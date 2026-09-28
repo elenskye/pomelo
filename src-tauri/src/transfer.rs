@@ -4,7 +4,7 @@
 //! Overwriting existing data requires `overwrite = true` and takes a snapshot backup first.
 //! Adding a module: new `Payload` variant + arms below.
 
-use crate::modules::books;
+use crate::modules::{books, films};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -27,32 +27,38 @@ struct ExportFile {
 
 enum Payload {
     Books(Vec<books::BookRecord>),
+    Films(Vec<films::FilmRecord>),
 }
 
 impl Payload {
     fn key(&self) -> &'static str {
         match self {
             Payload::Books(_) => books::KEY,
+            Payload::Films(_) => films::KEY,
         }
     }
     fn label(&self) -> &'static str {
         match self {
             Payload::Books(_) => books::LABEL,
+            Payload::Films(_) => films::LABEL,
         }
     }
     fn len(&self) -> usize {
         match self {
             Payload::Books(r) => r.len(),
+            Payload::Films(r) => r.len(),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
         match self {
             Payload::Books(_) => books::count(conn),
+            Payload::Films(_) => films::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
         match self {
             Payload::Books(r) => books::replace_all(conn, r),
+            Payload::Films(r) => films::replace_all(conn, r),
         }
     }
 }
@@ -80,6 +86,12 @@ fn parse(text: &str) -> Result<Parsed, String> {
                     .map_err(|e| format!("{}的数据格式不对：{e}", books::LABEL))?;
                 books::validate_records(&recs)?;
                 payloads.push(Payload::Books(recs));
+            }
+            films::KEY => {
+                let recs: Vec<films::FilmRecord> = serde_json::from_value(value)
+                    .map_err(|e| format!("{}的数据格式不对：{e}", films::LABEL))?;
+                films::validate_records(&recs)?;
+                payloads.push(Payload::Films(recs));
             }
             _ => skipped.push(key),
         }
@@ -180,10 +192,12 @@ mod tests {
     #[test]
     fn preview_counts_and_skips_unknown() {
         let c = memory_db();
-        let s = preview(&c, &file(json!({"books": [{"title": "A"}, {"title": "B"}], "films": []}))).unwrap();
-        assert_eq!(s.modules.len(), 1);
-        assert_eq!((s.modules[0].incoming, s.modules[0].existing), (2, 0));
-        assert_eq!(s.skipped, ["films"]);
+        let s = preview(&c, &file(json!({"books": [{"title": "A"}, {"title": "B"}], "films": [{"title": "F"}], "drawing": []})))
+            .unwrap();
+        assert_eq!(s.modules.len(), 2);
+        assert_eq!((s.modules[0].key.as_str(), s.modules[0].incoming, s.modules[0].existing), ("books", 2, 0));
+        assert_eq!((s.modules[1].key.as_str(), s.modules[1].incoming), ("films", 1));
+        assert_eq!(s.skipped, ["drawing"]);
     }
 
     #[test]
@@ -192,7 +206,7 @@ mod tests {
         assert!(preview(&c, "not json").is_err());
         assert!(preview(&c, &json!({"format": "x", "formatVersion": 1}).to_string()).is_err());
         assert!(preview(&c, &json!({"format": FORMAT, "formatVersion": 99, "modules": {}}).to_string()).is_err());
-        assert!(preview(&c, &file(json!({"films": []}))).is_err());
+        assert!(preview(&c, &file(json!({"drawing": []}))).is_err());
         assert!(preview(&c, &file(json!({"books": [{"title": "A", "extra": 1}]}))).is_err());
     }
 
@@ -239,5 +253,13 @@ mod tests {
         assert_eq!((n(Status::Done), n(Status::Doing), n(Status::Todo), n(Status::Unmarked)), (15, 1, 5, 0));
         assert_eq!(all[0].title, "献给阿尔吉侬的花束");
         assert_eq!(all.iter().filter(|b| b.rating == Some(5)).count(), 7);
+
+        let fs = films::list(&c).unwrap();
+        let m = |s: Status| fs.iter().filter(|f| f.status == s).count();
+        assert_eq!(fs.len(), 50);
+        assert_eq!((m(Status::Done), m(Status::Doing), m(Status::Todo), m(Status::Unmarked)), (12, 0, 0, 38));
+        assert_eq!(fs[0].title, "肖申克的救赎");
+        assert!(fs.iter().all(|f| f.kind == films::FilmKind::Movie));
+        assert!(fs.iter().all(|f| !f.director.as_deref().unwrap_or("").contains('&')));
     }
 }

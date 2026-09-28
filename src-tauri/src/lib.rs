@@ -107,6 +107,10 @@ pub fn run() {
             modules::books::books_create,
             modules::books::books_update,
             modules::books::books_delete,
+            modules::films::films_list,
+            modules::films::films_create,
+            modules::films::films_update,
+            modules::films::films_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -15,6 +15,8 @@ pub struct Migration {
 pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 1, name: "settings", sql: include_str!("../migrations/0001_settings.sql") },
     Migration { version: 2, name: "books", sql: include_str!("../migrations/0002_books.sql") },
+    Migration { version: 3, name: "books_kind", sql: include_str!("../migrations/0003_books_kind.sql") },
+    Migration { version: 4, name: "films", sql: include_str!("../migrations/0004_films.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -128,6 +130,20 @@ pub mod tests {
         assert_eq!(user_version(&snap).unwrap(), 1);
         let x: i64 = snap.query_row("SELECT x FROM a", [], |r| r.get(0)).unwrap();
         assert_eq!(x, 7);
+    }
+
+    /// Real path for installed apps: a v2 DB with books upgrades in place, backup first.
+    #[test]
+    fn real_migrations_upgrade_existing_books() {
+        let dir = temp_dir("real-upgrade");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..2], &dir.join("backups")).unwrap();
+        c.execute("INSERT INTO books (title, status, rating) VALUES ('小王子', 'done', 5)", []).unwrap();
+        assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), latest_version());
+        let (kind, rating): (String, i64) =
+            c.query_row("SELECT kind, rating FROM books", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((kind.as_str(), rating), ("fiction", 5));
+        assert_eq!(std::fs::read_dir(dir.join("backups")).unwrap().count(), 1);
     }
 
     #[test]

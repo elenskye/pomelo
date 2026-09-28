@@ -23,21 +23,21 @@ function expectHeaders(ws: Sheet, rowNo: number, headers: string[], sheet: strin
   }
 }
 
-function books(ws: Sheet) {
-  expectHeaders(ws, 3, ["书名", "作者", "国家", "状态", "尝尝咸淡", "备注"], "摸鱼读读");
-  const status: Record<string, Status> = { 想读: "todo", 在读: "doing", 已读: "done" };
+// Books & films sheets share one layout: 名称, 作者/导演, 国家, 状态, 尝尝咸淡, 备注 (data from row 4).
+function media(ws: Sheet, sheetName: string, headers: string[], status: Record<string, Status>) {
+  expectHeaders(ws, 3, headers, sheetName);
   const out = [];
   for (let r = 4; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
     const title = cell(row, 1);
     if (!title) continue;
     const st = cell(row, 4);
-    if (st && !(st in status)) throw new Error(`摸鱼读读第 ${r} 行：不认识的状态「${st}」`);
+    if (st && !(st in status)) throw new Error(`${sheetName}第 ${r} 行：不认识的状态「${st}」`);
     out.push({
       title,
-      author: cell(row, 2),
+      creator: cell(row, 2)?.replace(/\s*[&＆]\s*/g, " / ") ?? null, // unify separators to " / "
       country: cell(row, 3),
-      status: st ? status[st] : "unmarked",
+      status: st ? status[st] : ("unmarked" as Status),
       rating: stars(cell(row, 5)),
       finishedMonth: null,
       note: cell(row, 6),
@@ -45,6 +45,16 @@ function books(ws: Sheet) {
   }
   return out;
 }
+
+const books = (ws: Sheet) =>
+  media(ws, "摸鱼读读", ["书名", "作者", "国家", "状态", "尝尝咸淡", "备注"], { 想读: "todo", 在读: "doing", 已读: "done" }).map(
+    ({ creator, ...r }) => ({ ...r, author: creator, kind: "fiction" }), // 类型 not in sheet: default 虚构
+  );
+
+const films = (ws: Sheet) =>
+  media(ws, "好奇看看", ["名称", "作者/导演", "国家", "状态", "尝尝咸淡", "备注"], { 想看: "todo", 在看: "doing", 已看: "done" }).map(
+    ({ creator, ...r }) => ({ ...r, director: creator, kind: "movie" }), // sheet is all movies
+  );
 
 const wb = new ExcelJS.Workbook();
 await wb.xlsx.readFile(input);
@@ -54,15 +64,15 @@ const sheet = (name: string): Sheet => {
   return ws as unknown as Sheet;
 };
 
-const modules = { books: books(sheet("摸鱼读读")) };
+const modules = { books: books(sheet("摸鱼读读")), films: films(sheet("好奇看看")) };
 writeFileSync(
   output,
   JSON.stringify({ format: "pomelo-export", formatVersion: 1, exportedAt: new Date().toISOString(), source: "柚儿园.xlsx", modules }, null, 2) + "\n",
 );
 
 const count = (xs: { status: Status }[], s: Status) => xs.filter((x) => x.status === s).length;
-const b = modules.books;
+const summary = (label: string, unit: string, verbs: [string, string, string], xs: { status: Status }[]) =>
+  `${label} ${xs.length} ${unit}：${verbs[2]} ${count(xs, "done")} · ${verbs[1]} ${count(xs, "doing")} · ${verbs[0]} ${count(xs, "todo")} · 待标记 ${count(xs, "unmarked")}`;
 console.log(`已生成 ${output}`);
-console.log(
-  `摸鱼读读 ${b.length} 本：已读 ${count(b, "done")} · 在读 ${count(b, "doing")} · 想读 ${count(b, "todo")} · 待标记 ${count(b, "unmarked")}`,
-);
+console.log(summary("摸鱼读读", "本", ["想读", "在读", "已读"], modules.books));
+console.log(summary("好奇看看", "部", ["想看", "在看", "已看"], modules.films));

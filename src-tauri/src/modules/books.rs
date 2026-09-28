@@ -1,7 +1,8 @@
 //! 摸鱼读读 (books). Core fns take `&Connection` (unit-testable); `#[tauri::command]`
 //! wrappers at the bottom are the application-service API used by UI (and later AI tools).
+//! films.rs mirrors this file (author→director, BookKind→FilmKind); keep them in step.
 
-use super::common::{self, err, some, Status};
+use super::common::{self, err, some, str_enum, Status};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,13 @@ pub const KEY: &str = "books";
 pub const LABEL: &str = "摸鱼读读";
 const NOT_FOUND: &str = "找不到这本书，可能已经被删除了";
 
+str_enum!(BookKind, default = Fiction, {
+    Fiction => "fiction",
+    Nonfiction => "nonfiction",
+    Comic => "comic",
+    Other => "other",
+});
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Book {
@@ -18,6 +26,7 @@ pub struct Book {
     pub title: String,
     pub author: Option<String>,
     pub country: Option<String>,
+    pub kind: BookKind,
     pub status: Status,
     pub rating: Option<i64>,
     pub finished_month: Option<String>,
@@ -37,6 +46,8 @@ pub struct BookPatch {
     #[serde(default, deserialize_with = "some")]
     pub country: Option<Option<String>>,
     #[serde(default)]
+    pub kind: Option<BookKind>,
+    #[serde(default)]
     pub status: Option<Status>,
     #[serde(default, deserialize_with = "some")]
     pub rating: Option<Option<i64>>,
@@ -52,6 +63,7 @@ struct Fields {
     title: String,
     author: Option<String>,
     country: Option<String>,
+    kind: BookKind,
     status: Status,
     rating: Option<i64>,
     finished_month: Option<String>,
@@ -64,6 +76,7 @@ impl Fields {
             title: b.title.clone(),
             author: b.author.clone(),
             country: b.country.clone(),
+            kind: b.kind,
             status: b.status,
             rating: b.rating,
             finished_month: b.finished_month.clone(),
@@ -80,6 +93,9 @@ impl Fields {
         }
         if let Some(v) = p.country {
             self.country = v;
+        }
+        if let Some(v) = p.kind {
+            self.kind = v;
         }
         if let Some(v) = p.status {
             self.status = v;
@@ -101,6 +117,7 @@ impl Fields {
             title: common::require(&self.title, "书名", 200)?,
             author: common::clean(self.author),
             country: common::clean(self.country),
+            kind: self.kind,
             status: self.status,
             rating: self.rating,
             finished_month: common::clean(self.finished_month),
@@ -115,16 +132,7 @@ impl Fields {
     }
 }
 
-/// Rule: becoming `done` with an empty month fills the current month,
-/// unless the caller set the month explicitly (their value, even null, wins).
-fn auto_month(conn: &Connection, f: &mut Fields, was_done: bool, month_given: bool) -> Result<(), String> {
-    if f.status == Status::Done && !was_done && f.finished_month.is_none() && !month_given {
-        f.finished_month = Some(common::current_month(conn)?);
-    }
-    Ok(())
-}
-
-const COLS: &str = "id, title, author, country, status, rating, finished_month, note, created_at, updated_at";
+const COLS: &str = "id, title, author, country, kind, status, rating, finished_month, note, created_at, updated_at";
 
 fn from_row(r: &Row) -> rusqlite::Result<Book> {
     Ok(Book {
@@ -132,12 +140,13 @@ fn from_row(r: &Row) -> rusqlite::Result<Book> {
         title: r.get(1)?,
         author: r.get(2)?,
         country: r.get(3)?,
-        status: r.get(4)?,
-        rating: r.get(5)?,
-        finished_month: r.get(6)?,
-        note: r.get(7)?,
-        created_at: r.get(8)?,
-        updated_at: r.get(9)?,
+        kind: r.get(4)?,
+        status: r.get(5)?,
+        rating: r.get(6)?,
+        finished_month: r.get(7)?,
+        note: r.get(8)?,
+        created_at: r.get(9)?,
+        updated_at: r.get(10)?,
     })
 }
 
@@ -161,11 +170,11 @@ pub fn count(conn: &Connection) -> Result<i64, String> {
 pub fn create(conn: &Connection, patch: BookPatch) -> Result<Book, String> {
     let month_given = patch.finished_month.is_some();
     let mut f = Fields::default().apply(patch).validated()?;
-    auto_month(conn, &mut f, false, month_given)?;
+    common::auto_month(conn, f.status, false, &mut f.finished_month, month_given)?;
     conn.execute(
-        "INSERT INTO books (title, author, country, status, rating, finished_month, note)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![f.title, f.author, f.country, f.status, f.rating, f.finished_month, f.note],
+        "INSERT INTO books (title, author, country, kind, status, rating, finished_month, note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![f.title, f.author, f.country, f.kind, f.status, f.rating, f.finished_month, f.note],
     )
     .map_err(err)?;
     get(conn, conn.last_insert_rowid())
@@ -175,12 +184,12 @@ pub fn update(conn: &Connection, id: i64, patch: BookPatch) -> Result<Book, Stri
     let old = get(conn, id)?;
     let month_given = patch.finished_month.is_some();
     let mut f = Fields::from_book(&old).apply(patch).validated()?;
-    auto_month(conn, &mut f, old.status == Status::Done, month_given)?;
+    common::auto_month(conn, f.status, old.status == Status::Done, &mut f.finished_month, month_given)?;
     conn.execute(
-        "UPDATE books SET title = ?1, author = ?2, country = ?3, status = ?4, rating = ?5,
-           finished_month = ?6, note = ?7, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-         WHERE id = ?8",
-        params![f.title, f.author, f.country, f.status, f.rating, f.finished_month, f.note, id],
+        "UPDATE books SET title = ?1, author = ?2, country = ?3, kind = ?4, status = ?5, rating = ?6,
+           finished_month = ?7, note = ?8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?9",
+        params![f.title, f.author, f.country, f.kind, f.status, f.rating, f.finished_month, f.note, id],
     )
     .map_err(err)?;
     get(conn, id)
@@ -204,6 +213,8 @@ pub struct BookRecord {
     #[serde(default)]
     pub country: Option<String>,
     #[serde(default)]
+    pub kind: BookKind,
+    #[serde(default)]
     pub status: Status,
     #[serde(default)]
     pub rating: Option<i64>,
@@ -223,6 +234,7 @@ impl BookRecord {
             title: self.title.clone(),
             author: self.author.clone(),
             country: self.country.clone(),
+            kind: self.kind,
             status: self.status,
             rating: self.rating,
             finished_month: self.finished_month.clone(),
@@ -248,16 +260,16 @@ pub fn replace_all(conn: &Connection, records: &[BookRecord]) -> Result<usize, S
     conn.execute("DELETE FROM books", []).map_err(err)?;
     let mut st = conn
         .prepare(
-            "INSERT INTO books (title, author, country, status, rating, finished_month, note, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-               coalesce(?8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-               coalesce(?9, ?8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
+            "INSERT INTO books (title, author, country, kind, status, rating, finished_month, note, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+               coalesce(?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+               coalesce(?10, ?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
         )
         .map_err(err)?;
     for (i, r) in records.iter().enumerate() {
         let f = r.fields().map_err(|e| record_err(i, r, e))?;
         st.execute(params![
-            f.title, f.author, f.country, f.status, f.rating, f.finished_month, f.note, r.created_at, r.updated_at
+            f.title, f.author, f.country, f.kind, f.status, f.rating, f.finished_month, f.note, r.created_at, r.updated_at
         ])
         .map_err(err)?;
     }
@@ -303,6 +315,7 @@ mod tests {
         assert_eq!(p.country, None);
         assert!(serde_json::from_value::<BookPatch>(json!({"bogus": 1})).is_err());
         assert!(serde_json::from_value::<BookPatch>(json!({"status": "read"})).is_err());
+        assert!(serde_json::from_value::<BookPatch>(json!({"kind": "movie"})).is_err());
     }
 
     #[test]
@@ -312,9 +325,11 @@ mod tests {
         assert_eq!(b.title, "小王子");
         assert_eq!(b.author, None);
         assert_eq!(b.country.as_deref(), Some("法国"));
-        assert_eq!(b.status, Status::Unmarked);
+        assert_eq!((b.kind, b.status), (BookKind::Fiction, Status::Unmarked));
         assert_eq!(b.finished_month, None);
         assert!(!b.created_at.is_empty());
+        let n = create(&c, patch(json!({"title": "全球通史", "kind": "nonfiction"}))).unwrap();
+        assert_eq!(n.kind, BookKind::Nonfiction);
     }
 
     #[test]
@@ -353,8 +368,9 @@ mod tests {
         assert_eq!((u.status, u.rating, u.author.as_deref()), (Status::Doing, Some(4), Some("马尔克斯")));
         assert_eq!(u.finished_month, None);
 
-        let u = update(&c, b.id, patch(json!({"status": "done"}))).unwrap();
+        let u = update(&c, b.id, patch(json!({"status": "done", "kind": "comic"}))).unwrap();
         assert_eq!(u.finished_month.as_deref(), Some(now.as_str()));
+        assert_eq!(u.kind, BookKind::Comic);
 
         // already done: clearing the month sticks; re-saving done does not refill
         let u = update(&c, b.id, patch(json!({"finishedMonth": null}))).unwrap();
@@ -380,7 +396,7 @@ mod tests {
         let c = memory_db();
         create(&c, patch(json!({"title": "old"}))).unwrap();
         let recs: Vec<BookRecord> = serde_json::from_value(json!([
-            {"title": "A", "status": "done", "rating": 5, "createdAt": "2020-01-01T00:00:00.000Z"},
+            {"title": "A", "status": "done", "rating": 5, "kind": "nonfiction", "createdAt": "2020-01-01T00:00:00.000Z"},
             {"title": "B"}
         ]))
         .unwrap();
@@ -388,9 +404,10 @@ mod tests {
         let all = list(&c).unwrap();
         assert_eq!(all.iter().map(|b| b.title.as_str()).collect::<Vec<_>>(), ["A", "B"]);
         assert_eq!(all[0].finished_month, None); // imported as-is, no auto-fill
+        assert_eq!(all[0].kind, BookKind::Nonfiction);
         assert_eq!(all[0].created_at, "2020-01-01T00:00:00.000Z");
         assert_eq!(all[0].updated_at, "2020-01-01T00:00:00.000Z");
-        assert_eq!(all[1].status, Status::Unmarked);
+        assert_eq!((all[1].status, all[1].kind), (Status::Unmarked, BookKind::Fiction));
 
         let bad: Vec<BookRecord> = serde_json::from_value(json!([{"title": "ok"}, {"title": " "}])).unwrap();
         let e = validate_records(&bad).unwrap_err();

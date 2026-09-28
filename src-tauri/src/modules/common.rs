@@ -1,51 +1,74 @@
-//! Shared domain helpers: unified status, field validation, patch deserialization.
+//! Shared domain helpers: string enums, unified status, field validation, patch deserialization.
 
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::Connection;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 
-/// Unified status for books / films / drawing lessons. UI maps to module-specific labels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Status {
-    #[default]
-    Unmarked,
-    Todo,
-    Doing,
-    Done,
-}
-
-impl Status {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Status::Unmarked => "unmarked",
-            Status::Todo => "todo",
-            Status::Doing => "doing",
-            Status::Done => "done",
+/// Closed set of codes stored as TEXT (validated here, not by SQL CHECK, so adding a value
+/// needs no table rebuild). Generates serde (code strings), Default, and rusqlite To/FromSql.
+/// `str_enum!(Name, default = Variant, { Variant => "code", ... });`
+macro_rules! str_enum {
+    ($name:ident, default = $def:ident, { $($variant:ident => $code:literal),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+        pub enum $name {
+            $(#[serde(rename = $code)] $variant),+
         }
-    }
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "unmarked" => Status::Unmarked,
-            "todo" => Status::Todo,
-            "doing" => Status::Doing,
-            "done" => Status::Done,
-            _ => return None,
-        })
-    }
+        impl Default for $name {
+            fn default() -> Self {
+                Self::$def
+            }
+        }
+        impl $name {
+            #[allow(dead_code)]
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $code),+
+                }
+            }
+            pub fn parse(s: &str) -> Option<Self> {
+                match s {
+                    $($code => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+        impl rusqlite::types::ToSql for $name {
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                Ok(rusqlite::types::ToSqlOutput::from(self.as_str()))
+            }
+        }
+        impl rusqlite::types::FromSql for $name {
+            fn column_result(v: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+                let s = v.as_str()?;
+                Self::parse(s).ok_or_else(|| {
+                    rusqlite::types::FromSqlError::Other(format!("unknown {} {s}", stringify!($name)).into())
+                })
+            }
+        }
+    };
 }
+pub(crate) use str_enum;
 
-impl ToSql for Status {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(self.as_str()))
-    }
-}
+// Unified status for books / films / drawing lessons. UI maps to module-specific labels.
+str_enum!(Status, default = Unmarked, {
+    Unmarked => "unmarked",
+    Todo => "todo",
+    Doing => "doing",
+    Done => "done",
+});
 
-impl FromSql for Status {
-    fn column_result(v: ValueRef<'_>) -> FromSqlResult<Self> {
-        let s = v.as_str()?;
-        Status::parse(s).ok_or_else(|| FromSqlError::Other(format!("unknown status {s}").into()))
+/// Shared rule: becoming `done` with an empty month fills the current month, unless the
+/// caller set the month explicitly (their value, even null, wins).
+pub fn auto_month(
+    conn: &Connection,
+    status: Status,
+    was_done: bool,
+    month: &mut Option<String>,
+    month_given: bool,
+) -> Result<(), String> {
+    if status == Status::Done && !was_done && month.is_none() && !month_given {
+        *month = Some(current_month(conn)?);
     }
+    Ok(())
 }
 
 /// For `Option<Option<T>>` patch fields: absent → None, null → Some(None), value → Some(Some(v)).

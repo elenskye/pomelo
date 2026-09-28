@@ -3,3 +3,4 @@
 
 pub mod books;
 pub mod common;
+pub mod films;
