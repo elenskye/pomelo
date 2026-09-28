@@ -30,9 +30,19 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。�
 ## 环境
 
 - macOS，Apple M3，18 GB 内存
-- 已有 Node 24、Xcode 命令行工具；Rust 和 pnpm 要在阶段 1 开始前安装
+- Node 24、pnpm、Rust、Xcode 命令行工具都已安装。pnpm 在 `~/Library/pnpm/bin`，cargo 在 `~/.cargo/bin`；非交互终端里要先把它们加进 PATH
 - 辅助脚本用 TypeScript（Node），不引入 Python
 
 ## 常用命令
 
-阶段 1 初始化后补充。
+| 命令 | 作用 |
+|---|---|
+| `pnpm app:dev` | 运行开发版（测试数据） |
+| `pnpm check` | 类型检查 + Rust 自动测试，每次改完都要跑 |
+| `pnpm app:build` | 只打包正式版，不安装 |
+| `pnpm app:install` | 打包并安装到「应用程序」，只在阶段验收后、我同意时执行 |
+
+## 验证方法
+
+- 开发版的窗口无法被后台截图。需要截图时，先 `pnpm app:build`，再用 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"` 打开，这样不会碰真实数据。
+- 想打开某一页，就把临时数据库 `settings` 表里 `ui.last_route` 的值改成那一页（如 `"/settings"`），再重开 App。

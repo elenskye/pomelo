@@ -15,7 +15,7 @@
 
 ## 当前进度
 
-阶段 0（规划）已完成，下一步是阶段 1：搭建应用骨架。详见 [开发路线](docs/roadmap.md)。
+阶段 1（应用骨架）已完成，下一步是阶段 2：摸鱼读读。详见 [开发路线](docs/roadmap.md)。
 
 ## 文档
 
@@ -39,9 +39,10 @@
 
 ## 数据在哪里
 
-- 个人数据：`~/Library/Application Support/Pomelo OS/`（阶段 1 之后才会生成）
+- 个人数据：`~/Library/Application Support/Pomelo OS/`（第一次打开正式版时生成）
 - 开发时的数据：`~/Library/Application Support/Pomelo OS Dev/`，和真实数据分开
 
 ## 运行
 
-阶段 1 完成后补充。
+- **日常使用**：运行 `pnpm app:install`，把最新版装进「应用程序」，之后像普通 App 一样打开。
+- **开发**：运行 `pnpm app:dev`，使用测试数据，不影响日常使用的数据。
