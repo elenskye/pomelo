@@ -1,0 +1,28 @@
+# Personal data — never commit
+/prototype/
+*.xlsx
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+pomelo-export-*.json
+/backups/
+
+# Dependencies & build output
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Env & local config
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.log
