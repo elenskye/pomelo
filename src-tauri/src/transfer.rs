@@ -4,7 +4,7 @@
 //! Overwriting existing data requires `overwrite = true` and takes a snapshot backup first.
 //! Adding a module: new `Payload` variant + arms below.
 
-use crate::modules::{books, films};
+use crate::modules::{books, drawing, films};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -28,6 +28,7 @@ struct ExportFile {
 enum Payload {
     Books(Vec<books::BookRecord>),
     Films(Vec<films::FilmRecord>),
+    Drawing(Vec<drawing::CourseRecord>),
 }
 
 impl Payload {
@@ -35,30 +36,35 @@ impl Payload {
         match self {
             Payload::Books(_) => books::KEY,
             Payload::Films(_) => films::KEY,
+            Payload::Drawing(_) => drawing::KEY,
         }
     }
     fn label(&self) -> &'static str {
         match self {
             Payload::Books(_) => books::LABEL,
             Payload::Films(_) => films::LABEL,
+            Payload::Drawing(_) => drawing::LABEL,
         }
     }
     fn len(&self) -> usize {
         match self {
             Payload::Books(r) => r.len(),
             Payload::Films(r) => r.len(),
+            Payload::Drawing(r) => r.len(),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
         match self {
             Payload::Books(_) => books::count(conn),
             Payload::Films(_) => films::count(conn),
+            Payload::Drawing(_) => drawing::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
         match self {
             Payload::Books(r) => books::replace_all(conn, r),
             Payload::Films(r) => films::replace_all(conn, r),
+            Payload::Drawing(r) => drawing::replace_all(conn, r),
         }
     }
 }
@@ -92,6 +98,12 @@ fn parse(text: &str) -> Result<Parsed, String> {
                     .map_err(|e| format!("{}的数据格式不对：{e}", films::LABEL))?;
                 films::validate_records(&recs)?;
                 payloads.push(Payload::Films(recs));
+            }
+            drawing::KEY => {
+                let recs: Vec<drawing::CourseRecord> = serde_json::from_value(value)
+                    .map_err(|e| format!("{}的数据格式不对：{e}", drawing::LABEL))?;
+                drawing::validate_records(&recs)?;
+                payloads.push(Payload::Drawing(recs));
             }
             _ => skipped.push(key),
         }
@@ -192,12 +204,12 @@ mod tests {
     #[test]
     fn preview_counts_and_skips_unknown() {
         let c = memory_db();
-        let s = preview(&c, &file(json!({"books": [{"title": "A"}, {"title": "B"}], "films": [{"title": "F"}], "drawing": []})))
+        let s = preview(&c, &file(json!({"books": [{"title": "A"}, {"title": "B"}], "films": [{"title": "F"}], "packing": []})))
             .unwrap();
         assert_eq!(s.modules.len(), 2);
         assert_eq!((s.modules[0].key.as_str(), s.modules[0].incoming, s.modules[0].existing), ("books", 2, 0));
         assert_eq!((s.modules[1].key.as_str(), s.modules[1].incoming), ("films", 1));
-        assert_eq!(s.skipped, ["drawing"]);
+        assert_eq!(s.skipped, ["packing"]);
     }
 
     #[test]
@@ -206,7 +218,7 @@ mod tests {
         assert!(preview(&c, "not json").is_err());
         assert!(preview(&c, &json!({"format": "x", "formatVersion": 1}).to_string()).is_err());
         assert!(preview(&c, &json!({"format": FORMAT, "formatVersion": 99, "modules": {}}).to_string()).is_err());
-        assert!(preview(&c, &file(json!({"drawing": []}))).is_err());
+        assert!(preview(&c, &file(json!({"packing": []}))).is_err());
         assert!(preview(&c, &file(json!({"books": [{"title": "A", "extra": 1}]}))).is_err());
     }
 
@@ -239,6 +251,21 @@ mod tests {
         assert_eq!(books::count(&c).unwrap(), 0);
     }
 
+    /// Agent tooling: build a scratch DB from the real import file for screenshots.
+    /// `POMELO_SEED_DB=/tmp/x/pomelo.db cargo test seed_scratch_db -- --ignored` (never the real data dir).
+    #[test]
+    #[ignore]
+    fn seed_scratch_db() {
+        let Some(target) = std::env::var_os("POMELO_SEED_DB") else { return };
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/pomelo-import.json");
+        let text = std::fs::read_to_string(&path).expect("run `pnpm import:xlsx` first");
+        let target = std::path::PathBuf::from(target);
+        assert!(!target.to_string_lossy().contains("Application Support/Pomelo OS/"), "refusing real data dir");
+        let mut c = crate::db::open(&target).unwrap();
+        crate::db::migrate(&mut c, crate::db::MIGRATIONS, &temp_dir("seed")).unwrap();
+        apply(&mut c, &text, true, &temp_dir("seed")).unwrap();
+    }
+
     /// Real prototype data (local only, gitignored). Run: cargo test -- --ignored
     #[test]
     #[ignore]
@@ -259,7 +286,22 @@ mod tests {
         assert_eq!(fs.len(), 50);
         assert_eq!((m(Status::Done), m(Status::Doing), m(Status::Todo), m(Status::Unmarked)), (12, 0, 0, 38));
         assert_eq!(fs[0].title, "肖申克的救赎");
-        assert!(fs.iter().all(|f| f.kind == films::FilmKind::Movie));
+        let movie = crate::modules::kinds::tests::kind_id(&c, "films", "电影");
+        assert!(fs.iter().all(|f| f.kind_id == Some(movie)));
+        let fiction = crate::modules::kinds::tests::kind_id(&c, "books", "虚构");
+        assert!(all.iter().all(|b| b.kind_id == Some(fiction)));
+
+        let cs = drawing::courses(&c).unwrap();
+        assert_eq!(
+            cs.iter().map(|x| (x.name.as_str(), x.total)).collect::<Vec<_>>(),
+            [("正确绘画前两年", 40), ("人体前传", 32), ("人体正传", 15), ("原创绘画全攻略", 93), ("通用板绘上手", 22)]
+        );
+        let ls = drawing::lessons(&c, cs[3].id).unwrap();
+        assert!(ls.iter().all(|l| l.status == Status::Todo));
+        assert_eq!(ls[3].code.as_deref(), Some("2B"));
+        assert_eq!(ls[2].code, None); // DLC row: code folded into kind
+        let names: Vec<String> = crate::modules::kinds::list(&c, "drawing").unwrap().into_iter().map(|k| k.name).collect();
+        assert_eq!(names, ["正课", "DLC 跟画", "LIVE 辅导"]);
         assert!(fs.iter().all(|f| !f.director.as_deref().unwrap_or("").contains('&')));
     }
 }

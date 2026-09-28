@@ -17,6 +17,8 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 2, name: "books", sql: include_str!("../migrations/0002_books.sql") },
     Migration { version: 3, name: "books_kind", sql: include_str!("../migrations/0003_books_kind.sql") },
     Migration { version: 4, name: "films", sql: include_str!("../migrations/0004_films.sql") },
+    Migration { version: 5, name: "kinds", sql: include_str!("../migrations/0005_kinds.sql") },
+    Migration { version: 6, name: "drawing", sql: include_str!("../migrations/0006_drawing.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -140,10 +142,35 @@ pub mod tests {
         migrate(&mut c, &MIGRATIONS[..2], &dir.join("backups")).unwrap();
         c.execute("INSERT INTO books (title, status, rating) VALUES ('小王子', 'done', 5)", []).unwrap();
         assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), latest_version());
-        let (kind, rating): (String, i64) =
-            c.query_row("SELECT kind, rating FROM books", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!((kind.as_str(), rating), ("fiction", 5));
+        let (kind, rating): (String, i64) = c
+            .query_row("SELECT k.name, b.rating FROM books b JOIN kinds k ON k.id = b.kind_id", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((kind.as_str(), rating), ("虚构", 5));
         assert_eq!(std::fs::read_dir(dir.join("backups")).unwrap().count(), 1);
+    }
+
+    /// Installed phase-3 apps are at v4 with fixed kind codes; v5 maps them onto kinds rows.
+    #[test]
+    fn v4_kind_codes_map_to_kinds() {
+        let dir = temp_dir("v4-kinds");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..4], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            "INSERT INTO books (title, kind) VALUES ('a', 'fiction'), ('b', 'nonfiction'), ('c', 'comic'), ('d', 'other');
+             INSERT INTO films (title, kind) VALUES ('e', 'movie'), ('f', 'series'), ('g', 'anime');",
+        )
+        .unwrap();
+        migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap();
+        let names = |sql: &str| -> Vec<String> {
+            let mut st = c.prepare(sql).unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        };
+        assert_eq!(names("SELECT k.name FROM books b JOIN kinds k ON k.id = b.kind_id ORDER BY b.id"), ["虚构", "非虚构", "漫画", "其他"]);
+        assert_eq!(names("SELECT k.name FROM films f JOIN kinds k ON k.id = f.kind_id ORDER BY f.id"), ["电影", "剧集", "动漫"]);
+        let cols = names("SELECT name FROM pragma_table_info('books')");
+        assert!(cols.contains(&"kind_id".to_string()) && !cols.contains(&"kind".to_string()));
     }
 
     #[test]

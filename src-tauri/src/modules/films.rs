@@ -1,7 +1,8 @@
-//! 好奇看看 (films: movies / series / anime). Mirrors books.rs (author→director,
-//! BookKind→FilmKind); keep them in step. Commands at the bottom.
+//! 好奇看看 (films). Mirrors books.rs (author→director); keep them in step.
+//! 类型 = kinds.rs (module "films"). Commands at the bottom.
 
-use super::common::{self, err, some, str_enum, Status};
+use super::common::{self, err, some, Status};
+use super::kinds;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -11,12 +12,6 @@ pub const KEY: &str = "films";
 pub const LABEL: &str = "好奇看看";
 const NOT_FOUND: &str = "找不到这部作品，可能已经被删除了";
 
-str_enum!(FilmKind, default = Movie, {
-    Movie => "movie",
-    Series => "series",
-    Anime => "anime",
-});
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Film {
@@ -24,7 +19,8 @@ pub struct Film {
     pub title: String,
     pub director: Option<String>,
     pub country: Option<String>,
-    pub kind: FilmKind,
+    /// kinds.id (user-editable 类型); None = 未分类.
+    pub kind_id: Option<i64>,
     pub status: Status,
     pub rating: Option<i64>,
     pub finished_month: Option<String>,
@@ -43,8 +39,8 @@ pub struct FilmPatch {
     pub director: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
     pub country: Option<Option<String>>,
-    #[serde(default)]
-    pub kind: Option<FilmKind>,
+    #[serde(default, deserialize_with = "some")]
+    pub kind_id: Option<Option<i64>>,
     #[serde(default)]
     pub status: Option<Status>,
     #[serde(default, deserialize_with = "some")]
@@ -60,7 +56,7 @@ struct Fields {
     title: String,
     director: Option<String>,
     country: Option<String>,
-    kind: FilmKind,
+    kind_id: Option<i64>,
     status: Status,
     rating: Option<i64>,
     finished_month: Option<String>,
@@ -73,7 +69,7 @@ impl Fields {
             title: f.title.clone(),
             director: f.director.clone(),
             country: f.country.clone(),
-            kind: f.kind,
+            kind_id: f.kind_id,
             status: f.status,
             rating: f.rating,
             finished_month: f.finished_month.clone(),
@@ -91,8 +87,8 @@ impl Fields {
         if let Some(v) = p.country {
             self.country = v;
         }
-        if let Some(v) = p.kind {
-            self.kind = v;
+        if let Some(v) = p.kind_id {
+            self.kind_id = v;
         }
         if let Some(v) = p.status {
             self.status = v;
@@ -114,7 +110,7 @@ impl Fields {
             title: common::require(&self.title, "名称", 200)?,
             director: common::clean(self.director),
             country: common::clean(self.country),
-            kind: self.kind,
+            kind_id: self.kind_id,
             status: self.status,
             rating: self.rating,
             finished_month: common::clean(self.finished_month),
@@ -129,7 +125,7 @@ impl Fields {
     }
 }
 
-const COLS: &str = "id, title, director, country, kind, status, rating, finished_month, note, created_at, updated_at";
+const COLS: &str = "id, title, director, country, kind_id, status, rating, finished_month, note, created_at, updated_at";
 
 fn from_row(r: &Row) -> rusqlite::Result<Film> {
     Ok(Film {
@@ -137,7 +133,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Film> {
         title: r.get(1)?,
         director: r.get(2)?,
         country: r.get(3)?,
-        kind: r.get(4)?,
+        kind_id: r.get(4)?,
         status: r.get(5)?,
         rating: r.get(6)?,
         finished_month: r.get(7)?,
@@ -167,11 +163,12 @@ pub fn count(conn: &Connection) -> Result<i64, String> {
 pub fn create(conn: &Connection, patch: FilmPatch) -> Result<Film, String> {
     let month_given = patch.finished_month.is_some();
     let mut f = Fields::default().apply(patch).validated()?;
+    kinds::check(conn, KEY, f.kind_id)?;
     common::auto_month(conn, f.status, false, &mut f.finished_month, month_given)?;
     conn.execute(
-        "INSERT INTO films (title, director, country, kind, status, rating, finished_month, note)
+        "INSERT INTO films (title, director, country, kind_id, status, rating, finished_month, note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![f.title, f.director, f.country, f.kind, f.status, f.rating, f.finished_month, f.note],
+        params![f.title, f.director, f.country, f.kind_id, f.status, f.rating, f.finished_month, f.note],
     )
     .map_err(err)?;
     get(conn, conn.last_insert_rowid())
@@ -181,12 +178,13 @@ pub fn update(conn: &Connection, id: i64, patch: FilmPatch) -> Result<Film, Stri
     let old = get(conn, id)?;
     let month_given = patch.finished_month.is_some();
     let mut f = Fields::from_film(&old).apply(patch).validated()?;
+    kinds::check(conn, KEY, f.kind_id)?;
     common::auto_month(conn, f.status, old.status == Status::Done, &mut f.finished_month, month_given)?;
     conn.execute(
-        "UPDATE films SET title = ?1, director = ?2, country = ?3, kind = ?4, status = ?5, rating = ?6,
+        "UPDATE films SET title = ?1, director = ?2, country = ?3, kind_id = ?4, status = ?5, rating = ?6,
            finished_month = ?7, note = ?8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?9",
-        params![f.title, f.director, f.country, f.kind, f.status, f.rating, f.finished_month, f.note, id],
+        params![f.title, f.director, f.country, f.kind_id, f.status, f.rating, f.finished_month, f.note, id],
     )
     .map_err(err)?;
     get(conn, id)
@@ -209,8 +207,9 @@ pub struct FilmRecord {
     pub director: Option<String>,
     #[serde(default)]
     pub country: Option<String>,
+    /// 类型 name (created if missing on import).
     #[serde(default)]
-    pub kind: FilmKind,
+    pub kind: Option<String>,
     #[serde(default)]
     pub status: Status,
     #[serde(default)]
@@ -227,11 +226,12 @@ pub struct FilmRecord {
 
 impl FilmRecord {
     fn fields(&self) -> Result<Fields, String> {
+        kinds::check_name(&self.kind)?;
         Fields {
             title: self.title.clone(),
             director: self.director.clone(),
             country: self.country.clone(),
-            kind: self.kind,
+            kind_id: None, // resolved from name in replace_all
             status: self.status,
             rating: self.rating,
             finished_month: self.finished_month.clone(),
@@ -257,7 +257,7 @@ pub fn replace_all(conn: &Connection, records: &[FilmRecord]) -> Result<usize, S
     conn.execute("DELETE FROM films", []).map_err(err)?;
     let mut st = conn
         .prepare(
-            "INSERT INTO films (title, director, country, kind, status, rating, finished_month, note, created_at, updated_at)
+            "INSERT INTO films (title, director, country, kind_id, status, rating, finished_month, note, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                coalesce(?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                coalesce(?10, ?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
@@ -265,8 +265,9 @@ pub fn replace_all(conn: &Connection, records: &[FilmRecord]) -> Result<usize, S
         .map_err(err)?;
     for (i, r) in records.iter().enumerate() {
         let f = r.fields().map_err(|e| record_err(i, r, e))?;
+        let kind_id = kinds::resolve(conn, KEY, r.kind.as_deref())?;
         st.execute(params![
-            f.title, f.director, f.country, f.kind, f.status, f.rating, f.finished_month, f.note, r.created_at, r.updated_at
+            f.title, f.director, f.country, kind_id, f.status, f.rating, f.finished_month, f.note, r.created_at, r.updated_at
         ])
         .map_err(err)?;
     }
@@ -299,6 +300,7 @@ pub fn films_delete(state: State<AppState>, id: i64) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::db::tests::memory_db;
+    use crate::modules::kinds::tests::kind_id;
     use serde_json::json;
 
     fn patch(v: serde_json::Value) -> FilmPatch {
@@ -309,10 +311,10 @@ mod tests {
     fn create_defaults_and_kinds() {
         let c = memory_db();
         let f = create(&c, patch(json!({"title": " 千与千寻 ", "director": "宫崎骏"}))).unwrap();
-        assert_eq!((f.title.as_str(), f.kind, f.status), ("千与千寻", FilmKind::Movie, Status::Unmarked));
-        let s = create(&c, patch(json!({"title": "请回答1988", "kind": "series"}))).unwrap();
-        assert_eq!(s.kind, FilmKind::Series);
-        assert!(serde_json::from_value::<FilmPatch>(json!({"kind": "fiction"})).is_err());
+        assert_eq!((f.title.as_str(), f.kind_id, f.status), ("千与千寻", None, Status::Unmarked));
+        let series = kind_id(&c, "films", "剧集");
+        assert_eq!(create(&c, patch(json!({"title": "请回答1988", "kindId": series}))).unwrap().kind_id, Some(series));
+        assert!(create(&c, patch(json!({"title": "x", "kindId": kind_id(&c, "books", "虚构")}))).is_err());
         assert!(serde_json::from_value::<FilmPatch>(json!({"author": "x"})).is_err());
         assert!(create(&c, patch(json!({"title": " "}))).is_err());
     }
@@ -321,11 +323,12 @@ mod tests {
     fn update_and_auto_month() {
         let c = memory_db();
         let now = common::current_month(&c).unwrap();
+        let anime = kind_id(&c, "films", "动漫");
         let f = create(&c, patch(json!({"title": "星际穿越", "director": "诺兰"}))).unwrap();
         let u = update(&c, f.id, patch(json!({"status": "done", "rating": 5}))).unwrap();
         assert_eq!((u.finished_month.as_deref(), u.rating), (Some(now.as_str()), Some(5)));
-        let u = update(&c, f.id, patch(json!({"director": null, "kind": "anime"}))).unwrap();
-        assert_eq!((u.director, u.kind, u.status), (None, FilmKind::Anime, Status::Done));
+        let u = update(&c, f.id, patch(json!({"director": null, "kindId": anime}))).unwrap();
+        assert_eq!((u.director, u.kind_id, u.status), (None, Some(anime), Status::Done));
         delete(&c, f.id).unwrap();
         assert!(get(&c, f.id).is_err());
     }
@@ -334,13 +337,13 @@ mod tests {
     fn replace_all_imports_as_is() {
         let c = memory_db();
         let recs: Vec<FilmRecord> = serde_json::from_value(json!([
-            {"title": "A", "status": "done", "rating": 5},
+            {"title": "A", "status": "done", "rating": 5, "kind": "电影"},
             {"title": "B", "kind": "series"}
         ]))
         .unwrap();
         assert_eq!(replace_all(&c, &recs).unwrap(), 2);
         let all = list(&c).unwrap();
-        assert_eq!((all[0].finished_month.as_ref(), all[0].kind), (None, FilmKind::Movie));
-        assert_eq!((all[1].kind, all[1].status), (FilmKind::Series, Status::Unmarked));
+        assert_eq!((all[0].finished_month.as_ref(), all[0].kind_id), (None, Some(kind_id(&c, "films", "电影"))));
+        assert_eq!((all[1].kind_id, all[1].status), (Some(kind_id(&c, "films", "剧集")), Status::Unmarked));
     }
 }

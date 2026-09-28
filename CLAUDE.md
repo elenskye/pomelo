@@ -48,5 +48,6 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。�
 - **界面交互**：用 `.claude/launch.json` 里的 `ui-mock` 启动（也就是 `pnpm dev`），在内置浏览器打开 `http://localhost:1420/?mock`。这时用的是内存里的模拟数据（`src/dev/mockIpc.ts`），可以随便点。新增 Rust 命令时要同步加进模拟数据。
 - 模拟数据只用来测界面；业务规则以 Rust 测试为准。
 - **真实窗口**：开发版的窗口无法被后台截图。需要截图时，先 `pnpm app:build`，再用 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"` 打开，这样不会碰真实数据。
-- 屏幕锁定时拿不到真实窗口的画面，这时就只用浏览器测。
+- 屏幕锁定时拿不到真实窗口的画面，这时就只用浏览器测。后台工具也点不开真实窗口里的下拉菜单，下拉菜单只在浏览器里测。
+- 需要真实数据的截图时，先生成临时数据库：`POMELO_SEED_DB=<临时目录>/pomelo.db cargo test --manifest-path src-tauri/Cargo.toml seed_scratch_db -- --ignored`，再用上面的方法打开。
 - 想打开某一页，就把临时数据库 `settings` 表里 `ui.last_route` 的值改成那一页（如 `"/settings"`），再重开 App。

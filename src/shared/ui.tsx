@@ -1,6 +1,6 @@
-// Shared UI primitives: native controls styled to docs/design.md (no component library).
+// Shared UI primitives styled to docs/design.md (no component library). Dropdowns: ./Dropdown.tsx.
 import type { LucideIcon } from "lucide-react";
-import { ChevronDown, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import type { ButtonHTMLAttributes, ComponentProps, ReactNode, TextareaHTMLAttributes } from "react";
 
 export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; right?: ReactNode }) {
@@ -65,28 +65,6 @@ export function SearchInput(props: ComponentProps<"input">) {
   );
 }
 
-export function Select(props: {
-  value: string;
-  onChange: (v: string) => void;
-  children: ReactNode;
-  ariaLabel?: string;
-  className?: string;
-}) {
-  return (
-    <div className="relative inline-flex">
-      <select
-        value={props.value}
-        aria-label={props.ariaLabel}
-        onChange={(e) => props.onChange(e.target.value)}
-        className={`appearance-none rounded-control border bg-card py-1.5 pr-8 pl-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${props.className ?? ""}`}
-      >
-        {props.children}
-      </select>
-      <ChevronDown size={14} className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
-}
-
 export function Segmented<T extends string>(props: {
   value: T;
   options: { value: T; label: ReactNode }[];
@@ -122,6 +100,41 @@ export function Field(props: { label: string; children: ReactNode }) {
     <div className="flex flex-col gap-1.5">
       <span className="text-xs text-muted-foreground">{props.label}</span>
       {props.children}
+    </div>
+  );
+}
+
+/** Small square icon-only button (ghost). */
+export function IconButton(props: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={props.label}
+      title={props.label}
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className={`inline-flex shrink-0 items-center justify-center rounded-control p-1.5 transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-30 ${
+        props.danger ? "text-destructive" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+/** Thin progress bar: done (green) + doing (amber) segments. */
+export function ProgressBar(props: { done: number; doing?: number; total: number }) {
+  const pct = (n: number) => (props.total > 0 ? `${(n / props.total) * 100}%` : "0%");
+  return (
+    <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={props.done} aria-valuemax={props.total}>
+      <div style={{ width: pct(props.done), background: "var(--status-done-fg)" }} />
+      <div style={{ width: pct(props.doing ?? 0), background: "var(--status-doing-fg)", opacity: 0.55 }} />
     </div>
   );
 }

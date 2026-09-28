@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { Select } from "./ui";
+import { Dropdown } from "./Dropdown";
 
 export const currentMonth = () => {
   const d = new Date();
@@ -32,22 +32,22 @@ export function MonthInput(props: { value: string | null; onChange: (v: string |
 
   return (
     <div className="flex items-center gap-2">
-      <Select value={year} onChange={(y) => emit(y, month)} ariaLabel="年">
-        <option value="">年</option>
-        {years.map((y) => (
-          <option key={y} value={y}>
-            {y} 年
-          </option>
-        ))}
-      </Select>
-      <Select value={month} onChange={(m) => emit(year, m)} ariaLabel="月">
-        <option value="">月</option>
-        {months.map((m) => (
-          <option key={m} value={m}>
-            {Number(m)} 月
-          </option>
-        ))}
-      </Select>
+      <Dropdown
+        ariaLabel="年"
+        value={year}
+        onChange={(y) => emit(y, month || (y ? "01" : ""))}
+        placeholder="年"
+        menuMaxHeight={260}
+        options={years.map((y) => ({ value: y, label: `${y} 年` }))}
+      />
+      <Dropdown
+        ariaLabel="月"
+        value={month}
+        onChange={(m) => emit(year || String(new Date().getFullYear()), m)}
+        placeholder="月"
+        menuMaxHeight={260}
+        options={months.map((m) => ({ value: m, label: `${Number(m)} 月` }))}
+      />
       {(year || month) && (
         <button
           type="button"

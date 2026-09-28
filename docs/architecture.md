@@ -12,7 +12,7 @@
 |---|---|
 | 桌面应用外壳 | Tauri 2 |
 | 界面 | React + TypeScript + Vite，React Router，TanStack Query，Tailwind CSS |
-| 界面组件 | 用 macOS 原生的下拉菜单、弹窗，加少量自己写的组件（星级、年月选择等），不用组件库 |
+| 界面组件 | 自己写的少量组件（下拉菜单、星级、年月选择等），弹窗用浏览器原生的弹窗机制，不用组件库 |
 | 数据层 | Rust + rusqlite（自带 SQLite） |
 | 包管理 | pnpm（前端），cargo（Rust） |
 | 辅助脚本 | TypeScript（Node），不引入 Python 环境 |

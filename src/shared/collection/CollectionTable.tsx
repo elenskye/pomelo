@@ -1,5 +1,6 @@
 import { StarRating } from "@/shared/StarRating";
 import { StatusSelect } from "@/shared/status";
+import { useKinds } from "@/shared/kinds/api";
 import { useItemMutations } from "./api";
 import type { CollectionApi, CollectionConfig, Item } from "./types";
 
@@ -13,7 +14,8 @@ export function CollectionTable(props: {
 }) {
   const { config } = props;
   const { quickUpdate } = useItemMutations(props.api);
-  const kindLabel = Object.fromEntries(config.kinds.map((k) => [k.value, k.label]));
+  const { data: kinds = [] } = useKinds(config.moduleId);
+  const kindName = new Map(kinds.map((k) => [k.id, k.name]));
   const cols: { label: string; className: string }[] = [
     { label: config.titleLabel, className: "w-[26%] pl-4" },
     { label: config.creatorLabel, className: "w-[16%]" },
@@ -48,7 +50,7 @@ export function CollectionTable(props: {
             >
               <td className="truncate px-3 pl-4">{it.title}</td>
               <td className={`truncate px-3 ${muted}`}>{it.creator ?? "—"}</td>
-              <td className={`truncate px-3 ${muted}`}>{kindLabel[it.kind] ?? it.kind}</td>
+              <td className={`truncate px-3 ${muted}`}>{(it.kindId !== null && kindName.get(it.kindId)) || "—"}</td>
               <td className={`truncate px-3 max-lg:hidden ${muted}`}>{it.country ?? "—"}</td>
               <td className="px-3">
                 <StatusSelect
@@ -60,7 +62,7 @@ export function CollectionTable(props: {
               <td className="px-2">
                 <StarRating value={it.rating} onChange={(rating) => quickUpdate.mutate({ id: it.id, patch: { rating } })} />
               </td>
-              <td className={`px-3 ${muted}`}>{it.finishedMonth ?? "—"}</td>
+              <td className={`px-3 whitespace-nowrap ${muted}`}>{it.finishedMonth ?? "—"}</td>
               <td className={`truncate px-3 max-lg:hidden ${muted}`}>{it.note ?? ""}</td>
             </tr>
           ))}

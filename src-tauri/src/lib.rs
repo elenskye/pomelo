@@ -111,6 +111,19 @@ pub fn run() {
             modules::films::films_create,
             modules::films::films_update,
             modules::films::films_delete,
+            modules::kinds::kinds_list,
+            modules::kinds::kinds_create,
+            modules::kinds::kinds_rename,
+            modules::kinds::kinds_delete,
+            modules::kinds::kinds_reorder,
+            modules::drawing::drawing_courses,
+            modules::drawing::drawing_course_create,
+            modules::drawing::drawing_course_update,
+            modules::drawing::drawing_course_delete,
+            modules::drawing::drawing_lessons,
+            modules::drawing::drawing_lesson_create,
+            modules::drawing::drawing_lesson_update,
+            modules::drawing::drawing_lesson_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

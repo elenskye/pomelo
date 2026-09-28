@@ -46,6 +46,7 @@ macro_rules! str_enum {
         }
     };
 }
+#[allow(unused_imports)] // for future fixed-code enums in other modules
 pub(crate) use str_enum;
 
 // Unified status for books / films / drawing lessons. UI maps to module-specific labels.

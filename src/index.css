@@ -90,6 +90,13 @@
 
 @theme {
   --animate-slide-in: slide-in 0.18s ease-out;
+  --animate-pop-in: pop-in 0.12s ease-out;
+  @keyframes pop-in {
+    from {
+      transform: translateY(-4px) scale(0.98);
+      opacity: 0;
+    }
+  }
   @keyframes slide-in {
     from {
       transform: translateX(24px);

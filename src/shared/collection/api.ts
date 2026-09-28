@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
+import { KINDS_KEY } from "@/shared/kinds/api";
 import type { CollectionApi, Item, ItemPatch } from "./types";
 
 /**
@@ -30,7 +31,10 @@ export const useItems = (api: CollectionApi) => useQuery({ queryKey: api.key, qu
 export function useItemMutations(api: CollectionApi) {
   const qc = useQueryClient();
   const toast = useToast();
-  const onSuccess = () => qc.invalidateQueries({ queryKey: api.key });
+  const onSuccess = () => {
+    void qc.invalidateQueries({ queryKey: api.key });
+    void qc.invalidateQueries({ queryKey: KINDS_KEY }); // per-kind counts
+  };
   const onError = (e: unknown) => toast(errorText(e), "error");
   return {
     create: useMutation({ mutationFn: api.create, onSuccess }),

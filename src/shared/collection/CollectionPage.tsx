@@ -1,26 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { moduleById } from "@/app/modules";
-import { useConfirm } from "@/shared/feedback";
+import { Dropdown } from "@/shared/Dropdown";
+import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
+import { KindManager } from "@/shared/kinds/KindManager";
+import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
-import { Button, EmptyState, PageHeader, SearchInput, Segmented, Select } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, SearchInput, Segmented } from "@/shared/ui";
 import { useItems } from "./api";
 import { CollectionPanel } from "./CollectionPanel";
 import { CollectionTable } from "./CollectionTable";
 import type { CollectionApi, CollectionConfig, Item } from "./types";
 
 type Filter = "all" | StatusCode;
+type KindFilter = "all" | "none" | number;
 type Sort = "recent" | "title" | "rating" | "finished";
-type Selection = number | "new" | null;
 
 const collator = new Intl.Collator("zh-CN");
 
-function arrange(items: Item[], query: string, filter: Filter, kind: string, sort: Sort): Item[] {
+function arrange(items: Item[], query: string, filter: Filter, kind: KindFilter, sort: Sort): Item[] {
   const q = query.trim().toLowerCase();
   const xs = items.filter(
     (it) =>
       (filter === "all" || it.status === filter) &&
-      (kind === "all" || it.kind === kind) &&
+      (kind === "all" || (kind === "none" ? it.kindId === null : it.kindId === kind)) &&
       (!q || [it.title, it.creator, it.country, it.note].some((v) => v?.toLowerCase().includes(q))),
   );
   const byRecent = (a: Item, b: Item) => b.id - a.id;
@@ -40,14 +43,14 @@ const distinct = (xs: (string | null)[]) =>
 export function CollectionPage({ config, api }: { config: CollectionConfig; api: CollectionApi }) {
   const m = moduleById(config.moduleId);
   const { data: items = [], isPending } = useItems(api);
+  const { data: kinds = [] } = useKinds(config.moduleId);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [kind, setKind] = useState("all");
+  const [kind, setKind] = useState<KindFilter>("all");
   const [sort, setSort] = useState<Sort>("recent");
-  const [selection, setSelection] = useState<Selection>(null);
-  const dirty = useRef(false);
+  const [managingKinds, setManagingKinds] = useState(false);
+  const panel = usePanelSelection<number | "new">();
   const searchRef = useRef<HTMLInputElement>(null);
-  const [confirm, confirmDialog] = useConfirm();
   const labels = config.statusLabels;
 
   const counts = useMemo(() => {
@@ -55,41 +58,23 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
     items.forEach((it) => c[it.status]++);
     return c;
   }, [items]);
-  const visible = useMemo(() => arrange(items, query, filter, kind, sort), [items, query, filter, kind, sort]);
+  const uncategorized = useMemo(() => items.filter((it) => it.kindId === null).length, [items]);
+  // a deleted kind (or an emptied 未分类) can't stay selected as a filter
+  const kindFilter: KindFilter =
+    (typeof kind === "number" && !kinds.some((k) => k.id === kind)) || (kind === "none" && uncategorized === 0) ? "all" : kind;
+  const visible = useMemo(
+    () => arrange(items, query, filter, kindFilter, sort),
+    [items, query, filter, kindFilter, sort],
+  );
   const creators = useMemo(() => distinct(items.map((it) => it.creator)), [items]);
   const countries = useMemo(() => distinct(items.map((it) => it.country)), [items]);
-  const selected = typeof selection === "number" ? (items.find((it) => it.id === selection) ?? null) : null;
+  const sel = panel.selection;
+  const selected = typeof sel === "number" ? (items.find((it) => it.id === sel) ?? null) : null;
 
-  const requestSelect = async (next: Selection) => {
-    if (next === selection) return;
-    if (dirty.current) {
-      const ok = await confirm({ title: "放弃没有保存的修改？", confirmLabel: "放弃修改", danger: true });
-      if (!ok) return;
-    }
-    dirty.current = false;
-    setSelection(next);
-  };
-  const done = () => {
-    dirty.current = false;
-    setSelection(null);
-  };
-
-  // ⌘N new · ⌘F search · Esc close panel (native dialogs handle their own Esc)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (document.querySelector("dialog[open]")) return;
-      if (e.metaKey && e.key === "n") {
-        e.preventDefault();
-        void requestSelect("new");
-      } else if (e.metaKey && e.key === "f") {
-        e.preventDefault();
-        searchRef.current?.focus();
-      } else if (e.key === "Escape" && selection !== null) {
-        void requestSelect(null);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+  usePageKeys({
+    onNew: () => void panel.request("new"),
+    onFind: () => searchRef.current?.focus(),
+    onEscape: sel !== null ? () => void panel.request(null) : undefined,
   });
 
   const stats = (
@@ -107,10 +92,11 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
   );
 
   const newButton = (
-    <Button variant="primary" onClick={() => void requestSelect("new")}>
+    <Button variant="primary" onClick={() => void panel.request("new")}>
       <Plus size={14} /> {config.newLabel}
     </Button>
   );
+  const manageKinds = { label: "管理类型…", onSelect: () => setManagingKinds(true) };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -136,20 +122,30 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
             ]}
           />
           <div className="flex-1" />
-          <Select ariaLabel="按类型筛选" value={kind} onChange={setKind}>
-            <option value="all">全部类型</option>
-            {config.kinds.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
-          </Select>
-          <Select ariaLabel="排序" value={sort} onChange={(v) => setSort(v as Sort)}>
-            <option value="recent">最近添加</option>
-            <option value="title">{config.titleLabel}</option>
-            <option value="rating">评分</option>
-            <option value="finished">完成时间</option>
-          </Select>
+          <Dropdown<KindFilter>
+            ariaLabel="按类型筛选"
+            align="end"
+            value={kindFilter}
+            onChange={setKind}
+            options={[
+              { value: "all", label: "全部类型" },
+              ...kinds.map((k) => ({ value: k.id as KindFilter, label: k.name })),
+              ...(uncategorized > 0 ? [{ value: "none" as KindFilter, label: UNCATEGORIZED }] : []),
+            ]}
+            actions={[manageKinds]}
+          />
+          <Dropdown<Sort>
+            ariaLabel="排序"
+            align="end"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "recent", label: "最近添加" },
+              { value: "title", label: config.titleLabel },
+              { value: "rating", label: "评分" },
+              { value: "finished", label: "完成时间" },
+            ]}
+          />
           {newButton}
         </div>
       )}
@@ -164,28 +160,36 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
             config={config}
             api={api}
             items={visible}
-            selectedId={typeof selection === "number" ? selection : null}
-            onSelect={(id) => void requestSelect(id)}
+            selectedId={typeof sel === "number" ? sel : null}
+            onSelect={(id) => void panel.request(id)}
           />
         )}
       </div>
 
-      {selection !== null && (selection === "new" || selected) && (
+      {sel !== null && (sel === "new" || selected) && (
         <CollectionPanel
-          key={selection}
+          key={sel}
           config={config}
           api={api}
           item={selected}
           creators={creators}
           countries={countries}
-          onClose={() => void requestSelect(null)}
-          onDone={done}
-          onDirtyChange={(d) => {
-            dirty.current = d;
-          }}
+          onClose={() => void panel.request(null)}
+          onDone={panel.done}
+          onDirtyChange={panel.setDirty}
+          onManageKinds={() => setManagingKinds(true)}
         />
       )}
-      {confirmDialog}
+      {managingKinds && (
+        <KindManager
+          module={config.moduleId}
+          moduleLabel={m.label}
+          unit={config.unit}
+          itemsKey={api.key}
+          onClose={() => setManagingKinds(false)}
+        />
+      )}
+      {panel.confirmDialog}
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { Dropdown } from "./Dropdown";
+
 // Unified status (matches Rust modules::common::Status). Labels differ per module.
 export type StatusCode = "unmarked" | "todo" | "doing" | "done";
 export type StatusLabels = Record<StatusCode, string>;
@@ -17,22 +19,16 @@ export function StatusTag(props: { value: StatusCode; labels: StatusLabels }) {
   );
 }
 
-/** Colored pill that opens the native macOS menu. Stops click propagation (safe inside clickable rows). */
+/** Colored pill opening a status menu. Safe inside clickable rows (Dropdown stops propagation). */
 export function StatusSelect(props: { value: StatusCode; labels: StatusLabels; onChange: (s: StatusCode) => void }) {
   return (
-    <select
+    <Dropdown
+      ariaLabel="状态"
       value={props.value}
-      aria-label="状态"
-      style={statusStyle(props.value)}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => props.onChange(e.target.value as StatusCode)}
-      className="cursor-pointer appearance-none rounded-md px-2 py-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {STATUS_ORDER.map((s) => (
-        <option key={s} value={s}>
-          {props.labels[s]}
-        </option>
-      ))}
-    </select>
+      onChange={props.onChange}
+      options={STATUS_ORDER.map((s) => ({ value: s, label: <StatusTag value={s} labels={props.labels} /> }))}
+      triggerClassName="rounded-md outline-none transition-opacity duration-150 hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
+      renderTrigger={() => <StatusTag value={props.value} labels={props.labels} />}
+    />
   );
 }

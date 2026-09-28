@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Trash2, X } from "lucide-react";
+import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
+import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { currentMonth, MonthInput } from "@/shared/MonthInput";
+import { SidePanel } from "@/shared/panel";
 import { StarRating } from "@/shared/StarRating";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
-import { Button, Field, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { useItemMutations } from "./api";
 import type { CollectionApi, CollectionConfig, Item, ItemPatch } from "./types";
 
@@ -12,18 +14,18 @@ type Draft = {
   title: string;
   creator: string;
   country: string;
-  kind: string;
+  kindId: number | null;
   status: StatusCode;
   rating: number | null;
   finishedMonth: string | null;
   note: string;
 };
 
-const toDraft = (it: Item | null, defaultKind: string): Draft => ({
+const toDraft = (it: Item | null, defaultKindId: number | null): Draft => ({
   title: it?.title ?? "",
   creator: it?.creator ?? "",
   country: it?.country ?? "",
-  kind: it?.kind ?? defaultKind,
+  kindId: it ? it.kindId : defaultKindId,
   status: it?.status ?? "unmarked",
   rating: it?.rating ?? null,
   finishedMonth: it?.finishedMonth ?? null,
@@ -35,7 +37,7 @@ const toPatch = (d: Draft): ItemPatch => ({
   title: d.title,
   creator: d.creator.trim() || null,
   country: d.country.trim() || null,
-  kind: d.kind,
+  kindId: d.kindId,
   status: d.status,
   rating: d.rating,
   finishedMonth: d.finishedMonth,
@@ -52,16 +54,24 @@ export function CollectionPanel(props: {
   onClose: () => void; // user-initiated (page checks unsaved changes)
   onDone: () => void; // after save/delete
   onDirtyChange: (dirty: boolean) => void;
+  onManageKinds: () => void;
 }) {
   const { config, item } = props;
   const isNew = item === null;
-  const initial = useMemo(() => toDraft(item, config.kinds[0].value), [item, config]);
+  const { data: kinds = [] } = useKinds(config.moduleId);
+  const defaultKindId = kinds[0]?.id ?? null;
+  const initial = useMemo(() => toDraft(item, defaultKindId), [item, defaultKindId]);
   const [d, setD] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const { create, update, remove } = useItemMutations(props.api);
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
   const listId = (f: string) => `${config.moduleId}-${f}`;
+
+  // kinds may load after the panel opens: pick the default for a still-untouched new item
+  useEffect(() => {
+    if (isNew) setD((x) => (x.kindId === null ? { ...x, kindId: defaultKindId } : x));
+  }, [isNew, defaultKindId]);
 
   const dirty = JSON.stringify(d) !== JSON.stringify(initial);
   useEffect(() => {
@@ -109,86 +119,71 @@ export function CollectionPanel(props: {
   };
 
   return (
-    <aside className="absolute inset-y-0 right-0 z-10 flex w-[400px] animate-slide-in flex-col border-l bg-card shadow-2xl">
-      <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
-        <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between px-6 pb-3">
-          <h2 className="pointer-events-none text-base font-bold">{isNew ? config.newLabel : "编辑"}</h2>
-          <button
-            type="button"
-            aria-label="关闭"
-            onClick={props.onClose}
-            className="rounded-control p-1 text-muted-foreground hover:bg-muted"
-          >
-            <X size={16} />
-          </button>
-        </header>
-
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-2">
-          <Field label={config.titleLabel}>
-            <TextInput autoFocus value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" />
-          </Field>
-          <Field label={config.creatorLabel}>
-            <TextInput
-              list={listId("creators")}
-              value={d.creator}
-              onChange={(e) => set("creator", e.target.value)}
-              placeholder={`多位${config.creatorLabel}用「 / 」隔开`}
-            />
-          </Field>
-          <Field label="类型">
-            <Segmented ariaLabel="类型" value={d.kind} options={config.kinds} onChange={(v) => set("kind", v)} />
-          </Field>
-          <Field label="国家">
-            <TextInput list={listId("countries")} value={d.country} onChange={(e) => set("country", e.target.value)} />
-          </Field>
-          <Field label="状态">
-            <Segmented
-              ariaLabel="状态"
-              value={d.status}
-              options={STATUS_ORDER.map((s) => ({ value: s, label: config.statusLabels[s] }))}
-              onChange={setStatus}
-            />
-          </Field>
-          <Field label="尝尝咸淡">
-            <StarRating size={20} value={d.rating} onChange={(v) => set("rating", v)} />
-          </Field>
-          <Field label="完成时间">
-            <MonthInput value={d.finishedMonth} onChange={(v) => set("finishedMonth", v)} />
-          </Field>
-          <Field label="备注">
-            <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
-          </Field>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {item && (
-            <p className="pt-2 text-xs text-muted-foreground">添加于 {new Date(item.createdAt).toLocaleDateString("zh-CN")}</p>
-          )}
+    <SidePanel
+      title={isNew ? config.newLabel : "编辑"}
+      onClose={props.onClose}
+      onSubmit={save}
+      onDelete={item ? () => void del() : undefined}
+      error={error}
+      meta={item && `添加于 ${new Date(item.createdAt).toLocaleDateString("zh-CN")}`}
+      extra={
+        <>
+          <datalist id={listId("creators")}>
+            {props.creators.map((a) => (
+              <option key={a} value={a} />
+            ))}
+          </datalist>
+          <datalist id={listId("countries")}>
+            {props.countries.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+          {confirmDialog}
+        </>
+      }
+    >
+      <Field label={config.titleLabel}>
+        <TextInput autoFocus value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" />
+      </Field>
+      <Field label={config.creatorLabel}>
+        <TextInput
+          list={listId("creators")}
+          value={d.creator}
+          onChange={(e) => set("creator", e.target.value)}
+          placeholder={`多位${config.creatorLabel}用「 / 」隔开`}
+        />
+      </Field>
+      <Field label="类型">
+        <div>
+          <Dropdown
+            ariaLabel="类型"
+            value={d.kindId}
+            onChange={(v) => set("kindId", v)}
+            options={[...kinds.map((k) => ({ value: k.id as number | null, label: k.name })), { value: null, label: UNCATEGORIZED }]}
+            actions={[{ label: "管理类型…", onSelect: props.onManageKinds }]}
+          />
         </div>
-
-        <footer className="flex shrink-0 items-center gap-2 border-t px-6 py-3">
-          {item && (
-            <Button variant="ghost-danger" onClick={del}>
-              <Trash2 size={14} /> 删除
-            </Button>
-          )}
-          <div className="flex-1" />
-          <Button onClick={props.onClose}>取消</Button>
-          <Button type="submit" variant="primary">
-            保存
-          </Button>
-        </footer>
-      </form>
-
-      <datalist id={listId("creators")}>
-        {props.creators.map((a) => (
-          <option key={a} value={a} />
-        ))}
-      </datalist>
-      <datalist id={listId("countries")}>
-        {props.countries.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
-      {confirmDialog}
-    </aside>
+      </Field>
+      <Field label="国家">
+        <TextInput list={listId("countries")} value={d.country} onChange={(e) => set("country", e.target.value)} />
+      </Field>
+      <Field label="状态">
+        <Segmented
+          ariaLabel="状态"
+          value={d.status}
+          options={STATUS_ORDER.map((s) => ({ value: s, label: config.statusLabels[s] }))}
+          onChange={setStatus}
+        />
+      </Field>
+      <Field label="尝尝咸淡">
+        <StarRating size={20} value={d.rating} onChange={(v) => set("rating", v)} />
+      </Field>
+      <Field label="完成时间">
+        <MonthInput value={d.finishedMonth} onChange={(v) => set("finishedMonth", v)} />
+      </Field>
+      <Field label="备注">
+        <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
+      </Field>
+    </SidePanel>
   );
 }
