@@ -11,7 +11,8 @@
 | 部分 | 选择 |
 |---|---|
 | 桌面应用外壳 | Tauri 2 |
-| 界面 | React + TypeScript + Vite，React Router，TanStack Query，Tailwind CSS + shadcn/ui |
+| 界面 | React + TypeScript + Vite，React Router，TanStack Query，Tailwind CSS |
+| 界面组件 | 用 macOS 原生的下拉菜单、弹窗，加少量自己写的组件（星级、年月选择等），不用组件库 |
 | 数据层 | Rust + rusqlite（自带 SQLite） |
 | 包管理 | pnpm（前端），cargo（Rust） |
 | 辅助脚本 | TypeScript（Node），不引入 Python 环境 |
@@ -83,6 +84,8 @@ AI 助手（以后）──┘              业务规则、校验、事务都在
 
 - v0.1 的导入只支持「导入到空模块」和「覆盖整个模块」，不做合并。
 - Excel 原型也走 JSON 导入：先用脚本把 `柚儿园.xlsx` 转成 Pomelo 的导出格式，再用 App 导入。
+- 导入文件里暂时不支持的模块会被跳过，并在确认框里说明。
+- 文件里只要有一条数据不合格，就一条都不导入，并告诉你是第几条出了问题。
 
 ## 占用空间和内存
 

@@ -12,11 +12,10 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "settings",
-    sql: include_str!("../migrations/0001_settings.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration { version: 1, name: "settings", sql: include_str!("../migrations/0001_settings.sql") },
+    Migration { version: 2, name: "books", sql: include_str!("../migrations/0002_books.sql") },
+];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("无法打开数据库：{e}"))?;

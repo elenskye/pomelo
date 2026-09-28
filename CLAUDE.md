@@ -38,11 +38,15 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。�
 | 命令 | 作用 |
 |---|---|
 | `pnpm app:dev` | 运行开发版（测试数据） |
+| `pnpm import:xlsx` | 把 Excel 原型转换成导入文件 `prototype/pomelo-import.json` |
 | `pnpm check` | 类型检查 + Rust 自动测试，每次改完都要跑 |
 | `pnpm app:build` | 只打包正式版，不安装 |
 | `pnpm app:install` | 打包并安装到「应用程序」，只在阶段验收后、我同意时执行 |
 
 ## 验证方法
 
-- 开发版的窗口无法被后台截图。需要截图时，先 `pnpm app:build`，再用 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"` 打开，这样不会碰真实数据。
+- **界面交互**：用 `.claude/launch.json` 里的 `ui-mock` 启动（也就是 `pnpm dev`），在内置浏览器打开 `http://localhost:1420/?mock`。这时用的是内存里的模拟数据（`src/dev/mockIpc.ts`），可以随便点。新增 Rust 命令时要同步加进模拟数据。
+- 模拟数据只用来测界面；业务规则以 Rust 测试为准。
+- **真实窗口**：开发版的窗口无法被后台截图。需要截图时，先 `pnpm app:build`，再用 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"` 打开，这样不会碰真实数据。
+- 屏幕锁定时拿不到真实窗口的画面，这时就只用浏览器测。
 - 想打开某一页，就把临时数据库 `settings` 表里 `ui.last_route` 的值改成那一页（如 `"/settings"`），再重开 App。

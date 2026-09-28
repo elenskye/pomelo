@@ -4,8 +4,10 @@
 
 mod backup;
 mod db;
+mod modules;
 mod paths;
 mod settings;
+mod transfer;
 
 use paths::DataPaths;
 use rusqlite::Connection;
@@ -16,7 +18,7 @@ use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 pub struct AppState {
-    paths: DataPaths,
+    pub(crate) paths: DataPaths,
     db: Mutex<Option<Connection>>,
     /// Set when the DB could not be opened/migrated; UI shows it instead of crashing.
     startup_error: Option<String>,
@@ -35,7 +37,7 @@ impl AppState {
         }
     }
 
-    fn with_db<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
+    pub(crate) fn with_db<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
         let mut guard = self.db.lock().map_err(|_| "数据库连接异常，请重启 App".to_string())?;
         match guard.as_mut() {
             Some(conn) => f(conn),
@@ -87,13 +89,25 @@ fn settings_set(state: State<AppState>, key: String, value: Value) -> Result<(),
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let base = app.path().data_dir()?; // ~/Library/Application Support
             let root = paths::resolve_root(&base, std::env::var_os(paths::DATA_DIR_ENV).map(Into::into));
             app.manage(AppState::init(DataPaths::new(root)));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info, reveal_data_dir, settings_get, settings_set])
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            reveal_data_dir,
+            settings_get,
+            settings_set,
+            transfer::import_preview,
+            transfer::import_apply,
+            modules::books::books_list,
+            modules::books::books_create,
+            modules::books::books_update,
+            modules::books::books_delete,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -88,6 +88,16 @@
   --radius-card: 12px;
 }
 
+@theme {
+  --animate-slide-in: slide-in 0.18s ease-out;
+  @keyframes slide-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+  }
+}
+
 @layer base {
   html,
   body,
