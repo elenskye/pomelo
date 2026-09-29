@@ -124,6 +124,22 @@ pub fn run() {
             modules::drawing::drawing_lesson_create,
             modules::drawing::drawing_lesson_update,
             modules::drawing::drawing_lesson_delete,
+            modules::packing::packing_templates,
+            modules::packing::packing_template_create,
+            modules::packing::packing_template_update,
+            modules::packing::packing_template_delete,
+            modules::packing::packing_trips,
+            modules::packing::packing_trip_create,
+            modules::packing::packing_trip_update,
+            modules::packing::packing_trip_delete,
+            modules::packing::packing_template_items,
+            modules::packing::packing_template_item_create,
+            modules::packing::packing_template_item_update,
+            modules::packing::packing_template_item_delete,
+            modules::packing::packing_trip_items,
+            modules::packing::packing_trip_item_create,
+            modules::packing::packing_trip_item_update,
+            modules::packing::packing_trip_item_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

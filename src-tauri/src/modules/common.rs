@@ -126,6 +126,32 @@ pub fn check_month(m: &Option<String>) -> Result<(), String> {
     }
 }
 
+/// `YYYY-MM-DD`, a real calendar date, year 1900–2100.
+pub fn check_date(d: &Option<String>, label: &str) -> Result<(), String> {
+    let Some(d) = d else { return Ok(()) };
+    let parts: Vec<u32> = d.split('-').filter_map(|p| p.parse().ok()).collect();
+    let ok = d.len() == 10
+        && parts.len() == 3
+        && (1900..=2100).contains(&parts[0])
+        && (1..=12).contains(&parts[1])
+        && {
+            let (y, m, day) = (parts[0], parts[1], parts[2]);
+            let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+            let max = match m {
+                2 if leap => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            (1..=max).contains(&day)
+        };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("{label}格式不对：{d}（应为 2026-10-01 这样的日期）"))
+    }
+}
+
 pub fn current_month(conn: &Connection) -> Result<String, String> {
     conn.query_row("SELECT strftime('%Y-%m', 'now', 'localtime')", [], |r| r.get(0))
         .map_err(|e| e.to_string())
@@ -142,6 +168,16 @@ mod tests {
         }
         for bad in ["2026-9", "2026-13", "2026-00", "26-09-01", "abcd-ef", "1800-01", "2026/09"] {
             assert!(check_month(&Some(bad.into())).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn date_validation() {
+        for ok in [None, Some("2026-10-01"), Some("2024-02-29"), Some("2026-12-31")] {
+            assert!(check_date(&ok.map(String::from), "日期").is_ok(), "{ok:?}");
+        }
+        for bad in ["2026-02-29", "2026-04-31", "2026-13-01", "2026-1-01", "26-10-01", "2026/10/01", "abc"] {
+            assert!(check_date(&Some(bad.into()), "日期").is_err(), "{bad}");
         }
     }
 

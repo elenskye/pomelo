@@ -41,7 +41,9 @@ export function KindManager(props: {
   unit: string; // 本 / 部 / 节
   itemsKey: readonly unknown[];
   onClose: () => void;
+  noun?: string; // 类型 (default) | 类别
 }) {
+  const noun = props.noun ?? "类型";
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -71,8 +73,8 @@ export function KindManager(props: {
     const ok =
       k.count === 0 ||
       (await confirm({
-        title: `删除类型「${k.name}」？`,
-        message: `有 ${k.count} ${props.unit}属于这个类型。删除后它们会变成「未分类」，不会被删掉。`,
+        title: `删除${noun}「${k.name}」？`,
+        message: `有 ${k.count} ${props.unit}属于这个${noun}。删除后它们会变成「未分类」，不会被删掉。`,
         confirmLabel: "删除",
         danger: true,
       }));
@@ -93,7 +95,7 @@ export function KindManager(props: {
       className="m-auto h-fit w-[420px] rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30"
     >
       <div className="flex items-baseline justify-between">
-        <p className="text-base font-bold">管理类型</p>
+        <p className="text-base font-bold">管理{noun}</p>
         <span className="text-xs text-muted-foreground">{props.moduleLabel}</span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">点名字可以直接改名，按回车保存。</p>
@@ -116,11 +118,11 @@ export function KindManager(props: {
             </IconButton>
           </li>
         ))}
-        {kinds.length === 0 && <li className="py-3 text-center text-sm text-muted-foreground">还没有类型</li>}
+        {kinds.length === 0 && <li className="py-3 text-center text-sm text-muted-foreground">还没有{noun}</li>}
       </ul>
 
       <form onSubmit={add} className="mt-3 flex gap-2">
-        <TextInput value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新类型的名字" maxLength={20} />
+        <TextInput value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={`新${noun}的名字`} maxLength={20} />
         <Button type="submit">
           <Plus size={14} /> 添加
         </Button>

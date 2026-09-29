@@ -6,3 +6,4 @@ pub mod common;
 pub mod drawing;
 pub mod films;
 pub mod kinds;
+pub mod packing;

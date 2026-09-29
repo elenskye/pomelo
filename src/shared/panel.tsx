@@ -14,6 +14,7 @@ export function SidePanel(props: {
   meta?: ReactNode; // small print under the fields (e.g. 添加于 …)
   children: ReactNode;
   extra?: ReactNode; // rendered outside the form (datalists, dialogs)
+  cancelLabel?: string;
 }) {
   return (
     <aside className="absolute inset-y-0 right-0 z-10 flex w-[400px] animate-slide-in flex-col border-l bg-card shadow-2xl">
@@ -41,7 +42,7 @@ export function SidePanel(props: {
             </Button>
           )}
           <div className="flex-1" />
-          <Button onClick={props.onClose}>取消</Button>
+          <Button onClick={props.onClose}>{props.cancelLabel ?? "取消"}</Button>
           <Button type="submit" variant="primary">
             保存
           </Button>

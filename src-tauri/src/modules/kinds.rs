@@ -7,10 +7,15 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::State;
 
-/// module key → item table that references kinds.
-const TABLES: &[(&str, &str)] = &[("books", "books"), ("films", "films"), ("drawing", "drawing_lessons")];
+/// module key → item tables that reference kinds (counts sum over all of them).
+const TABLES: &[(&str, &[&str])] = &[
+    ("books", &["books"]),
+    ("films", &["films"]),
+    ("drawing", &["drawing_lessons"]),
+    ("packing", &["packing_template_items", "trip_items"]), // 类别
+];
 
-fn table(module: &str) -> Result<&'static str, String> {
+fn tables(module: &str) -> Result<&'static [&'static str], String> {
     TABLES
         .iter()
         .find(|(m, _)| *m == module)
@@ -30,10 +35,14 @@ pub struct Kind {
 }
 
 pub fn list(conn: &Connection, module: &str) -> Result<Vec<Kind>, String> {
-    let t = table(module)?;
+    let count = tables(module)?
+        .iter()
+        .map(|t| format!("(SELECT count(*) FROM {t} WHERE kind_id = k.id)"))
+        .collect::<Vec<_>>()
+        .join(" + ");
     let mut st = conn
         .prepare(&format!(
-            "SELECT k.id, k.module, k.name, k.sort_order, (SELECT count(*) FROM {t} WHERE kind_id = k.id)
+            "SELECT k.id, k.module, k.name, k.sort_order, {count}
              FROM kinds k WHERE k.module = ?1 ORDER BY k.sort_order, k.id"
         ))
         .map_err(err)?;
@@ -57,7 +66,7 @@ fn get(conn: &Connection, id: i64) -> Result<Kind, String> {
 }
 
 fn clean_name(conn: &Connection, module: &str, name: &str, except: Option<i64>) -> Result<String, String> {
-    let name = common::require(name, "类型名称", 20)?;
+    let name = common::require(name, "名称", 20)?;
     let dup: i64 = conn
         .query_row(
             "SELECT count(*) FROM kinds WHERE module = ?1 AND name = ?2 AND id != coalesce(?3, -1)",
@@ -66,13 +75,13 @@ fn clean_name(conn: &Connection, module: &str, name: &str, except: Option<i64>) 
         )
         .map_err(err)?;
     if dup > 0 {
-        return Err(format!("已经有叫「{name}」的类型了"));
+        return Err(format!("「{name}」已经有了，换个名字吧"));
     }
     Ok(name)
 }
 
 pub fn create(conn: &Connection, module: &str, name: &str) -> Result<Kind, String> {
-    table(module)?;
+    tables(module)?;
     let name = clean_name(conn, module, name, None)?;
     conn.execute(
         "INSERT INTO kinds (module, name, sort_order)
@@ -206,6 +215,7 @@ pub mod tests {
         assert_eq!(names("books"), ["虚构", "非虚构", "漫画", "其他"]);
         assert_eq!(names("films"), ["电影", "剧集", "动漫"]);
         assert_eq!(names("drawing"), ["正课", "DLC 跟画", "LIVE 辅导"]);
+        assert_eq!(names("packing"), ["重要物品", "随身", "护理", "兴趣"]);
         assert!(list(&c, "nope").is_err());
     }
 
@@ -214,7 +224,7 @@ pub mod tests {
         let c = memory_db();
         let k = create(&c, "books", " 杂志 ").unwrap();
         assert_eq!((k.name.as_str(), k.sort_order, k.count), ("杂志", 5, 0));
-        assert!(create(&c, "books", "杂志").unwrap_err().contains("已经有"));
+        assert!(create(&c, "books", "杂志").unwrap_err().contains("已经有了"));
         assert!(create(&c, "films", "杂志").is_ok()); // unique per module only
         assert!(create(&c, "books", " ").is_err());
         assert_eq!(rename(&c, k.id, "期刊").unwrap().name, "期刊");

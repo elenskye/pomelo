@@ -4,7 +4,7 @@
 //! Overwriting existing data requires `overwrite = true` and takes a snapshot backup first.
 //! Adding a module: new `Payload` variant + arms below.
 
-use crate::modules::{books, drawing, films};
+use crate::modules::{books, drawing, films, packing};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -29,6 +29,7 @@ enum Payload {
     Books(Vec<books::BookRecord>),
     Films(Vec<films::FilmRecord>),
     Drawing(Vec<drawing::CourseRecord>),
+    Packing(packing::PackingRecord),
 }
 
 impl Payload {
@@ -37,6 +38,7 @@ impl Payload {
             Payload::Books(_) => books::KEY,
             Payload::Films(_) => films::KEY,
             Payload::Drawing(_) => drawing::KEY,
+            Payload::Packing(_) => packing::KEY,
         }
     }
     fn label(&self) -> &'static str {
@@ -44,6 +46,7 @@ impl Payload {
             Payload::Books(_) => books::LABEL,
             Payload::Films(_) => films::LABEL,
             Payload::Drawing(_) => drawing::LABEL,
+            Payload::Packing(_) => packing::LABEL,
         }
     }
     fn len(&self) -> usize {
@@ -51,6 +54,7 @@ impl Payload {
             Payload::Books(r) => r.len(),
             Payload::Films(r) => r.len(),
             Payload::Drawing(r) => r.len(),
+            Payload::Packing(r) => r.len(),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
@@ -58,6 +62,7 @@ impl Payload {
             Payload::Books(_) => books::count(conn),
             Payload::Films(_) => films::count(conn),
             Payload::Drawing(_) => drawing::count(conn),
+            Payload::Packing(_) => packing::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
@@ -65,6 +70,7 @@ impl Payload {
             Payload::Books(r) => books::replace_all(conn, r),
             Payload::Films(r) => films::replace_all(conn, r),
             Payload::Drawing(r) => drawing::replace_all(conn, r),
+            Payload::Packing(r) => packing::replace_all(conn, r),
         }
     }
 }
@@ -104,6 +110,12 @@ fn parse(text: &str) -> Result<Parsed, String> {
                     .map_err(|e| format!("{}的数据格式不对：{e}", drawing::LABEL))?;
                 drawing::validate_records(&recs)?;
                 payloads.push(Payload::Drawing(recs));
+            }
+            packing::KEY => {
+                let rec: packing::PackingRecord = serde_json::from_value(value)
+                    .map_err(|e| format!("{}的数据格式不对：{e}", packing::LABEL))?;
+                packing::validate_records(&rec)?;
+                payloads.push(Payload::Packing(rec));
             }
             _ => skipped.push(key),
         }
@@ -204,12 +216,12 @@ mod tests {
     #[test]
     fn preview_counts_and_skips_unknown() {
         let c = memory_db();
-        let s = preview(&c, &file(json!({"books": [{"title": "A"}, {"title": "B"}], "films": [{"title": "F"}], "packing": []})))
+        let s = preview(&c, &file(json!({"books": [{"title": "A"}, {"title": "B"}], "films": [{"title": "F"}], "future": []})))
             .unwrap();
         assert_eq!(s.modules.len(), 2);
         assert_eq!((s.modules[0].key.as_str(), s.modules[0].incoming, s.modules[0].existing), ("books", 2, 0));
         assert_eq!((s.modules[1].key.as_str(), s.modules[1].incoming), ("films", 1));
-        assert_eq!(s.skipped, ["packing"]);
+        assert_eq!(s.skipped, ["future"]);
     }
 
     #[test]
@@ -218,7 +230,7 @@ mod tests {
         assert!(preview(&c, "not json").is_err());
         assert!(preview(&c, &json!({"format": "x", "formatVersion": 1}).to_string()).is_err());
         assert!(preview(&c, &json!({"format": FORMAT, "formatVersion": 99, "modules": {}}).to_string()).is_err());
-        assert!(preview(&c, &file(json!({"packing": []}))).is_err());
+        assert!(preview(&c, &file(json!({"future": []}))).is_err());
         assert!(preview(&c, &file(json!({"books": [{"title": "A", "extra": 1}]}))).is_err());
     }
 
@@ -302,6 +314,18 @@ mod tests {
         assert_eq!(ls[2].code, None); // DLC row: code folded into kind
         let names: Vec<String> = crate::modules::kinds::list(&c, "drawing").unwrap().into_iter().map(|k| k.name).collect();
         assert_eq!(names, ["正课", "DLC 跟画", "LIVE 辅导"]);
+
+        let ts = packing::templates(&c).unwrap();
+        assert_eq!(
+            ts.iter().map(|t| (t.name.as_str(), t.item_count)).collect::<Vec<_>>(),
+            [("国内游 3~7 天", 12), ("回家", 8), ("出国 5~10 天", 14)]
+        );
+        let abroad = packing::items(&c, packing::List::Template, ts[2].id).unwrap();
+        let skin = abroad.iter().find(|i| i.name == "护肤品").unwrap();
+        assert_eq!(skin.note.as_deref(), Some("随身最多携带 1L 液体，飞机托运无限制"));
+        let cats: Vec<String> = crate::modules::kinds::list(&c, "packing").unwrap().into_iter().map(|k| k.name).collect();
+        assert_eq!(cats, ["重要物品", "随身", "护理", "兴趣"]);
+        assert!(packing::trips(&c).unwrap().is_empty());
         assert!(fs.iter().all(|f| !f.director.as_deref().unwrap_or("").contains('&')));
     }
 }

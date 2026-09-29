@@ -19,6 +19,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 4, name: "films", sql: include_str!("../migrations/0004_films.sql") },
     Migration { version: 5, name: "kinds", sql: include_str!("../migrations/0005_kinds.sql") },
     Migration { version: 6, name: "drawing", sql: include_str!("../migrations/0006_drawing.sql") },
+    Migration { version: 7, name: "packing", sql: include_str!("../migrations/0007_packing.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {

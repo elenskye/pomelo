@@ -24,6 +24,7 @@ const addKind = (module: string, name: string) => {
     ["books", ["虚构", "非虚构", "漫画", "其他"]],
     ["films", ["电影", "剧集", "动漫"]],
     ["drawing", ["正课", "DLC 跟画", "LIVE 辅导"]],
+    ["packing", ["重要物品", "随身", "护理", "兴趣"]],
   ] as const
 ).forEach(([m, names]) => names.forEach((n) => addKind(m, n)));
 const kindId = (module: string, name: string) => kinds.find((k) => k.module === module && k.name === name)!.id;
@@ -102,13 +103,81 @@ const withCounts = (c: Course) => {
   addCourse("空课程");
 }
 
+// ---- packing ----
+type Tpl = { id: number; name: string; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type TripRow = { id: number; name: string; templateId: number | null; departOn: string | null; note: string | null; createdAt: string; updatedAt: string };
+type PItem = { id: number; parentId: number; kindId: number | null; name: string; note: string | null; packed?: boolean; sortOrder: number; createdAt: string; updatedAt: string };
+let tpls: Tpl[] = [];
+let tripRows: TripRow[] = [];
+let tplItems: PItem[] = [];
+let tripItems: PItem[] = [];
+itemsUsing.packing = () => [...tplItems, ...tripItems] as never;
+const pk = (name: string) => kindId("packing", name);
+const addTpl = (name: string, note: string | null = null) => {
+  const t = { id: nextId++, name, note, sortOrder: tpls.length + 1, createdAt: now(), updatedAt: now() };
+  tpls.push(t);
+  return t;
+};
+const addPItem = (rows: PItem[], parentId: number, p: Partial<PItem>) => {
+  const it = { id: nextId++, parentId, kindId: null, name: "", note: null, sortOrder: rows.filter((r) => r.parentId === parentId).length + 1, createdAt: now(), updatedAt: now(), ...p };
+  rows.push(it);
+  return it;
+};
+const tplOut = (t: Tpl) => ({ ...t, itemCount: tplItems.filter((i) => i.parentId === t.id).length });
+const tripOut = (t: TripRow) => {
+  const its = tripItems.filter((i) => i.parentId === t.id);
+  return { ...t, templateName: tpls.find((x) => x.id === t.templateId)?.name ?? null, total: its.length, packed: its.filter((i) => i.packed).length };
+};
+const createTripRow = (patch: Args, templateId: number | null) => {
+  if (!String(patch.name ?? "").trim()) throw "出行名称不能为空";
+  const t = { id: nextId++, name: String(patch.name).trim(), templateId, departOn: (patch.departOn as string) ?? null, note: (patch.note as string) ?? null, createdAt: now(), updatedAt: now() };
+  tripRows.push(t);
+  tplItems.filter((i) => i.parentId === templateId).forEach((i) => addPItem(tripItems, t.id, { kindId: i.kindId, name: i.name, note: i.note, packed: false }));
+  return t;
+};
+{
+  const home = addTpl("回家");
+  [["身份证", "重要物品"], ["家钥匙 🔑", "重要物品"], ["充电宝", "随身"], ["画纸 & 画笔", "兴趣"], ["纸巾", "护理"]].forEach(([n, k]) => addPItem(tplItems, home.id, { name: n, kindId: pk(k) }));
+  const abroad = addTpl("出国", "护照有效期要半年以上");
+  addPItem(tplItems, abroad.id, { name: "护照 / 签证", kindId: pk("重要物品") });
+  addPItem(tplItems, abroad.id, { name: "护肤品", kindId: pk("护理"), note: "随身最多 1L" });
+  const t = createTripRow({ name: "2026 国庆 · 回家", departOn: "2026-10-01" }, home.id);
+  tripItems.filter((i) => i.parentId === t.id).slice(0, 2).forEach((i) => (i.packed = true));
+}
+const pItemHandlers = (list: "template" | "trip") => {
+  const rows = () => (list === "template" ? tplItems : tripItems);
+  const parentKey = list === "template" ? "templateId" : "tripId";
+  const check = (p: Args) => {
+    if (p.name !== undefined && !String(p.name).trim()) throw "物品不能为空";
+  };
+  return {
+    [`packing_${list}_items`]: (a: Args) => rows().filter((i) => i.parentId === a[parentKey]).sort((x, y) => x.sortOrder - y.sortOrder),
+    [`packing_${list}_item_create`]: (a: Args) => {
+      const p = a.patch as Args;
+      check({ name: p.name ?? "" });
+      return addPItem(rows(), a[parentKey] as number, { ...(p as Partial<PItem>), name: String(p.name).trim(), ...(list === "trip" ? { packed: !!p.packed } : {}) });
+    },
+    [`packing_${list}_item_update`]: (a: Args) => {
+      check(a.patch as Args);
+      const it = rows().find((i) => i.id === a.id)!;
+      Object.assign(it, a.patch, { updatedAt: now() });
+      return it;
+    },
+    [`packing_${list}_item_delete`]: (a: Args) => {
+      if (list === "template") tplItems = tplItems.filter((i) => i.id !== a.id);
+      else tripItems = tripItems.filter((i) => i.id !== a.id);
+      return null;
+    },
+  };
+};
+
 const handlers: Record<string, (a: Args) => unknown> = {
   app_info: () => ({
     appVersion: "0.1.0-mock",
     isDev: true,
     dataDir: "/mock/Pomelo OS Dev",
     dbPath: "/mock/Pomelo OS Dev/pomelo.db",
-    schemaVersion: 6,
+    schemaVersion: 7,
     startupError: null,
   }),
   reveal_data_dir: () => null,
@@ -123,13 +192,13 @@ const handlers: Record<string, (a: Args) => unknown> = {
   kinds_create: (a) => {
     const name = String(a.name).trim();
     if (!name) throw "类型名称不能为空";
-    if (kinds.some((k) => k.module === a.module && k.name === name)) throw `已经有叫「${name}」的类型了`;
+    if (kinds.some((k) => k.module === a.module && k.name === name)) throw `「${name}」已经有了，换个名字吧`;
     return addKind(a.module as string, name);
   },
   kinds_rename: (a) => {
     const k = kinds.find((x) => x.id === a.id)!;
     const name = String(a.name).trim();
-    if (kinds.some((x) => x.module === k.module && x.name === name && x.id !== k.id)) throw `已经有叫「${name}」的类型了`;
+    if (kinds.some((x) => x.module === k.module && x.name === name && x.id !== k.id)) throw `「${name}」已经有了，换个名字吧`;
     k.name = name;
     return k;
   },
@@ -188,6 +257,39 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return null;
   },
 
+  packing_templates: () => tpls.map(tplOut),
+  packing_template_create: (a) => {
+    const p = a.patch as { name?: string; note?: string | null };
+    if (!p.name?.trim()) throw "模板名不能为空";
+    if (tpls.some((t) => t.name === p.name!.trim())) throw `已经有叫「${p.name}」的模板了`;
+    return tplOut(addTpl(p.name.trim(), p.note ?? null));
+  },
+  packing_template_update: (a) => {
+    const t = tpls.find((x) => x.id === a.id)!;
+    Object.assign(t, a.patch, { updatedAt: now() });
+    return tplOut(t);
+  },
+  packing_template_delete: (a) => {
+    tpls = tpls.filter((t) => t.id !== a.id);
+    tplItems = tplItems.filter((i) => i.parentId !== a.id);
+    tripRows.forEach((t) => t.templateId === a.id && (t.templateId = null));
+    return null;
+  },
+  packing_trips: () => [...tripRows].sort((x, y) => y.id - x.id).map(tripOut),
+  packing_trip_create: (a) => tripOut(createTripRow(a.patch as Args, (a.templateId as number | null) ?? null)),
+  packing_trip_update: (a) => {
+    const t = tripRows.find((x) => x.id === a.id)!;
+    Object.assign(t, a.patch, { updatedAt: now() });
+    return tripOut(t);
+  },
+  packing_trip_delete: (a) => {
+    tripRows = tripRows.filter((t) => t.id !== a.id);
+    tripItems = tripItems.filter((i) => i.parentId !== a.id);
+    return null;
+  },
+  ...pItemHandlers("template"),
+  ...pItemHandlers("trip"),
+
   "plugin:dialog|open": () => "/mock/pomelo-import.json",
   import_preview: () => ({
     modules: [
@@ -195,7 +297,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
       { key: "films", label: "好奇看看", incoming: 1, existing: handlers["films__count"]({}) },
       { key: "drawing", label: "随意画画", incoming: 1, existing: courses.length },
     ],
-    skipped: ["packing"],
+    skipped: [],
     backup: null,
   }),
   import_apply: () => {
@@ -211,7 +313,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
         { key: "films", label: "好奇看看", incoming: 1, existing: existing.films },
         { key: "drawing", label: "随意画画", incoming: 1, existing: existing.drawing },
       ],
-      skipped: ["packing"],
+      skipped: [],
       backup: "/mock/backup.db",
     };
   },

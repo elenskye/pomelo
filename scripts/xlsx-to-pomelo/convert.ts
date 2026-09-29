@@ -83,6 +83,22 @@ function drawing(ws: Sheet) {
   return [...courses.values()];
 }
 
+// 出门走走: 场景, 类别, 物品, 本次打包, 备注 (header row 4) → templates (first-appearance order). No trips:
+// the ✓ column is per-trip state, empty in the prototype.
+function packing(ws: Sheet) {
+  expectHeaders(ws, 4, ["场景", "类别", "物品", "本次打包", "备注"], "出门走走");
+  const templates = new Map<string, { name: string; items: object[] }>();
+  for (let r = 5; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r);
+    const name = cell(row, 1);
+    const item = cell(row, 3);
+    if (!name || !item) continue;
+    if (!templates.has(name)) templates.set(name, { name, items: [] });
+    templates.get(name)!.items.push({ category: cell(row, 2), name: item, note: cell(row, 5) });
+  }
+  return { templates: [...templates.values()], trips: [] };
+}
+
 const wb = new ExcelJS.Workbook();
 await wb.xlsx.readFile(input);
 const sheet = (name: string): Sheet => {
@@ -91,7 +107,7 @@ const sheet = (name: string): Sheet => {
   return ws as unknown as Sheet;
 };
 
-const modules = { books: books(sheet("摸鱼读读")), films: films(sheet("好奇看看")), drawing: drawing(sheet("随意画画")) };
+const modules = { books: books(sheet("摸鱼读读")), films: films(sheet("好奇看看")), drawing: drawing(sheet("随意画画")), packing: packing(sheet("出门走走")) };
 writeFileSync(
   output,
   JSON.stringify({ format: "pomelo-export", formatVersion: 1, exportedAt: new Date().toISOString(), source: "柚儿园.xlsx", modules }, null, 2) + "\n",
@@ -105,3 +121,5 @@ console.log(summary("摸鱼读读", "本", ["想读", "在读", "已读"], modul
 console.log(summary("好奇看看", "部", ["想看", "在看", "已看"], modules.films));
 const lessons = modules.drawing.flatMap((c) => c.lessons as { status: Status }[]);
 console.log(`${summary("随意画画", "节", ["未开始", "进行中", "已完成"], lessons)}（${modules.drawing.length} 门课）`);
+const tpls = modules.packing.templates;
+console.log(`出门走走 ${tpls.length} 个场景模板，共 ${tpls.reduce((n, t) => n + t.items.length, 0)} 件物品`);

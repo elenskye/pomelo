@@ -13,6 +13,7 @@ if pgrep -f "$DST/" >/dev/null; then
   osascript -e 'quit app "Pomelo OS"' >/dev/null 2>&1 || true
   sleep 1
 fi
+# Move (not copy): leaving the build output behind makes macOS list a second, real-data-using app.
 rm -rf "$DST"
-cp -R "$SRC" "$DST"
+mv "$SRC" "$DST"
 echo "已安装：$DST"
