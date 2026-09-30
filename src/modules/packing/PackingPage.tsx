@@ -7,8 +7,8 @@ import { KindManager } from "@/shared/kinds/KindManager";
 import { NameDialog } from "@/shared/NameDialog";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } from "@/shared/ui";
+import { formatDay } from "@/shared/dates";
 import {
-  formatDay,
   PACKING_KEY,
   usePackingMutations,
   usePackItems,

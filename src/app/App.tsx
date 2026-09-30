@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, TriangleAlert } from "lucide-react";
 import { api, SETTING_LAST_ROUTE, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
@@ -35,6 +35,30 @@ function useRouteMemory(enabled: boolean) {
   }, [restored, location.pathname]);
 }
 
+/** Rust takes the day's first snapshot at launch; this covers an app left open past midnight. */
+function useDailyBackup(enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    let day = new Date().toDateString();
+    const check = () => {
+      const today = new Date().toDateString();
+      if (today === day) return;
+      day = today;
+      api
+        .backupDaily()
+        .then((b) => b && qc.invalidateQueries({ queryKey: ["backups"] }))
+        .catch(() => {});
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [enabled, qc]);
+}
+
 function StartupError({ info }: { info: AppInfo }) {
   return (
     <div data-tauri-drag-region className="flex h-full flex-col items-center justify-center gap-3 px-16 text-center">
@@ -53,6 +77,7 @@ export function App() {
   const info = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
   const ok = !!info.data && !info.data.startupError;
   useRouteMemory(ok);
+  useDailyBackup(ok);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (

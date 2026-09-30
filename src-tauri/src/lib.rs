@@ -26,9 +26,16 @@ pub struct AppState {
 
 impl AppState {
     fn init(paths: DataPaths) -> Self {
+        let existed = paths.db.exists();
         let opened = paths.ensure().and_then(|_| {
             let mut conn = db::open(&paths.db)?;
             db::migrate(&mut conn, db::MIGRATIONS, &paths.backups)?;
+            if existed {
+                // best effort: a failed daily snapshot must not block startup (UI retries on focus)
+                if let Err(e) = backup::daily(&conn, &paths.backups) {
+                    eprintln!("daily backup failed: {e}");
+                }
+            }
             Ok(conn)
         });
         match opened {
@@ -103,6 +110,12 @@ pub fn run() {
             settings_set,
             transfer::import_preview,
             transfer::import_apply,
+            transfer::export_to,
+            backup::backups_list,
+            backup::backup_now,
+            backup::backup_daily,
+            backup::backup_restore,
+            backup::reveal_backups_dir,
             modules::books::books_list,
             modules::books::books_create,
             modules::books::books_update,
@@ -140,6 +153,21 @@ pub fn run() {
             modules::packing::packing_trip_item_create,
             modules::packing::packing_trip_item_update,
             modules::packing::packing_trip_item_delete,
+            modules::todo::todo_groups,
+            modules::todo::todo_group_create,
+            modules::todo::todo_group_rename,
+            modules::todo::todo_group_delete,
+            modules::todo::todo_goals,
+            modules::todo::todo_goal_create,
+            modules::todo::todo_goal_update,
+            modules::todo::todo_goal_delete,
+            modules::todo::todo_tasks,
+            modules::todo::todo_task_create,
+            modules::todo::todo_task_update,
+            modules::todo::todo_task_set_done,
+            modules::todo::todo_task_delete,
+            modules::todo::todo_agenda,
+            modules::todo::todo_done_between,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

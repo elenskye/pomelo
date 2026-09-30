@@ -20,6 +20,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 5, name: "kinds", sql: include_str!("../migrations/0005_kinds.sql") },
     Migration { version: 6, name: "drawing", sql: include_str!("../migrations/0006_drawing.sql") },
     Migration { version: 7, name: "packing", sql: include_str!("../migrations/0007_packing.sql") },
+    Migration { version: 8, name: "todo", sql: include_str!("../migrations/0008_todo.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -46,6 +47,11 @@ pub fn user_version(conn: &Connection) -> Result<i64, String> {
 /// Applies pending migrations. If the DB already has data (version > 0), takes a
 /// snapshot backup into `backups_dir` first. Returns the resulting version.
 pub fn migrate(conn: &mut Connection, migrations: &[Migration], backups_dir: &Path) -> Result<i64, String> {
+    migrate_with(conn, migrations, Some(backups_dir))
+}
+
+/// `backups_dir = None`: no pre-upgrade snapshot (caller already holds one, e.g. restore).
+pub fn migrate_with(conn: &mut Connection, migrations: &[Migration], backups_dir: Option<&Path>) -> Result<i64, String> {
     let current = user_version(conn)?;
     let latest = migrations.last().map_or(0, |m| m.version);
     if current > latest {
@@ -57,8 +63,8 @@ pub fn migrate(conn: &mut Connection, migrations: &[Migration], backups_dir: &Pa
     let Some(first) = pending.first() else {
         return Ok(current);
     };
-    if current > 0 {
-        backup::snapshot(conn, backups_dir, &format!("before-v{}", first.version))?;
+    if let (true, Some(dir)) = (current > 0, backups_dir) {
+        backup::snapshot(conn, dir, &format!("before-v{}", first.version))?;
     }
     for m in pending {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -172,6 +178,26 @@ pub mod tests {
         assert_eq!(names("SELECT k.name FROM films f JOIN kinds k ON k.id = f.kind_id ORDER BY f.id"), ["电影", "剧集", "动漫"]);
         let cols = names("SELECT name FROM pragma_table_info('books')");
         assert!(cols.contains(&"kind_id".to_string()) && !cols.contains(&"kind".to_string()));
+    }
+
+    /// v0.1 installs are at v7; v8 (一步一步) adds tables only, backing up first.
+    #[test]
+    fn v7_upgrades_to_todo_tables() {
+        let dir = temp_dir("v7-todo");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..7], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            "INSERT INTO books (title) VALUES ('小王子');
+             INSERT INTO packing_templates (name, sort_order) VALUES ('回家', 1);",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), 8);
+        let n: i64 = c.query_row("SELECT count(*) FROM books", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        c.execute("INSERT INTO todo_groups (name, sort_order) VALUES ('📌 Pick Up', 1)", []).unwrap();
+        let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_str().unwrap().ends_with("-before-v8.db"));
     }
 
     #[test]

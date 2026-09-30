@@ -8,6 +8,7 @@ import BooksPage from "@/modules/books/BooksPage";
 import FilmsPage from "@/modules/films/FilmsPage";
 import DrawingPage from "@/modules/drawing/DrawingPage";
 import PackingPage from "@/modules/packing/PackingPage";
+import TodoPage from "@/modules/todo/TodoPage";
 import SettingsPage from "@/settings/SettingsPage";
 import { ToastProvider } from "@/shared/feedback";
 import "./index.css";
@@ -30,6 +31,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <Routes>
           <Route element={<App />}>
             <Route index element={null} />
+            <Route path="todo" element={<TodoPage />} />
             <Route path="books" element={<BooksPage />} />
             <Route path="films" element={<FilmsPage />} />
             <Route path="drawing" element={<DrawingPage />} />

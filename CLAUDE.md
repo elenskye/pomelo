@@ -5,13 +5,15 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## 开工前先读
 
 1. `docs/roadmap.md`：做到哪了、下一步做什么
-2. 按需再读：`docs/architecture.md`、`docs/schema.md`、`docs/design.md`
+2. `docs/requirements.md`：已确定的需求（问卷原件在 `docs/archive/`）
+3. 按需再读：`docs/architecture.md`、`docs/schema.md`、`docs/design.md`
 
 ## 最高原则
 
 - **个人、轻量**：只在一台 Mac 上给一个人用。不做账号、多人协作、云端服务、跨平台，不搭复杂架构，不做「以后可能用得上」的抽象。
 - **按阶段推进**：只做当前阶段的事。阶段结束时功能必须真正能用，并说明验收结果。
 - **重要决定先问我**：数据结构、页面结构、新增依赖、功能范围。给出推荐方案，由我来定。
+- **怎么问**：大范围、整个模块的需求，用 Word 问卷（放 `docs/`，勾选为主，答完移到 `docs/archive/`，结论写进 `requirements.md`）；开发过程中零散的几个决策点，直接在对话里提问。
 
 ## 数据规则
 
@@ -30,18 +32,20 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 | 位置 | 内容 |
 |---|---|
-| `src-tauri/src/modules/` | 每个模块一个文件：类型、校验、SQL、Tauri 命令（`books` `films` `drawing` `packing`）；`kinds.rs` 是可自定义的类型 / 类别；`common.rs` 是状态和通用校验 |
-| `src-tauri/src/transfer.rs` | 导入 Pomelo 数据文件 |
+| `src-tauri/src/modules/` | 每个模块一个文件：类型、校验、SQL、Tauri 命令（`todo` `books` `films` `drawing` `packing`）；`kinds.rs` 是可自定义的类型 / 类别；`common.rs` 是状态和通用校验 |
+| `src-tauri/src/transfer.rs` | Pomelo 数据文件的导出和导入 |
+| `src-tauri/src/backup.rs` | 快照备份：列表、立即备份、每日备份和保留规则、恢复 |
 | `src-tauri/src/db.rs` · `migrations/` | 数据库连接、升级脚本列表 · 升级脚本 |
 | `src/modules/<模块>/` | 各模块页面 |
-| `src/shared/` | 共用：`collection/`（书单、影单共用的整页）、`Dropdown`、`panel`（右侧编辑面板）、`kinds/`（管理类型）、`NameDialog`、`feedback`（提示和确认框） |
+| `src/settings/` | 设置页：导出导入（`Transfer`）、备份（`Backups`） |
+| `src/shared/` | 共用：`collection/`（书单、影单共用的整页）、`Dropdown`、`panel`（右侧编辑面板）、`kinds/`（管理类型）、`NameDialog`、`feedback`（提示和确认框）、`dates`（本地日期）、`InlineMd`（**加粗**） |
 | `src/dev/mockIpc.ts` | 浏览器测试用的模拟后端 |
-| `scripts/xlsx-to-pomelo/` | Excel 转换脚本 |
+| `scripts/xlsx-to-pomelo/` · `scripts/md-todo-to-pomelo/` | Excel 转换脚本 · Markdown 待办转换脚本 |
 
 ## 新增一个模块
 
 1. 新增 `src-tauri/migrations/000N_xxx.sql`，加进 `db.rs` 的 `MIGRATIONS`
-2. 写 `src-tauri/src/modules/xxx.rs`（参考 `drawing.rs`、`packing.rs`），在 `mod.rs`、`lib.rs` 注册；支持导入就在 `transfer.rs` 加一项
+2. 写 `src-tauri/src/modules/xxx.rs`（参考 `drawing.rs`、`packing.rs`），在 `mod.rs`、`lib.rs` 注册；在 `transfer.rs` 加上导入和导出（导出再导入必须完全一致，有测试把关）
 3. 需要「类型」：在 `kinds.rs` 的 `TABLES` 加一行，默认类型写进 migration
 4. 前端：`src/modules/xxx/`，在 `app/modules.ts`、`main.tsx` 注册；再把命令加进 `src/dev/mockIpc.ts`
 5. 更新文档
@@ -53,6 +57,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `pnpm check` | 类型检查 + Rust 测试，每次改完都要跑 |
 | `pnpm app:dev` | 运行开发版 |
 | `pnpm import:xlsx` | Excel → `prototype/pomelo-import.json` |
+| `pnpm import:todo` | Markdown 待办 → `prototype/todo-import.json` |
 | `pnpm app:build` | 只打包，不安装 |
 | `pnpm app:install` | 打包并安装到「应用程序」，只在阶段验收后、我同意时执行 |
 

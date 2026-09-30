@@ -252,6 +252,26 @@ pub fn validate_records(records: &[FilmRecord]) -> Result<(), String> {
     Ok(())
 }
 
+/// All records in id order (kinds by name), for the export file.
+pub fn export(conn: &Connection) -> Result<Vec<FilmRecord>, String> {
+    let names = kinds::name_map(conn, KEY)?;
+    Ok(list(conn)?
+        .into_iter()
+        .map(|x| FilmRecord {
+            title: x.title,
+            director: x.director,
+            country: x.country,
+            kind: x.kind_id.and_then(|id| names.get(&id).cloned()),
+            status: x.status,
+            rating: x.rating,
+            finished_month: x.finished_month,
+            note: x.note,
+            created_at: Some(x.created_at),
+            updated_at: Some(x.updated_at),
+        })
+        .collect())
+}
+
 /// Replaces all films with `records` (as-is, no auto-fill). Caller owns the transaction.
 pub fn replace_all(conn: &Connection, records: &[FilmRecord]) -> Result<usize, String> {
     conn.execute("DELETE FROM films", []).map_err(err)?;

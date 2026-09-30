@@ -1,0 +1,127 @@
+// Typed wrappers for Rust todo_* commands (src-tauri/src/modules/todo.rs) + React Query hooks.
+// Rules (placement, completion cascade, 今天 / 已过期) live in Rust; the UI only renders.
+import { invoke } from "@tauri-apps/api/core";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { errorText, useToast } from "@/shared/feedback";
+
+export type TodoGroup = { id: number; name: string; sortOrder: number; open: number; createdAt: string; updatedAt: string };
+
+export type GoalStatus = "active" | "paused" | "done" | "abandoned";
+export const GOAL_STATUS: Record<GoalStatus, string> = { active: "进行中", paused: "暂停", done: "已完成", abandoned: "已放弃" };
+
+export type Goal = {
+  id: number;
+  groupId: number;
+  name: string;
+  status: GoalStatus;
+  startDate: string | null;
+  endDate: string | null;
+  note: string | null;
+  review: string | null;
+  sortOrder: number;
+  total: number; // leaf tasks
+  done: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Task = {
+  id: number;
+  groupId: number;
+  goalId: number | null;
+  parentId: number | null;
+  title: string;
+  note: string | null;
+  link: string | null;
+  planDate: string | null;
+  startDate: string | null; // with dueDate = 时间段
+  dueDate: string | null;
+  done: boolean;
+  doneAt: string | null;
+  collapsed: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** A task with where it lives (今天 / 回看 lists). */
+export type PlacedTask = Task & { groupName: string; goalName: string | null; parentTitle: string | null };
+export type Agenda = { today: string; overdue: PlacedTask[]; due: PlacedTask[]; doneToday: PlacedTask[] };
+
+/** Omitted key = unchanged; null = clear. Create places by parentId > goalId > groupId. */
+export type TaskPatch = Partial<Pick<Task, "title" | "note" | "link" | "planDate" | "startDate" | "dueDate" | "collapsed">> & {
+  groupId?: number;
+  goalId?: number | null;
+  parentId?: number;
+};
+export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "status" | "startDate" | "endDate" | "note" | "review">>;
+
+/** Which place a task list shows. */
+export type Place = { groupId: number; goalId?: undefined } | { goalId: number; groupId?: undefined };
+
+const api = {
+  groups: () => invoke<TodoGroup[]>("todo_groups"),
+  createGroup: (name: string) => invoke<TodoGroup>("todo_group_create", { name }),
+  renameGroup: (v: { id: number; name: string }) => invoke<TodoGroup>("todo_group_rename", v),
+  deleteGroup: (id: number) => invoke<void>("todo_group_delete", { id }),
+  goals: () => invoke<Goal[]>("todo_goals"),
+  createGoal: (patch: GoalPatch) => invoke<Goal>("todo_goal_create", { patch }),
+  updateGoal: (v: { id: number; patch: GoalPatch }) => invoke<Goal>("todo_goal_update", v),
+  deleteGoal: (id: number) => invoke<void>("todo_goal_delete", { id }),
+  tasks: (p: Place) => invoke<Task[]>("todo_tasks", { groupId: p.groupId ?? null, goalId: p.goalId ?? null }),
+  createTask: (patch: TaskPatch) => invoke<Task>("todo_task_create", { patch }),
+  updateTask: (v: { id: number; patch: TaskPatch }) => invoke<Task>("todo_task_update", v),
+  setDone: (v: { id: number; done: boolean }) => invoke<void>("todo_task_set_done", v),
+  deleteTask: (id: number) => invoke<void>("todo_task_delete", { id }),
+  agenda: (today: string) => invoke<Agenda>("todo_agenda", { today }),
+  doneBetween: (from: string, to: string) => invoke<PlacedTask[]>("todo_done_between", { from, to }),
+};
+
+export const TODO_KEY = ["todo"];
+export const useGroups = () => useQuery({ queryKey: [...TODO_KEY, "groups"], queryFn: api.groups });
+export const useGoals = () => useQuery({ queryKey: [...TODO_KEY, "goals"], queryFn: api.goals });
+export const useTasks = (p: Place | null) =>
+  useQuery({ queryKey: [...TODO_KEY, "tasks", p], queryFn: () => api.tasks(p!), enabled: p !== null });
+export const useAgenda = (today: string) => useQuery({ queryKey: [...TODO_KEY, "agenda", today], queryFn: () => api.agenda(today) });
+export const useDoneBetween = (from: string, to: string) =>
+  useQuery({ queryKey: [...TODO_KEY, "done", from, to], queryFn: () => api.doneBetween(from, to) });
+
+export function useTodoMutations() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  // Any change can move counts, progress and 今天 → refresh every todo query.
+  const onSuccess = () => void qc.invalidateQueries({ queryKey: TODO_KEY });
+  const onError = (e: unknown) => toast(errorText(e), "error");
+  return {
+    createGroup: useMutation({ mutationFn: api.createGroup, onSuccess }),
+    renameGroup: useMutation({ mutationFn: api.renameGroup, onSuccess }),
+    deleteGroup: useMutation({ mutationFn: api.deleteGroup, onSuccess }),
+    createGoal: useMutation({ mutationFn: api.createGoal, onSuccess }),
+    updateGoal: useMutation({ mutationFn: api.updateGoal, onSuccess }),
+    deleteGoal: useMutation({ mutationFn: api.deleteGoal, onSuccess }),
+    createTask: useMutation({ mutationFn: api.createTask, onSuccess }),
+    updateTask: useMutation({ mutationFn: api.updateTask, onSuccess }),
+    /** Fire-and-forget (circle clicks, collapse toggles, row deletes): errors surface as toasts. */
+    quickUpdateTask: useMutation({ mutationFn: api.updateTask, onSuccess, onError }),
+    setDone: useMutation({ mutationFn: api.setDone, onSuccess, onError }),
+    deleteTask: useMutation({ mutationFn: api.deleteTask, onSuccess, onError }),
+  };
+}
+
+export type TreeNode = { task: Task; children: TreeNode[]; leaves: number; doneLeaves: number };
+
+/** Flat list (one place) → forest in sort order, with leaf progress per node. */
+export function buildTree(tasks: Task[]): TreeNode[] {
+  const byParent = new Map<number | null, Task[]>();
+  for (const t of tasks) byParent.set(t.parentId, [...(byParent.get(t.parentId) ?? []), t]);
+  const build = (parent: number | null): TreeNode[] =>
+    (byParent.get(parent) ?? []).map((task) => {
+      const children = build(task.id);
+      const leaves = children.length ? children.reduce((n, c) => n + c.leaves, 0) : 1;
+      const doneLeaves = children.length ? children.reduce((n, c) => n + c.doneLeaves, 0) : task.done ? 1 : 0;
+      return { task, children, leaves, doneLeaves };
+    });
+  return build(null);
+}
+
+export const pct = (done: number, total: number) => (total > 0 ? Math.round((done / total) * 100) : 0);

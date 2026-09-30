@@ -172,6 +172,52 @@ pub fn resolve(conn: &Connection, module: &str, name: Option<&str>) -> Result<Op
     }
 }
 
+// ---------- import / export: top-level `"kinds": {"books": ["虚构", ...], ...}` (order = sort_order) ----------
+
+pub fn modules() -> impl Iterator<Item = &'static str> {
+    TABLES.iter().map(|(m, _)| *m)
+}
+
+/// id → name, for writing export records.
+pub fn name_map(conn: &Connection, module: &str) -> Result<std::collections::HashMap<i64, String>, String> {
+    Ok(list(conn, module)?.into_iter().map(|k| (k.id, k.name)).collect())
+}
+
+pub fn export(conn: &Connection) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    modules().map(|m| Ok((m.to_string(), list(conn, m)?.into_iter().map(|k| k.name).collect()))).collect()
+}
+
+pub fn validate_names(label: &str, names: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for n in names {
+        let n = common::require(n, "类型名称", 20).map_err(|e| format!("{label}的类型列表：{e}"))?;
+        if !seen.insert(n.clone()) {
+            return Err(format!("{label}的类型列表：「{n}」重复了"));
+        }
+    }
+    Ok(())
+}
+
+/// Import: make `module`'s kinds exactly `names`, in order. Same-name kinds keep their id;
+/// kinds not listed are deleted (their items → 未分类). Caller owns the transaction.
+pub fn replace_names(conn: &Connection, module: &str, names: &[String]) -> Result<(), String> {
+    let wanted: Vec<&str> = names.iter().map(|n| n.trim()).collect();
+    for k in list(conn, module)? {
+        if !wanted.contains(&k.name.as_str()) {
+            delete(conn, k.id)?;
+        }
+    }
+    for (i, name) in wanted.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO kinds (module, name, sort_order) VALUES (?1, ?2, ?3)
+             ON CONFLICT(module, name) DO UPDATE SET sort_order = excluded.sort_order",
+            params![module, name, i as i64 + 1],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
+}
+
 // ---------- commands ----------
 
 #[tauri::command]
@@ -254,6 +300,28 @@ pub mod tests {
         assert!(check(&c, "films", Some(ids[0])).is_ok());
         assert!(check(&c, "books", Some(ids[0])).is_err());
         assert!(check(&c, "books", None).is_ok());
+    }
+
+    #[test]
+    fn replace_names_keeps_ids_reorders_and_drops() {
+        let c = memory_db();
+        let comic = kind_id(&c, "books", "漫画");
+        let fiction = kind_id(&c, "books", "虚构");
+        c.execute("INSERT INTO books (title, kind_id) VALUES ('a', ?1), ('b', ?2)", [comic, fiction]).unwrap();
+        let names: Vec<String> = ["漫画", "绘本", "非虚构"].map(String::from).to_vec();
+        replace_names(&c, "books", &names).unwrap();
+        let l = list(&c, "books").unwrap();
+        assert_eq!(l.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(), names);
+        assert_eq!(l[0].id, comic);
+        let kids: Vec<Option<i64>> = {
+            let mut st = c.prepare("SELECT kind_id FROM books ORDER BY id").unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        };
+        assert_eq!(kids, [Some(comic), None]); // 虚构 dropped → 未分类
+        assert_eq!(list(&c, "films").unwrap().len(), 3); // other modules untouched
+        assert!(validate_names("书", &["a".into(), " a ".into()]).is_err());
+        assert!(validate_names("书", &[" ".into()]).is_err());
+        assert!(validate_names("书", &[]).is_ok());
     }
 
     #[test]

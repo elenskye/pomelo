@@ -21,6 +21,7 @@ src-tauri/gen/schemas/
 !.env.example
 
 # OS / editor
+~$*
 .DS_Store
 .vscode/*
 !.vscode/extensions.json

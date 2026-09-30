@@ -171,16 +171,233 @@ const pItemHandlers = (list: "template" | "trip") => {
   };
 };
 
+// ---- backups (file names mirror backup.rs; restore only records the safety copy) ----
+type Backup = { fileName: string; label: string; createdAt: string; size: number };
+const stamp = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+};
+const mkBackup = (label: string, d = new Date()): Backup => {
+  const s = stamp(d);
+  return {
+    fileName: `pomelo-${s}-${label}.db`,
+    label,
+    createdAt: `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(9, 11)}:${s.slice(11, 13)}:${s.slice(13, 15)}`,
+    size: 98304 + Math.floor(Math.random() * 4096),
+  };
+};
+let backups: Backup[] = [
+  ...Array.from({ length: 10 }, (_, i) => mkBackup("daily", new Date(Date.now() - (i + 1) * 86400000))),
+  mkBackup("before-v7", new Date(Date.now() - 2 * 86400000 + 60000)),
+  mkBackup("before-import", new Date(Date.now() - 3 * 86400000 + 120000)),
+  mkBackup("manual", new Date(Date.now() - 5 * 86400000 + 180000)),
+];
+const addBackup = (label: string) => {
+  const b = mkBackup(label);
+  backups = [b, ...backups];
+  return b;
+};
+
+// ---- 一步一步 (todo): mirrors todo.rs rules loosely (placement, cascade, 今天 / 已过期) ----
+type TGroup = { id: number; name: string; sortOrder: number; createdAt: string; updatedAt: string };
+type TGoal = { id: number; groupId: number; name: string; status: string; startDate: string | null; endDate: string | null; note: string | null; review: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type TTask = {
+  id: number; groupId: number; goalId: number | null; parentId: number | null; title: string; note: string | null; link: string | null;
+  planDate: string | null; startDate: string | null; dueDate: string | null; done: boolean; doneAt: string | null; collapsed: boolean;
+  sortOrder: number; createdAt: string; updatedAt: string;
+};
+let tGroups: TGroup[] = [];
+let tGoals: TGoal[] = [];
+let tTasks: TTask[] = [];
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const dayOffset = (n: number) => ymd(new Date(Date.now() + n * 86400000));
+const isLeaf = (t: TTask) => !tTasks.some((c) => c.parentId === t.id);
+const tGroupOut = (g: TGroup) => ({ ...g, open: tTasks.filter((t) => t.groupId === g.id && !t.done && isLeaf(t)).length });
+const tGoalOut = (g: TGoal) => {
+  const ls = tTasks.filter((t) => t.goalId === g.id && isLeaf(t));
+  return { ...g, total: ls.length, done: ls.filter((t) => t.done).length };
+};
+const subtree = (id: number): TTask[] => tTasks.filter((t) => t.parentId === id).flatMap((t) => [t, ...subtree(t.id)]);
+const reopenUp = (t: TTask) => {
+  for (let p = tTasks.find((x) => x.id === t.parentId); p; p = tTasks.find((x) => x.id === p!.parentId)) {
+    p.done = false;
+    p.doneAt = null;
+  }
+};
+const addTGroup = (name: string) => {
+  const g = { id: nextId++, name, sortOrder: tGroups.length + 1, createdAt: now(), updatedAt: now() };
+  tGroups.push(g);
+  return g;
+};
+const addTGoal = (groupId: number, name: string, p: Partial<TGoal> = {}) => {
+  const g = { id: nextId++, groupId, name, status: "active", startDate: null, endDate: null, note: null, review: null, sortOrder: tGoals.filter((x) => x.groupId === groupId).length + 1, createdAt: now(), updatedAt: now(), ...p };
+  tGoals.push(g);
+  return g;
+};
+const addTTask = (p: Partial<TTask> & { title: string }) => {
+  let place = { groupId: p.groupId ?? 0, goalId: p.goalId ?? null, parentId: p.parentId ?? null };
+  if (p.parentId) {
+    const parent = tTasks.find((t) => t.id === p.parentId);
+    if (!parent) throw "找不到上一层任务，可能已经被删除了";
+    place = { groupId: parent.groupId, goalId: parent.goalId, parentId: parent.id };
+  } else if (p.goalId) {
+    place = { groupId: tGoals.find((g) => g.id === p.goalId)!.groupId, goalId: p.goalId, parentId: null };
+  } else if (!tGroups.some((g) => g.id === place.groupId)) throw "请选择分组";
+  if (!p.title.trim()) throw "任务不能为空";
+  if (p.startDate && !p.dueDate) throw "时间段要有结束日期";
+  const sibs = tTasks.filter((t) => t.groupId === place.groupId && t.goalId === place.goalId && t.parentId === place.parentId);
+  const t: TTask = {
+    note: null, link: null, planDate: null, startDate: null, dueDate: null, done: false, doneAt: null, collapsed: false, createdAt: now(), updatedAt: now(),
+    ...p, ...place, id: nextId++, title: p.title.trim(), sortOrder: sibs.length + 1,
+  };
+  tTasks.push(t);
+  reopenUp(t);
+  return t;
+};
+const placedOut = (t: TTask) => ({
+  ...t,
+  groupName: tGroups.find((g) => g.id === t.groupId)?.name ?? "",
+  goalName: tGoals.find((g) => g.id === t.goalId)?.name ?? null,
+  parentTitle: tTasks.find((x) => x.id === t.parentId)?.title ?? null,
+});
+const placeKey = (t: TTask) => {
+  const g = tGroups.find((x) => x.id === t.groupId)!;
+  const o = tGoals.find((x) => x.id === t.goalId);
+  return [g.sortOrder, o ? o.sortOrder : -1, t.sortOrder, t.id];
+};
+const byPlace = (a: TTask, b: TTask) => {
+  const [x, y] = [placeKey(a), placeKey(b)];
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return 0;
+};
+{
+  const study = addTGroup("🖥️ 学业");
+  const proj = addTGroup("📌 个人项目");
+  const later = addTGroup("📈 长期");
+  addTTask({ groupId: study.id, title: "交 **课程报告** 第一版", done: true, doneAt: new Date(Date.now() - 2 * 86400000).toISOString() });
+  addTTask({ groupId: study.id, title: "**周五** 交实验记录", dueDate: dayOffset(-2) });
+  addTTask({ groupId: study.id, title: "和导师约进度会", dueDate: dayOffset(0), link: "https://example.com" });
+  addTTask({ groupId: study.id, title: "报告提交窗口", startDate: dayOffset(-1), dueDate: dayOffset(2) });
+  addTTask({ groupId: study.id, title: "期末展示", dueDate: dayOffset(20) });
+  const before = addTTask({ groupId: study.id, title: "**答辩前**提交：", collapsed: false });
+  ["最终报告", "个人总结", "展示 PPT"].forEach((t, i) => addTTask({ parentId: before.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null }));
+  const site = addTGoal(proj.id, "个人网站上线", { startDate: dayOffset(-10), endDate: dayOffset(40), note: "先做简单版" });
+  ["选框架", "写首页", "买域名"].forEach((t, i) => addTTask({ goalId: site.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null, planDate: i === 1 ? dayOffset(0) : null }));
+  addTGoal(proj.id, "学日语", { status: "paused" });
+  addTTask({ groupId: proj.id, title: "整理照片", planDate: dayOffset(-3), note: "挑 20 张" });
+  addTTask({ groupId: later.id, title: "办护照" });
+}
+const todoHandlers: Record<string, (a: Args) => unknown> = {
+  todo_groups: () => [...tGroups].sort((a, b) => a.sortOrder - b.sortOrder).map(tGroupOut),
+  todo_group_create: (a) => {
+    const name = String(a.name).trim();
+    if (!name) throw "分组名不能为空";
+    if (tGroups.some((g) => g.name === name)) throw `已经有叫「${name}」的分组了`;
+    return tGroupOut(addTGroup(name));
+  },
+  todo_group_rename: (a) => {
+    const g = tGroups.find((x) => x.id === a.id)!;
+    g.name = String(a.name).trim();
+    return tGroupOut(g);
+  },
+  todo_group_delete: (a) => {
+    tGroups = tGroups.filter((g) => g.id !== a.id);
+    tGoals = tGoals.filter((g) => g.groupId !== a.id);
+    tTasks = tTasks.filter((t) => t.groupId !== a.id);
+    return null;
+  },
+  todo_goals: () => [...tGoals].sort((a, b) => a.sortOrder - b.sortOrder).map(tGoalOut),
+  todo_goal_create: (a) => {
+    const p = a.patch as Partial<TGoal>;
+    if (!p.groupId) throw "请选择分组";
+    if (!p.name?.trim()) throw "目标名不能为空";
+    return tGoalOut(addTGoal(p.groupId, p.name.trim(), p));
+  },
+  todo_goal_update: (a) => {
+    const g = tGoals.find((x) => x.id === a.id)!;
+    const p = a.patch as Partial<TGoal>;
+    if (p.groupId && p.groupId !== g.groupId) tTasks.filter((t) => t.goalId === g.id).forEach((t) => (t.groupId = p.groupId!));
+    Object.assign(g, p, { updatedAt: now() });
+    return tGoalOut(g);
+  },
+  todo_goal_delete: (a) => {
+    tGoals = tGoals.filter((g) => g.id !== a.id);
+    tTasks = tTasks.filter((t) => t.goalId !== a.id);
+    return null;
+  },
+  todo_tasks: (a) =>
+    tTasks
+      .filter((t) => (a.goalId ? t.goalId === a.goalId : t.groupId === a.groupId && t.goalId === null))
+      .sort((x, y) => x.sortOrder - y.sortOrder || x.id - y.id),
+  todo_task_create: (a) => addTTask(a.patch as TTask),
+  todo_task_update: (a) => {
+    const t = tTasks.find((x) => x.id === a.id);
+    if (!t) throw "找不到这个任务，可能已经被删除了";
+    const { groupId, goalId, ...p } = a.patch as Partial<TTask>;
+    if ((goalId !== undefined && goalId !== t.goalId) || (groupId !== undefined && groupId !== t.groupId)) {
+      if (t.parentId) throw "子任务跟着上一层任务走，不能单独移动";
+      const g = goalId ? tGoals.find((x) => x.id === goalId)!.groupId : (groupId ?? t.groupId);
+      for (const x of [t, ...subtree(t.id)]) Object.assign(x, { groupId: g, goalId: goalId ?? null });
+    }
+    Object.assign(t, p, { updatedAt: now() });
+    if (t.startDate && !t.dueDate) throw "时间段要有结束日期";
+    return t;
+  },
+  todo_task_set_done: (a) => {
+    const t = tTasks.find((x) => x.id === a.id)!;
+    if (a.done) {
+      for (const x of [t, ...subtree(t.id)]) if (!x.done) Object.assign(x, { done: true, doneAt: now() });
+      for (let c = t; c.parentId; ) {
+        const p = tTasks.find((x) => x.id === c.parentId)!;
+        if (tTasks.some((x) => x.parentId === p.id && !x.done)) break;
+        Object.assign(p, { done: true, doneAt: p.doneAt ?? now() });
+        c = p;
+      }
+    } else {
+      Object.assign(t, { done: false, doneAt: null });
+      reopenUp(t);
+    }
+    return null;
+  },
+  todo_task_delete: (a) => {
+    const gone = new Set([a.id as number, ...subtree(a.id as number).map((t) => t.id)]);
+    tTasks = tTasks.filter((t) => !gone.has(t.id));
+    return null;
+  },
+  todo_agenda: (a) => {
+    const today = String(a.today);
+    const active = (t: TTask) => !t.goalId || tGoals.find((g) => g.id === t.goalId)?.status === "active";
+    const hit = (t: TTask) =>
+      (t.planDate !== null && t.planDate <= today) || (t.dueDate !== null && t.dueDate <= today) || (t.startDate !== null && t.startDate <= today && today <= t.dueDate!);
+    const late = (t: TTask) => (t.dueDate ? t.dueDate < today : t.planDate !== null && t.planDate < today);
+    const open = tTasks.filter((t) => !t.done && active(t) && hit(t)).sort(byPlace);
+    const key = (t: TTask) => t.dueDate ?? t.planDate ?? "";
+    return {
+      today,
+      overdue: open.filter(late).sort((x, y) => key(x).localeCompare(key(y))).map(placedOut),
+      due: open.filter((t) => !late(t)).map(placedOut),
+      doneToday: tTasks.filter((t) => t.done && t.doneAt && ymd(new Date(t.doneAt)) === today).map(placedOut),
+    };
+  },
+  todo_done_between: (a) =>
+    tTasks
+      .filter((t) => t.done && t.doneAt && ymd(new Date(t.doneAt)) >= String(a.from) && ymd(new Date(t.doneAt)) <= String(a.to))
+      .sort((x, y) => x.doneAt!.localeCompare(y.doneAt!))
+      .map(placedOut),
+  "plugin:opener|open_url": (a) => void window.open(String(a.url), "_blank"),
+};
+
 const handlers: Record<string, (a: Args) => unknown> = {
   app_info: () => ({
     appVersion: "0.1.0-mock",
     isDev: true,
     dataDir: "/mock/Pomelo OS Dev",
     dbPath: "/mock/Pomelo OS Dev/pomelo.db",
-    schemaVersion: 7,
+    schemaVersion: 8,
     startupError: null,
   }),
   reveal_data_dir: () => null,
+  ...todoHandlers,
   settings_get: (a) => settings.get(a.key as string) ?? null,
   settings_set: (a) => void settings.set(a.key as string, a.value),
 
@@ -291,6 +508,24 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...pItemHandlers("trip"),
 
   "plugin:dialog|open": () => "/mock/pomelo-import.json",
+  "plugin:dialog|save": () => "/mock/pomelo-export.json",
+  export_to: (a) => ({
+    path: a.path,
+    modules: [
+      { key: "books", label: "摸鱼读读", incoming: handlers["books__count"]({}) },
+      { key: "films", label: "好奇看看", incoming: handlers["films__count"]({}) },
+      { key: "drawing", label: "随意画画", incoming: courses.length },
+      { key: "packing", label: "出门走走", incoming: tpls.length + tripRows.length },
+    ],
+  }),
+  backups_list: () => [...backups].sort((x, y) => y.fileName.localeCompare(x.fileName)),
+  backup_now: () => addBackup("manual"),
+  backup_daily: () => (backups.some((b) => b.label === "daily" && b.fileName.includes(stamp(new Date()).slice(0, 8))) ? null : addBackup("daily")),
+  backup_restore: (a) => {
+    if (!backups.some((b) => b.fileName === a.fileName)) throw "找不到这份备份，可能已经被删除了";
+    return { safety: addBackup("before-restore") };
+  },
+  reveal_backups_dir: () => null,
   import_preview: () => ({
     modules: [
       { key: "books", label: "摸鱼读读", incoming: 2, existing: handlers["books__count"]({}) },

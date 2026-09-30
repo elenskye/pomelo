@@ -433,6 +433,10 @@ pub struct ItemRecord {
     /// Trip items only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,6 +447,10 @@ pub struct TemplateRecord {
     pub note: Option<String>,
     #[serde(default)]
     pub items: Vec<ItemRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -458,6 +466,10 @@ pub struct TripRecord {
     pub note: Option<String>,
     #[serde(default)]
     pub items: Vec<ItemRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -512,11 +524,14 @@ fn insert_items(conn: &Connection, list: List, parent_id: i64, items: &[ItemReco
         let kind_id = kinds::resolve(conn, KEY, it.category.as_deref())?;
         conn.execute(
             &format!(
-                "INSERT INTO {} ({}, kind_id, name, note, sort_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO {} ({}, kind_id, name, note, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, coalesce(?6, {NOW}), coalesce(?7, ?6, {NOW}))",
                 list.table(),
                 list.parent_col()
             ),
-            params![parent_id, kind_id, it.name.trim(), common::clean(it.note.clone()), j as i64 + 1],
+            params![
+                parent_id, kind_id, it.name.trim(), common::clean(it.note.clone()), j as i64 + 1, it.created_at, it.updated_at
+            ],
         )
         .map_err(err)?;
         if list == List::Trip && it.packed == Some(true) {
@@ -526,6 +541,53 @@ fn insert_items(conn: &Connection, list: List, parent_id: i64, items: &[ItemReco
     Ok(())
 }
 
+fn export_items(conn: &Connection, list: List, parent_id: i64, names: &HashMap<i64, String>) -> Result<Vec<ItemRecord>, String> {
+    Ok(items(conn, list, parent_id)?
+        .into_iter()
+        .map(|i| ItemRecord {
+            category: i.kind_id.and_then(|id| names.get(&id).cloned()),
+            name: i.name,
+            note: i.note,
+            packed: i.packed,
+            created_at: Some(i.created_at),
+            updated_at: Some(i.updated_at),
+        })
+        .collect())
+}
+
+/// Templates in display order; trips oldest first (re-import keeps their relative order).
+pub fn export(conn: &Connection) -> Result<PackingRecord, String> {
+    let names = kinds::name_map(conn, KEY)?;
+    let templates = templates(conn)?
+        .into_iter()
+        .map(|t| {
+            Ok(TemplateRecord {
+                items: export_items(conn, List::Template, t.id, &names)?,
+                name: t.name,
+                note: t.note,
+                created_at: Some(t.created_at),
+                updated_at: Some(t.updated_at),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let trips = trips(conn)?
+        .into_iter()
+        .rev()
+        .map(|t| {
+            Ok(TripRecord {
+                items: export_items(conn, List::Trip, t.id, &names)?,
+                name: t.name,
+                template: t.template_name,
+                depart_on: t.depart_on,
+                note: t.note,
+                created_at: Some(t.created_at),
+                updated_at: Some(t.updated_at),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(PackingRecord { templates, trips })
+}
+
 /// Replaces all templates + trips. Caller owns the transaction.
 pub fn replace_all(conn: &Connection, rec: &PackingRecord) -> Result<usize, String> {
     validate_records(rec)?;
@@ -533,8 +595,11 @@ pub fn replace_all(conn: &Connection, rec: &PackingRecord) -> Result<usize, Stri
     let mut ids = HashMap::new();
     for (i, t) in rec.templates.iter().enumerate() {
         conn.execute(
-            "INSERT INTO packing_templates (name, note, sort_order) VALUES (?1, ?2, ?3)",
-            params![t.name.trim(), common::clean(t.note.clone()), i as i64 + 1],
+            &format!(
+                "INSERT INTO packing_templates (name, note, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, coalesce(?4, {NOW}), coalesce(?5, ?4, {NOW}))"
+            ),
+            params![t.name.trim(), common::clean(t.note.clone()), i as i64 + 1, t.created_at, t.updated_at],
         )
         .map_err(err)?;
         let id = conn.last_insert_rowid();
@@ -544,8 +609,14 @@ pub fn replace_all(conn: &Connection, rec: &PackingRecord) -> Result<usize, Stri
     for t in &rec.trips {
         let template_id = t.template.as_deref().and_then(|n| ids.get(n.trim()).copied());
         conn.execute(
-            "INSERT INTO trips (name, template_id, depart_on, note) VALUES (?1, ?2, ?3, ?4)",
-            params![t.name.trim(), template_id, common::clean(t.depart_on.clone()), common::clean(t.note.clone())],
+            &format!(
+                "INSERT INTO trips (name, template_id, depart_on, note, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, coalesce(?5, {NOW}), coalesce(?6, ?5, {NOW}))"
+            ),
+            params![
+                t.name.trim(), template_id, common::clean(t.depart_on.clone()), common::clean(t.note.clone()), t.created_at,
+                t.updated_at
+            ],
         )
         .map_err(err)?;
         insert_items(conn, List::Trip, conn.last_insert_rowid(), &t.items)?;

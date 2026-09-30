@@ -11,7 +11,8 @@
     "app:build": "tauri build --bundles app",
     "app:install": "bash scripts/install-app.sh",
     "check": "tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml",
-    "import:xlsx": "node scripts/xlsx-to-pomelo/convert.ts"
+    "import:xlsx": "node scripts/xlsx-to-pomelo/convert.ts",
+    "import:todo": "node scripts/md-todo-to-pomelo/convert.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.0",

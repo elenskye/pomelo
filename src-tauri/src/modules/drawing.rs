@@ -367,6 +367,30 @@ pub fn validate_records(records: &[CourseRecord]) -> Result<(), String> {
     Ok(())
 }
 
+/// Courses → lessons in display order (kinds by name), for the export file.
+pub fn export(conn: &Connection) -> Result<Vec<CourseRecord>, String> {
+    let names = kinds::name_map(conn, KEY)?;
+    courses(conn)?
+        .into_iter()
+        .map(|c| {
+            let lessons = lessons(conn, c.id)?
+                .into_iter()
+                .map(|l| LessonRecord {
+                    code: l.code,
+                    kind: l.kind_id.and_then(|id| names.get(&id).cloned()),
+                    title: l.title,
+                    status: l.status,
+                    finished_month: l.finished_month,
+                    note: l.note,
+                    created_at: Some(l.created_at),
+                    updated_at: Some(l.updated_at),
+                })
+                .collect();
+            Ok(CourseRecord { name: c.name, note: c.note, lessons, created_at: Some(c.created_at), updated_at: Some(c.updated_at) })
+        })
+        .collect()
+}
+
 /// Replaces all courses + lessons (as-is, no auto-fill). Caller owns the transaction.
 pub fn replace_all(conn: &Connection, records: &[CourseRecord]) -> Result<usize, String> {
     validate_records(records)?;

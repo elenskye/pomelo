@@ -96,11 +96,3 @@ export function usePackingMutations() {
     quickDeleteItem: useMutation({ mutationFn: api.deleteItem, onSuccess, onError }),
   };
 }
-
-/** "2026-10-01" → "10 月 1 日"（not this year: "2025 年 10 月 1 日"）. */
-export function formatDay(d: string | null): string | null {
-  if (!d) return null;
-  const [y, m, day] = d.split("-").map(Number);
-  const md = `${m} 月 ${day} 日`;
-  return y === new Date().getFullYear() ? md : `${y} 年 ${md}`;
-}
