@@ -1,12 +1,13 @@
-// 一步一步: left nav (今天 · 回看 · groups → goals) + right content. Modeled on GoalMap.
+// 一步一步: left nav (今天 · 月历 · 回看 · groups → goals, draggable) + right content. Modeled on GoalMap.
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, ChevronLeft, ChevronRight, FolderPlus, Pencil, Plus, Sun, Target } from "lucide-react";
+import { CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, FolderPlus, Pencil, Plus, Sun, Target } from "lucide-react";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
-import { addDays, formatDay, localToday, mondayOf, toYmd, weekday } from "@/shared/dates";
+import { addDays, formatDay, localToday, mondayOf, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
+import { DragHandle, useSortable } from "@/shared/sortable";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar } from "@/shared/ui";
 import {
   GOAL_STATUS,
@@ -17,6 +18,7 @@ import {
   useGroups,
   useTasks,
   useTodoMutations,
+  type DoneItem,
   type Goal,
   type GoalStatus,
   type PlacedTask,
@@ -24,10 +26,11 @@ import {
   type TodoGroup,
 } from "./api";
 import { GoalDialog, GroupDialog } from "./Dialogs";
+import { MonthView } from "./MonthView";
 import { PlacedList, TaskTree } from "./TaskList";
 import { TaskPanel, type NewTask } from "./TaskPanel";
 
-type View = { kind: "today" } | { kind: "review" } | { kind: "group"; id: number } | { kind: "goal"; id: number };
+type View = { kind: "today" } | { kind: "month" } | { kind: "review" } | { kind: "group"; id: number } | { kind: "goal"; id: number };
 
 /** Local date that follows the clock (re-checked when the window regains focus). */
 function useToday() {
@@ -40,18 +43,65 @@ function useToday() {
   return today;
 }
 
-function NavButton(props: { active: boolean; onClick: () => void; children: ReactNode; indent?: boolean }) {
+function NavButton(props: { active: boolean; onClick: () => void; children: ReactNode; indent?: boolean; grip?: ReactNode }) {
   return (
-    <button
-      type="button"
-      aria-current={props.active}
-      onClick={props.onClick}
-      className={`flex w-full items-center gap-2 rounded-control py-1.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-        props.indent ? "pr-2.5 pl-6" : "px-2.5"
-      } ${props.active ? "bg-accent" : "hover:bg-muted/70"}`}
-    >
-      {props.children}
-    </button>
+    <div className={`group flex items-center rounded-control transition-colors duration-150 ${props.active ? "bg-accent" : "hover:bg-muted/70"}`}>
+      {props.grip !== undefined && <span className="flex w-3 shrink-0 justify-center">{props.grip}</span>}
+      <button
+        type="button"
+        aria-current={props.active}
+        onClick={props.onClick}
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-control py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          props.indent ? "pr-2.5 pl-4" : props.grip !== undefined ? "pr-2.5 pl-1" : "px-2.5"
+        }`}
+      >
+        {props.children}
+      </button>
+    </div>
+  );
+}
+
+/** Groups (and each group's goals) in the nav, draggable to reorder. */
+function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (v: View) => void }) {
+  const m = useTodoMutations();
+  const sort = useSortable((ids) => m.reorderGroups.mutate(ids));
+  return (
+    <div ref={sort.listRef}>
+      {props.groups.map((g) => (
+        <div key={g.id} {...sort.item(g.id)} className="bg-background">
+          <NavButton
+            active={props.view.kind === "group" && props.view.id === g.id}
+            onClick={() => props.go({ kind: "group", id: g.id })}
+            grip={props.groups.length > 1 ? <DragHandle {...sort.handle(g.id)} label="拖动分组排序" /> : null}
+          >
+            <span className="min-w-0 flex-1 truncate">{g.name}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{g.open || ""}</span>
+          </NavButton>
+          <GoalNav goals={props.goals.filter((o) => o.groupId === g.id)} groupId={g.id} view={props.view} go={props.go} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GoalNav(props: { goals: Goal[]; groupId: number; view: View; go: (v: View) => void }) {
+  const m = useTodoMutations();
+  const sort = useSortable((ids) => m.reorderGoals.mutate({ groupId: props.groupId, ids }));
+  return (
+    <div ref={sort.listRef}>
+      {props.goals.map((o) => (
+        <div key={o.id} {...sort.item(o.id)} className="bg-background">
+          <NavButton
+            indent
+            active={props.view.kind === "goal" && props.view.id === o.id}
+            onClick={() => props.go({ kind: "goal", id: o.id })}
+            grip={props.goals.length > 1 ? <DragHandle {...sort.handle(o.id)} label="拖动目标排序" /> : null}
+          >
+            <GoalNavLabel goal={o} />
+          </NavButton>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -199,14 +249,14 @@ export default function TodoPage() {
     const subs = placeTasks.some((x) => x.parentId === t.id);
     const ok = await confirm({
       title: `删除「${t.title.replace(/\*\*/g, "")}」？`,
-      message: `${subs ? "它下面的子任务会一起删除。" : ""}删除后只能从备份里找回。`,
+      message: `${subs ? "它下面的子任务会一起删除。" : ""}删错了可以按 ⌘Z 撤销。`,
       confirmLabel: "删除",
       danger: true,
     });
     if (!ok) return;
     mut.deleteTask.mutate(t.id, {
       onSuccess: () => {
-        toast("已删除");
+        toast("已删除（⌘Z 撤销）");
         panel.done();
       },
     });
@@ -279,11 +329,8 @@ export default function TodoPage() {
 
   const reviewView = () => {
     const items = doneQ.data ?? [];
-    const byDay = new Map<string, PlacedTask[]>();
-    for (const t of [...items].reverse()) {
-      const day = toYmd(new Date(t.doneAt!));
-      byDay.set(day, [...(byDay.get(day) ?? []), t]);
-    }
+    const byDay = new Map<string, DoneItem[]>();
+    for (const t of [...items].reverse()) byDay.set(t.day, [...(byDay.get(t.day) ?? []), t]);
     const label = weekOffset === 0 ? "本周" : weekOffset === -1 ? "上周" : `${formatDay(week.from)} 那一周`;
     return (
       <>
@@ -432,26 +479,16 @@ export default function TodoPage() {
           {counts && counts.overdue > 0 && <span className="text-xs text-destructive">{counts.overdue} 过期</span>}
           {counts && <span className="text-xs text-muted-foreground">{counts.due}</span>}
         </NavButton>
+        <NavButton active={view.kind === "month"} onClick={() => void go({ kind: "month" })}>
+          <CalendarDays size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+          <span className="flex-1">月历</span>
+        </NavButton>
         <NavButton active={view.kind === "review"} onClick={() => void go({ kind: "review" })}>
           <CalendarCheck size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">回看</span>
         </NavButton>
         <div className="px-2.5 pt-4 pb-1 text-xs text-muted-foreground">分组</div>
-        {groups.map((g) => (
-          <div key={g.id}>
-            <NavButton active={view.kind === "group" && view.id === g.id} onClick={() => void go({ kind: "group", id: g.id })}>
-              <span className="min-w-0 flex-1 truncate">{g.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{g.open || ""}</span>
-            </NavButton>
-            {goals
-              .filter((o) => o.groupId === g.id)
-              .map((o) => (
-                <NavButton key={o.id} indent active={view.kind === "goal" && view.id === o.id} onClick={() => void go({ kind: "goal", id: o.id })}>
-                  <GoalNavLabel goal={o} />
-                </NavButton>
-              ))}
-          </div>
-        ))}
+        <GroupNav groups={groups} goals={goals} view={view} go={(v) => void go(v)} />
       </div>
       <Button variant="ghost" className="mt-2 justify-center text-muted-foreground" onClick={() => setGroupDialog({ group: null })}>
         <FolderPlus size={14} /> 新分组
@@ -461,6 +498,15 @@ export default function TodoPage() {
 
   const parentTitle =
     editing === null ? null : "parentTitle" in editing ? editing.parentTitle : (placeTasks.find((t) => t.id === editing.parentId)?.title ?? null);
+  // Selection and editing/creating are set in two steps; only mount once both agree, or a panel could
+  // start from the previous task's draft.
+  const panelOpen =
+    panel.selection !== null &&
+    ((editing !== null && panel.selection === `t${editing.id}`) || (creating !== null && panel.selection === `new${JSON.stringify(creating)}`));
+  // The panel shows live counters (check-ins, amounts): take the latest copy of the task we have.
+  const fresh =
+    editing &&
+    ([...placeTasks, ...(agenda ? [...agenda.overdue, ...agenda.due, ...agenda.doneToday] : [])].find((t) => t.id === editing.id) ?? editing);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -480,6 +526,7 @@ export default function TodoPage() {
           {nav}
           <section className="flex min-w-0 flex-1 flex-col">
             {view.kind === "today" && todayView()}
+            {view.kind === "month" && <MonthView today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} />}
             {view.kind === "review" && reviewView()}
             {group && groupView(group)}
             {goal && goalView(goal)}
@@ -487,12 +534,13 @@ export default function TodoPage() {
         </div>
       )}
 
-      {panel.selection !== null && (editing || creating) && (
+      {panelOpen && (
         <TaskPanel
           key={panel.selection}
-          task={editing}
+          task={fresh}
           create={creating ?? undefined}
           parentTitle={parentTitle}
+          hasChildren={!!editing && placeTasks.some((t) => t.parentId === editing.id)}
           groups={groups}
           goals={goals}
           onClose={() => void panel.request(null)}

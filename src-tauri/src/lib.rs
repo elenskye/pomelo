@@ -8,6 +8,7 @@ mod modules;
 mod paths;
 mod settings;
 mod transfer;
+mod undo;
 
 use paths::DataPaths;
 use rusqlite::Connection;
@@ -20,6 +21,8 @@ use tauri_plugin_opener::OpenerExt;
 pub struct AppState {
     pub(crate) paths: DataPaths,
     db: Mutex<Option<Connection>>,
+    /// Undo / redo stacks for UI edits (see undo.rs).
+    history: Mutex<undo::History>,
     /// Set when the DB could not be opened/migrated; UI shows it instead of crashing.
     startup_error: Option<String>,
 }
@@ -39,8 +42,8 @@ impl AppState {
             Ok(conn)
         });
         match opened {
-            Ok(conn) => Self { paths, db: Mutex::new(Some(conn)), startup_error: None },
-            Err(e) => Self { paths, db: Mutex::new(None), startup_error: Some(e) },
+            Ok(conn) => Self { paths, db: Mutex::new(Some(conn)), history: Mutex::default(), startup_error: None },
+            Err(e) => Self { paths, db: Mutex::new(None), history: Mutex::default(), startup_error: Some(e) },
         }
     }
 
@@ -111,6 +114,8 @@ pub fn run() {
             transfer::import_preview,
             transfer::import_apply,
             transfer::export_to,
+            undo::undo_last,
+            undo::redo_last,
             backup::backups_list,
             backup::backup_now,
             backup::backup_daily,
@@ -130,6 +135,8 @@ pub fn run() {
             modules::kinds::kinds_delete,
             modules::kinds::kinds_reorder,
             modules::drawing::drawing_courses,
+            modules::drawing::drawing_courses_reorder,
+            modules::drawing::drawing_lessons_reorder,
             modules::drawing::drawing_course_create,
             modules::drawing::drawing_course_update,
             modules::drawing::drawing_course_delete,
@@ -138,6 +145,8 @@ pub fn run() {
             modules::drawing::drawing_lesson_update,
             modules::drawing::drawing_lesson_delete,
             modules::packing::packing_templates,
+            modules::packing::packing_templates_reorder,
+            modules::packing::packing_items_reorder,
             modules::packing::packing_template_create,
             modules::packing::packing_template_update,
             modules::packing::packing_template_delete,
@@ -168,6 +177,14 @@ pub fn run() {
             modules::todo::todo_task_delete,
             modules::todo::todo_agenda,
             modules::todo::todo_done_between,
+            modules::todo::todo_task_skip,
+            modules::todo::todo_logs,
+            modules::todo::todo_log,
+            modules::todo::todo_log_delete,
+            modules::todo::todo_month,
+            modules::todo::todo_groups_reorder,
+            modules::todo::todo_goals_reorder,
+            modules::todo::todo_tasks_reorder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

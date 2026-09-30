@@ -32,7 +32,7 @@ export function CourseDialog(props: {
         course ? {
           label: "删除课程",
           confirmTitle: `删除课程「${course.name}」？`,
-          confirmMessage: `其中的 ${course.total} 节课也会一起删除。删除后无法撤销，只能从备份里找回。`,
+          confirmMessage: `其中的 ${course.total} 节课也会一起删除。删错了可以按 ⌘Z 撤销。`,
           run: async () => {
             await m.deleteCourse.mutateAsync(course.id);
             toast(`已删除课程「${course.name}」`);

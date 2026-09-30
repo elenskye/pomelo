@@ -303,17 +303,17 @@ pub fn films_list(state: State<AppState>) -> Result<Vec<Film>, String> {
 
 #[tauri::command]
 pub fn films_create(state: State<AppState>, patch: FilmPatch) -> Result<Film, String> {
-    state.with_db(|c| create(c, patch))
+    state.with_undo("添加影视", |c| create(c, patch))
 }
 
 #[tauri::command]
 pub fn films_update(state: State<AppState>, id: i64, patch: FilmPatch) -> Result<Film, String> {
-    state.with_db(|c| update(c, id, patch))
+    state.with_undo("修改影视", |c| update(c, id, patch))
 }
 
 #[tauri::command]
 pub fn films_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete(c, id))
+    state.with_undo("删除影视", |c| delete(c, id))
 }
 
 #[cfg(test)]

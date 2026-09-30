@@ -104,7 +104,7 @@ export function CollectionPanel(props: {
     if (!item) return;
     const ok = await confirm({
       title: `删除《${item.title}》？`,
-      message: "删除后无法撤销，只能从备份里找回。",
+      message: "删错了可以按 ⌘Z 撤销。",
       confirmLabel: "删除",
       danger: true,
     });

@@ -70,20 +70,20 @@ export function BackupsSection() {
 
   const shown = showAll ? backups : backups.slice(0, COLLAPSED);
   return (
-    <Section title="备份">
-      <div className="flex items-center justify-between gap-4 border-b px-4 py-3">
-        <p className="text-sm text-muted-foreground">
-          每天第一次打开时自动备份。每日备份保留最近 30 份，更早的每月留一份；其他备份不会自动删除。
-        </p>
-        <div className="flex shrink-0 gap-2">
+    <Section
+      title="备份"
+      help="每天第一次打开 App 时自动备份一份。每日备份保留最近 30 份，更早的每个月只留一份；手动、升级前、导入前、恢复前的备份不会自动删除。恢复前会先备份现在的数据。"
+      actions={
+        <>
           <Button onClick={() => void api.revealBackupsDir().catch((e) => toast(errorText(e), "error"))}>
             <FolderOpen size={14} strokeWidth={1.5} /> 打开文件夹
           </Button>
           <Button variant="primary" disabled={busy} onClick={() => void backupNow()}>
             <DatabaseBackup size={14} strokeWidth={1.5} /> 立即备份
           </Button>
-        </div>
-      </div>
+        </>
+      }
+    >
       {backups.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-muted-foreground">还没有备份</p>
       ) : (

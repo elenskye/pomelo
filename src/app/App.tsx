@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, TriangleAlert } from "lucide-react";
+import { errorText, useToast } from "@/shared/feedback";
 import { api, SETTING_LAST_ROUTE, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
 import { Sidebar } from "./Sidebar";
@@ -59,6 +60,33 @@ function useDailyBackup(enabled: boolean) {
   }, [enabled, qc]);
 }
 
+/** ⌘Z / ⌘⇧Z undo / redo the last edits (Rust keeps the history). Text fields keep their own undo. */
+function useUndoKeys(enabled: boolean) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = async (e: KeyboardEvent) => {
+      if (!e.metaKey || e.key.toLowerCase() !== "z" || e.altKey || e.ctrlKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (document.querySelector("dialog[open]")) return;
+      e.preventDefault();
+      const redo = e.shiftKey;
+      try {
+        const r = await (redo ? api.redo() : api.undo());
+        if (!r.label) return toast(redo ? "没有可以重做的了" : "没有可以撤销的了");
+        await qc.invalidateQueries();
+        toast(`${redo ? "已重做" : "已撤销"}：${r.label}`);
+      } catch (err) {
+        toast(errorText(err), "error");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [enabled, qc, toast]);
+}
+
 function StartupError({ info }: { info: AppInfo }) {
   return (
     <div data-tauri-drag-region className="flex h-full flex-col items-center justify-center gap-3 px-16 text-center">
@@ -78,6 +106,7 @@ export function App() {
   const ok = !!info.data && !info.data.startupError;
   useRouteMemory(ok);
   useDailyBackup(ok);
+  useUndoKeys(ok);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (

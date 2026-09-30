@@ -6,7 +6,7 @@ import { moduleLabel } from "@/app/modules";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
-import { Row, RowAction } from "./layout";
+import { Row } from "./layout";
 
 const FILTERS = [{ name: "Pomelo 数据文件", extensions: ["json"] }];
 
@@ -28,13 +28,15 @@ export function ExportRow() {
     }
   };
   return (
-    <Row label="导出">
-      <RowAction hint="把所有模块存成一个 Pomelo 数据文件，适合长期保存，也能再导入">
+    <Row
+      label="导出"
+      help="把所有模块存成一个 Pomelo 数据文件（.json），适合长期保存、换电脑，也能再导入。"
+      actions={
         <Button onClick={() => void run()}>
           <FileOutput size={14} strokeWidth={1.5} /> 导出…
         </Button>
-      </RowAction>
-    </Row>
+      }
+    />
   );
 }
 
@@ -76,12 +78,15 @@ export function ImportRow() {
   };
 
   return (
-    <Row label="导入">
-      <RowAction hint="从 Pomelo 数据文件导入，比如导出的文件，或由 Excel 转换来的文件">
+    <Row
+      label="导入"
+      help="从 Pomelo 数据文件导入，比如导出的文件、由 Excel 或 Markdown 待办转换来的文件。文件里有的模块会被替换，替换前会先确认并备份。"
+      actions={
         <Button onClick={() => void run()}>
           <FileInput size={14} strokeWidth={1.5} /> 选择文件…
         </Button>
-      </RowAction>
+      }
+    >
       {confirmDialog}
     </Row>
   );

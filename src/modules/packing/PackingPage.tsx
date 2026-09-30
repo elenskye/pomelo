@@ -6,6 +6,7 @@ import { useKinds, UNCATEGORIZED, type Kind } from "@/shared/kinds/api";
 import { KindManager } from "@/shared/kinds/KindManager";
 import { NameDialog } from "@/shared/NameDialog";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
+import { DragHandle, useSortable } from "@/shared/sortable";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } from "@/shared/ui";
 import { formatDay } from "@/shared/dates";
 import {
@@ -24,8 +25,29 @@ import { TripDialog } from "./TripDialog";
 
 type Tab = "trips" | "templates";
 
-/** Items grouped by 类别, in the user's 类别 order; 未分类 last. */
-function GroupedItems(props: { items: PackItem[]; kinds: Kind[]; row: (it: PackItem) => ReactNode; groupNote?: (items: PackItem[]) => ReactNode }) {
+/** One 类别's rows; draggable when `onReorder` is set. */
+function SortableRows(props: { items: PackItem[]; row: (it: PackItem, grip: ReactNode) => ReactNode; onReorder?: (ids: number[]) => void }) {
+  const sort = useSortable((ids) => props.onReorder?.(ids));
+  return (
+    <div ref={sort.listRef} className="overflow-hidden rounded-card border bg-card">
+      {props.items.map((it) => (
+        <div key={it.id} {...sort.item(it.id)} className="[&:last-child>div]:border-b-0">
+          {props.row(it, props.onReorder && props.items.length > 1 ? <DragHandle {...sort.handle(it.id)} label="拖动物品排序" /> : null)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Items grouped by 类别, in the user's 类别 order; 未分类 last. Dragging reorders within a 类别. */
+function GroupedItems(props: {
+  items: PackItem[];
+  kinds: Kind[];
+  row: (it: PackItem, grip: ReactNode) => ReactNode;
+  groupNote?: (items: PackItem[]) => ReactNode;
+  /** All items of the list in their new order (only when every item is shown). */
+  onReorder?: (ids: number[]) => void;
+}) {
   const groups = [
     ...props.kinds.map((k) => ({ key: String(k.id), name: k.name, items: props.items.filter((i) => i.kindId === k.id) })),
     { key: "none", name: UNCATEGORIZED, items: props.items.filter((i) => i.kindId === null || !props.kinds.some((k) => k.id === i.kindId)) },
@@ -38,7 +60,18 @@ function GroupedItems(props: { items: PackItem[]; kinds: Kind[]; row: (it: PackI
             {g.name}
             <span className="text-xs">{props.groupNote?.(g.items) ?? g.items.length}</span>
           </h3>
-          <div className="rounded-card border bg-card">{g.items.map(props.row)}</div>
+          <SortableRows
+            items={g.items}
+            row={props.row}
+            onReorder={
+              props.onReorder &&
+              ((ids) => {
+                const inGroup = new Set(ids);
+                const queue = [...ids];
+                props.onReorder!(props.items.map((it) => (inGroup.has(it.id) ? queue.shift()! : it.id)));
+              })
+            }
+          />
         </section>
       ))}
     </div>
@@ -63,24 +96,27 @@ function SideList<T extends { id: number }>(props: {
   items: T[];
   currentId: number | null;
   onSelect: (id: number) => void;
-  render: (it: T) => ReactNode;
+  render: (it: T, grip: ReactNode) => ReactNode;
   newLabel: string;
   onNew: () => void;
+  onReorder?: (ids: number[]) => void;
 }) {
+  const sort = useSortable((ids) => props.onReorder?.(ids));
   return (
     <nav aria-label={props.label} className="flex w-56 shrink-0 flex-col">
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+      <div ref={sort.listRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
         {props.items.map((it) => (
           <button
             key={it.id}
             type="button"
             aria-current={it.id === props.currentId}
             onClick={() => props.onSelect(it.id)}
-            className={`w-full space-y-1.5 rounded-control px-3 py-2.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              it.id === props.currentId ? "bg-accent" : "hover:bg-muted/70"
+            {...sort.item(it.id)}
+            className={`group w-full space-y-1.5 rounded-control px-3 py-2.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              it.id === props.currentId ? "bg-accent" : "bg-background hover:bg-muted/70"
             }`}
           >
-            {props.render(it)}
+            {props.render(it, props.onReorder && props.items.length > 1 ? <DragHandle {...sort.handle(it.id)} label={`拖动${props.label}排序`} /> : null)}
           </button>
         ))}
       </div>
@@ -138,7 +174,7 @@ export default function PackingPage() {
 
   const visible = tab === "trips" && onlyUnpacked ? items.filter((i) => !i.packed) : items;
 
-  const tripRow = (it: PackItem) => (
+  const tripRow = (it: PackItem, grip: ReactNode) => (
     <div
       key={it.id}
       role="checkbox"
@@ -151,8 +187,9 @@ export default function PackingPage() {
           mut.quickUpdateItem.mutate({ list: "trip", id: it.id, patch: { packed: !it.packed } });
         }
       }}
-      className="group flex min-h-10 cursor-pointer items-center gap-3 border-b px-3 py-1.5 outline-none transition-colors duration-150 last:border-b-0 hover:bg-muted/70 focus-visible:bg-muted/70"
+      className="group flex min-h-10 cursor-pointer items-center gap-3 border-b bg-card py-1.5 pr-3 pl-1 outline-none transition-colors duration-150 hover:bg-muted/70 focus-visible:bg-muted/70"
     >
+      <span className="flex w-3 shrink-0 justify-center">{grip}</span>
       {it.packed ? (
         <CheckCircle2 size={18} strokeWidth={1.75} className="shrink-0" style={{ color: "var(--status-done-fg)" }} />
       ) : (
@@ -168,14 +205,15 @@ export default function PackingPage() {
     </div>
   );
 
-  const templateRow = (it: PackItem) => (
+  const templateRow = (it: PackItem, grip: ReactNode) => (
     <div
       key={it.id}
       onClick={() => void panel.request(it.id)}
-      className={`group flex min-h-10 cursor-pointer items-center gap-3 border-b px-3 py-1.5 transition-colors duration-150 last:border-b-0 ${
-        it.id === sel ? "bg-accent" : "hover:bg-muted/70"
+      className={`group flex min-h-10 cursor-pointer items-center gap-3 border-b py-1.5 pr-3 pl-1 transition-colors duration-150 ${
+        it.id === sel ? "bg-accent" : "bg-card hover:bg-muted/70"
       }`}
     >
+      <span className="flex w-3 shrink-0 justify-center">{grip}</span>
       <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
       <span className="min-w-0 flex-1">
         {it.name}
@@ -205,6 +243,7 @@ export default function PackingPage() {
         kinds={kinds}
         row={tab === "trips" ? tripRow : templateRow}
         groupNote={tab === "trips" ? (xs) => `${xs.filter((x) => x.packed).length}/${xs.length}` : undefined}
+        onReorder={parentId !== null && visible.length === items.length ? (ids) => mut.reorderItems.mutate({ list, parentId, ids }) : undefined}
       />
     );
 
@@ -341,9 +380,13 @@ export default function PackingPage() {
               onSelect={(id) => void switchTo(() => setTemplateId(id))}
               newLabel="新模板"
               onNew={() => void switchTo(() => setTemplateDialog("new"))}
-              render={(t) => (
+              onReorder={(ids) => mut.reorderTemplates.mutate(ids)}
+              render={(t, grip) => (
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="truncate">{t.name}</span>
+                  <span className="-ml-2 flex min-w-0 items-center gap-0.5">
+                    {grip}
+                    <span className="truncate">{t.name}</span>
+                  </span>
                   <span className="shrink-0 text-xs text-muted-foreground">{t.itemCount} 件</span>
                 </div>
               )}

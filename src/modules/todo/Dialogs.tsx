@@ -68,7 +68,7 @@ export function GroupDialog(props: { group: TodoGroup | null; goalCount: number;
   const del = async () => {
     if (!group) return;
     const what = props.goalCount > 0 ? `里面的 ${props.goalCount} 个目标和所有任务` : "里面的所有任务";
-    if (!(await confirm({ title: `删除分组「${group.name}」？`, message: `${what}会一起删除。删除后只能从备份里找回。`, confirmLabel: "删除", danger: true }))) return;
+    if (!(await confirm({ title: `删除分组「${group.name}」？`, message: `${what}会一起删除。删错了可以按 ⌘Z 撤销。`, confirmLabel: "删除", danger: true }))) return;
     try {
       await m.deleteGroup.mutateAsync(group.id);
       toast(`已删除分组「${group.name}」`);
@@ -146,7 +146,7 @@ export function GoalDialog(props: {
 
   const del = async () => {
     if (!goal) return;
-    const msg = goal.total > 0 ? `目标里的任务会一起删除。删除后只能从备份里找回。` : "删除后只能从备份里找回。";
+    const msg = goal.total > 0 ? `目标里的任务会一起删除。删错了可以按 ⌘Z 撤销。` : "删错了可以按 ⌘Z 撤销。";
     if (!(await confirm({ title: `删除目标「${goal.name}」？`, message: msg, confirmLabel: "删除", danger: true }))) return;
     try {
       await m.deleteGoal.mutateAsync(goal.id);

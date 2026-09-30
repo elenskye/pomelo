@@ -36,6 +36,9 @@ export const api = {
   backupRestore: (fileName: string) => invoke<{ safety: BackupInfo }>("backup_restore", { fileName }),
   revealBackupsDir: () => invoke<void>("reveal_backups_dir"),
   revealDataDir: () => invoke<void>("reveal_data_dir"),
+  /** label = the step undone / redone; null = nothing to do. */
+  undo: () => invoke<{ label: string | null }>("undo_last"),
+  redo: () => invoke<{ label: string | null }>("redo_last"),
   settingsGet: <T>(key: string) => invoke<T | null>("settings_get", { key }),
   settingsSet: (key: string, value: unknown) => invoke<void>("settings_set", { key, value }),
 };

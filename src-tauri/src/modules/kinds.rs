@@ -227,22 +227,22 @@ pub fn kinds_list(state: State<AppState>, module: String) -> Result<Vec<Kind>, S
 
 #[tauri::command]
 pub fn kinds_create(state: State<AppState>, module: String, name: String) -> Result<Kind, String> {
-    state.with_db(|c| create(c, &module, &name))
+    state.with_undo("添加类型", |c| create(c, &module, &name))
 }
 
 #[tauri::command]
 pub fn kinds_rename(state: State<AppState>, id: i64, name: String) -> Result<Kind, String> {
-    state.with_db(|c| rename(c, id, &name))
+    state.with_undo("重命名类型", |c| rename(c, id, &name))
 }
 
 #[tauri::command]
 pub fn kinds_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete(c, id))
+    state.with_undo("删除类型", |c| delete(c, id))
 }
 
 #[tauri::command]
 pub fn kinds_reorder(state: State<AppState>, module: String, ids: Vec<i64>) -> Result<Vec<Kind>, String> {
-    state.with_db(|c| reorder(c, &module, &ids))
+    state.with_undo("调整类型顺序", |c| reorder(c, &module, &ids))
 }
 
 #[cfg(test)]

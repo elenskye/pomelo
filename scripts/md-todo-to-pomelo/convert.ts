@@ -5,7 +5,7 @@
 // - `### heading` → group (emoji kept); `- [ ]` / `- [x]` → task (indent = subtask); `<!-- {"fold":true} -->` → collapsed
 // - in the Pick Up group, GOAL_TITLES become goals; other items stay tasks
 // - plain bullets under a task → its note (JY Gift's gift ideas); a top-level plain bullet → an undone task
-//   (「每周六交周报」; its weekly repeat is set up once repeating tasks exist)
+//   (「每周六交周报」; turned into a 重复 task by hand in the app)
 // - any line mentioning 密码 is dropped, never written out
 // - dates in titles: 「1/22–1/25」 or 「1 月 27–29 日」 → time range; 「10 月 14 日」 → due date (months before the
 //   current one roll into next year)

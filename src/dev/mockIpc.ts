@@ -2,6 +2,7 @@
 // Mirrors the Rust command surface loosely (not the source of truth — Rust rules/tests are).
 // Keep in sync when adding commands. Never imported in production builds (guarded in main.tsx).
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { addDays, parseYmd, toYmd } from "@/shared/dates";
 
 type Args = Record<string, unknown>;
 type Row = Record<string, unknown> & { id: number; title: string; status: string; finishedMonth: string | null };
@@ -198,32 +199,106 @@ const addBackup = (label: string) => {
   return b;
 };
 
-// ---- 一步一步 (todo): mirrors todo.rs rules loosely (placement, cascade, 今天 / 已过期) ----
+// ---- 一步一步 (todo): mirrors todo.rs rules loosely (placement, cascade, types, 今天 / 已过期) ----
 type TGroup = { id: number; name: string; sortOrder: number; createdAt: string; updatedAt: string };
 type TGoal = { id: number; groupId: number; name: string; status: string; startDate: string | null; endDate: string | null; note: string | null; review: string | null; sortOrder: number; createdAt: string; updatedAt: string };
 type TTask = {
   id: number; groupId: number; goalId: number | null; parentId: number | null; title: string; note: string | null; link: string | null;
   planDate: string | null; startDate: string | null; dueDate: string | null; done: boolean; doneAt: string | null; collapsed: boolean;
   sortOrder: number; createdAt: string; updatedAt: string;
+  taskType: "normal" | "repeat" | "checkin" | "progress"; repeatRule: string | null; repeatTotal: number | null; repeatUntil: string | null;
+  target: number | null; unit: string | null; period: string | null;
 };
+type TLog = { id: number; taskId: number; day: string; amount: number; createdAt: string };
 let tGroups: TGroup[] = [];
 let tGoals: TGoal[] = [];
 let tTasks: TTask[] = [];
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const dayOffset = (n: number) => ymd(new Date(Date.now() + n * 86400000));
+let tLogs: TLog[] = [];
+const ymd = toYmd;
+const mockToday = () => ymd(new Date());
+const dayOffset = (n: number) => addDays(mockToday(), n);
+const isoWeekday = (d: string) => ((parseYmd(d).getDay() + 6) % 7) + 1;
 const isLeaf = (t: TTask) => !tTasks.some((c) => c.parentId === t.id);
+const logsOf = (id: number) => tLogs.filter((l) => l.taskId === id);
 const tGroupOut = (g: TGroup) => ({ ...g, open: tTasks.filter((t) => t.groupId === g.id && !t.done && isLeaf(t)).length });
 const tGoalOut = (g: TGoal) => {
   const ls = tTasks.filter((t) => t.goalId === g.id && isLeaf(t));
   return { ...g, total: ls.length, done: ls.filter((t) => t.done).length };
 };
+const ruleNext = (rule: string, anchor: string, completed: string): string => {
+  const [kind, arg = ""] = rule.split(":");
+  if (kind === "daily") return addDays(anchor, 1);
+  if (kind === "weekly") {
+    const ds = arg.split(",").map(Number);
+    for (let i = 1; i <= 7; i++) if (ds.includes(isoWeekday(addDays(anchor, i)))) return addDays(anchor, i);
+  }
+  if (kind === "monthly") {
+    const d = parseYmd(anchor);
+    for (let k = 0; k < 24; k++) {
+      const last = new Date(d.getFullYear(), d.getMonth() + k + 1, 0).getDate();
+      const c = ymd(new Date(d.getFullYear(), d.getMonth() + k, Math.min(Number(arg), last)));
+      if (c > anchor) return c;
+    }
+  }
+  const n = Number(arg.slice(0, -1));
+  if (kind === "every") return addDays(anchor, arg.endsWith("w") ? 7 * n : n);
+  return addDays(completed, n); // after
+};
+const scheduled = (rule: string | null, d: string) => rule === "daily" || (!!rule?.startsWith("weekly:") && rule.slice(7).split(",").map(Number).includes(isoWeekday(d)));
+const periodStart = (p: string | null, today: string) =>
+  p === "day" ? today : p === "week" ? addDays(today, 1 - isoWeekday(today)) : p === "month" ? `${today.slice(0, 7)}-01` : "";
+const tTaskOut = (t: TTask) => {
+  const today = mockToday();
+  const ls = logsOf(t.id);
+  const total = ls.reduce((n, l) => n + l.amount, 0);
+  const since = periodStart(t.period, today);
+  let streak = 0;
+  if (t.taskType === "checkin") {
+    const days = new Set(ls.map((l) => l.day));
+    for (let i = 0; i < 400; i++) {
+      const d = addDays(today, -i);
+      if (t.planDate && d < t.planDate) break;
+      if (!scheduled(t.repeatRule, d)) continue;
+      if (days.has(d)) streak++;
+      else if (i > 0) break;
+    }
+  }
+  return {
+    ...t,
+    count: t.taskType === "progress" ? ls.filter((l) => l.day >= since && l.day <= today).reduce((n, l) => n + l.amount, 0) : t.taskType === "normal" ? 0 : ls.length,
+    totalAmount: total,
+    loggedToday: ls.some((l) => l.day === today),
+    streak,
+  };
+};
 const subtree = (id: number): TTask[] => tTasks.filter((t) => t.parentId === id).flatMap((t) => [t, ...subtree(t.id)]);
 const reopenUp = (t: TTask) => {
-  for (let p = tTasks.find((x) => x.id === t.parentId); p; p = tTasks.find((x) => x.id === p!.parentId)) {
-    p.done = false;
-    p.doneAt = null;
+  for (let p = tTasks.find((x) => x.id === t.parentId); p; p = tTasks.find((x) => x.id === p!.parentId)) Object.assign(p, { done: false, doneAt: null });
+};
+const markDone = (t: TTask) => {
+  for (const x of [t, ...subtree(t.id)]) if (!x.done) Object.assign(x, { done: true, doneAt: now() });
+  for (let c = t; c.parentId; ) {
+    const p = tTasks.find((x) => x.id === c.parentId)!;
+    if (tTasks.some((x) => x.parentId === p.id && !x.done)) break;
+    Object.assign(p, { done: true, doneAt: p.doneAt ?? now() });
+    c = p;
   }
 };
+const settle = (t: TTask) => {
+  const o = tTaskOut(t);
+  const reached = t.taskType === "checkin" ? (t.repeatTotal ? o.count >= t.repeatTotal : null) : t.taskType === "progress" && t.period === "all" ? o.totalAmount >= (t.target ?? Infinity) : null;
+  if (reached === true && !t.done) markDone(t);
+  if (reached === false && t.done) Object.assign(t, { done: false, doneAt: null });
+};
+const advance = (t: TTask, completed: string) => {
+  const anchor = t.dueDate ?? t.planDate!;
+  const next = ruleNext(t.repeatRule!, anchor, completed);
+  if ((t.repeatTotal && logsOf(t.id).length >= t.repeatTotal) || (t.repeatUntil && next > t.repeatUntil)) return markDone(t);
+  const delta = Math.round((parseYmd(next).getTime() - parseYmd(anchor).getTime()) / 86400000);
+  const shift = (d: string | null) => (d ? addDays(d, delta) : null);
+  Object.assign(t, { planDate: shift(t.planDate), startDate: shift(t.startDate), dueDate: shift(t.dueDate) });
+};
+const addLog = (taskId: number, day: string, amount = 1) => tLogs.push({ id: nextId++, taskId, day, amount, createdAt: now() });
 const addTGroup = (name: string) => {
   const g = { id: nextId++, name, sortOrder: tGroups.length + 1, createdAt: now(), updatedAt: now() };
   tGroups.push(g);
@@ -239,23 +314,28 @@ const addTTask = (p: Partial<TTask> & { title: string }) => {
   if (p.parentId) {
     const parent = tTasks.find((t) => t.id === p.parentId);
     if (!parent) throw "找不到上一层任务，可能已经被删除了";
+    if (parent.taskType !== "normal") throw "重复、打卡、进度条任务下面不能加子任务";
     place = { groupId: parent.groupId, goalId: parent.goalId, parentId: parent.id };
   } else if (p.goalId) {
     place = { groupId: tGoals.find((g) => g.id === p.goalId)!.groupId, goalId: p.goalId, parentId: null };
   } else if (!tGroups.some((g) => g.id === place.groupId)) throw "请选择分组";
   if (!p.title.trim()) throw "任务不能为空";
   if (p.startDate && !p.dueDate) throw "时间段要有结束日期";
+  if (p.taskType === "repeat" && !p.planDate && !p.dueDate) throw "重复任务要设计划日期或截止日期，从那天开始重复";
+  if (p.taskType === "progress" && !p.target) throw "请设置目标数量（1～100000）";
   const sibs = tTasks.filter((t) => t.groupId === place.groupId && t.goalId === place.goalId && t.parentId === place.parentId);
   const t: TTask = {
     note: null, link: null, planDate: null, startDate: null, dueDate: null, done: false, doneAt: null, collapsed: false, createdAt: now(), updatedAt: now(),
+    taskType: "normal", repeatRule: null, repeatTotal: null, repeatUntil: null, target: null, unit: null, period: null,
     ...p, ...place, id: nextId++, title: p.title.trim(), sortOrder: sibs.length + 1,
   };
+  if (t.taskType === "progress") t.period ??= "all";
   tTasks.push(t);
   reopenUp(t);
   return t;
 };
 const placedOut = (t: TTask) => ({
-  ...t,
+  ...tTaskOut(t),
   groupName: tGroups.find((g) => g.id === t.groupId)?.name ?? "",
   goalName: tGoals.find((g) => g.id === t.goalId)?.name ?? null,
   parentTitle: tTasks.find((x) => x.id === t.parentId)?.title ?? null,
@@ -270,6 +350,20 @@ const byPlace = (a: TTask, b: TTask) => {
   for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i];
   return 0;
 };
+const reorder = <T extends { id: number; sortOrder: number }>(rows: T[], ids: number[]) => ids.forEach((id, i) => (rows.find((r) => r.id === id)!.sortOrder = i + 1));
+const doneItems = (from: string, to: string) => {
+  const out = tTasks
+    .filter((t) => t.done && t.doneAt && ymd(new Date(t.doneAt)) >= from && ymd(new Date(t.doneAt)) <= to)
+    .map((t) => ({ ...placedOut(t), day: ymd(new Date(t.doneAt!)), at: t.doneAt!, detail: t.taskType === "normal" ? null : "全部完成" }));
+  for (const l of tLogs.filter((x) => x.day >= from && x.day <= to)) {
+    const t = tTasks.find((x) => x.id === l.taskId);
+    if (!t) continue;
+    const nth = logsOf(t.id).filter((x) => x.day < l.day || (x.day === l.day && x.id <= l.id)).length;
+    const detail = t.taskType === "repeat" ? `第 ${nth} 次` : t.taskType === "checkin" ? "打卡" : `+${l.amount}${t.unit ? ` ${t.unit}` : ""}`;
+    out.push({ ...placedOut(t), day: l.day, at: l.createdAt, detail });
+  }
+  return out.sort((a, b) => (a.day + a.at).localeCompare(b.day + b.at));
+};
 {
   const study = addTGroup("🖥️ 学业");
   const proj = addTGroup("📌 个人项目");
@@ -278,59 +372,84 @@ const byPlace = (a: TTask, b: TTask) => {
   addTTask({ groupId: study.id, title: "**周五** 交实验记录", dueDate: dayOffset(-2) });
   addTTask({ groupId: study.id, title: "和导师约进度会", dueDate: dayOffset(0), link: "https://example.com" });
   addTTask({ groupId: study.id, title: "报告提交窗口", startDate: dayOffset(-1), dueDate: dayOffset(2) });
-  addTTask({ groupId: study.id, title: "期末展示", dueDate: dayOffset(20) });
-  const before = addTTask({ groupId: study.id, title: "**答辩前**提交：", collapsed: false });
+  const weekly = addTTask({ groupId: study.id, title: "交 Weekly Progress Report", taskType: "repeat", repeatRule: "weekly:6", repeatTotal: 20, dueDate: addDays(dayOffset(0), (6 - isoWeekday(dayOffset(0)) + 7) % 7) });
+  for (let i = 1; i <= 6; i++) addLog(weekly.id, dayOffset(-7 * i));
+  const before = addTTask({ groupId: study.id, title: "**答辩前**提交：" });
   ["最终报告", "个人总结", "展示 PPT"].forEach((t, i) => addTTask({ parentId: before.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null }));
   const site = addTGoal(proj.id, "个人网站上线", { startDate: dayOffset(-10), endDate: dayOffset(40), note: "先做简单版" });
   ["选框架", "写首页", "买域名"].forEach((t, i) => addTTask({ goalId: site.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null, planDate: i === 1 ? dayOffset(0) : null }));
-  addTGoal(proj.id, "学日语", { status: "paused" });
+  const jp = addTGoal(proj.id, "学日语");
+  const words = addTTask({ goalId: jp.id, title: "背单词", taskType: "checkin", repeatRule: "daily", planDate: dayOffset(-10), repeatTotal: 30 });
+  [1, 2, 3, 5, 6].forEach((i) => addLog(words.id, dayOffset(-i)));
+  const read = addTTask({ groupId: proj.id, title: "今年读 20 本书", taskType: "progress", target: 20, unit: "本", period: "all", dueDate: `${mockToday().slice(0, 4)}-12-31` });
+  addLog(read.id, dayOffset(-20), 5);
+  addLog(read.id, dayOffset(-3), 2);
+  const apply = addTTask({ groupId: proj.id, title: "投简历", taskType: "progress", target: 5, unit: "份", period: "week" });
+  addLog(apply.id, dayOffset(0), 1);
   addTTask({ groupId: proj.id, title: "整理照片", planDate: dayOffset(-3), note: "挑 20 张" });
   addTTask({ groupId: later.id, title: "办护照" });
 }
+// Undo / redo mock: whole-state snapshots of the todo tables around each edit.
+type Snap = { label: string; before: string; after: string };
+const snapState = () => JSON.stringify({ tGroups, tGoals, tTasks, tLogs });
+const loadState = (s: string) => ({ tGroups, tGoals, tTasks, tLogs } = JSON.parse(s));
+let undoStack: Snap[] = [];
+let redoStack: Snap[] = [];
+const undoable = (label: string, f: (a: Args) => unknown) => (a: Args) => {
+  const before = snapState();
+  const out = f(a);
+  const after = snapState();
+  if (after !== before) {
+    undoStack.push({ label, before, after });
+    redoStack = [];
+  }
+  return out;
+};
 const todoHandlers: Record<string, (a: Args) => unknown> = {
   todo_groups: () => [...tGroups].sort((a, b) => a.sortOrder - b.sortOrder).map(tGroupOut),
-  todo_group_create: (a) => {
+  todo_group_create: undoable("添加分组", (a) => {
     const name = String(a.name).trim();
     if (!name) throw "分组名不能为空";
     if (tGroups.some((g) => g.name === name)) throw `已经有叫「${name}」的分组了`;
     return tGroupOut(addTGroup(name));
-  },
-  todo_group_rename: (a) => {
+  }),
+  todo_group_rename: undoable("重命名分组", (a) => {
     const g = tGroups.find((x) => x.id === a.id)!;
     g.name = String(a.name).trim();
     return tGroupOut(g);
-  },
-  todo_group_delete: (a) => {
+  }),
+  todo_group_delete: undoable("删除分组", (a) => {
     tGroups = tGroups.filter((g) => g.id !== a.id);
     tGoals = tGoals.filter((g) => g.groupId !== a.id);
     tTasks = tTasks.filter((t) => t.groupId !== a.id);
     return null;
-  },
+  }),
   todo_goals: () => [...tGoals].sort((a, b) => a.sortOrder - b.sortOrder).map(tGoalOut),
-  todo_goal_create: (a) => {
+  todo_goal_create: undoable("添加目标", (a) => {
     const p = a.patch as Partial<TGoal>;
     if (!p.groupId) throw "请选择分组";
     if (!p.name?.trim()) throw "目标名不能为空";
     return tGoalOut(addTGoal(p.groupId, p.name.trim(), p));
-  },
-  todo_goal_update: (a) => {
+  }),
+  todo_goal_update: undoable("修改目标", (a) => {
     const g = tGoals.find((x) => x.id === a.id)!;
     const p = a.patch as Partial<TGoal>;
     if (p.groupId && p.groupId !== g.groupId) tTasks.filter((t) => t.goalId === g.id).forEach((t) => (t.groupId = p.groupId!));
     Object.assign(g, p, { updatedAt: now() });
     return tGoalOut(g);
-  },
-  todo_goal_delete: (a) => {
+  }),
+  todo_goal_delete: undoable("删除目标", (a) => {
     tGoals = tGoals.filter((g) => g.id !== a.id);
     tTasks = tTasks.filter((t) => t.goalId !== a.id);
     return null;
-  },
+  }),
   todo_tasks: (a) =>
     tTasks
       .filter((t) => (a.goalId ? t.goalId === a.goalId : t.groupId === a.groupId && t.goalId === null))
-      .sort((x, y) => x.sortOrder - y.sortOrder || x.id - y.id),
-  todo_task_create: (a) => addTTask(a.patch as TTask),
-  todo_task_update: (a) => {
+      .sort((x, y) => x.sortOrder - y.sortOrder || x.id - y.id)
+      .map(tTaskOut),
+  todo_task_create: undoable("添加任务", (a) => tTaskOut(addTTask(a.patch as TTask))),
+  todo_task_update: undoable("修改任务", (a) => {
     const t = tTasks.find((x) => x.id === a.id);
     if (!t) throw "找不到这个任务，可能已经被删除了";
     const { groupId, goalId, ...p } = a.patch as Partial<TTask>;
@@ -339,51 +458,129 @@ const todoHandlers: Record<string, (a: Args) => unknown> = {
       const g = goalId ? tGoals.find((x) => x.id === goalId)!.groupId : (groupId ?? t.groupId);
       for (const x of [t, ...subtree(t.id)]) Object.assign(x, { groupId: g, goalId: goalId ?? null });
     }
+    if (p.taskType && p.taskType !== "normal" && tTasks.some((x) => x.parentId === t.id)) throw "有子任务的任务只能是普通任务";
     Object.assign(t, p, { updatedAt: now() });
     if (t.startDate && !t.dueDate) throw "时间段要有结束日期";
-    return t;
-  },
-  todo_task_set_done: (a) => {
+    settle(t);
+    return tTaskOut(t);
+  }),
+  todo_task_set_done: undoable("勾选任务", (a) => {
     const t = tTasks.find((x) => x.id === a.id)!;
-    if (a.done) {
-      for (const x of [t, ...subtree(t.id)]) if (!x.done) Object.assign(x, { done: true, doneAt: now() });
-      for (let c = t; c.parentId; ) {
-        const p = tTasks.find((x) => x.id === c.parentId)!;
-        if (tTasks.some((x) => x.parentId === p.id && !x.done)) break;
-        Object.assign(p, { done: true, doneAt: p.doneAt ?? now() });
-        c = p;
-      }
-    } else {
-      Object.assign(t, { done: false, doneAt: null });
-      reopenUp(t);
-    }
+    const today = mockToday();
+    if (t.taskType === "normal") {
+      if (a.done) markDone(t);
+      else Object.assign(t, { done: false, doneAt: null }), reopenUp(t);
+    } else if (t.taskType === "repeat") {
+      if (a.done && !t.done) addLog(t.id, today), advance(t, today);
+      else if (!a.done && t.done) Object.assign(t, { done: false, doneAt: null });
+    } else if (t.taskType === "checkin") {
+      if (a.done && !logsOf(t.id).some((l) => l.day === today)) addLog(t.id, today);
+      if (!a.done) tLogs = tLogs.filter((l) => !(l.taskId === t.id && l.day === today));
+      settle(t);
+    } else if (a.done && !t.done) {
+      addLog(t.id, today);
+      settle(t);
+    } else if (!a.done && t.done) Object.assign(t, { done: false, doneAt: null });
     return null;
-  },
-  todo_task_delete: (a) => {
+  }),
+  todo_task_skip: undoable("跳过一次", (a) => {
+    advance(tTasks.find((x) => x.id === a.id)!, mockToday());
+    return null;
+  }),
+  todo_logs: (a) => logsOf(a.taskId as number).sort((x, y) => y.day.localeCompare(x.day) || y.id - x.id),
+  todo_log: undoable("记录", (a) => {
+    const t = tTasks.find((x) => x.id === a.taskId)!;
+    const day = (a.day as string) ?? mockToday();
+    if (day > mockToday()) throw "不能记未来的日子";
+    if (t.taskType === "checkin") {
+      const had = logsOf(t.id).some((l) => l.day === day);
+      if (had) tLogs = tLogs.filter((l) => !(l.taskId === t.id && l.day === day));
+      else addLog(t.id, day);
+    } else addLog(t.id, day, (a.amount as number) ?? 1);
+    settle(t);
+    return null;
+  }),
+  todo_log_delete: undoable("删除记录", (a) => {
+    const l = tLogs.find((x) => x.id === a.id)!;
+    tLogs = tLogs.filter((x) => x.id !== a.id);
+    settle(tTasks.find((t) => t.id === l.taskId)!);
+    return null;
+  }),
+  todo_task_delete: undoable("删除任务", (a) => {
     const gone = new Set([a.id as number, ...subtree(a.id as number).map((t) => t.id)]);
     tTasks = tTasks.filter((t) => !gone.has(t.id));
+    tLogs = tLogs.filter((l) => !gone.has(l.taskId));
     return null;
-  },
+  }),
+  todo_groups_reorder: undoable("调整顺序", (a) => reorder(tGroups, a.ids as number[])),
+  todo_goals_reorder: undoable("调整顺序", (a) => reorder(tGoals, a.ids as number[])),
+  todo_tasks_reorder: undoable("调整顺序", (a) => reorder(tTasks, a.ids as number[])),
   todo_agenda: (a) => {
     const today = String(a.today);
     const active = (t: TTask) => !t.goalId || tGoals.find((g) => g.id === t.goalId)?.status === "active";
     const hit = (t: TTask) =>
       (t.planDate !== null && t.planDate <= today) || (t.dueDate !== null && t.dueDate <= today) || (t.startDate !== null && t.startDate <= today && today <= t.dueDate!);
     const late = (t: TTask) => (t.dueDate ? t.dueDate < today : t.planDate !== null && t.planDate < today);
-    const open = tTasks.filter((t) => !t.done && active(t) && hit(t)).sort(byPlace);
+    const overdue: ReturnType<typeof placedOut>[] = [];
+    const due: ReturnType<typeof placedOut>[] = [];
+    const doneToday: ReturnType<typeof placedOut>[] = [];
+    for (const t of tTasks.filter((x) => !x.done && active(x)).sort(byPlace)) {
+      const o = placedOut(t);
+      const started = (!t.planDate || t.planDate <= today) && (!t.repeatUntil || today <= t.repeatUntil);
+      if (t.taskType === "checkin") {
+        if (o.loggedToday) doneToday.push(o);
+        else if (started && scheduled(t.repeatRule, today)) due.push(o);
+      } else if (t.taskType === "progress" && t.period !== "all") {
+        if (started && o.count < (t.target ?? 0)) due.push(o);
+        else if (o.loggedToday) doneToday.push(o);
+      } else {
+        if (o.loggedToday) doneToday.push(o);
+        if (hit(t)) (late(t) ? overdue : due).push(o);
+      }
+    }
     const key = (t: TTask) => t.dueDate ?? t.planDate ?? "";
-    return {
-      today,
-      overdue: open.filter(late).sort((x, y) => key(x).localeCompare(key(y))).map(placedOut),
-      due: open.filter((t) => !late(t)).map(placedOut),
-      doneToday: tTasks.filter((t) => t.done && t.doneAt && ymd(new Date(t.doneAt)) === today).map(placedOut),
-    };
+    overdue.sort((x, y) => key(x).localeCompare(key(y)));
+    for (const t of tTasks.filter((t) => t.done && t.doneAt && ymd(new Date(t.doneAt)) === today)) if (!doneToday.some((d) => d.id === t.id)) doneToday.push(placedOut(t));
+    return { today, overdue, due, doneToday };
   },
-  todo_done_between: (a) =>
-    tTasks
-      .filter((t) => t.done && t.doneAt && ymd(new Date(t.doneAt)) >= String(a.from) && ymd(new Date(t.doneAt)) <= String(a.to))
-      .sort((x, y) => x.doneAt!.localeCompare(y.doneAt!))
-      .map(placedOut),
+  todo_done_between: (a) => doneItems(String(a.from), String(a.to)),
+  todo_month: (a) => {
+    const [from, to] = [String(a.from), String(a.to)];
+    const out: object[] = [];
+    const inside = (d: string | null) => !!d && d >= from && d <= to;
+    for (const t of tTasks.filter((x) => !x.done && x.taskType !== "checkin")) {
+      const o = placedOut(t);
+      if (t.startDate && t.dueDate) for (let d = t.startDate; d <= t.dueDate; d = addDays(d, 1)) inside(d) && out.push({ ...o, day: d, what: "range", detail: null });
+      else if (inside(t.dueDate)) out.push({ ...o, day: t.dueDate, what: "due", detail: null });
+      if (inside(t.planDate) && t.planDate !== t.dueDate) out.push({ ...o, day: t.planDate, what: "plan", detail: null });
+      if (t.taskType === "repeat") {
+        let anchor = t.dueDate ?? t.planDate!;
+        for (let k = 1; k <= 62; k++) {
+          const next = ruleNext(t.repeatRule!, anchor, anchor);
+          const n = o.count + k + 1;
+          if (next > to || (t.repeatTotal && n > t.repeatTotal) || (t.repeatUntil && next > t.repeatUntil)) break;
+          if (inside(next)) out.push({ ...o, day: next, what: "next", detail: `第 ${n} 次` });
+          anchor = next;
+        }
+      }
+    }
+    for (const d of doneItems(from, to)) out.push({ ...d, what: "done" });
+    return out;
+  },
+  undo_last: () => {
+    const s = undoStack.pop();
+    if (!s) return { label: null };
+    loadState(s.before);
+    redoStack.push(s);
+    return { label: s.label };
+  },
+  redo_last: () => {
+    const s = redoStack.pop();
+    if (!s) return { label: null };
+    loadState(s.after);
+    undoStack.push(s);
+    return { label: s.label };
+  },
   "plugin:opener|open_url": (a) => void window.open(String(a.url), "_blank"),
 };
 
@@ -393,7 +590,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     isDev: true,
     dataDir: "/mock/Pomelo OS Dev",
     dbPath: "/mock/Pomelo OS Dev/pomelo.db",
-    schemaVersion: 8,
+    schemaVersion: 9,
     startupError: null,
   }),
   reveal_data_dir: () => null,
@@ -442,6 +639,11 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ]),
 
   drawing_courses: () => [...courses].sort((a, b) => a.sortOrder - b.sortOrder).map(withCounts),
+  drawing_courses_reorder: (a) => void (a.ids as number[]).forEach((id, i) => (courses.find((c) => c.id === id)!.sortOrder = i + 1)),
+  drawing_lessons_reorder: (a) => void (a.ids as number[]).forEach((id, i) => (lessons.find((l) => l.id === id)!.sortOrder = i + 1)),
+  packing_templates_reorder: (a) => void (a.ids as number[]).forEach((id, i) => (tpls.find((t) => t.id === id)!.sortOrder = i + 1)),
+  packing_items_reorder: (a) =>
+    void (a.ids as number[]).forEach((id, i) => ((a.list === "template" ? tplItems : tripItems).find((t) => t.id === id)!.sortOrder = i + 1)),
   drawing_course_create: (a) => {
     const p = a.patch as { name?: string; note?: string | null };
     if (!p.name?.trim()) throw "课程名不能为空";
@@ -474,7 +676,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return null;
   },
 
-  packing_templates: () => tpls.map(tplOut),
+  packing_templates: () => [...tpls].sort((a, b) => a.sortOrder - b.sortOrder).map(tplOut),
   packing_template_create: (a) => {
     const p = a.patch as { name?: string; note?: string | null };
     if (!p.name?.trim()) throw "模板名不能为空";

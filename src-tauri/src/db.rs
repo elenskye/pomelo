@@ -21,6 +21,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 6, name: "drawing", sql: include_str!("../migrations/0006_drawing.sql") },
     Migration { version: 7, name: "packing", sql: include_str!("../migrations/0007_packing.sql") },
     Migration { version: 8, name: "todo", sql: include_str!("../migrations/0008_todo.sql") },
+    Migration { version: 9, name: "todo_types", sql: include_str!("../migrations/0009_todo_types.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -191,13 +192,32 @@ pub mod tests {
              INSERT INTO packing_templates (name, sort_order) VALUES ('回家', 1);",
         )
         .unwrap();
-        assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), 8);
+        assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), latest_version());
         let n: i64 = c.query_row("SELECT count(*) FROM books", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
         c.execute("INSERT INTO todo_groups (name, sort_order) VALUES ('📌 Pick Up', 1)", []).unwrap();
         let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(files.len(), 1);
         assert!(files[0].to_str().unwrap().ends_with("-before-v8.db"));
+    }
+
+    /// Phase-1 installs are at v8 with tasks; v9 adds task types (existing tasks → normal) and logs.
+    #[test]
+    fn v8_tasks_become_normal_type() {
+        let dir = temp_dir("v8-types");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..8], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            "INSERT INTO todo_groups (name, sort_order) VALUES ('📌 Pick Up', 1);
+             INSERT INTO todo_tasks (group_id, title, sort_order) VALUES (1, '嘉信入金', 1);",
+        )
+        .unwrap();
+        migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap();
+        let t: String = c.query_row("SELECT task_type FROM todo_tasks", [], |r| r.get(0)).unwrap();
+        assert_eq!(t, "normal");
+        c.execute("INSERT INTO todo_logs (task_id, day) VALUES (1, '2026-09-30')", []).unwrap();
+        let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(files[0].to_str().unwrap().ends_with("-before-v9.db"));
     }
 
     #[test]

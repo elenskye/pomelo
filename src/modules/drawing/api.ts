@@ -46,6 +46,8 @@ const api = {
   createLesson: (v: { courseId: number; patch: LessonPatch }) => invoke<Lesson>("drawing_lesson_create", v),
   updateLesson: (v: { id: number; patch: LessonPatch }) => invoke<Lesson>("drawing_lesson_update", v),
   deleteLesson: (id: number) => invoke<void>("drawing_lesson_delete", { id }),
+  reorderCourses: (ids: number[]) => invoke<void>("drawing_courses_reorder", { ids }),
+  reorderLessons: (v: { courseId: number; ids: number[] }) => invoke<void>("drawing_lessons_reorder", v),
 };
 
 export const DRAWING_KEY = ["drawing"];
@@ -76,5 +78,7 @@ export function useDrawingMutations() {
     /** Fire-and-forget inline edits (row toggles): errors surface as toasts. */
     quickUpdate: useMutation({ mutationFn: api.updateLesson, onSuccess, onError }),
     deleteLesson: useMutation({ mutationFn: api.deleteLesson, onSuccess }),
+    reorderCourses: useMutation({ mutationFn: api.reorderCourses, onSuccess, onError }),
+    reorderLessons: useMutation({ mutationFn: api.reorderLessons, onSuccess, onError }),
   };
 }

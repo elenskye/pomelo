@@ -627,20 +627,34 @@ pub fn replace_all(conn: &Connection, rec: &PackingRecord) -> Result<usize, Stri
 // ---------- commands ----------
 
 #[tauri::command]
+pub fn packing_templates_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(), String> {
+    state.with_undo("调整顺序", |c| common::reorder(c, "packing_templates", "1 = 1", &[], &ids))
+}
+/// `list`: "template" | "trip"; `ids` = all items of that template / trip in the new order.
+#[tauri::command]
+pub fn packing_items_reorder(state: State<AppState>, list: String, parent_id: i64, ids: Vec<i64>) -> Result<(), String> {
+    let list = match list.as_str() {
+        "template" => List::Template,
+        "trip" => List::Trip,
+        _ => return Err("未知清单".into()),
+    };
+    state.with_undo("调整顺序", |c| common::reorder(c, list.table(), &format!("{} = ?1", list.parent_col()), &[&parent_id], &ids))
+}
+#[tauri::command]
 pub fn packing_templates(state: State<AppState>) -> Result<Vec<Template>, String> {
     state.with_db(|c| templates(c))
 }
 #[tauri::command]
 pub fn packing_template_create(state: State<AppState>, patch: TemplatePatch) -> Result<Template, String> {
-    state.with_db(|c| create_template(c, patch))
+    state.with_undo("添加模板", |c| create_template(c, patch))
 }
 #[tauri::command]
 pub fn packing_template_update(state: State<AppState>, id: i64, patch: TemplatePatch) -> Result<Template, String> {
-    state.with_db(|c| update_template(c, id, patch))
+    state.with_undo("修改模板", |c| update_template(c, id, patch))
 }
 #[tauri::command]
 pub fn packing_template_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_template(c, id))
+    state.with_undo("删除模板", |c| delete_template(c, id))
 }
 #[tauri::command]
 pub fn packing_trips(state: State<AppState>) -> Result<Vec<Trip>, String> {
@@ -648,15 +662,15 @@ pub fn packing_trips(state: State<AppState>) -> Result<Vec<Trip>, String> {
 }
 #[tauri::command]
 pub fn packing_trip_create(state: State<AppState>, patch: TripPatch, template_id: Option<i64>) -> Result<Trip, String> {
-    state.with_db(|c| create_trip(c, patch, template_id))
+    state.with_undo("新建出行", |c| create_trip(c, patch, template_id))
 }
 #[tauri::command]
 pub fn packing_trip_update(state: State<AppState>, id: i64, patch: TripPatch) -> Result<Trip, String> {
-    state.with_db(|c| update_trip(c, id, patch))
+    state.with_undo("修改出行", |c| update_trip(c, id, patch))
 }
 #[tauri::command]
 pub fn packing_trip_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_trip(c, id))
+    state.with_undo("删除出行", |c| delete_trip(c, id))
 }
 #[tauri::command]
 pub fn packing_template_items(state: State<AppState>, template_id: i64) -> Result<Vec<Item>, String> {
@@ -664,15 +678,15 @@ pub fn packing_template_items(state: State<AppState>, template_id: i64) -> Resul
 }
 #[tauri::command]
 pub fn packing_template_item_create(state: State<AppState>, template_id: i64, patch: ItemPatch) -> Result<Item, String> {
-    state.with_db(|c| create_item(c, List::Template, template_id, patch))
+    state.with_undo("添加物品", |c| create_item(c, List::Template, template_id, patch))
 }
 #[tauri::command]
 pub fn packing_template_item_update(state: State<AppState>, id: i64, patch: ItemPatch) -> Result<Item, String> {
-    state.with_db(|c| update_item(c, List::Template, id, patch))
+    state.with_undo("修改物品", |c| update_item(c, List::Template, id, patch))
 }
 #[tauri::command]
 pub fn packing_template_item_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_item(c, List::Template, id))
+    state.with_undo("删除物品", |c| delete_item(c, List::Template, id))
 }
 #[tauri::command]
 pub fn packing_trip_items(state: State<AppState>, trip_id: i64) -> Result<Vec<Item>, String> {
@@ -680,15 +694,15 @@ pub fn packing_trip_items(state: State<AppState>, trip_id: i64) -> Result<Vec<It
 }
 #[tauri::command]
 pub fn packing_trip_item_create(state: State<AppState>, trip_id: i64, patch: ItemPatch) -> Result<Item, String> {
-    state.with_db(|c| create_item(c, List::Trip, trip_id, patch))
+    state.with_undo("添加物品", |c| create_item(c, List::Trip, trip_id, patch))
 }
 #[tauri::command]
 pub fn packing_trip_item_update(state: State<AppState>, id: i64, patch: ItemPatch) -> Result<Item, String> {
-    state.with_db(|c| update_item(c, List::Trip, id, patch))
+    state.with_undo("修改物品", |c| update_item(c, List::Trip, id, patch))
 }
 #[tauri::command]
 pub fn packing_trip_item_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_item(c, List::Trip, id))
+    state.with_undo("删除物品", |c| delete_item(c, List::Trip, id))
 }
 
 #[cfg(test)]

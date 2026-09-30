@@ -62,6 +62,8 @@ const api = {
   updateItem: (v: { list: ListKind; id: number; patch: ItemPatch }) =>
     invoke<PackItem>(`packing_${v.list}_item_update`, { id: v.id, patch: v.patch }),
   deleteItem: (v: { list: ListKind; id: number }) => invoke<void>(`packing_${v.list}_item_delete`, { id: v.id }),
+  reorderTemplates: (ids: number[]) => invoke<void>("packing_templates_reorder", { ids }),
+  reorderItems: (v: { list: ListKind; parentId: number; ids: number[] }) => invoke<void>("packing_items_reorder", v),
 };
 
 export const PACKING_KEY = ["packing"];
@@ -94,5 +96,7 @@ export function usePackingMutations() {
     /** Fire-and-forget (checkbox toggles, row deletes): errors surface as toasts. */
     quickUpdateItem: useMutation({ mutationFn: api.updateItem, onSuccess, onError }),
     quickDeleteItem: useMutation({ mutationFn: api.deleteItem, onSuccess, onError }),
+    reorderTemplates: useMutation({ mutationFn: api.reorderTemplates, onSuccess, onError }),
+    reorderItems: useMutation({ mutationFn: api.reorderItems, onSuccess, onError }),
   };
 }

@@ -293,6 +293,98 @@ pub fn delete_goal(conn: &Connection, id: i64) -> Result<(), String> {
     }
 }
 
+// ---------- task types & repeat rules ----------
+
+str_enum!(TaskType, default = Normal, {
+    Normal => "normal",
+    Repeat => "repeat",
+    Checkin => "checkin",
+    Progress => "progress",
+});
+
+str_enum!(Period, default = All, {
+    All => "all",
+    Day => "day",
+    Week => "week",
+    Month => "month",
+});
+
+/// Parsed `repeat_rule`: daily | weekly:<1-7,…> (Mon=1) | monthly:<1-31> | every:<n>d | every:<n>w | after:<n>d.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Rule {
+    Daily,
+    Weekly(Vec<u32>),
+    Monthly(u32),
+    EveryDays(i64),
+    EveryWeeks(i64),
+    AfterDays(i64),
+}
+
+impl Rule {
+    pub fn parse(s: &str) -> Result<Rule, String> {
+        let bad = || format!("重复规则不对：{s}");
+        let num = |v: &str, max: i64| v.parse::<i64>().ok().filter(|n| (1..=max).contains(n)).ok_or_else(bad);
+        let unit = |v: &str, u: char| v.strip_suffix(u).map(str::to_string);
+        Ok(match s.split_once(':') {
+            None if s == "daily" => Rule::Daily,
+            Some(("weekly", days)) => {
+                let mut ds = days.split(',').map(|d| num(d, 7).map(|n| n as u32)).collect::<Result<Vec<_>, _>>()?;
+                ds.sort_unstable();
+                ds.dedup();
+                Rule::Weekly(ds)
+            }
+            Some(("monthly", d)) => Rule::Monthly(num(d, 31)? as u32),
+            Some(("every", n)) => match (unit(n, 'd'), unit(n, 'w')) {
+                (Some(d), _) => Rule::EveryDays(num(&d, 365)?),
+                (_, Some(w)) => Rule::EveryWeeks(num(&w, 52)?),
+                _ => return Err(bad()),
+            },
+            Some(("after", n)) => Rule::AfterDays(num(&unit(n, 'd').ok_or_else(bad)?, 365)?),
+            _ => return Err(bad()),
+        })
+    }
+
+    /// Next occurrence after `anchor` (after-rules count from `completed`).
+    pub fn next(&self, anchor: &str, completed: &str) -> String {
+        match self {
+            Rule::Daily => common::add_days(anchor, 1),
+            Rule::Weekly(days) => (1..=7).map(|i| common::add_days(anchor, i)).find(|d| days.contains(&common::weekday(d))).unwrap(),
+            Rule::Monthly(day) => {
+                let (mut y, mut m) = (anchor[..4].parse::<i64>().unwrap(), anchor[5..7].parse::<u32>().unwrap());
+                loop {
+                    let d = format!("{y:04}-{m:02}-{:02}", (*day).min(common::days_in_month(y, m)));
+                    if d.as_str() > anchor {
+                        return d;
+                    }
+                    (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+                }
+            }
+            Rule::EveryDays(n) => common::add_days(anchor, *n),
+            Rule::EveryWeeks(n) => common::add_days(anchor, 7 * n),
+            Rule::AfterDays(n) => common::add_days(completed, *n),
+        }
+    }
+
+    /// Check-in schedule (daily / weekly rules only).
+    fn scheduled(&self, day: &str) -> bool {
+        match self {
+            Rule::Daily => true,
+            Rule::Weekly(ds) => ds.contains(&common::weekday(day)),
+            _ => false,
+        }
+    }
+}
+
+/// First day of the counting period that contains `today` (None = all time).
+fn period_start(p: Period, today: &str) -> Option<String> {
+    match p {
+        Period::All => None,
+        Period::Day => Some(today.into()),
+        Period::Week => Some(common::add_days(today, 1 - common::weekday(today) as i64)),
+        Period::Month => Some(format!("{}-01", &today[..7])),
+    }
+}
+
 // ---------- tasks ----------
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -314,10 +406,25 @@ pub struct Task {
     pub sort_order: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub task_type: TaskType,
+    pub repeat_rule: Option<String>,
+    pub repeat_total: Option<i64>,
+    pub repeat_until: Option<String>,
+    pub target: Option<i64>,
+    pub unit: Option<String>,
+    pub period: Option<Period>,
+    /// Derived (`enrich`): repeat = occurrences done, checkin = days checked, progress = amount this period.
+    pub count: i64,
+    /// Derived, progress: amount all-time.
+    pub total_amount: i64,
+    /// Derived: has a log today.
+    pub logged_today: bool,
+    /// Derived, checkin: consecutive scheduled days checked up to today (today may still be open).
+    pub streak: i64,
 }
 
 /// Create: place by `parentId` > `goalId` > `groupId`. Update: `groupId` / `goalId` move a root task
-/// (with its subtree); `parentId` is create-only. Completion goes through `set_done`.
+/// (with its subtree); `parentId` is create-only. Completion goes through `set_done` / logs.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskPatch {
@@ -341,10 +448,26 @@ pub struct TaskPatch {
     pub due_date: Option<Option<String>>,
     #[serde(default)]
     pub collapsed: Option<bool>,
+    #[serde(default)]
+    pub task_type: Option<TaskType>,
+    #[serde(default, deserialize_with = "some")]
+    pub repeat_rule: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some")]
+    pub repeat_total: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "some")]
+    pub repeat_until: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some")]
+    pub target: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "some")]
+    pub unit: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some")]
+    pub period: Option<Option<Period>>,
 }
 
 const TASK_COLS: &str = "t.id, t.group_id, t.goal_id, t.parent_id, t.title, t.note, t.link, t.plan_date, t.start_date,
-  t.due_date, t.done, t.done_at, t.collapsed, t.sort_order, t.created_at, t.updated_at";
+  t.due_date, t.done, t.done_at, t.collapsed, t.sort_order, t.created_at, t.updated_at,
+  t.task_type, t.repeat_rule, t.repeat_total, t.repeat_until, t.target, t.unit, t.period";
+const TASK_NCOLS: usize = 23;
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
     Ok(Task {
@@ -364,14 +487,88 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         sort_order: r.get(13)?,
         created_at: r.get(14)?,
         updated_at: r.get(15)?,
+        task_type: r.get(16)?,
+        repeat_rule: r.get(17)?,
+        repeat_total: r.get(18)?,
+        repeat_until: r.get(19)?,
+        target: r.get(20)?,
+        unit: r.get(21)?,
+        period: r.get(22)?,
+        count: 0,
+        total_amount: 0,
+        logged_today: false,
+        streak: 0,
     })
 }
 
+fn count_of(conn: &Connection, sql: &str, args: &[&dyn rusqlite::ToSql]) -> Result<i64, String> {
+    conn.query_row(sql, args, |r| r.get(0)).map_err(err)
+}
+
+/// Fills the derived counters (no-op for normal tasks).
+fn enrich(conn: &Connection, t: &mut Task, today: &str) -> Result<(), String> {
+    if t.task_type == TaskType::Normal {
+        return Ok(());
+    }
+    t.logged_today = count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1 AND day = ?2", &[&t.id, &today])? > 0;
+    match t.task_type {
+        TaskType::Repeat | TaskType::Checkin => t.count = count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&t.id])?,
+        TaskType::Progress => {
+            t.total_amount = count_of(conn, "SELECT coalesce(sum(amount), 0) FROM todo_logs WHERE task_id = ?1", &[&t.id])?;
+            t.count = match period_start(t.period.unwrap_or_default(), today) {
+                None => t.total_amount,
+                Some(s) => count_of(
+                    conn,
+                    "SELECT coalesce(sum(amount), 0) FROM todo_logs WHERE task_id = ?1 AND day BETWEEN ?2 AND ?3",
+                    &[&t.id, &s, &today],
+                )?,
+            };
+        }
+        TaskType::Normal => {}
+    }
+    if t.task_type == TaskType::Checkin {
+        t.streak = streak(conn, t, today)?;
+    }
+    Ok(())
+}
+
+fn streak(conn: &Connection, t: &Task, today: &str) -> Result<i64, String> {
+    let Some(rule) = t.repeat_rule.as_deref().and_then(|r| Rule::parse(r).ok()) else { return Ok(0) };
+    let mut st = conn.prepare("SELECT day FROM todo_logs WHERE task_id = ?1").map_err(err)?;
+    let days: std::collections::HashSet<String> =
+        st.query_map([t.id], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let start = t.plan_date.clone().unwrap_or_default();
+    let mut n = 0;
+    for i in 0..=730 {
+        let d = common::add_days(today, -i);
+        if d < start {
+            break;
+        }
+        if !rule.scheduled(&d) {
+            continue;
+        }
+        if days.contains(&d) {
+            n += 1;
+        } else if i > 0 {
+            break; // today not checked yet doesn't break the streak
+        }
+    }
+    Ok(n)
+}
+
+/// Raw row (no derived counters) — for internal rules.
 pub fn task(conn: &Connection, id: i64) -> Result<Task, String> {
     conn.query_row(&format!("SELECT {TASK_COLS} FROM todo_tasks t WHERE t.id = ?1"), [id], task_row)
         .optional()
         .map_err(err)?
         .ok_or_else(|| gone("任务"))
+}
+
+/// Row with derived counters, as the UI sees it.
+pub fn task_view(conn: &Connection, id: i64) -> Result<Task, String> {
+    let mut t = task(conn, id)?;
+    enrich(conn, &mut t, &today(conn)?)?;
+    Ok(t)
 }
 
 /// Tasks of one place, flat (the UI builds the tree from parent_id): a group's loose tasks
@@ -391,8 +588,12 @@ pub fn tasks(conn: &Connection, group_id: Option<i64>, goal_id: Option<i64>) -> 
     let mut st = conn
         .prepare(&format!("SELECT {TASK_COLS} FROM todo_tasks t WHERE {sql} ORDER BY t.sort_order, t.id"))
         .map_err(err)?;
-    let rows = st.query_map([id], task_row).map_err(err)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    let mut out = st.query_map([id], task_row).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+    let today = today(conn)?;
+    for t in &mut out {
+        enrich(conn, t, &today)?;
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -405,6 +606,9 @@ struct Place {
 fn resolve_place(conn: &Connection, group_id: Option<i64>, goal_id: Option<i64>, parent_id: Option<i64>) -> Result<Place, String> {
     if let Some(p) = parent_id {
         let parent = task(conn, p).map_err(|_| gone("上一层任务"))?;
+        if parent.task_type != TaskType::Normal {
+            return Err("重复、打卡、进度条任务下面不能加子任务".into());
+        }
         return Ok(Place { group_id: parent.group_id, goal_id: parent.goal_id, parent_id: Some(p) });
     }
     if let Some(g) = goal_id {
@@ -425,6 +629,7 @@ fn next_sort(conn: &Connection, p: Place) -> Result<i64, String> {
     .map_err(err)
 }
 
+#[derive(Default)]
 struct TaskFields {
     title: String,
     note: Option<String>,
@@ -432,23 +637,108 @@ struct TaskFields {
     plan_date: Option<String>,
     start_date: Option<String>,
     due_date: Option<String>,
+    task_type: TaskType,
+    repeat_rule: Option<String>,
+    repeat_total: Option<i64>,
+    repeat_until: Option<String>,
+    target: Option<i64>,
+    unit: Option<String>,
+    period: Option<Period>,
 }
 
 impl TaskFields {
-    fn validated(self) -> Result<Self, String> {
-        let f = Self {
+    fn from_task(t: &Task) -> Self {
+        Self {
+            title: t.title.clone(),
+            note: t.note.clone(),
+            link: t.link.clone(),
+            plan_date: t.plan_date.clone(),
+            start_date: t.start_date.clone(),
+            due_date: t.due_date.clone(),
+            task_type: t.task_type,
+            repeat_rule: t.repeat_rule.clone(),
+            repeat_total: t.repeat_total,
+            repeat_until: t.repeat_until.clone(),
+            target: t.target,
+            unit: t.unit.clone(),
+            period: t.period,
+        }
+    }
+
+    fn apply(mut self, p: &TaskPatch) -> Self {
+        macro_rules! take {
+            ($($f:ident),*) => { $( if let Some(v) = p.$f.clone() { self.$f = v; } )* };
+        }
+        take!(note, link, plan_date, start_date, due_date, repeat_rule, repeat_total, repeat_until, target, unit, period);
+        if let Some(v) = p.title.clone() {
+            self.title = v;
+        }
+        if let Some(v) = p.task_type {
+            self.task_type = v;
+        }
+        self
+    }
+
+    /// Normalizes and checks; fields that don't belong to the type are cleared.
+    fn validated(self, has_children: bool) -> Result<Self, String> {
+        let mut f = Self {
             title: common::require(&self.title, "任务", 500)?,
             note: common::clean(self.note),
             link: common::clean(self.link),
             plan_date: common::clean(self.plan_date),
             start_date: common::clean(self.start_date),
             due_date: common::clean(self.due_date),
+            repeat_rule: common::clean(self.repeat_rule),
+            repeat_until: common::clean(self.repeat_until),
+            unit: common::clean(self.unit),
+            ..self
         };
         common::check_len(&f.note, "备注", 5000)?;
         common::check_len(&f.link, "链接", 1000)?;
         common::check_date(&f.plan_date, "计划日期")?;
         common::check_date(&f.start_date, "开始日期")?;
         common::check_date(&f.due_date, "截止日期")?;
+        common::check_date(&f.repeat_until, "结束日期")?;
+        if f.task_type != TaskType::Normal && has_children {
+            return Err("有子任务的任务只能是普通任务".into());
+        }
+        let total_ok = |n: Option<i64>, what: &str| match n {
+            Some(n) if !(1..=10000).contains(&n) => Err(format!("{what}要在 1～10000 之间")),
+            _ => Ok(()),
+        };
+        match f.task_type {
+            TaskType::Normal => {
+                (f.repeat_rule, f.repeat_total, f.repeat_until, f.target, f.unit, f.period) = (None, None, None, None, None, None);
+            }
+            TaskType::Repeat => {
+                Rule::parse(f.repeat_rule.as_deref().ok_or("请设置重复规则")?)?;
+                if f.plan_date.is_none() && f.due_date.is_none() {
+                    return Err("重复任务要设计划日期或截止日期，从那天开始重复".into());
+                }
+                total_ok(f.repeat_total, "重复次数")?;
+                (f.target, f.unit, f.period) = (None, None, None);
+            }
+            TaskType::Checkin => {
+                let rule = Rule::parse(f.repeat_rule.as_deref().ok_or("请设置打卡的日子")?)?;
+                if !matches!(rule, Rule::Daily | Rule::Weekly(_)) {
+                    return Err("打卡只能按每天或每周固定几天".into());
+                }
+                if f.plan_date.is_none() {
+                    return Err("打卡要有开始日期".into());
+                }
+                total_ok(f.repeat_total, "目标天数")?;
+                (f.start_date, f.due_date, f.target, f.unit, f.period) = (None, None, None, None, None);
+            }
+            TaskType::Progress => {
+                match f.target {
+                    Some(n) if (1..=100000).contains(&n) => {}
+                    _ => return Err("请设置目标数量（1～100000）".into()),
+                }
+                common::check_len(&f.unit, "单位", 10)?;
+                f.period = Some(f.period.unwrap_or_default());
+                (f.repeat_rule, f.repeat_total, f.repeat_until) = (None, None, None);
+            }
+        }
         if f.start_date.is_some() && f.due_date.is_none() {
             return Err("时间段要有结束日期".into());
         }
@@ -474,29 +764,27 @@ fn reopen_ancestors(conn: &Connection, id: i64) -> Result<(), String> {
 
 pub fn create_task(conn: &Connection, patch: TaskPatch) -> Result<Task, String> {
     let place = resolve_place(conn, patch.group_id, patch.goal_id.flatten(), patch.parent_id)?;
-    let f = TaskFields {
-        title: patch.title.unwrap_or_default(),
-        note: patch.note.flatten(),
-        link: patch.link.flatten(),
-        plan_date: patch.plan_date.flatten(),
-        start_date: patch.start_date.flatten(),
-        due_date: patch.due_date.flatten(),
-    }
-    .validated()?;
+    let f = TaskFields::default().apply(&patch).validated(false)?;
     let tx = conn.unchecked_transaction().map_err(err)?;
     tx.execute(
-        "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date, collapsed, sort_order)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date, collapsed, sort_order,
+           task_type, repeat_rule, repeat_total, repeat_until, target, unit, period)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             place.group_id, place.goal_id, place.parent_id, f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date,
-            patch.collapsed.unwrap_or(false), next_sort(&tx, place)?
+            patch.collapsed.unwrap_or(false), next_sort(&tx, place)?, f.task_type, f.repeat_rule, f.repeat_total,
+            f.repeat_until, f.target, f.unit, f.period
         ],
     )
     .map_err(err)?;
     let id = tx.last_insert_rowid();
     reopen_ancestors(&tx, id)?;
     tx.commit().map_err(err)?;
-    task(conn, id)
+    task_view(conn, id)
+}
+
+fn has_children(conn: &Connection, id: i64) -> Result<bool, String> {
+    Ok(count_of(conn, "SELECT count(*) FROM todo_tasks WHERE parent_id = ?1", &[&id])? > 0)
 }
 
 pub fn update_task(conn: &Connection, id: i64, patch: TaskPatch) -> Result<Task, String> {
@@ -504,15 +792,7 @@ pub fn update_task(conn: &Connection, id: i64, patch: TaskPatch) -> Result<Task,
     if patch.parent_id.is_some() {
         return Err("不能在这里改上一层任务".into());
     }
-    let f = TaskFields {
-        title: patch.title.unwrap_or(old.title.clone()),
-        note: patch.note.unwrap_or(old.note.clone()),
-        link: patch.link.unwrap_or(old.link.clone()),
-        plan_date: patch.plan_date.unwrap_or(old.plan_date.clone()),
-        start_date: patch.start_date.unwrap_or(old.start_date.clone()),
-        due_date: patch.due_date.unwrap_or(old.due_date.clone()),
-    }
-    .validated()?;
+    let f = TaskFields::from_task(&old).apply(&patch).validated(has_children(conn, id)?)?;
     let tx = conn.unchecked_transaction().map_err(err)?;
     let moving = patch.group_id.is_some_and(|g| g != old.group_id) || patch.goal_id.is_some_and(|g| g != old.goal_id);
     if moving {
@@ -538,50 +818,138 @@ pub fn update_task(conn: &Connection, id: i64, patch: TaskPatch) -> Result<Task,
     tx.execute(
         &format!(
             "UPDATE todo_tasks SET title = ?1, note = ?2, link = ?3, plan_date = ?4, start_date = ?5, due_date = ?6,
-               collapsed = ?7, updated_at = {NOW} WHERE id = ?8"
+               collapsed = ?7, task_type = ?8, repeat_rule = ?9, repeat_total = ?10, repeat_until = ?11, target = ?12,
+               unit = ?13, period = ?14, updated_at = {NOW} WHERE id = ?15"
         ),
-        params![f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date, patch.collapsed.unwrap_or(old.collapsed), id],
+        params![
+            f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date, patch.collapsed.unwrap_or(old.collapsed),
+            f.task_type, f.repeat_rule, f.repeat_total, f.repeat_until, f.target, f.unit, f.period, id
+        ],
     )
     .map_err(err)?;
+    settle(&tx, id, &today(&tx)?)?; // e.g. a lowered target may complete it
     tx.commit().map_err(err)?;
-    task(conn, id)
+    task_view(conn, id)
 }
 
-/// See module docs for the cascade rules.
-pub fn set_done(conn: &Connection, id: i64, done: bool) -> Result<(), String> {
-    task(conn, id)?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
-    if done {
-        tx.execute(
-            &format!(
-                "WITH RECURSIVE sub(id) AS (
-                   SELECT ?1 UNION ALL SELECT t.id FROM todo_tasks t JOIN sub ON t.parent_id = sub.id)
-                 UPDATE todo_tasks SET done = 1, done_at = {NOW}, updated_at = {NOW}
-                 WHERE id IN (SELECT id FROM sub) AND done = 0"
-            ),
-            [id],
-        )
+/// Checks the task and its subtree, then any parent whose children are now all done.
+fn mark_done(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute(
+        &format!(
+            "WITH RECURSIVE sub(id) AS (
+               SELECT ?1 UNION ALL SELECT t.id FROM todo_tasks t JOIN sub ON t.parent_id = sub.id)
+             UPDATE todo_tasks SET done = 1, done_at = {NOW}, updated_at = {NOW}
+             WHERE id IN (SELECT id FROM sub) AND done = 0"
+        ),
+        [id],
+    )
+    .map_err(err)?;
+    let mut child = id;
+    while let Some(parent) = task(conn, child)?.parent_id {
+        if count_of(conn, "SELECT count(*) FROM todo_tasks WHERE parent_id = ?1 AND done = 0", &[&parent])? > 0 {
+            break;
+        }
+        conn.execute(&format!("UPDATE todo_tasks SET done = 1, done_at = {NOW}, updated_at = {NOW} WHERE id = ?1 AND done = 0"), [parent])
+            .map_err(err)?;
+        child = parent;
+    }
+    Ok(())
+}
+
+fn mark_undone(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute(&format!("UPDATE todo_tasks SET done = 0, done_at = NULL, updated_at = {NOW} WHERE id = ?1"), [id])
         .map_err(err)?;
-        let mut child = id;
-        while let Some(parent) = task(&tx, child)?.parent_id {
-            let open: i64 = tx
-                .query_row("SELECT count(*) FROM todo_tasks WHERE parent_id = ?1 AND done = 0", [parent], |r| r.get(0))
-                .map_err(err)?;
-            if open > 0 {
-                break;
-            }
+    reopen_ancestors(conn, id)
+}
+
+/// Completes / reopens a check-in or whole-period progress task from its logs.
+fn settle(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
+    let mut t = task(conn, id)?;
+    enrich(conn, &mut t, today)?;
+    let reached = match t.task_type {
+        TaskType::Checkin => match t.repeat_total {
+            Some(n) => t.count >= n,
+            None => return Ok(()),
+        },
+        TaskType::Progress if t.period == Some(Period::All) => t.total_amount >= t.target.unwrap_or(i64::MAX),
+        _ => return Ok(()),
+    };
+    match (reached, t.done) {
+        (true, false) => mark_done(conn, id),
+        (false, true) => mark_undone(conn, id),
+        _ => Ok(()),
+    }
+}
+
+/// Moves a repeat task to its next occurrence (shifting plan / start / due together), or ends the
+/// series when the total or end date is reached.
+fn advance(conn: &Connection, t: &Task, completed: &str, count: i64) -> Result<(), String> {
+    let rule = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default())?;
+    let anchor = t.due_date.clone().or(t.plan_date.clone()).ok_or("重复任务没有日期")?;
+    let next = rule.next(&anchor, completed);
+    let ended = t.repeat_total.is_some_and(|n| count >= n) || t.repeat_until.as_deref().is_some_and(|u| next.as_str() > u);
+    if ended {
+        return mark_done(conn, t.id);
+    }
+    let delta = common::day_number(&next) - common::day_number(&anchor);
+    let shift = |d: &Option<String>| d.as_deref().map(|d| common::add_days(d, delta));
+    conn.execute(
+        &format!("UPDATE todo_tasks SET plan_date = ?1, start_date = ?2, due_date = ?3, updated_at = {NOW} WHERE id = ?4"),
+        params![shift(&t.plan_date), shift(&t.start_date), shift(&t.due_date), t.id],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
+/// The circle in the list. normal: check / uncheck (cascades). repeat: finish this occurrence (logged,
+/// dates move on). checkin: check in / undo today. progress: +1 today. Unchecking a finished
+/// repeat / progress task reopens it.
+pub fn set_done_on(conn: &Connection, id: i64, done: bool, today: &str) -> Result<(), String> {
+    let t = task(conn, id)?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    match (t.task_type, done) {
+        (TaskType::Normal, true) => mark_done(&tx, id)?,
+        (TaskType::Normal, false) => mark_undone(&tx, id)?,
+        (TaskType::Repeat, true) if !t.done => {
+            tx.execute("INSERT INTO todo_logs (task_id, day) VALUES (?1, ?2)", params![id, today]).map_err(err)?;
+            let count = count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
+            advance(&tx, &t, today, count)?;
+        }
+        (TaskType::Checkin, true) => {
             tx.execute(
-                &format!("UPDATE todo_tasks SET done = 1, done_at = {NOW}, updated_at = {NOW} WHERE id = ?1 AND done = 0"),
-                [parent],
+                "INSERT INTO todo_logs (task_id, day) SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM todo_logs WHERE task_id = ?1 AND day = ?2)",
+                params![id, today],
             )
             .map_err(err)?;
-            child = parent;
+            settle(&tx, id, today)?;
         }
-    } else {
-        tx.execute(&format!("UPDATE todo_tasks SET done = 0, done_at = NULL, updated_at = {NOW} WHERE id = ?1"), [id])
-            .map_err(err)?;
-        reopen_ancestors(&tx, id)?;
+        (TaskType::Checkin, false) => {
+            tx.execute("DELETE FROM todo_logs WHERE task_id = ?1 AND day = ?2", params![id, today]).map_err(err)?;
+            settle(&tx, id, today)?;
+        }
+        (TaskType::Progress, true) if !t.done => {
+            tx.execute("INSERT INTO todo_logs (task_id, day, amount) VALUES (?1, ?2, 1)", params![id, today]).map_err(err)?;
+            settle(&tx, id, today)?;
+        }
+        (TaskType::Repeat | TaskType::Progress, false) if t.done => mark_undone(&tx, id)?,
+        _ => {}
     }
+    tx.commit().map_err(err)
+}
+
+pub fn set_done(conn: &Connection, id: i64, done: bool) -> Result<(), String> {
+    set_done_on(conn, id, done, &today(conn)?)
+}
+
+/// Repeat tasks: move on to the next occurrence without counting this one.
+pub fn skip_on(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
+    let t = task(conn, id)?;
+    if t.task_type != TaskType::Repeat || t.done {
+        return Err("只有没结束的重复任务能跳过".into());
+    }
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    let count = count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
+    advance(&tx, &t, today, count)?;
     tx.commit().map_err(err)
 }
 
@@ -593,7 +961,75 @@ pub fn delete_task(conn: &Connection, id: i64) -> Result<(), String> {
     }
 }
 
-// ---------- 今天 / 回看 ----------
+// ---------- logs (repeat occurrences, check-ins, progress amounts) ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Log {
+    pub id: i64,
+    pub task_id: i64,
+    pub day: String,
+    pub amount: i64,
+    pub created_at: String,
+}
+
+/// Newest first.
+pub fn logs(conn: &Connection, task_id: i64) -> Result<Vec<Log>, String> {
+    task(conn, task_id)?;
+    let mut st = conn
+        .prepare("SELECT id, task_id, day, amount, created_at FROM todo_logs WHERE task_id = ?1 ORDER BY day DESC, id DESC")
+        .map_err(err)?;
+    let rows = st
+        .query_map([task_id], |r| Ok(Log { id: r.get(0)?, task_id: r.get(1)?, day: r.get(2)?, amount: r.get(3)?, created_at: r.get(4)? }))
+        .map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
+/// Progress: count `amount` on `day`. Check-in: check in (or back-fill) `day` — a scheduled day
+/// between the start and today; checking a checked day again un-checks it.
+pub fn log_on(conn: &Connection, task_id: i64, day: &str, amount: i64, today: &str) -> Result<(), String> {
+    let t = task(conn, task_id)?;
+    common::check_date(&Some(day.to_string()), "日期")?;
+    if day > today {
+        return Err("不能记未来的日子".into());
+    }
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    match t.task_type {
+        TaskType::Progress => {
+            if !(1..=100000).contains(&amount) {
+                return Err("数量要在 1～100000 之间".into());
+            }
+            tx.execute("INSERT INTO todo_logs (task_id, day, amount) VALUES (?1, ?2, ?3)", params![task_id, day, amount])
+                .map_err(err)?;
+        }
+        TaskType::Checkin => {
+            let rule = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default())?;
+            if !rule.scheduled(day) || t.plan_date.as_deref().is_some_and(|s| day < s) {
+                return Err("这天不用打卡".into());
+            }
+            if tx.execute("DELETE FROM todo_logs WHERE task_id = ?1 AND day = ?2", params![task_id, day]).map_err(err)? == 0 {
+                tx.execute("INSERT INTO todo_logs (task_id, day) VALUES (?1, ?2)", params![task_id, day]).map_err(err)?;
+            }
+        }
+        _ => return Err("这个任务不用记数".into()),
+    }
+    settle(&tx, task_id, today)?;
+    tx.commit().map_err(err)
+}
+
+pub fn delete_log(conn: &Connection, id: i64) -> Result<(), String> {
+    let task_id: i64 = conn
+        .query_row("SELECT task_id FROM todo_logs WHERE id = ?1", [id], |r| r.get(0))
+        .optional()
+        .map_err(err)?
+        .ok_or_else(|| gone("记录"))?;
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    tx.execute("DELETE FROM todo_logs WHERE id = ?1", [id]).map_err(err)?;
+    settle(&tx, task_id, &today(&tx)?)?;
+    tx.commit().map_err(err)
+}
+
+// ---------- 今天 / 回看 / 月历 ----------
 
 /// A task with where it lives, for cross-place lists.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -615,7 +1051,9 @@ pub struct Agenda {
     pub done_today: Vec<PlacedTask>,
 }
 
-fn placed(conn: &Connection, filter: &str, order: &str, args: &[&dyn rusqlite::ToSql]) -> Result<Vec<PlacedTask>, String> {
+const PLACE_ORDER: &str = "g.sort_order, g.id, go.sort_order, go.id, t.sort_order, t.id";
+
+fn placed(conn: &Connection, filter: &str, order: &str, args: &[&dyn rusqlite::ToSql], today: &str) -> Result<Vec<PlacedTask>, String> {
     let mut st = conn
         .prepare(&format!(
             "SELECT {TASK_COLS}, g.name, go.name, p.title
@@ -624,12 +1062,23 @@ fn placed(conn: &Connection, filter: &str, order: &str, args: &[&dyn rusqlite::T
              WHERE {filter} ORDER BY {order}"
         ))
         .map_err(err)?;
-    let rows = st
-        .query_map(args, |r| {
-            Ok(PlacedTask { task: task_row(r)?, group_name: r.get(16)?, goal_name: r.get(17)?, parent_title: r.get(18)? })
-        })
+    let n = TASK_NCOLS;
+    let mut out = st
+        .query_map(args, |r| Ok(PlacedTask { task: task_row(r)?, group_name: r.get(n)?, goal_name: r.get(n + 1)?, parent_title: r.get(n + 2)? }))
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    for p in &mut out {
+        enrich(conn, &mut p.task, today)?;
+    }
+    Ok(out)
+}
+
+/// Dated tasks (normal / repeat / whole-period progress): planned on or before today, due today,
+/// or today inside [start, due].
+fn dated_hit(t: &Task, today: &str) -> bool {
+    let le = |d: &Option<String>| d.as_deref().is_some_and(|d| d <= today);
+    le(&t.plan_date) || le(&t.due_date) || (le(&t.start_date) && t.due_date.as_deref().is_some_and(|d| today <= d))
 }
 
 fn is_overdue(t: &Task, today: &str) -> bool {
@@ -640,33 +1089,192 @@ fn is_overdue(t: &Task, today: &str) -> bool {
     }
 }
 
+fn started(t: &Task, today: &str) -> bool {
+    t.plan_date.as_deref().is_none_or(|s| s <= today) && t.repeat_until.as_deref().is_none_or(|u| today <= u)
+}
+
 pub fn agenda(conn: &Connection, today: &str) -> Result<Agenda, String> {
     common::check_date(&Some(today.to_string()), "日期")?;
-    let open = placed(
-        conn,
-        "t.done = 0 AND (go.id IS NULL OR go.status = 'active')
-         AND (t.plan_date <= ?1 OR t.due_date <= ?1 OR (t.start_date <= ?1 AND ?1 <= t.due_date))",
-        "g.sort_order, g.id, go.sort_order, go.id, t.sort_order, t.id",
-        &[&today],
-    )?;
-    let (mut overdue, due): (Vec<_>, Vec<_>) = open.into_iter().partition(|p| is_overdue(&p.task, today));
+    let open = placed(conn, "t.done = 0 AND (go.id IS NULL OR go.status = 'active')", PLACE_ORDER, &[], today)?;
+    let (mut overdue, mut due, mut done_today) = (Vec::new(), Vec::new(), Vec::new());
+    for p in open {
+        let t = &p.task;
+        let periodic = t.task_type == TaskType::Progress && t.period != Some(Period::All);
+        match t.task_type {
+            TaskType::Checkin => {
+                let rule = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default())?;
+                if t.logged_today {
+                    done_today.push(p);
+                } else if started(t, today) && rule.scheduled(today) {
+                    due.push(p);
+                }
+            }
+            _ if periodic => {
+                if started(t, today) && t.count < t.target.unwrap_or(0) {
+                    due.push(p);
+                } else if t.logged_today {
+                    done_today.push(p);
+                }
+            }
+            _ => {
+                if t.logged_today {
+                    done_today.push(p.clone()); // an occurrence / amount done today
+                }
+                if dated_hit(t, today) {
+                    if is_overdue(t, today) { overdue.push(p) } else { due.push(p) }
+                }
+            }
+        }
+    }
     overdue.sort_by(|a, b| {
         let key = |p: &PlacedTask| p.task.due_date.clone().or(p.task.plan_date.clone());
         key(a).cmp(&key(b))
     });
-    let done_today = placed(conn, "t.done = 1 AND date(t.done_at, 'localtime') = ?1", "t.done_at", &[&today])?;
+    let finished = placed(conn, "t.done = 1 AND date(t.done_at, 'localtime') = ?1", "t.done_at", &[&today], today)?;
+    for p in finished {
+        if !done_today.iter().any(|d: &PlacedTask| d.task.id == p.task.id) {
+            done_today.push(p);
+        }
+    }
     Ok(Agenda { today: today.into(), overdue, due, done_today })
 }
 
-/// Tasks checked off between two local dates (inclusive), in completion order.
-pub fn done_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<PlacedTask>, String> {
-    common::check_date(&Some(from.to_string()), "开始日期")?;
-    common::check_date(&Some(to.to_string()), "结束日期")?;
-    placed(conn, "t.done = 1 AND date(t.done_at, 'localtime') BETWEEN ?1 AND ?2", "t.done_at", &[&from, &to])
+/// Something finished on a day: a checked task, or one log of a repeat / check-in / progress task.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoneItem {
+    pub day: String,
+    /// Sort key within the day (UTC timestamp).
+    pub at: String,
+    /// 第 3 次 / 打卡 / +2 本; None for plain checks.
+    pub detail: Option<String>,
+    #[serde(flatten)]
+    pub task: PlacedTask,
 }
 
-fn today(conn: &Connection) -> Result<String, String> {
+/// What got done between two local dates (inclusive), in order.
+pub fn done_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<DoneItem>, String> {
+    common::check_date(&Some(from.to_string()), "开始日期")?;
+    common::check_date(&Some(to.to_string()), "结束日期")?;
+    let today = today(conn)?;
+    let mut out: Vec<DoneItem> = placed(conn, "t.done = 1 AND date(t.done_at, 'localtime') BETWEEN ?1 AND ?2", "t.done_at", &[&from, &to], &today)?
+        .into_iter()
+        .map(|p| {
+            let at = p.task.done_at.clone().unwrap_or_default();
+            let day = conn.query_row("SELECT date(?1, 'localtime')", [&at], |r| r.get(0)).unwrap_or_default();
+            DoneItem { day, at, detail: (p.task.task_type != TaskType::Normal).then(|| "全部完成".into()), task: p }
+        })
+        .collect();
+    let mut st = conn
+        .prepare(
+            "SELECT l.task_id, l.day, l.created_at, l.amount,
+               (SELECT count(*) FROM todo_logs x WHERE x.task_id = l.task_id AND (x.day < l.day OR (x.day = l.day AND x.id <= l.id)))
+             FROM todo_logs l WHERE l.day BETWEEN ?1 AND ?2 ORDER BY l.id",
+        )
+        .map_err(err)?;
+    let logs: Vec<(i64, String, String, i64, i64)> = st
+        .query_map([from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    for (task_id, day, at, amount, nth) in logs {
+        let Some(p) = placed(conn, "t.id = ?1", "t.id", &[&task_id], &today)?.pop() else { continue };
+        let detail = match p.task.task_type {
+            TaskType::Repeat => format!("第 {nth} 次"),
+            TaskType::Checkin => "打卡".into(),
+            _ => format!("+{amount}{}", p.task.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default()),
+        };
+        out.push(DoneItem { day, at, detail: Some(detail), task: p });
+    }
+    out.sort_by(|a, b| (&a.day, &a.at).cmp(&(&b.day, &b.at)));
+    Ok(out)
+}
+
+/// One entry in the month grid.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalItem {
+    pub day: String,
+    /// plan | due | range | next (a later occurrence of a repeat task) | done
+    pub what: String,
+    pub detail: Option<String>,
+    #[serde(flatten)]
+    pub task: PlacedTask,
+}
+
+/// Dated work between two local dates: open tasks by their dates (time ranges on every day, repeat
+/// tasks with their upcoming occurrences), plus what got done. Check-ins are left out (every day).
+pub fn month(conn: &Connection, from: &str, to: &str) -> Result<Vec<CalItem>, String> {
+    let done = done_between(conn, from, to)?;
+    let today = today(conn)?;
+    let open = placed(conn, "t.done = 0 AND t.task_type != 'checkin' AND (go.id IS NULL OR go.status = 'active')", PLACE_ORDER, &[], &today)?;
+    let inside = |d: &str| from <= d && d <= to;
+    let mut out = Vec::new();
+    let mut push = |day: String, what: &str, detail: Option<String>, p: &PlacedTask| {
+        out.push(CalItem { day, what: what.into(), detail, task: p.clone() })
+    };
+    for p in &open {
+        let t = &p.task;
+        match (&t.start_date, &t.due_date) {
+            (Some(s), Some(d)) => {
+                let (a, b) = (common::day_number(s.max(&from.to_string())), common::day_number(d.min(&to.to_string())));
+                for n in a..=b.min(a + 62) {
+                    push(common::from_day_number(n), "range", None, p);
+                }
+            }
+            (None, Some(d)) if inside(d) => push(d.clone(), "due", None, p),
+            _ => {}
+        }
+        if let Some(pd) = t.plan_date.as_deref().filter(|d| inside(d) && Some(*d) != t.due_date.as_deref()) {
+            push(pd.into(), "plan", None, p);
+        }
+        if t.task_type == TaskType::Repeat {
+            let Ok(rule) = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default()) else { continue };
+            let Some(mut anchor) = t.due_date.clone().or(t.plan_date.clone()) else { continue };
+            for k in 1..=62 {
+                let next = rule.next(&anchor, &anchor);
+                let n = t.count + k + 1; // occurrence number of `next`
+                if next.as_str() > to || t.repeat_total.is_some_and(|tot| n > tot) || t.repeat_until.as_deref().is_some_and(|u| next.as_str() > u) {
+                    break;
+                }
+                if inside(&next) {
+                    push(next.clone(), "next", Some(format!("第 {n} 次")), p);
+                }
+                anchor = next;
+            }
+        }
+    }
+    for d in done {
+        let DoneItem { day, detail, task, .. } = d;
+        out.push(CalItem { day, what: "done".into(), detail, task });
+    }
+    Ok(out)
+}
+
+pub fn today(conn: &Connection) -> Result<String, String> {
     conn.query_row("SELECT date('now', 'localtime')", [], |r| r.get(0)).map_err(err)
+}
+
+// ---------- order (drag and drop) ----------
+
+pub fn reorder_groups(conn: &Connection, ids: &[i64]) -> Result<(), String> {
+    common::reorder(conn, "todo_groups", "1 = 1", &[], ids)
+}
+
+pub fn reorder_goals(conn: &Connection, group_id: i64, ids: &[i64]) -> Result<(), String> {
+    common::reorder(conn, "todo_goals", "group_id = ?1", &[&group_id], ids)
+}
+
+/// `ids` = all siblings of one parent (or one place's top level), in the new order.
+pub fn reorder_tasks(conn: &Connection, ids: &[i64]) -> Result<(), String> {
+    let first = task(conn, *ids.first().ok_or("列表是空的")?)?;
+    common::reorder(
+        conn,
+        "todo_tasks",
+        "group_id = ?1 AND goal_id IS ?2 AND parent_id IS ?3",
+        &[&first.group_id, &first.goal_id, &first.parent_id],
+        ids,
+    )
 }
 
 // ---------- import / export: { groups: [{ name, goals: [{…, tasks }], tasks }] }, subtasks nested ----------
@@ -701,6 +1309,40 @@ pub struct TaskRecord {
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "is_normal")]
+    pub task_type: TaskType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_rule: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_total: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_until: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<Period>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<LogRecord>,
+}
+
+fn is_normal(t: &TaskType) -> bool {
+    *t == TaskType::Normal
+}
+
+fn one() -> i64 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LogRecord {
+    pub day: String,
+    #[serde(default = "one")]
+    pub amount: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -773,15 +1415,29 @@ impl TodoRecord {
 
 impl TaskRecord {
     fn fields(&self) -> Result<TaskFields, String> {
-        TaskFields {
+        let f = TaskFields {
             title: self.title.clone(),
             note: self.note.clone(),
             link: self.link.clone(),
             plan_date: self.plan_date.clone(),
             start_date: self.start_date.clone(),
             due_date: self.due_date.clone(),
+            task_type: self.task_type,
+            repeat_rule: self.repeat_rule.clone(),
+            repeat_total: self.repeat_total,
+            repeat_until: self.repeat_until.clone(),
+            target: self.target,
+            unit: self.unit.clone(),
+            period: self.period,
         }
-        .validated()
+        .validated(!self.children.is_empty())?;
+        for l in &self.logs {
+            common::check_date(&Some(l.day.clone()), "记录日期")?;
+            if l.amount < 1 {
+                return Err("记录的数量要大于 0".into());
+            }
+        }
+        Ok(f)
     }
 }
 
@@ -831,16 +1487,27 @@ fn insert_tasks(conn: &Connection, place: Place, tasks: &[TaskRecord]) -> Result
         conn.execute(
             &format!(
                 "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date,
-                   done, done_at, collapsed, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, coalesce(?14, {NOW}), coalesce(?15, ?14, {NOW}))"
+                   done, done_at, collapsed, sort_order, created_at, updated_at,
+                   task_type, repeat_rule, repeat_total, repeat_until, target, unit, period)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, coalesce(?14, {NOW}), coalesce(?15, ?14, {NOW}),
+                   ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
             ),
             params![
                 place.group_id, place.goal_id, place.parent_id, f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date,
-                t.done, t.done_at, t.collapsed, i as i64 + 1, t.created_at, t.updated_at
+                t.done, t.done_at, t.collapsed, i as i64 + 1, t.created_at, t.updated_at, f.task_type, f.repeat_rule,
+                f.repeat_total, f.repeat_until, f.target, f.unit, f.period
             ],
         )
         .map_err(err)?;
-        let child = Place { parent_id: Some(conn.last_insert_rowid()), ..place };
+        let id = conn.last_insert_rowid();
+        for l in &t.logs {
+            conn.execute(
+                &format!("INSERT INTO todo_logs (task_id, day, amount, created_at) VALUES (?1, ?2, ?3, coalesce(?4, {NOW}))"),
+                params![id, l.day, l.amount, l.created_at],
+            )
+            .map_err(err)?;
+        }
+        let child = Place { parent_id: Some(id), ..place };
         insert_tasks(conn, child, &t.children)?;
     }
     Ok(())
@@ -880,12 +1547,24 @@ pub fn replace_all(conn: &Connection, rec: &TodoRecord) -> Result<usize, String>
     Ok(rec.len())
 }
 
-fn task_tree(all: &[Task]) -> Vec<TaskRecord> {
+fn task_tree(conn: &Connection, all: &[Task]) -> Result<Vec<TaskRecord>, String> {
     let mut by_parent: HashMap<Option<i64>, Vec<&Task>> = HashMap::new();
+    let mut logs: HashMap<i64, Vec<LogRecord>> = HashMap::new();
     for t in all {
         by_parent.entry(t.parent_id).or_default().push(t);
+        if t.task_type != TaskType::Normal {
+            let mut st = conn
+                .prepare("SELECT day, amount, created_at FROM todo_logs WHERE task_id = ?1 ORDER BY day, id")
+                .map_err(err)?;
+            let ls = st
+                .query_map([t.id], |r| Ok(LogRecord { day: r.get(0)?, amount: r.get(1)?, created_at: r.get(2)? }))
+                .map_err(err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(err)?;
+            logs.insert(t.id, ls);
+        }
     }
-    fn build(parent: Option<i64>, by_parent: &HashMap<Option<i64>, Vec<&Task>>) -> Vec<TaskRecord> {
+    fn build(parent: Option<i64>, by_parent: &HashMap<Option<i64>, Vec<&Task>>, logs: &HashMap<i64, Vec<LogRecord>>) -> Vec<TaskRecord> {
         by_parent
             .get(&parent)
             .map(|ts| {
@@ -900,15 +1579,23 @@ fn task_tree(all: &[Task]) -> Vec<TaskRecord> {
                         done: t.done,
                         done_at: t.done_at.clone(),
                         collapsed: t.collapsed,
-                        children: build(Some(t.id), by_parent),
+                        children: build(Some(t.id), by_parent, logs),
                         created_at: Some(t.created_at.clone()),
                         updated_at: Some(t.updated_at.clone()),
+                        task_type: t.task_type,
+                        repeat_rule: t.repeat_rule.clone(),
+                        repeat_total: t.repeat_total,
+                        repeat_until: t.repeat_until.clone(),
+                        target: t.target,
+                        unit: t.unit.clone(),
+                        period: t.period,
+                        logs: logs.get(&t.id).cloned().unwrap_or_default(),
                     })
                     .collect()
             })
             .unwrap_or_default()
     }
-    build(None, &by_parent)
+    Ok(build(None, &by_parent, &logs))
 }
 
 pub fn export(conn: &Connection) -> Result<TodoRecord, String> {
@@ -927,14 +1614,14 @@ pub fn export(conn: &Connection) -> Result<TodoRecord, String> {
                         end_date: x.end_date.clone(),
                         note: x.note.clone(),
                         review: x.review.clone(),
-                        tasks: task_tree(&tasks(conn, None, Some(x.id))?),
+                        tasks: task_tree(conn, &tasks(conn, None, Some(x.id))?)?,
                         created_at: Some(x.created_at.clone()),
                         updated_at: Some(x.updated_at.clone()),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             Ok(GroupRecord {
-                tasks: task_tree(&tasks(conn, Some(g.id), None)?),
+                tasks: task_tree(conn, &tasks(conn, Some(g.id), None)?)?,
                 name: g.name,
                 goals,
                 created_at: Some(g.created_at),
@@ -953,15 +1640,15 @@ pub fn todo_groups(state: State<AppState>) -> Result<Vec<Group>, String> {
 }
 #[tauri::command]
 pub fn todo_group_create(state: State<AppState>, name: String) -> Result<Group, String> {
-    state.with_db(|c| create_group(c, &name))
+    state.with_undo("添加分组", |c| create_group(c, &name))
 }
 #[tauri::command]
 pub fn todo_group_rename(state: State<AppState>, id: i64, name: String) -> Result<Group, String> {
-    state.with_db(|c| rename_group(c, id, &name))
+    state.with_undo("重命名分组", |c| rename_group(c, id, &name))
 }
 #[tauri::command]
 pub fn todo_group_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_group(c, id))
+    state.with_undo("删除分组", |c| delete_group(c, id))
 }
 #[tauri::command]
 pub fn todo_goals(state: State<AppState>) -> Result<Vec<Goal>, String> {
@@ -969,15 +1656,15 @@ pub fn todo_goals(state: State<AppState>) -> Result<Vec<Goal>, String> {
 }
 #[tauri::command]
 pub fn todo_goal_create(state: State<AppState>, patch: GoalPatch) -> Result<Goal, String> {
-    state.with_db(|c| create_goal(c, patch))
+    state.with_undo("添加目标", |c| create_goal(c, patch))
 }
 #[tauri::command]
 pub fn todo_goal_update(state: State<AppState>, id: i64, patch: GoalPatch) -> Result<Goal, String> {
-    state.with_db(|c| update_goal(c, id, patch))
+    state.with_undo("修改目标", |c| update_goal(c, id, patch))
 }
 #[tauri::command]
 pub fn todo_goal_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_goal(c, id))
+    state.with_undo("删除目标", |c| delete_goal(c, id))
 }
 #[tauri::command]
 pub fn todo_tasks(state: State<AppState>, group_id: Option<i64>, goal_id: Option<i64>) -> Result<Vec<Task>, String> {
@@ -985,19 +1672,55 @@ pub fn todo_tasks(state: State<AppState>, group_id: Option<i64>, goal_id: Option
 }
 #[tauri::command]
 pub fn todo_task_create(state: State<AppState>, patch: TaskPatch) -> Result<Task, String> {
-    state.with_db(|c| create_task(c, patch))
+    state.with_undo("添加任务", |c| create_task(c, patch))
 }
 #[tauri::command]
 pub fn todo_task_update(state: State<AppState>, id: i64, patch: TaskPatch) -> Result<Task, String> {
-    state.with_db(|c| update_task(c, id, patch))
+    state.with_undo("修改任务", |c| update_task(c, id, patch))
 }
 #[tauri::command]
 pub fn todo_task_set_done(state: State<AppState>, id: i64, done: bool) -> Result<(), String> {
-    state.with_db(|c| set_done(c, id, done))
+    state.with_undo(if done { "完成任务" } else { "取消完成" }, |c| set_done(c, id, done))
+}
+#[tauri::command]
+pub fn todo_task_skip(state: State<AppState>, id: i64) -> Result<(), String> {
+    state.with_undo("跳过一次", |c| skip_on(c, id, &today(c)?))
+}
+#[tauri::command]
+pub fn todo_logs(state: State<AppState>, task_id: i64) -> Result<Vec<Log>, String> {
+    state.with_db(|c| logs(c, task_id))
+}
+/// `day` defaults to today.
+#[tauri::command]
+pub fn todo_log(state: State<AppState>, task_id: i64, day: Option<String>, amount: Option<i64>) -> Result<(), String> {
+    state.with_undo("记录", |c| {
+        let t = today(c)?;
+        log_on(c, task_id, day.as_deref().unwrap_or(&t), amount.unwrap_or(1), &t)
+    })
+}
+#[tauri::command]
+pub fn todo_log_delete(state: State<AppState>, id: i64) -> Result<(), String> {
+    state.with_undo("删除记录", |c| delete_log(c, id))
+}
+#[tauri::command]
+pub fn todo_month(state: State<AppState>, from: String, to: String) -> Result<Vec<CalItem>, String> {
+    state.with_db(|c| month(c, &from, &to))
+}
+#[tauri::command]
+pub fn todo_groups_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(), String> {
+    state.with_undo("调整顺序", |c| reorder_groups(c, &ids))
+}
+#[tauri::command]
+pub fn todo_goals_reorder(state: State<AppState>, group_id: i64, ids: Vec<i64>) -> Result<(), String> {
+    state.with_undo("调整顺序", |c| reorder_goals(c, group_id, &ids))
+}
+#[tauri::command]
+pub fn todo_tasks_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(), String> {
+    state.with_undo("调整顺序", |c| reorder_tasks(c, &ids))
 }
 #[tauri::command]
 pub fn todo_task_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_task(c, id))
+    state.with_undo("删除任务", |c| delete_task(c, id))
 }
 /// `today` defaults to the Mac's local date.
 #[tauri::command]
@@ -1011,7 +1734,7 @@ pub fn todo_agenda(state: State<AppState>, today: Option<String>) -> Result<Agen
     })
 }
 #[tauri::command]
-pub fn todo_done_between(state: State<AppState>, from: String, to: String) -> Result<Vec<PlacedTask>, String> {
+pub fn todo_done_between(state: State<AppState>, from: String, to: String) -> Result<Vec<DoneItem>, String> {
     state.with_db(|c| done_between(c, &from, &to))
 }
 
@@ -1186,7 +1909,7 @@ mod tests {
         assert_eq!((s.group_name.as_str(), s.goal_name.as_deref(), s.parent_title.as_deref()), ("A", Some("Act"), Some("active goal")));
         let today = today(&c).unwrap(); // done_at is "now", so done_today uses the real date
         assert_eq!(titles(&agenda(&c, &today).unwrap().done_today), ["finished"]);
-        assert_eq!(titles(&done_between(&c, &today, &today).unwrap()), ["finished"]);
+        assert_eq!(done_between(&c, &today, &today).unwrap().iter().map(|d| d.task.task.title.as_str()).collect::<Vec<_>>(), ["finished"]);
         assert!(done_between(&c, "2020-01-01", "2020-01-07").unwrap().is_empty());
         assert!(agenda(&c, "2026-9-30").is_err());
     }
@@ -1200,11 +1923,13 @@ mod tests {
                 {"title": "答辩前提交", "collapsed": true, "children": [{"title": "IA Report"}, {"title": "Poster", "children": [{"title": "draft", "dueDate": "2027-01-20"}]}]},
                 {"title": "提交窗口", "startDate": "2027-01-22", "dueDate": "2027-01-25"}
             ]},
-            {"name": "📌 Pick Up", "goals": [{"name": "Personal Website", "status": "paused", "review": "r", "tasks": [{"title": "选框架"}]}], "tasks": [{"title": "嘉信入金", "link": "https://x"}]}
+            {"name": "📌 Pick Up", "goals": [{"name": "Personal Website", "status": "paused", "review": "r", "tasks": [{"title": "选框架"}]}], "tasks": [{"title": "嘉信入金", "link": "https://x"},
+                {"title": "周报", "taskType": "repeat", "repeatRule": "weekly:6", "dueDate": "2026-10-03", "repeatTotal": 20, "logs": [{"day": "2026-09-26"}]},
+                {"title": "读书", "taskType": "progress", "target": 20, "unit": "本", "period": "all", "logs": [{"day": "2026-09-01", "amount": 2}]}]}
         ]}))
         .unwrap();
-        assert_eq!(rec.len(), 2 + 1 + 8);
-        assert_eq!(replace_all(&c, &rec).unwrap(), 11);
+        assert_eq!(rec.len(), 2 + 1 + 10);
+        assert_eq!(replace_all(&c, &rec).unwrap(), 13);
         let out = export(&c).unwrap();
         let a = serde_json::to_value(&out).unwrap();
         assert!(a["groups"][0]["createdAt"].is_string());
@@ -1216,10 +1941,182 @@ mod tests {
         assert_eq!(d.tasks[1].children[1].children[0].due_date.as_deref(), Some("2027-01-20"));
         assert!(d.tasks[0].done && d.tasks[0].done_at.is_none() && d.tasks[1].collapsed);
         assert_eq!(out.groups[1].goals[0].status, GoalStatus::Paused);
+        let reading = &out.groups[1].tasks[2];
+        assert_eq!((reading.task_type, reading.target, reading.logs.len(), reading.logs[0].amount), (TaskType::Progress, Some(20), 1, 2));
 
         let dup: TodoRecord = serde_json::from_value(json!({"groups": [{"name": "X"}, {"name": " X "}]})).unwrap();
         assert!(validate_records(&dup).unwrap_err().contains("重复"));
         let bad: TodoRecord = serde_json::from_value(json!({"groups": [{"name": "X", "tasks": [{"title": "ok", "children": [{"title": " "}]}]}]})).unwrap();
         assert!(validate_records(&bad).is_err());
+    }
+
+    #[test]
+    fn rules_parse_and_next() {
+        let next = |r: &str, anchor: &str, done: &str| Rule::parse(r).unwrap().next(anchor, done);
+        assert_eq!(next("weekly:6", "2026-09-30", "2026-09-30"), "2026-10-03");
+        assert_eq!(next("weekly:3,4", "2026-09-30", ""), "2026-10-01");
+        assert_eq!(next("monthly:31", "2026-09-30", ""), "2026-10-31");
+        assert_eq!(next("monthly:31", "2026-01-31", ""), "2026-02-28");
+        assert_eq!(next("monthly:15", "2026-09-10", ""), "2026-09-15");
+        assert_eq!(next("every:2w", "2026-09-30", ""), "2026-10-14");
+        assert_eq!(next("every:3d", "2026-09-30", ""), "2026-10-03");
+        assert_eq!(next("after:30d", "2026-09-01", "2026-09-30"), "2026-10-30");
+        assert_eq!(next("daily", "2026-12-31", ""), "2027-01-01");
+        for bad in ["weekly:", "weekly:8", "monthly:0", "every:3", "every:0d", "after:2w", "hourly", ""] {
+            assert!(Rule::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn repeat_occurrences_skip_and_end() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        assert!(create_task(&c, tp(json!({"groupId": a, "title": "x", "taskType": "repeat", "repeatRule": "weekly:6"}))).unwrap_err().contains("日期"));
+        let t = create_task(&c, tp(json!({"groupId": a, "title": "周报", "taskType": "repeat", "repeatRule": "weekly:6", "dueDate": "2026-10-03", "repeatTotal": 3}))).unwrap();
+        assert!(create_task(&c, tp(json!({"parentId": t.id, "title": "sub"}))).is_err());
+        set_done_on(&c, t.id, true, "2026-10-02").unwrap();
+        let u = task_view(&c, t.id).unwrap();
+        assert_eq!((u.due_date.as_deref(), u.count, u.done), (Some("2026-10-10"), 1, false));
+        skip_on(&c, t.id, "2026-10-09").unwrap(); // not counted
+        assert_eq!(task(&c, t.id).unwrap().due_date.as_deref(), Some("2026-10-17"));
+        set_done_on(&c, t.id, true, "2026-10-17").unwrap();
+        set_done_on(&c, t.id, true, "2026-10-24").unwrap(); // 3rd → series ends
+        let u = task_view(&c, t.id).unwrap();
+        assert_eq!((u.done, u.count), (true, 3));
+        assert!(skip_on(&c, t.id, "2026-10-25").is_err());
+        set_done_on(&c, t.id, false, "2026-10-25").unwrap(); // reopen
+        assert!(!task(&c, t.id).unwrap().done);
+
+        // plan / start / due move together; the end date stops the series
+        let r = create_task(&c, tp(json!({"groupId": a, "title": "窗口", "taskType": "repeat", "repeatRule": "every:4w",
+            "planDate": "2027-01-20", "startDate": "2027-01-22", "dueDate": "2027-01-25", "repeatUntil": "2027-03-01"}))).unwrap();
+        set_done_on(&c, r.id, true, "2027-01-24").unwrap();
+        let r2 = task(&c, r.id).unwrap();
+        assert_eq!(
+            (r2.plan_date.as_deref(), r2.start_date.as_deref(), r2.due_date.as_deref(), r2.done),
+            (Some("2027-02-17"), Some("2027-02-19"), Some("2027-02-22"), false)
+        );
+        set_done_on(&c, r.id, true, "2027-02-20").unwrap(); // next would be 03-22 > until
+        assert!(task(&c, r.id).unwrap().done);
+        // after-rule counts from the completion day
+        let hair = create_task(&c, tp(json!({"groupId": a, "title": "理发", "taskType": "repeat", "repeatRule": "after:30d", "planDate": "2026-09-01"}))).unwrap();
+        set_done_on(&c, hair.id, true, "2026-09-30").unwrap();
+        assert_eq!(task(&c, hair.id).unwrap().plan_date.as_deref(), Some("2026-10-30"));
+        // switching back to normal clears the repeat fields
+        let n = update_task(&c, hair.id, tp(json!({"taskType": "normal"}))).unwrap();
+        assert_eq!((n.task_type, n.repeat_rule), (TaskType::Normal, None));
+    }
+
+    #[test]
+    fn checkin_streak_backfill_and_target() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        assert!(create_task(&c, tp(json!({"groupId": a, "title": "x", "taskType": "checkin", "repeatRule": "every:2d", "planDate": "2026-09-01"}))).is_err());
+        assert!(create_task(&c, tp(json!({"groupId": a, "title": "x", "taskType": "checkin", "repeatRule": "daily"}))).is_err());
+        let t = create_task(&c, tp(json!({"groupId": a, "title": "背单词", "taskType": "checkin", "repeatRule": "weekly:1,2,3,4,5",
+            "planDate": "2026-09-21", "repeatTotal": 4, "dueDate": "2026-12-01"}))).unwrap();
+        assert_eq!(t.due_date, None); // not used by check-ins
+        let today = "2026-09-30"; // Wednesday
+        let view = |d: &str| {
+            let mut v = task(&c, t.id).unwrap();
+            enrich(&c, &mut v, d).unwrap();
+            v
+        };
+        log_on(&c, t.id, "2026-09-28", 1, today).unwrap(); // Mon
+        log_on(&c, t.id, "2026-09-29", 1, today).unwrap(); // Tue
+        assert!(log_on(&c, t.id, "2026-09-27", 1, today).is_err()); // Sunday: not scheduled
+        assert!(log_on(&c, t.id, "2026-10-01", 1, today).is_err()); // future
+        assert!(log_on(&c, t.id, "2026-09-18", 1, today).is_err()); // before the start
+        let v = view(today);
+        assert_eq!((v.count, v.streak, v.logged_today), (2, 2, false)); // today still open
+        set_done_on(&c, t.id, true, today).unwrap();
+        let v = view(today);
+        assert_eq!((v.count, v.streak, v.logged_today, v.done), (3, 3, true, false));
+        log_on(&c, t.id, "2026-09-25", 1, today).unwrap(); // back-fill Fri → 4 days → target reached
+        assert!(task(&c, t.id).unwrap().done);
+        log_on(&c, t.id, "2026-09-25", 1, today).unwrap(); // same day again = un-check → reopened
+        assert!(!task(&c, t.id).unwrap().done);
+        assert_eq!(view("2026-10-02").streak, 0); // Thu 10-01 missed
+        set_done_on(&c, t.id, false, today).unwrap(); // undo today's check-in
+        assert_eq!(view(today).count, 2);
+    }
+
+    #[test]
+    fn progress_counts_by_period() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        assert!(create_task(&c, tp(json!({"groupId": a, "title": "x", "taskType": "progress"}))).is_err());
+        let books = create_task(&c, tp(json!({"groupId": a, "title": "读书", "taskType": "progress", "target": 3, "unit": "本"}))).unwrap();
+        assert_eq!(books.period, Some(Period::All));
+        set_done_on(&c, books.id, true, "2026-09-30").unwrap();
+        log_on(&c, books.id, "2026-09-30", 2, "2026-09-30").unwrap();
+        let v = task_view(&c, books.id).unwrap();
+        assert_eq!((v.done, v.total_amount), (true, 3));
+        let newest = logs(&c, books.id).unwrap()[0].id;
+        delete_log(&c, newest).unwrap(); // back to 1 → reopened
+        assert!(!task(&c, books.id).unwrap().done);
+        assert!(log_on(&c, books.id, "2026-09-30", 0, "2026-09-30").is_err());
+
+        let weekly = create_task(&c, tp(json!({"groupId": a, "title": "投简历", "taskType": "progress", "target": 5, "unit": "份", "period": "week"}))).unwrap();
+        log_on(&c, weekly.id, "2026-09-27", 4, "2026-09-30").unwrap(); // last week (Sunday)
+        log_on(&c, weekly.id, "2026-09-29", 2, "2026-09-30").unwrap();
+        let mut v = task(&c, weekly.id).unwrap();
+        enrich(&c, &mut v, "2026-09-30").unwrap();
+        assert_eq!((v.count, v.total_amount, v.done), (2, 6, false));
+        let ag = agenda(&c, "2026-09-30").unwrap();
+        assert!(ag.due.iter().any(|p| p.task.id == weekly.id)); // 2 / 5 this week
+        log_on(&c, weekly.id, "2026-09-30", 3, "2026-09-30").unwrap();
+        let ag = agenda(&c, "2026-09-30").unwrap();
+        assert!(!ag.due.iter().any(|p| p.task.id == weekly.id));
+        assert!(ag.done_today.iter().any(|p| p.task.id == weekly.id));
+        assert!(!task(&c, weekly.id).unwrap().done); // periodic ones never finish on their own
+    }
+
+    #[test]
+    fn today_review_and_month_with_types() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        let today = today(&c).unwrap();
+        let ck = create_task(&c, tp(json!({"groupId": a, "title": "打卡", "taskType": "checkin", "repeatRule": "daily", "planDate": today}))).unwrap();
+        let rep = create_task(&c, tp(json!({"groupId": a, "title": "周报", "taskType": "repeat", "repeatRule": "daily", "planDate": today, "repeatTotal": 2}))).unwrap();
+        assert_eq!(titles(&agenda(&c, &today).unwrap().due), ["打卡", "周报"]);
+        set_done(&c, ck.id, true).unwrap();
+        set_done(&c, rep.id, true).unwrap();
+        let ag = agenda(&c, &today).unwrap();
+        assert!(ag.due.is_empty()); // 周报 moved on to tomorrow
+        assert_eq!(titles(&ag.done_today), ["打卡", "周报"]);
+        let rv = done_between(&c, &today, &today).unwrap();
+        let d: Vec<_> = rv.iter().map(|x| (x.task.task.title.as_str(), x.detail.as_deref())).collect();
+        assert_eq!(d, [("打卡", Some("打卡")), ("周报", Some("第 1 次"))]);
+
+        let water = create_task(&c, tp(json!({"groupId": a, "title": "浇花", "taskType": "repeat", "repeatRule": "every:2d", "planDate": today}))).unwrap();
+        let cal = month(&c, &today, &common::add_days(&today, 6)).unwrap();
+        let of = |id: i64| cal.iter().filter(|x| x.task.task.id == id).map(|x| (x.what.as_str(), x.detail.clone())).collect::<Vec<_>>();
+        assert_eq!(
+            of(water.id),
+            [("plan", None), ("next", Some("第 2 次".into())), ("next", Some("第 3 次".into())), ("next", Some("第 4 次".into()))]
+        );
+        assert_eq!(of(rep.id), [("plan", None), ("done", Some("第 1 次".into()))]); // 2 of 2: no more projections
+        assert!(of(ck.id).iter().all(|(w, _)| *w == "done")); // check-ins only show when done
+    }
+
+    #[test]
+    fn reorder_siblings_goals_groups() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        let b = create_group(&c, "B").unwrap().id;
+        reorder_groups(&c, &[b, a]).unwrap();
+        assert_eq!(groups(&c).unwrap().iter().map(|g| g.id).collect::<Vec<_>>(), [b, a]);
+        let mk = |t: &str| create_task(&c, tp(json!({"groupId": a, "title": t}))).unwrap().id;
+        let (t1, t2, t3) = (mk("1"), mk("2"), mk("3"));
+        let sub = create_task(&c, tp(json!({"parentId": t1, "title": "s"}))).unwrap().id;
+        reorder_tasks(&c, &[t3, t1, t2]).unwrap();
+        assert_eq!(tasks(&c, Some(a), None).unwrap().iter().filter(|t| t.parent_id.is_none()).map(|t| t.id).collect::<Vec<_>>(), [t3, t1, t2]);
+        assert!(reorder_tasks(&c, &[t3, t1]).is_err()); // must list all siblings
+        assert!(reorder_tasks(&c, &[t3, t1, t2, sub]).is_err()); // not siblings
+        let g1 = create_goal(&c, gp(json!({"groupId": a, "name": "g1"}))).unwrap().id;
+        let g2 = create_goal(&c, gp(json!({"groupId": a, "name": "g2"}))).unwrap().id;
+        reorder_goals(&c, a, &[g2, g1]).unwrap();
+        assert_eq!(goals(&c).unwrap().iter().map(|g| g.id).collect::<Vec<_>>(), [g2, g1]);
     }
 }

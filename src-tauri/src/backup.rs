@@ -237,6 +237,7 @@ pub struct RestoreResult {
 pub fn backup_restore(state: State<AppState>, file_name: String) -> Result<RestoreResult, String> {
     let dir = state.paths.backups.clone();
     let safety = state.with_db(|c| restore(c, &dir, &file_name))?;
+    state.clear_history();
     Ok(RestoreResult { safety: info_of(&safety)? })
 }
 

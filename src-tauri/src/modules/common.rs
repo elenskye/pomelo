@@ -152,6 +152,69 @@ pub fn check_date(d: &Option<String>, label: &str) -> Result<(), String> {
     }
 }
 
+// ---------- civil dates ("YYYY-MM-DD", proleptic Gregorian; H. Hinnant's algorithms) ----------
+
+/// Days since 1970-01-01. Input must already be a valid date (`check_date`).
+pub fn day_number(d: &str) -> i64 {
+    let (y, m, dd) = (d[..4].parse::<i64>().unwrap(), d[5..7].parse::<i64>().unwrap(), d[8..10].parse::<i64>().unwrap());
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + dd - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+pub fn from_day_number(n: i64) -> String {
+    let z = n + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+pub fn add_days(d: &str, n: i64) -> String {
+    from_day_number(day_number(d) + n)
+}
+
+/// Monday = 1 … Sunday = 7.
+pub fn weekday(d: &str) -> u32 {
+    ((day_number(d) + 3).rem_euclid(7) + 1) as u32 // 1970-01-01 was a Thursday
+}
+
+pub fn days_in_month(y: i64, m: u32) -> u32 {
+    match m {
+        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// `ids` must be exactly the rows matching `scope` (a WHERE clause); they get sort_order 1..n.
+pub fn reorder(conn: &Connection, table: &str, scope: &str, args: &[&dyn rusqlite::ToSql], ids: &[i64]) -> Result<(), String> {
+    let mut st = conn.prepare(&format!("SELECT id FROM {table} WHERE {scope}")).map_err(err)?;
+    let mut current: Vec<i64> = st.query_map(args, |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let mut wanted = ids.to_vec();
+    current.sort_unstable();
+    wanted.sort_unstable();
+    if current != wanted {
+        return Err("列表已经变了，请刷新后再拖".into());
+    }
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(&format!("UPDATE {table} SET sort_order = ?1 WHERE id = ?2"), rusqlite::params![i as i64 + 1, id])
+            .map_err(err)?;
+    }
+    tx.commit().map_err(err)
+}
+
 pub fn current_month(conn: &Connection) -> Result<String, String> {
     conn.query_row("SELECT strftime('%Y-%m', 'now', 'localtime')", [], |r| r.get(0))
         .map_err(|e| e.to_string())
@@ -179,6 +242,18 @@ mod tests {
         for bad in ["2026-02-29", "2026-04-31", "2026-13-01", "2026-1-01", "26-10-01", "2026/10/01", "abc"] {
             assert!(check_date(&Some(bad.into()), "日期").is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn civil_dates() {
+        for d in ["1970-01-01", "2000-02-29", "2026-09-30", "2027-01-01", "1900-03-01", "2100-12-31"] {
+            assert_eq!(from_day_number(day_number(d)), d);
+        }
+        assert_eq!(day_number("1970-01-01"), 0);
+        assert_eq!(add_days("2026-12-31", 1), "2027-01-01");
+        assert_eq!(add_days("2024-03-01", -1), "2024-02-29");
+        assert_eq!((weekday("2026-09-30"), weekday("2026-10-03"), weekday("2026-10-04")), (3, 6, 7));
+        assert_eq!((days_in_month(2024, 2), days_in_month(2026, 2), days_in_month(2026, 9)), (29, 28, 30));
     }
 
     #[test]

@@ -305,17 +305,17 @@ pub fn books_list(state: State<AppState>) -> Result<Vec<Book>, String> {
 
 #[tauri::command]
 pub fn books_create(state: State<AppState>, patch: BookPatch) -> Result<Book, String> {
-    state.with_db(|c| create(c, patch))
+    state.with_undo("添加书", |c| create(c, patch))
 }
 
 #[tauri::command]
 pub fn books_update(state: State<AppState>, id: i64, patch: BookPatch) -> Result<Book, String> {
-    state.with_db(|c| update(c, id, patch))
+    state.with_undo("修改书", |c| update(c, id, patch))
 }
 
 #[tauri::command]
 pub fn books_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete(c, id))
+    state.with_undo("删除书", |c| delete(c, id))
 }
 
 #[cfg(test)]

@@ -428,23 +428,33 @@ pub fn replace_all(conn: &Connection, records: &[CourseRecord]) -> Result<usize,
 // ---------- commands ----------
 
 #[tauri::command]
+pub fn drawing_courses_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(), String> {
+    state.with_undo("调整顺序", |c| common::reorder(c, "drawing_courses", "1 = 1", &[], &ids))
+}
+
+#[tauri::command]
+pub fn drawing_lessons_reorder(state: State<AppState>, course_id: i64, ids: Vec<i64>) -> Result<(), String> {
+    state.with_undo("调整顺序", |c| common::reorder(c, "drawing_lessons", "course_id = ?1", &[&course_id], &ids))
+}
+
+#[tauri::command]
 pub fn drawing_courses(state: State<AppState>) -> Result<Vec<Course>, String> {
     state.with_db(|c| courses(c))
 }
 
 #[tauri::command]
 pub fn drawing_course_create(state: State<AppState>, patch: CoursePatch) -> Result<Course, String> {
-    state.with_db(|c| create_course(c, patch))
+    state.with_undo("添加课程", |c| create_course(c, patch))
 }
 
 #[tauri::command]
 pub fn drawing_course_update(state: State<AppState>, id: i64, patch: CoursePatch) -> Result<Course, String> {
-    state.with_db(|c| update_course(c, id, patch))
+    state.with_undo("修改课程", |c| update_course(c, id, patch))
 }
 
 #[tauri::command]
 pub fn drawing_course_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_course(c, id))
+    state.with_undo("删除课程", |c| delete_course(c, id))
 }
 
 #[tauri::command]
@@ -454,17 +464,17 @@ pub fn drawing_lessons(state: State<AppState>, course_id: i64) -> Result<Vec<Les
 
 #[tauri::command]
 pub fn drawing_lesson_create(state: State<AppState>, course_id: i64, patch: LessonPatch) -> Result<Lesson, String> {
-    state.with_db(|c| create_lesson(c, course_id, patch))
+    state.with_undo("添加课节", |c| create_lesson(c, course_id, patch))
 }
 
 #[tauri::command]
 pub fn drawing_lesson_update(state: State<AppState>, id: i64, patch: LessonPatch) -> Result<Lesson, String> {
-    state.with_db(|c| update_lesson(c, id, patch))
+    state.with_undo("修改课节", |c| update_lesson(c, id, patch))
 }
 
 #[tauri::command]
 pub fn drawing_lesson_delete(state: State<AppState>, id: i64) -> Result<(), String> {
-    state.with_db(|c| delete_lesson(c, id))
+    state.with_undo("删除课节", |c| delete_lesson(c, id))
 }
 
 #[cfg(test)]
