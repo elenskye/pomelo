@@ -4,9 +4,11 @@
 //! Completion (`set_done`): checking a task checks its whole subtree, and a parent whose children are
 //! all done is checked too (recursively); unchecking a task (or adding an undone subtask) unchecks
 //! its ancestors. Goal status stays manual; progress = done leaf tasks / leaf tasks.
-//! 今天 (`agenda`): undone tasks outside paused/closed goals that are planned on or before today, due
-//! today, or have today inside their [start, due] range. 已过期: due before today, or — with no due
-//! date — planned before today.
+//! Dates: normal / progress tasks have none or a [start, due] range (start optional); a repeat task's
+//! due date is its current occurrence, derived from the rule (see `TaskFields::validated`).
+//! 今天 (`agenda`): undone tasks outside paused/closed goals that are due today or earlier, or have
+//! today inside their [start, due] range; check-ins on their scheduled days. 已过期: due before today.
+//! (plan_date on normal tasks only exists in data older than v10 and is read as a range start.)
 
 use super::common::{self, err, some, str_enum};
 use crate::AppState;
@@ -309,12 +311,13 @@ str_enum!(Period, default = All, {
     Month => "month",
 });
 
-/// Parsed `repeat_rule`: daily | weekly:<1-7,…> (Mon=1) | monthly:<1-31> | every:<n>d | every:<n>w | after:<n>d.
+/// Parsed `repeat_rule`: daily | weekly:<1-7,…> (Mon=1) | monthly:<1-31,…> | every:<n>d | every:<n>w | after:<n>d.
+/// Monthly days past a month's end fall on its last day.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rule {
     Daily,
     Weekly(Vec<u32>),
-    Monthly(u32),
+    Monthly(Vec<u32>),
     EveryDays(i64),
     EveryWeeks(i64),
     AfterDays(i64),
@@ -325,15 +328,16 @@ impl Rule {
         let bad = || format!("重复规则不对：{s}");
         let num = |v: &str, max: i64| v.parse::<i64>().ok().filter(|n| (1..=max).contains(n)).ok_or_else(bad);
         let unit = |v: &str, u: char| v.strip_suffix(u).map(str::to_string);
+        let days = |v: &str, max: i64| -> Result<Vec<u32>, String> {
+            let mut ds = v.split(',').map(|d| num(d, max).map(|n| n as u32)).collect::<Result<Vec<_>, _>>()?;
+            ds.sort_unstable();
+            ds.dedup();
+            Ok(ds)
+        };
         Ok(match s.split_once(':') {
             None if s == "daily" => Rule::Daily,
-            Some(("weekly", days)) => {
-                let mut ds = days.split(',').map(|d| num(d, 7).map(|n| n as u32)).collect::<Result<Vec<_>, _>>()?;
-                ds.sort_unstable();
-                ds.dedup();
-                Rule::Weekly(ds)
-            }
-            Some(("monthly", d)) => Rule::Monthly(num(d, 31)? as u32),
+            Some(("weekly", ds)) => Rule::Weekly(days(ds, 7)?),
+            Some(("monthly", ds)) => Rule::Monthly(days(ds, 31)?),
             Some(("every", n)) => match (unit(n, 'd'), unit(n, 'w')) {
                 (Some(d), _) => Rule::EveryDays(num(&d, 365)?),
                 (_, Some(w)) => Rule::EveryWeeks(num(&w, 52)?),
@@ -349,11 +353,11 @@ impl Rule {
         match self {
             Rule::Daily => common::add_days(anchor, 1),
             Rule::Weekly(days) => (1..=7).map(|i| common::add_days(anchor, i)).find(|d| days.contains(&common::weekday(d))).unwrap(),
-            Rule::Monthly(day) => {
+            Rule::Monthly(days) => {
                 let (mut y, mut m) = (anchor[..4].parse::<i64>().unwrap(), anchor[5..7].parse::<u32>().unwrap());
                 loop {
-                    let d = format!("{y:04}-{m:02}-{:02}", (*day).min(common::days_in_month(y, m)));
-                    if d.as_str() > anchor {
+                    let last = common::days_in_month(y, m);
+                    if let Some(d) = days.iter().map(|d| format!("{y:04}-{m:02}-{:02}", (*d).min(last))).find(|d| d.as_str() > anchor) {
                         return d;
                     }
                     (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
@@ -365,6 +369,19 @@ impl Rule {
         }
     }
 
+    /// First occurrence on or after `day` (interval rules start on `day` itself).
+    pub fn first_from(&self, day: &str) -> String {
+        match self {
+            Rule::Weekly(_) | Rule::Monthly(_) => self.next(&common::add_days(day, -1), day),
+            _ => day.to_string(),
+        }
+    }
+
+    /// Series that end by count (一共几次); the others end by date (monthly) or never (after).
+    fn counted(&self) -> bool {
+        matches!(self, Rule::Daily | Rule::Weekly(_) | Rule::EveryDays(_) | Rule::EveryWeeks(_))
+    }
+
     /// Check-in schedule (daily / weekly rules only).
     fn scheduled(&self, day: &str) -> bool {
         match self {
@@ -372,16 +389,6 @@ impl Rule {
             Rule::Weekly(ds) => ds.contains(&common::weekday(day)),
             _ => false,
         }
-    }
-}
-
-/// First day of the counting period that contains `today` (None = all time).
-fn period_start(p: Period, today: &str) -> Option<String> {
-    match p {
-        Period::All => None,
-        Period::Day => Some(today.into()),
-        Period::Week => Some(common::add_days(today, 1 - common::weekday(today) as i64)),
-        Period::Month => Some(format!("{}-01", &today[..7])),
     }
 }
 
@@ -413,8 +420,12 @@ pub struct Task {
     pub target: Option<i64>,
     pub unit: Option<String>,
     pub period: Option<Period>,
+    /// Repeat: occurrences done before logging started.
+    pub done_before: i64,
     /// Derived (`enrich`): repeat = occurrences done, checkin = days checked, progress = amount this period.
     pub count: i64,
+    /// Derived, repeat series with a total: date of the last occurrence.
+    pub last_date: Option<String>,
     /// Derived, progress: amount all-time.
     pub total_amount: i64,
     /// Derived: has a log today.
@@ -462,12 +473,15 @@ pub struct TaskPatch {
     pub unit: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
     pub period: Option<Option<Period>>,
+    /// Repeat: occurrences done so far (sets `done_before` = this − logs).
+    #[serde(default)]
+    pub done_count: Option<i64>,
 }
 
 const TASK_COLS: &str = "t.id, t.group_id, t.goal_id, t.parent_id, t.title, t.note, t.link, t.plan_date, t.start_date,
   t.due_date, t.done, t.done_at, t.collapsed, t.sort_order, t.created_at, t.updated_at,
-  t.task_type, t.repeat_rule, t.repeat_total, t.repeat_until, t.target, t.unit, t.period";
-const TASK_NCOLS: usize = 23;
+  t.task_type, t.repeat_rule, t.repeat_total, t.repeat_until, t.target, t.unit, t.period, t.done_before";
+const TASK_NCOLS: usize = 24;
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
     Ok(Task {
@@ -494,7 +508,9 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         target: r.get(20)?,
         unit: r.get(21)?,
         period: r.get(22)?,
+        done_before: r.get(23)?,
         count: 0,
+        last_date: None,
         total_amount: 0,
         logged_today: false,
         streak: 0,
@@ -512,17 +528,14 @@ fn enrich(conn: &Connection, t: &mut Task, today: &str) -> Result<(), String> {
     }
     t.logged_today = count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1 AND day = ?2", &[&t.id, &today])? > 0;
     match t.task_type {
-        TaskType::Repeat | TaskType::Checkin => t.count = count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&t.id])?,
+        TaskType::Repeat => {
+            t.count = t.done_before + count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&t.id])?;
+            t.last_date = last_date(t);
+        }
+        TaskType::Checkin => t.count = count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&t.id])?,
         TaskType::Progress => {
             t.total_amount = count_of(conn, "SELECT coalesce(sum(amount), 0) FROM todo_logs WHERE task_id = ?1", &[&t.id])?;
-            t.count = match period_start(t.period.unwrap_or_default(), today) {
-                None => t.total_amount,
-                Some(s) => count_of(
-                    conn,
-                    "SELECT coalesce(sum(amount), 0) FROM todo_logs WHERE task_id = ?1 AND day BETWEEN ?2 AND ?3",
-                    &[&t.id, &s, &today],
-                )?,
-            };
+            t.count = t.total_amount;
         }
         TaskType::Normal => {}
     }
@@ -530,6 +543,17 @@ fn enrich(conn: &Connection, t: &mut Task, today: &str) -> Result<(), String> {
         t.streak = streak(conn, t, today)?;
     }
     Ok(())
+}
+
+/// Open counted series: walk from the current occurrence to the last one.
+fn last_date(t: &Task) -> Option<String> {
+    let rule = Rule::parse(t.repeat_rule.as_deref()?).ok().filter(Rule::counted)?;
+    let left = t.repeat_total? - t.count - 1; // occurrences after the current one
+    let mut d = t.due_date.clone().filter(|_| !t.done && left >= 0)?;
+    for _ in 0..left {
+        d = rule.next(&d, &d);
+    }
+    Some(d)
 }
 
 fn streak(conn: &Connection, t: &Task, today: &str) -> Result<i64, String> {
@@ -644,6 +668,7 @@ struct TaskFields {
     target: Option<i64>,
     unit: Option<String>,
     period: Option<Period>,
+    done_before: i64,
 }
 
 impl TaskFields {
@@ -662,6 +687,7 @@ impl TaskFields {
             target: t.target,
             unit: t.unit.clone(),
             period: t.period,
+            done_before: t.done_before,
         }
     }
 
@@ -679,10 +705,13 @@ impl TaskFields {
         self
     }
 
-    /// Normalizes and checks; fields that don't belong to the type are cleared.
+    /// Normalizes and checks; fields that don't belong to the type are cleared. Dates by type:
+    /// normal / progress = optional [start, due] range; repeat = due (current occurrence, set by
+    /// create / update) + plan as series start and until as end (monthly) or plan only (after);
+    /// checkin = plan as start, until as end.
     fn validated(self, has_children: bool) -> Result<Self, String> {
         let mut f = Self {
-            title: common::require(&self.title, "任务", 500)?,
+            title: common::require(&self.title, "标题", 500)?,
             note: common::clean(self.note),
             link: common::clean(self.link),
             plan_date: common::clean(self.plan_date),
@@ -693,9 +722,9 @@ impl TaskFields {
             unit: common::clean(self.unit),
             ..self
         };
-        common::check_len(&f.note, "备注", 5000)?;
+        common::check_len(&f.note, "内容", 5000)?;
         common::check_len(&f.link, "链接", 1000)?;
-        common::check_date(&f.plan_date, "计划日期")?;
+        common::check_date(&f.plan_date, "开始日期")?;
         common::check_date(&f.start_date, "开始日期")?;
         common::check_date(&f.due_date, "截止日期")?;
         common::check_date(&f.repeat_until, "结束日期")?;
@@ -706,17 +735,46 @@ impl TaskFields {
             Some(n) if !(1..=10000).contains(&n) => Err(format!("{what}要在 1～10000 之间")),
             _ => Ok(()),
         };
+        if f.task_type != TaskType::Repeat {
+            f.done_before = 0;
+        }
         match f.task_type {
-            TaskType::Normal => {
-                (f.repeat_rule, f.repeat_total, f.repeat_until, f.target, f.unit, f.period) = (None, None, None, None, None, None);
+            TaskType::Normal | TaskType::Progress => {
+                // older data: a plan date folds into the range
+                if let Some(p) = f.plan_date.take() {
+                    if f.start_date.is_none() && f.due_date.as_deref().is_none_or(|d| p.as_str() <= d) {
+                        f.start_date = Some(p.clone());
+                    }
+                    f.due_date.get_or_insert(p);
+                }
+                (f.repeat_rule, f.repeat_total, f.repeat_until) = (None, None, None);
+                if f.task_type == TaskType::Normal {
+                    (f.target, f.unit, f.period) = (None, None, None);
+                } else {
+                    match f.target {
+                        Some(n) if (1..=100000).contains(&n) => {}
+                        _ => return Err("请设置目标数量（1～100000）".into()),
+                    }
+                    common::check_len(&f.unit, "单位", 10)?;
+                    f.period = Some(Period::All);
+                }
             }
             TaskType::Repeat => {
-                Rule::parse(f.repeat_rule.as_deref().ok_or("请设置重复规则")?)?;
-                if f.plan_date.is_none() && f.due_date.is_none() {
-                    return Err("重复任务要设计划日期或截止日期，从那天开始重复".into());
+                let rule = Rule::parse(f.repeat_rule.as_deref().ok_or("请设置重复规则")?)?;
+                if rule.counted() {
+                    total_ok(f.repeat_total, "一共几次")?;
+                    (f.plan_date, f.repeat_until) = (None, None);
+                } else {
+                    f.repeat_total = None;
+                    if !matches!(rule, Rule::Monthly(_)) {
+                        f.repeat_until = None;
+                    }
+                    check_range(&f.plan_date, &f.repeat_until, "时间段")?;
                 }
-                total_ok(f.repeat_total, "重复次数")?;
-                (f.target, f.unit, f.period) = (None, None, None);
+                if !(0..=10000).contains(&f.done_before) {
+                    return Err("已经做了几次要在 0～10000 之间".into());
+                }
+                (f.start_date, f.target, f.unit, f.period) = (None, None, None, None);
             }
             TaskType::Checkin => {
                 let rule = Rule::parse(f.repeat_rule.as_deref().ok_or("请设置打卡的日子")?)?;
@@ -729,21 +787,42 @@ impl TaskFields {
                 total_ok(f.repeat_total, "目标天数")?;
                 (f.start_date, f.due_date, f.target, f.unit, f.period) = (None, None, None, None, None);
             }
-            TaskType::Progress => {
-                match f.target {
-                    Some(n) if (1..=100000).contains(&n) => {}
-                    _ => return Err("请设置目标数量（1～100000）".into()),
-                }
-                common::check_len(&f.unit, "单位", 10)?;
-                f.period = Some(f.period.unwrap_or_default());
-                (f.repeat_rule, f.repeat_total, f.repeat_until) = (None, None, None);
-            }
         }
         if f.start_date.is_some() && f.due_date.is_none() {
             return Err("时间段要有结束日期".into());
         }
         check_range(&f.start_date, &f.due_date, "时间段")?;
         Ok(f)
+    }
+
+    /// Repeat: the current occurrence of a new or re-planned series — the first one from today, or
+    /// from the series start if that is later.
+    fn first_due(&self, today: &str) -> Result<String, String> {
+        let rule = Rule::parse(self.repeat_rule.as_deref().unwrap_or_default())?;
+        let from = self.plan_date.as_deref().filter(|s| *s > today).unwrap_or(today);
+        let d = rule.first_from(from);
+        if self.repeat_until.as_deref().is_some_and(|u| d.as_str() > u) {
+            return Err("时间段里没有要做的日子".into());
+        }
+        Ok(d)
+    }
+
+    /// Repeat: `done_count` (occurrences done so far, None = unchanged) → done_before, given the
+    /// occurrences already logged.
+    fn set_done_count(&mut self, done_count: Option<i64>, logged: i64) -> Result<(), String> {
+        if let Some(n) = done_count {
+            if n < logged {
+                return Err(format!("已经记了 {logged} 次，不能少于这个数"));
+            }
+            self.done_before = n - logged;
+        }
+        if !(0..=10000).contains(&self.done_before) {
+            return Err("已经做了几次要在 0～10000 之间".into());
+        }
+        if self.repeat_total.is_some_and(|t| self.done_before + logged > t) {
+            return Err("已经做了的次数不能多于一共几次".into());
+        }
+        Ok(())
     }
 }
 
@@ -763,22 +842,31 @@ fn reopen_ancestors(conn: &Connection, id: i64) -> Result<(), String> {
 }
 
 pub fn create_task(conn: &Connection, patch: TaskPatch) -> Result<Task, String> {
+    create_task_on(conn, patch, &today(conn)?)
+}
+
+pub fn create_task_on(conn: &Connection, patch: TaskPatch, today: &str) -> Result<Task, String> {
     let place = resolve_place(conn, patch.group_id, patch.goal_id.flatten(), patch.parent_id)?;
-    let f = TaskFields::default().apply(&patch).validated(false)?;
+    let mut f = TaskFields::default().apply(&patch).validated(false)?;
+    if f.task_type == TaskType::Repeat {
+        f.set_done_count(patch.done_count, 0)?;
+        f.due_date = Some(f.first_due(today)?);
+    }
     let tx = conn.unchecked_transaction().map_err(err)?;
     tx.execute(
         "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date, collapsed, sort_order,
-           task_type, repeat_rule, repeat_total, repeat_until, target, unit, period)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+           task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             place.group_id, place.goal_id, place.parent_id, f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date,
             patch.collapsed.unwrap_or(false), next_sort(&tx, place)?, f.task_type, f.repeat_rule, f.repeat_total,
-            f.repeat_until, f.target, f.unit, f.period
+            f.repeat_until, f.target, f.unit, f.period, f.done_before
         ],
     )
     .map_err(err)?;
     let id = tx.last_insert_rowid();
     reopen_ancestors(&tx, id)?;
+    settle(&tx, id, today)?;
     tx.commit().map_err(err)?;
     task_view(conn, id)
 }
@@ -788,11 +876,22 @@ fn has_children(conn: &Connection, id: i64) -> Result<bool, String> {
 }
 
 pub fn update_task(conn: &Connection, id: i64, patch: TaskPatch) -> Result<Task, String> {
+    update_task_on(conn, id, patch, &today(conn)?)
+}
+
+pub fn update_task_on(conn: &Connection, id: i64, patch: TaskPatch, today: &str) -> Result<Task, String> {
     let old = task(conn, id)?;
     if patch.parent_id.is_some() {
         return Err("不能在这里改上一层任务".into());
     }
-    let f = TaskFields::from_task(&old).apply(&patch).validated(has_children(conn, id)?)?;
+    let mut f = TaskFields::from_task(&old).apply(&patch).validated(has_children(conn, id)?)?;
+    if f.task_type == TaskType::Repeat {
+        f.set_done_count(patch.done_count, count_of(conn, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?)?;
+        let replanned = old.task_type != TaskType::Repeat || f.repeat_rule != old.repeat_rule || f.plan_date != old.plan_date;
+        if replanned || f.due_date.is_none() {
+            f.due_date = Some(f.first_due(today)?);
+        }
+    }
     let tx = conn.unchecked_transaction().map_err(err)?;
     let moving = patch.group_id.is_some_and(|g| g != old.group_id) || patch.goal_id.is_some_and(|g| g != old.goal_id);
     if moving {
@@ -819,15 +918,15 @@ pub fn update_task(conn: &Connection, id: i64, patch: TaskPatch) -> Result<Task,
         &format!(
             "UPDATE todo_tasks SET title = ?1, note = ?2, link = ?3, plan_date = ?4, start_date = ?5, due_date = ?6,
                collapsed = ?7, task_type = ?8, repeat_rule = ?9, repeat_total = ?10, repeat_until = ?11, target = ?12,
-               unit = ?13, period = ?14, updated_at = {NOW} WHERE id = ?15"
+               unit = ?13, period = ?14, done_before = ?15, updated_at = {NOW} WHERE id = ?16"
         ),
         params![
             f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date, patch.collapsed.unwrap_or(old.collapsed),
-            f.task_type, f.repeat_rule, f.repeat_total, f.repeat_until, f.target, f.unit, f.period, id
+            f.task_type, f.repeat_rule, f.repeat_total, f.repeat_until, f.target, f.unit, f.period, f.done_before, id
         ],
     )
     .map_err(err)?;
-    settle(&tx, id, &today(&tx)?)?; // e.g. a lowered target may complete it
+    settle(&tx, id, today)?; // e.g. a lowered target may complete it
     tx.commit().map_err(err)?;
     task_view(conn, id)
 }
@@ -862,17 +961,17 @@ fn mark_undone(conn: &Connection, id: i64) -> Result<(), String> {
     reopen_ancestors(conn, id)
 }
 
-/// Completes / reopens a check-in or whole-period progress task from its logs.
+/// Completes / reopens a counted repeat, check-in or progress task from its count.
 fn settle(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
     let mut t = task(conn, id)?;
     enrich(conn, &mut t, today)?;
     let reached = match t.task_type {
-        TaskType::Checkin => match t.repeat_total {
+        TaskType::Repeat | TaskType::Checkin => match t.repeat_total {
             Some(n) => t.count >= n,
             None => return Ok(()),
         },
-        TaskType::Progress if t.period == Some(Period::All) => t.total_amount >= t.target.unwrap_or(i64::MAX),
-        _ => return Ok(()),
+        TaskType::Progress => t.total_amount >= t.target.unwrap_or(i64::MAX),
+        TaskType::Normal => return Ok(()),
     };
     match (reached, t.done) {
         (true, false) => mark_done(conn, id),
@@ -881,23 +980,19 @@ fn settle(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
     }
 }
 
-/// Moves a repeat task to its next occurrence (shifting plan / start / due together), or ends the
-/// series when the total or end date is reached.
+/// Moves a repeat task (`count` occurrences done) to its next occurrence, or ends the series when
+/// the total or end date is reached. The next one comes after both the current occurrence and the
+/// day it was done / skipped, so a late finish doesn't leave a trail of overdue occurrences.
 fn advance(conn: &Connection, t: &Task, completed: &str, count: i64) -> Result<(), String> {
     let rule = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default())?;
-    let anchor = t.due_date.clone().or(t.plan_date.clone()).ok_or("重复任务没有日期")?;
-    let next = rule.next(&anchor, completed);
+    let anchor = t.due_date.as_deref().ok_or("重复任务没有日期")?;
+    let next = rule.next(anchor.max(completed), completed);
     let ended = t.repeat_total.is_some_and(|n| count >= n) || t.repeat_until.as_deref().is_some_and(|u| next.as_str() > u);
     if ended {
         return mark_done(conn, t.id);
     }
-    let delta = common::day_number(&next) - common::day_number(&anchor);
-    let shift = |d: &Option<String>| d.as_deref().map(|d| common::add_days(d, delta));
-    conn.execute(
-        &format!("UPDATE todo_tasks SET plan_date = ?1, start_date = ?2, due_date = ?3, updated_at = {NOW} WHERE id = ?4"),
-        params![shift(&t.plan_date), shift(&t.start_date), shift(&t.due_date), t.id],
-    )
-    .map_err(err)?;
+    conn.execute(&format!("UPDATE todo_tasks SET due_date = ?1, updated_at = {NOW} WHERE id = ?2"), params![next, t.id])
+        .map_err(err)?;
     Ok(())
 }
 
@@ -912,7 +1007,7 @@ pub fn set_done_on(conn: &Connection, id: i64, done: bool, today: &str) -> Resul
         (TaskType::Normal, false) => mark_undone(&tx, id)?,
         (TaskType::Repeat, true) if !t.done => {
             tx.execute("INSERT INTO todo_logs (task_id, day) VALUES (?1, ?2)", params![id, today]).map_err(err)?;
-            let count = count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
+            let count = t.done_before + count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
             advance(&tx, &t, today, count)?;
         }
         (TaskType::Checkin, true) => {
@@ -948,7 +1043,7 @@ pub fn skip_on(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
         return Err("只有没结束的重复任务能跳过".into());
     }
     let tx = conn.unchecked_transaction().map_err(err)?;
-    let count = count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
+    let count = t.done_before + count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
     advance(&tx, &t, today, count)?;
     tx.commit().map_err(err)
 }
@@ -1074,11 +1169,13 @@ fn placed(conn: &Connection, filter: &str, order: &str, args: &[&dyn rusqlite::T
     Ok(out)
 }
 
-/// Dated tasks (normal / repeat / whole-period progress): planned on or before today, due today,
-/// or today inside [start, due].
+/// Dated tasks (normal / repeat / progress): due today or earlier, or today inside [start, due].
+/// A repeat task's plan date is its series start, not a day to do it.
 fn dated_hit(t: &Task, today: &str) -> bool {
     let le = |d: &Option<String>| d.as_deref().is_some_and(|d| d <= today);
-    le(&t.plan_date) || le(&t.due_date) || (le(&t.start_date) && t.due_date.as_deref().is_some_and(|d| today <= d))
+    (t.task_type != TaskType::Repeat && le(&t.plan_date))
+        || le(&t.due_date)
+        || (le(&t.start_date) && t.due_date.as_deref().is_some_and(|d| today <= d))
 }
 
 fn is_overdue(t: &Task, today: &str) -> bool {
@@ -1099,7 +1196,6 @@ pub fn agenda(conn: &Connection, today: &str) -> Result<Agenda, String> {
     let (mut overdue, mut due, mut done_today) = (Vec::new(), Vec::new(), Vec::new());
     for p in open {
         let t = &p.task;
-        let periodic = t.task_type == TaskType::Progress && t.period != Some(Period::All);
         match t.task_type {
             TaskType::Checkin => {
                 let rule = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default())?;
@@ -1107,13 +1203,6 @@ pub fn agenda(conn: &Connection, today: &str) -> Result<Agenda, String> {
                     done_today.push(p);
                 } else if started(t, today) && rule.scheduled(today) {
                     due.push(p);
-                }
-            }
-            _ if periodic => {
-                if started(t, today) && t.count < t.target.unwrap_or(0) {
-                    due.push(p);
-                } else if t.logged_today {
-                    done_today.push(p);
                 }
             }
             _ => {
@@ -1180,7 +1269,7 @@ pub fn done_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<DoneI
     for (task_id, day, at, amount, nth) in logs {
         let Some(p) = placed(conn, "t.id = ?1", "t.id", &[&task_id], &today)?.pop() else { continue };
         let detail = match p.task.task_type {
-            TaskType::Repeat => format!("第 {nth} 次"),
+            TaskType::Repeat => format!("第 {} 次", p.task.done_before + nth),
             TaskType::Checkin => "打卡".into(),
             _ => format!("+{amount}{}", p.task.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default()),
         };
@@ -1195,7 +1284,7 @@ pub fn done_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<DoneI
 #[serde(rename_all = "camelCase")]
 pub struct CalItem {
     pub day: String,
-    /// plan | due | range | next (a later occurrence of a repeat task) | done
+    /// due | range | next (a later occurrence of a repeat task) | done
     pub what: String,
     pub detail: Option<String>,
     #[serde(flatten)]
@@ -1225,12 +1314,9 @@ pub fn month(conn: &Connection, from: &str, to: &str) -> Result<Vec<CalItem>, St
             (None, Some(d)) if inside(d) => push(d.clone(), "due", None, p),
             _ => {}
         }
-        if let Some(pd) = t.plan_date.as_deref().filter(|d| inside(d) && Some(*d) != t.due_date.as_deref()) {
-            push(pd.into(), "plan", None, p);
-        }
         if t.task_type == TaskType::Repeat {
             let Ok(rule) = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default()) else { continue };
-            let Some(mut anchor) = t.due_date.clone().or(t.plan_date.clone()) else { continue };
+            let Some(mut anchor) = t.due_date.clone() else { continue };
             for k in 1..=62 {
                 let next = rule.next(&anchor, &anchor);
                 let n = t.count + k + 1; // occurrence number of `next`
@@ -1323,12 +1409,18 @@ pub struct TaskRecord {
     pub unit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period: Option<Period>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub done_before: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<LogRecord>,
 }
 
 fn is_normal(t: &TaskType) -> bool {
     *t == TaskType::Normal
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 fn one() -> i64 {
@@ -1415,13 +1507,17 @@ impl TodoRecord {
 
 impl TaskRecord {
     fn fields(&self) -> Result<TaskFields, String> {
+        let (mut plan_date, mut due_date) = (self.plan_date.clone(), self.due_date.clone());
+        if self.task_type == TaskType::Repeat && due_date.is_none() {
+            due_date = plan_date.take(); // format ≤ 3: the occurrence was the plan date
+        }
         let f = TaskFields {
             title: self.title.clone(),
             note: self.note.clone(),
             link: self.link.clone(),
-            plan_date: self.plan_date.clone(),
+            plan_date,
             start_date: self.start_date.clone(),
-            due_date: self.due_date.clone(),
+            due_date,
             task_type: self.task_type,
             repeat_rule: self.repeat_rule.clone(),
             repeat_total: self.repeat_total,
@@ -1429,8 +1525,12 @@ impl TaskRecord {
             target: self.target,
             unit: self.unit.clone(),
             period: self.period,
+            done_before: self.done_before,
         }
         .validated(!self.children.is_empty())?;
+        if f.task_type == TaskType::Repeat && f.due_date.is_none() {
+            return Err("重复任务没有日期".into());
+        }
         for l in &self.logs {
             common::check_date(&Some(l.day.clone()), "记录日期")?;
             if l.amount < 1 {
@@ -1488,14 +1588,14 @@ fn insert_tasks(conn: &Connection, place: Place, tasks: &[TaskRecord]) -> Result
             &format!(
                 "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date,
                    done, done_at, collapsed, sort_order, created_at, updated_at,
-                   task_type, repeat_rule, repeat_total, repeat_until, target, unit, period)
+                   task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, coalesce(?14, {NOW}), coalesce(?15, ?14, {NOW}),
-                   ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
+                   ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)"
             ),
             params![
                 place.group_id, place.goal_id, place.parent_id, f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date,
                 t.done, t.done_at, t.collapsed, i as i64 + 1, t.created_at, t.updated_at, f.task_type, f.repeat_rule,
-                f.repeat_total, f.repeat_until, f.target, f.unit, f.period
+                f.repeat_total, f.repeat_until, f.target, f.unit, f.period, f.done_before
             ],
         )
         .map_err(err)?;
@@ -1589,6 +1689,7 @@ fn task_tree(conn: &Connection, all: &[Task]) -> Result<Vec<TaskRecord>, String>
                         target: t.target,
                         unit: t.unit.clone(),
                         period: t.period,
+                        done_before: t.done_before,
                         logs: logs.get(&t.id).cloned().unwrap_or_default(),
                     })
                     .collect()
@@ -1924,7 +2025,7 @@ mod tests {
                 {"title": "提交窗口", "startDate": "2027-01-22", "dueDate": "2027-01-25"}
             ]},
             {"name": "📌 Pick Up", "goals": [{"name": "Personal Website", "status": "paused", "review": "r", "tasks": [{"title": "选框架"}]}], "tasks": [{"title": "嘉信入金", "link": "https://x"},
-                {"title": "周报", "taskType": "repeat", "repeatRule": "weekly:6", "dueDate": "2026-10-03", "repeatTotal": 20, "logs": [{"day": "2026-09-26"}]},
+                {"title": "周报", "taskType": "repeat", "repeatRule": "weekly:6", "dueDate": "2026-10-03", "repeatTotal": 20, "doneBefore": 6, "logs": [{"day": "2026-09-26"}]},
                 {"title": "读书", "taskType": "progress", "target": 20, "unit": "本", "period": "all", "logs": [{"day": "2026-09-01", "amount": 2}]}]}
         ]}))
         .unwrap();
@@ -1941,8 +2042,22 @@ mod tests {
         assert_eq!(d.tasks[1].children[1].children[0].due_date.as_deref(), Some("2027-01-20"));
         assert!(d.tasks[0].done && d.tasks[0].done_at.is_none() && d.tasks[1].collapsed);
         assert_eq!(out.groups[1].goals[0].status, GoalStatus::Paused);
+        assert_eq!(out.groups[1].tasks[1].done_before, 6);
         let reading = &out.groups[1].tasks[2];
         assert_eq!((reading.task_type, reading.target, reading.logs.len(), reading.logs[0].amount), (TaskType::Progress, Some(20), 1, 2));
+
+        // older files: a repeat occurrence in planDate, plan dates on normal tasks
+        let old: TodoRecord = serde_json::from_value(json!({"groups": [{"name": "X", "tasks": [
+            {"title": "周报", "taskType": "repeat", "repeatRule": "weekly:6", "planDate": "2026-10-03"},
+            {"title": "p", "planDate": "2026-10-01", "dueDate": "2026-10-05"}]}]}))
+        .unwrap();
+        let c3 = memory_db();
+        replace_all(&c3, &old).unwrap();
+        let ts = &export(&c3).unwrap().groups[0].tasks;
+        assert_eq!((ts[0].plan_date.as_deref(), ts[0].due_date.as_deref()), (None, Some("2026-10-03")));
+        assert_eq!((ts[1].plan_date.as_deref(), ts[1].start_date.as_deref(), ts[1].due_date.as_deref()), (None, Some("2026-10-01"), Some("2026-10-05")));
+        let dateless: TodoRecord = serde_json::from_value(json!({"groups": [{"name": "X", "tasks": [{"title": "r", "taskType": "repeat", "repeatRule": "daily"}]}]})).unwrap();
+        assert!(validate_records(&dateless).is_err());
 
         let dup: TodoRecord = serde_json::from_value(json!({"groups": [{"name": "X"}, {"name": " X "}]})).unwrap();
         assert!(validate_records(&dup).unwrap_err().contains("重复"));
@@ -1958,6 +2073,11 @@ mod tests {
         assert_eq!(next("monthly:31", "2026-09-30", ""), "2026-10-31");
         assert_eq!(next("monthly:31", "2026-01-31", ""), "2026-02-28");
         assert_eq!(next("monthly:15", "2026-09-10", ""), "2026-09-15");
+        assert_eq!(next("monthly:30,1,15", "2026-02-15", ""), "2026-02-28"); // 30 → month end
+        assert_eq!(next("monthly:1,15,30", "2026-02-28", ""), "2026-03-01");
+        let first = |r: &str, d: &str| Rule::parse(r).unwrap().first_from(d);
+        assert_eq!((first("weekly:3", "2026-09-30"), first("weekly:6", "2026-09-30")), ("2026-09-30".into(), "2026-10-03".into()));
+        assert_eq!((first("monthly:30", "2026-09-30"), first("every:2w", "2026-09-30")), ("2026-09-30".into(), "2026-09-30".into()));
         assert_eq!(next("every:2w", "2026-09-30", ""), "2026-10-14");
         assert_eq!(next("every:3d", "2026-09-30", ""), "2026-10-03");
         assert_eq!(next("after:30d", "2026-09-01", "2026-09-30"), "2026-10-30");
@@ -1971,40 +2091,61 @@ mod tests {
     fn repeat_occurrences_skip_and_end() {
         let c = memory_db();
         let a = create_group(&c, "A").unwrap().id;
-        assert!(create_task(&c, tp(json!({"groupId": a, "title": "x", "taskType": "repeat", "repeatRule": "weekly:6"}))).unwrap_err().contains("日期"));
-        let t = create_task(&c, tp(json!({"groupId": a, "title": "周报", "taskType": "repeat", "repeatRule": "weekly:6", "dueDate": "2026-10-03", "repeatTotal": 3}))).unwrap();
-        assert!(create_task(&c, tp(json!({"parentId": t.id, "title": "sub"}))).is_err());
-        set_done_on(&c, t.id, true, "2026-10-02").unwrap();
-        let u = task_view(&c, t.id).unwrap();
-        assert_eq!((u.due_date.as_deref(), u.count, u.done), (Some("2026-10-10"), 1, false));
+        let today = "2026-09-30"; // Wednesday
+        let mk = |v: serde_json::Value| {
+            let mut p = json!({"groupId": a, "taskType": "repeat"});
+            p.as_object_mut().unwrap().extend(v.as_object().unwrap().clone());
+            create_task_on(&c, tp(p), today)
+        };
+        let view = |id: i64| {
+            let mut v = task(&c, id).unwrap();
+            enrich(&c, &mut v, today).unwrap();
+            v
+        };
+        assert!(mk(json!({"title": "x"})).unwrap_err().contains("规则"));
+        // counted series: dates come from the rule (a sent date is ignored); 7 of 10 done before
+        let t = mk(json!({"title": "周报", "repeatRule": "weekly:6", "repeatTotal": 10, "doneCount": 7, "dueDate": "2020-01-01", "planDate": "2020-01-01"})).unwrap();
+        assert_eq!((t.due_date.as_deref(), t.plan_date.as_deref(), t.count, t.last_date.as_deref()), (Some("2026-10-03"), None, 7, Some("2026-10-17")));
+        assert!(create_task_on(&c, tp(json!({"parentId": t.id, "title": "sub"})), today).is_err());
+        set_done_on(&c, t.id, true, "2026-10-02").unwrap(); // early: the next one is still after 10-03
+        let u = view(t.id);
+        assert_eq!((u.due_date.as_deref(), u.count, u.done), (Some("2026-10-10"), 8, false));
         skip_on(&c, t.id, "2026-10-09").unwrap(); // not counted
         assert_eq!(task(&c, t.id).unwrap().due_date.as_deref(), Some("2026-10-17"));
-        set_done_on(&c, t.id, true, "2026-10-17").unwrap();
-        set_done_on(&c, t.id, true, "2026-10-24").unwrap(); // 3rd → series ends
-        let u = task_view(&c, t.id).unwrap();
-        assert_eq!((u.done, u.count), (true, 3));
+        set_done_on(&c, t.id, true, "2026-10-20").unwrap(); // late: the next one comes after the finish day
+        assert_eq!((view(t.id).due_date.as_deref(), view(t.id).count), (Some("2026-10-24"), 9));
+        set_done_on(&c, t.id, true, "2026-10-24").unwrap(); // 10th → series ends
+        assert_eq!((view(t.id).done, view(t.id).count, view(t.id).last_date), (true, 10, None));
         assert!(skip_on(&c, t.id, "2026-10-25").is_err());
-        set_done_on(&c, t.id, false, "2026-10-25").unwrap(); // reopen
-        assert!(!task(&c, t.id).unwrap().done);
+        assert!(update_task_on(&c, t.id, tp(json!({"doneCount": 2})), today).unwrap_err().contains("不能少于")); // 3 logged
+        assert!(update_task_on(&c, t.id, tp(json!({"doneCount": 11})), today).is_err()); // more than the total
+        assert!(!update_task_on(&c, t.id, tp(json!({"repeatTotal": 12})), today).unwrap().done); // reopened
+        let u = update_task_on(&c, t.id, tp(json!({"repeatRule": "weekly:1"})), "2026-10-25").unwrap(); // new rule: re-planned
+        assert_eq!(u.due_date.as_deref(), Some("2026-10-26"));
+        let u = update_task_on(&c, t.id, tp(json!({"title": "周报 v2"})), "2026-11-30").unwrap(); // other edits keep the date
+        assert_eq!(u.due_date.as_deref(), Some("2026-10-26"));
 
-        // plan / start / due move together; the end date stops the series
-        let r = create_task(&c, tp(json!({"groupId": a, "title": "窗口", "taskType": "repeat", "repeatRule": "every:4w",
-            "planDate": "2027-01-20", "startDate": "2027-01-22", "dueDate": "2027-01-25", "repeatUntil": "2027-03-01"}))).unwrap();
-        set_done_on(&c, r.id, true, "2027-01-24").unwrap();
-        let r2 = task(&c, r.id).unwrap();
-        assert_eq!(
-            (r2.plan_date.as_deref(), r2.start_date.as_deref(), r2.due_date.as_deref(), r2.done),
-            (Some("2027-02-17"), Some("2027-02-19"), Some("2027-02-22"), false)
-        );
-        set_done_on(&c, r.id, true, "2027-02-20").unwrap(); // next would be 03-22 > until
-        assert!(task(&c, r.id).unwrap().done);
-        // after-rule counts from the completion day
-        let hair = create_task(&c, tp(json!({"groupId": a, "title": "理发", "taskType": "repeat", "repeatRule": "after:30d", "planDate": "2026-09-01"}))).unwrap();
-        set_done_on(&c, hair.id, true, "2026-09-30").unwrap();
-        assert_eq!(task(&c, hair.id).unwrap().plan_date.as_deref(), Some("2026-10-30"));
-        // switching back to normal clears the repeat fields
-        let n = update_task(&c, hair.id, tp(json!({"taskType": "normal"}))).unwrap();
-        assert_eq!((n.task_type, n.repeat_rule), (TaskType::Normal, None));
+        // monthly: several days, from the series start to its end; no total
+        let m = mk(json!({"title": "房租", "repeatRule": "monthly:31,15", "planDate": "2026-10-01", "repeatUntil": "2026-11-20", "repeatTotal": 5})).unwrap();
+        assert_eq!((m.due_date.as_deref(), m.repeat_total, m.plan_date.as_deref()), (Some("2026-10-15"), None, Some("2026-10-01")));
+        set_done_on(&c, m.id, true, "2026-10-15").unwrap();
+        assert_eq!(task(&c, m.id).unwrap().due_date.as_deref(), Some("2026-10-31"));
+        set_done_on(&c, m.id, true, "2026-10-31").unwrap();
+        set_done_on(&c, m.id, true, "2026-11-15").unwrap(); // next would be 11-30 > end
+        assert!(task(&c, m.id).unwrap().done);
+        assert!(mk(json!({"title": "x", "repeatRule": "monthly:31", "planDate": "2026-10-01", "repeatUntil": "2026-10-20"})).unwrap_err().contains("没有要做的日子"));
+        assert!(mk(json!({"title": "x", "repeatRule": "monthly:1", "planDate": "2026-10-01", "repeatUntil": "2026-09-01"})).is_err());
+
+        // after: first on its start day (today if that has passed), then n days after each finish
+        let hair = mk(json!({"title": "理发", "repeatRule": "after:30d", "planDate": "2026-10-05", "repeatUntil": "2026-12-01"})).unwrap();
+        assert_eq!((hair.due_date.as_deref(), hair.repeat_until), (Some("2026-10-05"), None));
+        set_done_on(&c, hair.id, true, "2026-10-07").unwrap();
+        assert_eq!(task(&c, hair.id).unwrap().due_date.as_deref(), Some("2026-11-06"));
+        assert_eq!(mk(json!({"title": "p", "repeatRule": "after:7d", "planDate": "2026-09-01"})).unwrap().due_date.as_deref(), Some(today));
+        // switching back to normal clears the repeat fields; the occurrence stays as its deadline
+        let n = update_task_on(&c, hair.id, tp(json!({"taskType": "normal"})), today).unwrap();
+        assert_eq!((n.task_type, n.repeat_rule, n.plan_date, n.due_date.as_deref()), (TaskType::Normal, None, None, Some("2026-11-06")));
+        assert!(!agenda(&c, today).unwrap().due.iter().any(|p| p.task.title == "房租")); // series start is not a day to do it
     }
 
     #[test]
@@ -2042,34 +2183,24 @@ mod tests {
     }
 
     #[test]
-    fn progress_counts_by_period() {
+    fn progress_counts_toward_target() {
         let c = memory_db();
         let a = create_group(&c, "A").unwrap().id;
         assert!(create_task(&c, tp(json!({"groupId": a, "title": "x", "taskType": "progress"}))).is_err());
-        let books = create_task(&c, tp(json!({"groupId": a, "title": "读书", "taskType": "progress", "target": 3, "unit": "本"}))).unwrap();
-        assert_eq!(books.period, Some(Period::All));
+        let books = create_task(&c, tp(json!({"groupId": a, "title": "读书", "taskType": "progress", "target": 3, "unit": "本", "period": "week"}))).unwrap();
+        assert_eq!(books.period, Some(Period::All)); // per-period counting was dropped
         set_done_on(&c, books.id, true, "2026-09-30").unwrap();
         log_on(&c, books.id, "2026-09-30", 2, "2026-09-30").unwrap();
         let v = task_view(&c, books.id).unwrap();
-        assert_eq!((v.done, v.total_amount), (true, 3));
+        assert_eq!((v.done, v.count, v.total_amount), (true, 3, 3));
         let newest = logs(&c, books.id).unwrap()[0].id;
         delete_log(&c, newest).unwrap(); // back to 1 → reopened
         assert!(!task(&c, books.id).unwrap().done);
         assert!(log_on(&c, books.id, "2026-09-30", 0, "2026-09-30").is_err());
-
-        let weekly = create_task(&c, tp(json!({"groupId": a, "title": "投简历", "taskType": "progress", "target": 5, "unit": "份", "period": "week"}))).unwrap();
-        log_on(&c, weekly.id, "2026-09-27", 4, "2026-09-30").unwrap(); // last week (Sunday)
-        log_on(&c, weekly.id, "2026-09-29", 2, "2026-09-30").unwrap();
-        let mut v = task(&c, weekly.id).unwrap();
-        enrich(&c, &mut v, "2026-09-30").unwrap();
-        assert_eq!((v.count, v.total_amount, v.done), (2, 6, false));
-        let ag = agenda(&c, "2026-09-30").unwrap();
-        assert!(ag.due.iter().any(|p| p.task.id == weekly.id)); // 2 / 5 this week
-        log_on(&c, weekly.id, "2026-09-30", 3, "2026-09-30").unwrap();
-        let ag = agenda(&c, "2026-09-30").unwrap();
-        assert!(!ag.due.iter().any(|p| p.task.id == weekly.id));
-        assert!(ag.done_today.iter().any(|p| p.task.id == weekly.id));
-        assert!(!task(&c, weekly.id).unwrap().done); // periodic ones never finish on their own
+        // a time range works as for normal tasks: 今天 every day inside it
+        let cv = create_task(&c, tp(json!({"groupId": a, "title": "投简历", "taskType": "progress", "target": 5, "startDate": "2026-09-28", "dueDate": "2026-10-04"}))).unwrap();
+        assert!(agenda(&c, "2026-09-30").unwrap().due.iter().any(|p| p.task.id == cv.id));
+        assert!(agenda(&c, "2026-10-06").unwrap().overdue.iter().any(|p| p.task.id == cv.id));
     }
 
     #[test]
@@ -2078,7 +2209,7 @@ mod tests {
         let a = create_group(&c, "A").unwrap().id;
         let today = today(&c).unwrap();
         let ck = create_task(&c, tp(json!({"groupId": a, "title": "打卡", "taskType": "checkin", "repeatRule": "daily", "planDate": today}))).unwrap();
-        let rep = create_task(&c, tp(json!({"groupId": a, "title": "周报", "taskType": "repeat", "repeatRule": "daily", "planDate": today, "repeatTotal": 2}))).unwrap();
+        let rep = create_task(&c, tp(json!({"groupId": a, "title": "周报", "taskType": "repeat", "repeatRule": "daily", "repeatTotal": 2}))).unwrap();
         assert_eq!(titles(&agenda(&c, &today).unwrap().due), ["打卡", "周报"]);
         set_done(&c, ck.id, true).unwrap();
         set_done(&c, rep.id, true).unwrap();
@@ -2089,14 +2220,14 @@ mod tests {
         let d: Vec<_> = rv.iter().map(|x| (x.task.task.title.as_str(), x.detail.as_deref())).collect();
         assert_eq!(d, [("打卡", Some("打卡")), ("周报", Some("第 1 次"))]);
 
-        let water = create_task(&c, tp(json!({"groupId": a, "title": "浇花", "taskType": "repeat", "repeatRule": "every:2d", "planDate": today}))).unwrap();
+        let water = create_task(&c, tp(json!({"groupId": a, "title": "浇花", "taskType": "repeat", "repeatRule": "every:2d"}))).unwrap();
         let cal = month(&c, &today, &common::add_days(&today, 6)).unwrap();
         let of = |id: i64| cal.iter().filter(|x| x.task.task.id == id).map(|x| (x.what.as_str(), x.detail.clone())).collect::<Vec<_>>();
         assert_eq!(
             of(water.id),
-            [("plan", None), ("next", Some("第 2 次".into())), ("next", Some("第 3 次".into())), ("next", Some("第 4 次".into()))]
+            [("due", None), ("next", Some("第 2 次".into())), ("next", Some("第 3 次".into())), ("next", Some("第 4 次".into()))]
         );
-        assert_eq!(of(rep.id), [("plan", None), ("done", Some("第 1 次".into()))]); // 2 of 2: no more projections
+        assert_eq!(of(rep.id), [("due", None), ("done", Some("第 1 次".into()))]); // tomorrow is the 2nd of 2: no more projections
         assert!(of(ck.id).iter().all(|(w, _)| *w == "done")); // check-ins only show when done
     }
 
@@ -2112,7 +2243,8 @@ mod tests {
         let sub = create_task(&c, tp(json!({"parentId": t1, "title": "s"}))).unwrap().id;
         reorder_tasks(&c, &[t3, t1, t2]).unwrap();
         assert_eq!(tasks(&c, Some(a), None).unwrap().iter().filter(|t| t.parent_id.is_none()).map(|t| t.id).collect::<Vec<_>>(), [t3, t1, t2]);
-        assert!(reorder_tasks(&c, &[t3, t1]).is_err()); // must list all siblings
+        reorder_tasks(&c, &[t2, t3]).unwrap(); // part of the list (e.g. the undone ones): t1 keeps its slot
+        assert_eq!(tasks(&c, Some(a), None).unwrap().iter().filter(|t| t.parent_id.is_none()).map(|t| t.id).collect::<Vec<_>>(), [t2, t1, t3]);
         assert!(reorder_tasks(&c, &[t3, t1, t2, sub]).is_err()); // not siblings
         let g1 = create_goal(&c, gp(json!({"groupId": a, "name": "g1"}))).unwrap().id;
         let g2 = create_goal(&c, gp(json!({"groupId": a, "name": "g2"}))).unwrap().id;

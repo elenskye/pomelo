@@ -13,5 +13,4 @@ export const FILMS: CollectionConfig = {
   creatorLabel: "导演",
   statusLabels: { unmarked: "待标记", todo: "想看", doing: "在看", done: "已看" },
   emptyTitle: "片单空空，先去泡杯茶",
-  emptyHint: "也可以在「设置」里从 Excel 转换来的文件导入影单",
 };

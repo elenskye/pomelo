@@ -27,8 +27,6 @@ export type Goal = {
 
 export type TaskType = "normal" | "repeat" | "checkin" | "progress";
 export const TASK_TYPES: Record<TaskType, string> = { normal: "普通", repeat: "重复", checkin: "打卡", progress: "进度条" };
-export type Period = "all" | "day" | "week" | "month";
-export const PERIODS: Record<Period, string> = { all: "整体", day: "每天", week: "每周", month: "每月" };
 
 export type Task = {
   id: number;
@@ -38,8 +36,10 @@ export type Task = {
   title: string;
   note: string | null;
   link: string | null;
+  /** Repeat (monthly / after) and check-in: series start. */
   planDate: string | null;
-  startDate: string | null; // with dueDate = 时间段
+  startDate: string | null; // normal / progress: optional start of the 时间段 ending at dueDate
+  /** Normal / progress: deadline (end of the 时间段). Repeat: the current occurrence. */
   dueDate: string | null;
   done: boolean;
   doneAt: string | null;
@@ -48,16 +48,17 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   taskType: TaskType;
-  /** daily | weekly:1,3 (Mon=1) | monthly:15 | every:3d | every:2w | after:30d */
+  /** daily | weekly:1,3 (Mon=1) | monthly:1,15 | every:3d | every:2w | after:30d */
   repeatRule: string | null;
-  repeatTotal: number | null; // repeat: occurrences; checkin: target days
-  repeatUntil: string | null;
+  repeatTotal: number | null; // repeat (daily / weekly / every): occurrences; checkin: target days
+  repeatUntil: string | null; // repeat (monthly) / checkin: series end
   target: number | null; // progress
   unit: string | null;
-  period: Period | null;
-  /** Derived: repeat = occurrences done; checkin = days checked; progress = amount this period. */
+  /** Derived: repeat = occurrences done; checkin = days checked; progress = amount so far. */
   count: number;
-  totalAmount: number; // progress, all-time
+  /** Derived, repeat with a total: date of the last occurrence. */
+  lastDate: string | null;
+  totalAmount: number; // progress
   loggedToday: boolean;
   streak: number; // checkin
 };
@@ -69,16 +70,18 @@ export type PlacedTask = Task & { groupName: string; goalName: string | null; pa
 export type Agenda = { today: string; overdue: PlacedTask[]; due: PlacedTask[]; doneToday: PlacedTask[] };
 /** Something finished on `day` (a checked task, or one log: 第 3 次 / 打卡 / +2 本). */
 export type DoneItem = PlacedTask & { day: string; at: string; detail: string | null };
-/** Month grid entry. what: plan | due | range | next (later occurrence of a repeat task) | done. */
-export type CalItem = PlacedTask & { day: string; what: "plan" | "due" | "range" | "next" | "done"; detail: string | null };
+/** Month grid entry. what: due | range | next (later occurrence of a repeat task) | done. */
+export type CalItem = PlacedTask & { day: string; what: "due" | "range" | "next" | "done"; detail: string | null };
 
 /** Omitted key = unchanged; null = clear. Create places by parentId > goalId > groupId. */
 export type TaskPatch = Partial<
-  Pick<Task, "title" | "note" | "link" | "planDate" | "startDate" | "dueDate" | "collapsed" | "taskType" | "repeatRule" | "repeatTotal" | "repeatUntil" | "target" | "unit" | "period">
+  Pick<Task, "title" | "note" | "link" | "planDate" | "startDate" | "dueDate" | "collapsed" | "taskType" | "repeatRule" | "repeatTotal" | "repeatUntil" | "target" | "unit">
 > & {
   groupId?: number;
   goalId?: number | null;
   parentId?: number;
+  /** Repeat: occurrences done so far. */
+  doneCount?: number;
 };
 export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "status" | "startDate" | "endDate" | "note" | "review">>;
 
@@ -168,29 +171,3 @@ export function buildTree(tasks: Task[]): TreeNode[] {
 }
 
 export const pct = (done: number, total: number) => (total > 0 ? Math.round((done / total) * 100) : 0);
-
-const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
-
-/** Repeat rule → words: 「每周六」「每月 15 号」「每隔 3 天」「完成后 30 天」. */
-export function ruleLabel(rule: string | null): string {
-  if (!rule) return "";
-  if (rule === "daily") return "每天";
-  const [kind, arg] = rule.split(":");
-  if (kind === "weekly") {
-    const days = arg.split(",").map(Number);
-    if (days.length === 5 && days.every((d) => d <= 5)) return "工作日";
-    return `每周${days.map((d) => WEEK[d - 1]).join("、")}`;
-  }
-  if (kind === "monthly") return `每月 ${arg} 号`;
-  const n = arg.slice(0, -1);
-  if (kind === "every") return arg.endsWith("w") ? `每隔 ${n} 周` : `每隔 ${n} 天`;
-  if (kind === "after") return `完成后 ${n} 天`;
-  return rule;
-}
-
-/** Progress text: 「8 / 20 本」「本周 2 / 5 份」. */
-export function progressLabel(t: Task): string {
-  const unit = t.unit ? ` ${t.unit}` : "";
-  const prefix = { all: "", day: "今天 ", week: "本周 ", month: "本月 " }[t.period ?? "all"];
-  return `${prefix}${t.count} / ${t.target ?? 0}${unit}`;
-}

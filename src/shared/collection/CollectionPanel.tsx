@@ -104,7 +104,6 @@ export function CollectionPanel(props: {
     if (!item) return;
     const ok = await confirm({
       title: `删除《${item.title}》？`,
-      message: "删错了可以按 ⌘Z 撤销。",
       confirmLabel: "删除",
       danger: true,
     });
@@ -150,7 +149,6 @@ export function CollectionPanel(props: {
           list={listId("creators")}
           value={d.creator}
           onChange={(e) => set("creator", e.target.value)}
-          placeholder={`多位${config.creatorLabel}用「 / 」隔开`}
         />
       </Field>
       <Field label="类型">

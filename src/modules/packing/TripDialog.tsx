@@ -59,7 +59,7 @@ export function TripDialog(props: {
     if (!trip) return;
     const ok = await confirm({
       title: `删除「${trip.name}」？`,
-      message: "这次出行的清单会一起删除，模板不受影响。删错了可以按 ⌘Z 撤销。",
+      message: "这次出行的清单会一起删除，模板不受影响。",
       confirmLabel: "删除",
       danger: true,
     });
@@ -108,7 +108,6 @@ export function TripDialog(props: {
               setName(e.target.value);
               setNameTouched(true);
             }}
-            placeholder="比如：2026 国庆 · 回家"
           />
         </Field>
         <Field label="出发日期">

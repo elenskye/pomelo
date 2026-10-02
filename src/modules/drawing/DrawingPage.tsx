@@ -78,7 +78,7 @@ function LessonTable(props: {
   kindName: Map<number, string>;
   selectedId: number | null;
   onSelect: (id: number) => void;
-  /** Set when the whole course is shown (no filter): rows can be dragged. */
+  /** Rows can be dragged (also when filtered: hidden lessons keep their places). */
   onReorder?: (ids: number[]) => void;
 }) {
   const { quickUpdate } = useDrawingMutations();
@@ -203,7 +203,6 @@ export default function DrawingPage() {
       {isPending ? null : courses.length === 0 ? (
         <EmptyState
           title="画板空空，随手画一笔吧"
-          hint="也可以在「设置」里从 Excel 转换来的文件导入课程"
           action={
             <Button variant="primary" onClick={() => setCourseDialog("new")}>
               <Plus size={14} /> 新课程
@@ -301,9 +300,7 @@ export default function DrawingPage() {
                     selectedId={typeof sel === "number" ? sel : null}
                     onSelect={(id) => void panel.request(id)}
                     onReorder={
-                      visible.length === lessons.length && current
-                        ? (ids) => reorderLessons.mutate({ courseId: current.id, ids })
-                        : undefined
+                      current ? (ids) => reorderLessons.mutate({ courseId: current.id, ids }) : undefined
                     }
                   />
                 )}

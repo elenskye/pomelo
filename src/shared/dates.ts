@@ -32,10 +32,5 @@ export function formatDay(d: string | null): string | null {
   return y === new Date().getFullYear() ? md : `${y} 年 ${md}`;
 }
 
-/** 今天 / 明天 / 昨天, else formatDay. */
-export function dayLabel(d: string, today: string): string {
-  if (d === today) return "今天";
-  if (d === addDays(today, 1)) return "明天";
-  if (d === addDays(today, -1)) return "昨天";
-  return formatDay(d)!;
-}
+/** "2026-10-03" → "2026 / 10 / 03". */
+export const slashDate = (d: string) => d.split("-").join(" / ");

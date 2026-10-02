@@ -22,6 +22,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 7, name: "packing", sql: include_str!("../migrations/0007_packing.sql") },
     Migration { version: 8, name: "todo", sql: include_str!("../migrations/0008_todo.sql") },
     Migration { version: 9, name: "todo_types", sql: include_str!("../migrations/0009_todo_types.sql") },
+    Migration { version: 10, name: "todo_dates", sql: include_str!("../migrations/0010_todo_dates.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -218,6 +219,44 @@ pub mod tests {
         c.execute("INSERT INTO todo_logs (task_id, day) VALUES (1, '2026-09-30')", []).unwrap();
         let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert!(files[0].to_str().unwrap().ends_with("-before-v9.db"));
+    }
+
+    #[test]
+    fn v9_plan_dates_fold_into_ranges() {
+        let dir = temp_dir("v9-dates");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..9], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            "INSERT INTO todo_groups (name, sort_order) VALUES ('A', 1);
+             INSERT INTO todo_tasks (group_id, title, sort_order, plan_date, start_date, due_date, task_type, repeat_rule) VALUES
+               (1, 'plan only', 1, '2026-10-01', NULL, NULL, 'normal', NULL),
+               (1, 'plan then due', 2, '2026-10-01', NULL, '2026-10-05', 'normal', NULL),
+               (1, 'plan after due', 3, '2026-10-09', NULL, '2026-10-05', 'normal', NULL),
+               (1, 'range kept', 4, NULL, '2026-10-01', '2026-10-02', 'normal', NULL),
+               (1, 'weekly', 5, '2026-10-03', NULL, NULL, 'repeat', 'weekly:6'),
+               (1, 'checkin', 6, '2026-09-01', NULL, NULL, 'checkin', 'daily');",
+        )
+        .unwrap();
+        migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap();
+        let rows: Vec<(Option<String>, Option<String>, Option<String>, i64)> = c
+            .prepare("SELECT plan_date, start_date, due_date, done_before FROM todo_tasks ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            rows,
+            [
+                (None, s("2026-10-01"), s("2026-10-01"), 0),
+                (None, s("2026-10-01"), s("2026-10-05"), 0),
+                (None, None, s("2026-10-05"), 0),
+                (None, s("2026-10-01"), s("2026-10-02"), 0),
+                (None, None, s("2026-10-03"), 0),
+                (s("2026-09-01"), None, None, 0),
+            ]
+        );
     }
 
     #[test]

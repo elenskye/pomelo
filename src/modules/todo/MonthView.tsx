@@ -1,4 +1,4 @@
-// 月历: 6-week grid of dated work (plans, deadlines, time ranges, upcoming repeats, what got done).
+// 月历: 6-week grid of dated work (deadlines, time ranges, repeat occurrences, what got done).
 // Click a day to list its items below the grid.
 import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -8,10 +8,10 @@ import { useMonth, type CalItem, type Task } from "./api";
 import { PlacedList } from "./TaskList";
 
 const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
-const WHAT: Record<CalItem["what"], string> = { plan: "计划", due: "截止", range: "时间段", next: "之后的一次", done: "完成" };
+const WHAT: Record<CalItem["what"], string> = { due: "截止", range: "时间段", next: "之后的一次", done: "完成" };
 
 function Chip({ it, today }: { it: CalItem; today: string }) {
-  const late = (it.what === "due" || it.what === "plan") && it.day < today;
+  const late = it.what === "due" && it.day < today;
   const title = it.title.replace(/\*\*/g, "");
   return (
     <div
@@ -117,7 +117,7 @@ export function MonthView(props: { today: string; selectedId: number | null; onO
           </h3>
           {dayItems.length > 0 ? (
             <PlacedList
-              items={dayItems.map((it) => ({ ...it, detail: [WHAT[it.what], it.detail].filter(Boolean).join(" ") }))}
+              items={dayItems}
               today={today}
               selectedId={props.selectedId}
               onOpen={props.onOpen}

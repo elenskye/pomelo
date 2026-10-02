@@ -90,7 +90,6 @@ export function LessonPanel(props: {
     if (!lesson) return;
     const ok = await confirm({
       title: `删除「${lesson.title}」？`,
-      message: "删错了可以按 ⌘Z 撤销。",
       confirmLabel: "删除",
       danger: true,
     });
@@ -118,7 +117,7 @@ export function LessonPanel(props: {
         <TextInput autoFocus value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" />
       </Field>
       <Field label="编号">
-        <TextInput value={d.code} onChange={(e) => set("code", e.target.value)} placeholder="如 2B，可以不填" maxLength={20} />
+        <TextInput value={d.code} onChange={(e) => set("code", e.target.value)} maxLength={20} />
       </Field>
       <Field label="类型">
         <div>

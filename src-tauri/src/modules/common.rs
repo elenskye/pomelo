@@ -197,18 +197,21 @@ pub fn days_in_month(y: i64, m: u32) -> u32 {
     }
 }
 
-/// `ids` must be exactly the rows matching `scope` (a WHERE clause); they get sort_order 1..n.
+/// `scope` = WHERE clause of one list. `ids` = some rows of the scope (e.g. the visible ones: undone tasks, a filtered list) in their new
+/// order; they swap among the slots they already hold and the other rows stay put.
 pub fn reorder(conn: &Connection, table: &str, scope: &str, args: &[&dyn rusqlite::ToSql], ids: &[i64]) -> Result<(), String> {
-    let mut st = conn.prepare(&format!("SELECT id FROM {table} WHERE {scope}")).map_err(err)?;
-    let mut current: Vec<i64> = st.query_map(args, |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
-    let mut wanted = ids.to_vec();
-    current.sort_unstable();
-    wanted.sort_unstable();
-    if current != wanted {
+    let mut st = conn.prepare(&format!("SELECT id FROM {table} WHERE {scope} ORDER BY sort_order, id")).map_err(err)?;
+    let mut order: Vec<i64> = st.query_map(args, |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let wanted: std::collections::HashSet<i64> = ids.iter().copied().collect();
+    if wanted.len() != ids.len() || !ids.iter().all(|id| order.contains(id)) {
         return Err("列表已经变了，请刷新后再拖".into());
     }
+    let mut next = ids.iter();
+    for slot in order.iter_mut().filter(|id| wanted.contains(id)) {
+        *slot = *next.next().unwrap();
+    }
     let tx = conn.unchecked_transaction().map_err(err)?;
-    for (i, id) in ids.iter().enumerate() {
+    for (i, id) in order.iter().enumerate() {
         tx.execute(&format!("UPDATE {table} SET sort_order = ?1 WHERE id = ?2"), rusqlite::params![i as i64 + 1, id])
             .map_err(err)?;
     }
@@ -218,6 +221,35 @@ pub fn reorder(conn: &Connection, table: &str, scope: &str, args: &[&dyn rusqlit
 pub fn current_month(conn: &Connection) -> Result<String, String> {
     conn.query_row("SELECT strftime('%Y-%m', 'now', 'localtime')", [], |r| r.get(0))
         .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, PartialEq)]
+pub enum LinkTarget {
+    Url(String),
+    Path(std::path::PathBuf),
+}
+
+/// What a stored link opens: a URL with any scheme (https:, mailto:, bear:…), a local path
+/// (`/…` or `~/…`), or a bare address like `www.x.com` (→ https).
+pub fn link_target(link: &str, home: &std::path::Path) -> Result<LinkTarget, String> {
+    let s = link.trim();
+    if s.is_empty() {
+        return Err("没有链接".into());
+    }
+    if let Some(rest) = s.strip_prefix("~/") {
+        return Ok(LinkTarget::Path(home.join(rest)));
+    }
+    if s.starts_with('/') {
+        return Ok(LinkTarget::Path(s.into()));
+    }
+    // `host:8080` is not a scheme
+    let has_scheme = s.split_once(':').is_some_and(|(a, rest)| {
+        a.len() > 1
+            && a.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && a.chars().all(|c| c.is_ascii_alphanumeric() || "+-".contains(c))
+            && !rest.starts_with(|c: char| c.is_ascii_digit())
+    });
+    Ok(LinkTarget::Url(if has_scheme { s.to_string() } else { format!("https://{s}") }))
 }
 
 #[cfg(test)]
@@ -254,6 +286,37 @@ mod tests {
         assert_eq!(add_days("2024-03-01", -1), "2024-02-29");
         assert_eq!((weekday("2026-09-30"), weekday("2026-10-03"), weekday("2026-10-04")), (3, 6, 7));
         assert_eq!((days_in_month(2024, 2), days_in_month(2026, 2), days_in_month(2026, 9)), (29, 28, 30));
+    }
+
+    #[test]
+    fn link_targets() {
+        let home = std::path::Path::new("/Users/me");
+        let url = |s: &str| Ok(LinkTarget::Url(s.into()));
+        assert_eq!(link_target(" https://a.com/x?y=1 ", home), url("https://a.com/x?y=1"));
+        assert_eq!(link_target("www.a.com/x", home), url("https://www.a.com/x"));
+        assert_eq!(link_target("a.com:8080/x", home), url("https://a.com:8080/x"));
+        assert_eq!(link_target("localhost:3000", home), url("https://localhost:3000"));
+        assert_eq!(link_target("bear://x-callback-url/open-note?id=1", home), url("bear://x-callback-url/open-note?id=1"));
+        assert_eq!(link_target("mailto:a@b.c", home), url("mailto:a@b.c"));
+        assert_eq!(link_target("~/Documents/Seeker", home), Ok(LinkTarget::Path("/Users/me/Documents/Seeker".into())));
+        assert_eq!(link_target("/tmp/a.pdf", home), Ok(LinkTarget::Path("/tmp/a.pdf".into())));
+        assert!(link_target("  ", home).is_err());
+    }
+
+    #[test]
+    fn reorder_part_of_a_list() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, k INTEGER, sort_order INTEGER); INSERT INTO t VALUES (1,0,1),(2,0,2),(3,0,3),(4,0,4),(5,1,1);")
+            .unwrap();
+        let order = |c: &Connection| -> Vec<i64> {
+            c.prepare("SELECT id FROM t WHERE k = 0 ORDER BY sort_order").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        };
+        reorder(&c, "t", "k = ?1", &[&0], &[4, 2, 1, 3]).unwrap();
+        assert_eq!(order(&c), [4, 2, 1, 3]);
+        reorder(&c, "t", "k = ?1", &[&0], &[3, 4]).unwrap(); // 2 and 1 (e.g. done / filtered out) keep their slots
+        assert_eq!(order(&c), [3, 2, 1, 4]);
+        assert!(reorder(&c, "t", "k = ?1", &[&0], &[1, 5]).is_err()); // 5 is in another list
+        assert!(reorder(&c, "t", "k = ?1", &[&0], &[1, 1]).is_err());
     }
 
     #[test]

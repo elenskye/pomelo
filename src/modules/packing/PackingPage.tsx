@@ -243,7 +243,7 @@ export default function PackingPage() {
         kinds={kinds}
         row={tab === "trips" ? tripRow : templateRow}
         groupNote={tab === "trips" ? (xs) => `${xs.filter((x) => x.packed).length}/${xs.length}` : undefined}
-        onReorder={parentId !== null && visible.length === items.length ? (ids) => mut.reorderItems.mutate({ list, parentId, ids }) : undefined}
+        onReorder={parentId !== null ? (ids) => mut.reorderItems.mutate({ list, parentId, ids }) : undefined}
       />
     );
 
@@ -332,7 +332,6 @@ export default function PackingPage() {
       {loading ? null : tab === "trips" && trips.length === 0 ? (
         <EmptyState
           title="行李箱空空，说走就走"
-          hint={templates.length > 0 ? "从模板新建一次出行，清单会自动复制过来" : "先在「模板」里建好常用清单，或者在「设置」里导入 Excel"}
           action={
             <Button variant="primary" onClick={() => setTripDialog({ mode: "new" })}>
               <Plus size={14} /> 新出行
@@ -342,7 +341,6 @@ export default function PackingPage() {
       ) : tab === "templates" && templates.length === 0 ? (
         <EmptyState
           title="还没有模板"
-          hint="把常去的场景（回家、出国…）的物品整理成模板，每次出行直接复制"
           action={
             <Button variant="primary" onClick={() => setTemplateDialog("new")}>
               <Plus size={14} /> 新模板

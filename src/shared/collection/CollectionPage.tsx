@@ -152,7 +152,7 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pb-8">
         {isPending ? null : items.length === 0 ? (
-          <EmptyState title={config.emptyTitle} hint={config.emptyHint} action={newButton} />
+          <EmptyState title={config.emptyTitle} action={newButton} />
         ) : visible.length === 0 ? (
           <EmptyState title={`没有找到符合条件的${config.itemName}`} />
         ) : (

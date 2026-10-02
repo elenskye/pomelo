@@ -90,7 +90,7 @@ export function ItemPanel(props: {
       onDelete={item ? () => void del() : undefined}
       cancelLabel={isNew && added > 0 ? "完成" : "取消"}
       error={error}
-      meta={isNew ? (added > 0 ? `已添加 ${added} 件。按回车继续添加下一件。` : "保存后可以接着添加下一件。") : undefined}
+      meta={isNew && added > 0 ? `已添加 ${added} 件` : undefined}
     >
       <Field label="物品">
         <TextInput ref={nameRef} autoFocus value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="必填" maxLength={100} />
@@ -107,7 +107,7 @@ export function ItemPanel(props: {
         </div>
       </Field>
       <Field label="备注">
-        <TextInput value={d.note} onChange={(e) => set("note", e.target.value)} placeholder="比如：飞机须托运" maxLength={1000} />
+        <TextInput value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={1000} />
       </Field>
       {list === "trip" && (
         <Field label="这次">

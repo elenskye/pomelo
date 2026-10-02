@@ -1,36 +1,37 @@
-// Side panel to create / edit a task, including its type (普通 / 重复 / 打卡 / 进度条). Root tasks
-// can move between groups and goals; subtasks stay under their parent. For saved tasks the type's
-// records (skip / check-in calendar / amounts) act immediately and are undoable with ⌘Z.
+// Side panel to create / edit a task: 标题, 内容, type (普通 / 重复 / 打卡 / 进度条) and its fields.
+// Root tasks can move between groups and goals; subtasks stay under their parent. Dates per type:
+// 普通 / 进度条 = nothing or a 时间段; 重复 = none to enter (Rust derives each occurrence from the
+// rule), plus a start (每月 / 完成后) and an end (每月); 打卡 = start and end. For saved tasks the
+// type's records (skip / check-in calendar / amounts) act immediately.
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
-import { addDays, formatDay, localToday, mondayOf, parseYmd, toYmd } from "@/shared/dates";
+import { addDays, formatDay, localToday, mondayOf, parseYmd, slashDate, toYmd } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { SidePanel } from "@/shared/panel";
 import { Button, Field, IconButton, inputClass, Segmented, TextArea, TextInput } from "@/shared/ui";
-import { PERIODS, TASK_TYPES, useLogs, useTodoMutations, type Goal, type Period, type Task, type TaskPatch, type TaskType, type TodoGroup } from "./api";
+import { TASK_TYPES, useLogs, useTodoMutations, type Goal, type Task, type TaskPatch, type TaskType, type TodoGroup } from "./api";
 
-type Deadline = "none" | "due" | "range";
 type Draft = {
   title: string;
+  note: string;
   where: string;
-  planDate: string;
-  deadline: Deadline;
+  taskType: TaskType;
+  ranged: boolean; // 普通 / 进度条: 时间段 or 不设
   startDate: string;
   dueDate: string;
-  link: string;
-  note: string;
-  taskType: TaskType;
   rule: string;
+  planDate: string; // 重复 (每月 / 完成后) and 打卡: start
   repeatTotal: string;
-  repeatUntil: string;
+  doneCount: string; // 重复 (每天 / 每周 / 每隔)
+  repeatUntil: string; // 重复 (每月) and 打卡: end
   target: string;
   unit: string;
-  period: Period;
+  link: string;
 };
 
 /** Where a new task goes. `where` = "g:<groupId>" or "o:<goalId>". */
-export type NewTask = { where: string; parentId?: number; parentTitle?: string; planDate?: string };
+export type NewTask = { where: string; parentId?: number; parentTitle?: string; dueDate?: string };
 
 /** UTC timestamp → local "10 月 1 日". */
 const localDay = (ts: string) => formatDay(toYmd(new Date(ts)));
@@ -40,24 +41,46 @@ const placeOf = (where: string): Pick<TaskPatch, "groupId" | "goalId"> => {
   return where.startsWith("o:") ? { goalId: id } : { groupId: id, goalId: null };
 };
 const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
+const ruleKind = (rule: string) => rule.split(":")[0];
+/** Rules whose series ends by count (一共几次 / 已经做了几次); 每月 has a 时间段, 完成后 a start. */
+const counted = (rule: string) => ["daily", "weekly", "every"].includes(ruleKind(rule));
+
+const dateClass = "rounded-control border bg-card px-2 py-1.5 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function DateInput(props: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <div className="flex items-center gap-1">
-      <input type="date" aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} className={inputClass} />
+    <div className="flex shrink-0 items-center gap-0.5">
+      <input type="date" aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} className={dateClass} />
       {props.value && (
-        <IconButton label={`清除${props.label}`} onClick={() => props.onChange("")}>
-          <X size={14} />
-        </IconButton>
+        <button
+          type="button"
+          aria-label={`清除${props.label}`}
+          title={`清除${props.label}`}
+          onClick={() => props.onChange("")}
+          className="rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <X size={13} />
+        </button>
       )}
     </div>
   );
 }
 
-const NumberInput = (props: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) => (
+/** One row: start (clearable: a deadline only) 到 end. */
+function RangeInput(props: { start: string; end: string; onStart: (v: string) => void; onEnd: (v: string) => void }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <DateInput label="开始日期" value={props.start} onChange={props.onStart} />
+      <span className="shrink-0 text-muted-foreground">到</span>
+      <input type="date" aria-label="结束日期" value={props.end} onChange={(e) => props.onEnd(e.target.value)} className={dateClass} />
+    </div>
+  );
+}
+
+const NumberInput = (props: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; min?: number }) => (
   <input
     type="number"
-    min={1}
+    min={props.min ?? 1}
     aria-label={props.label}
     value={props.value}
     placeholder={props.placeholder}
@@ -66,21 +89,24 @@ const NumberInput = (props: { label: string; value: string; onChange: (v: string
   />
 );
 
-function Weekdays(props: { value: number[]; onChange: (v: number[]) => void }) {
+/** Round toggles; at least one stays on. */
+function DayPicker(props: { days: number[]; labels: (d: number) => string; value: number[]; onChange: (v: number[]) => void; ariaLabel: string; cols?: boolean }) {
   return (
-    <div className="flex gap-1" role="group" aria-label="星期几">
-      {WEEK.map((w, i) => {
-        const d = i + 1;
+    <div className={props.cols ? "grid w-fit grid-cols-7 gap-1" : "flex gap-1"} role="group" aria-label={props.ariaLabel}>
+      {props.days.map((d) => {
         const on = props.value.includes(d);
         return (
           <button
             key={d}
             type="button"
             aria-pressed={on}
-            onClick={() => props.onChange(on ? props.value.filter((x) => x !== d) : [...props.value, d].sort())}
-            className={`size-8 rounded-full text-sm transition-colors ${on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}
+            onClick={() => {
+              const next = on ? props.value.filter((x) => x !== d) : [...props.value, d].sort((a, b) => a - b);
+              if (next.length > 0) props.onChange(next);
+            }}
+            className={`size-8 rounded-full text-sm tabular-nums transition-colors ${on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}
           >
-            {w}
+            {props.labels(d)}
           </button>
         );
       })}
@@ -94,8 +120,8 @@ type Mode = "daily" | "weekly" | "monthly" | "every" | "after";
 function RuleEditor(props: { value: string; onChange: (v: string) => void; checkin?: boolean }) {
   const [kind, arg = ""] = props.value.split(":");
   const mode = (["daily", "weekly", "monthly", "every", "after"].includes(kind) ? kind : "daily") as Mode;
-  const days = mode === "weekly" ? arg.split(",").filter(Boolean).map(Number) : [];
-  const n = mode === "every" || mode === "after" ? arg.slice(0, -1) : mode === "monthly" ? arg : "";
+  const list = mode === "weekly" || mode === "monthly" ? arg.split(",").filter(Boolean).map(Number) : [];
+  const n = mode === "every" || mode === "after" ? arg.slice(0, -1) : "";
   const unit = mode === "every" && arg.endsWith("w") ? "w" : "d";
   const modes: { value: Mode; label: string }[] = props.checkin
     ? [
@@ -109,16 +135,32 @@ function RuleEditor(props: { value: string; onChange: (v: string) => void; check
         { value: "every", label: "每隔" },
         { value: "after", label: "完成后" },
       ];
+  const today = parseYmd(localToday());
   const setMode = (m: Mode) =>
-    props.onChange({ daily: "daily", weekly: `weekly:${days.length ? days.join(",") : "1"}`, monthly: "monthly:1", every: "every:2d", after: "after:30d" }[m]);
+    props.onChange(
+      {
+        daily: "daily",
+        weekly: `weekly:${((today.getDay() + 6) % 7) + 1}`,
+        monthly: `monthly:${today.getDate()}`,
+        every: "every:2d",
+        after: "after:7d",
+      }[m],
+    );
   return (
     <div className="space-y-2">
       <Segmented ariaLabel="重复方式" value={mode} onChange={setMode} options={modes} />
-      {mode === "weekly" && <Weekdays value={days} onChange={(ds) => props.onChange(`weekly:${ds.join(",")}`)} />}
+      {mode === "weekly" && (
+        <DayPicker ariaLabel="星期几" days={[1, 2, 3, 4, 5, 6, 7]} labels={(d) => WEEK[d - 1]} value={list} onChange={(ds) => props.onChange(`weekly:${ds.join(",")}`)} />
+      )}
       {mode === "monthly" && (
-        <div className="flex items-center gap-2 text-sm">
-          每月 <NumberInput label="几号" value={n} onChange={(v) => props.onChange(`monthly:${v}`)} /> 号（没有这天的月份用最后一天）
-        </div>
+        <DayPicker
+          cols
+          ariaLabel="每月哪几天"
+          days={Array.from({ length: 31 }, (_, i) => i + 1)}
+          labels={String}
+          value={list}
+          onChange={(ds) => props.onChange(`monthly:${ds.join(",")}`)}
+        />
       )}
       {mode === "every" && (
         <div className="flex items-center gap-2 text-sm">
@@ -202,7 +244,6 @@ function CheckinCalendar(props: { task: Task }) {
           );
         })}
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">点日期补打卡，再点一次取消。</p>
     </div>
   );
 }
@@ -225,8 +266,7 @@ function ProgressLog(props: { task: Task }) {
         <Button onClick={() => m.log.mutate({ taskId: t.id, day, amount: Number(amount) || 1 })}>记上</Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        累计 {t.totalAmount} {unit}
-        {t.period !== "all" && `，${PERIODS[t.period ?? "all"]}目标 ${t.target} ${unit}`}
+        累计 {t.totalAmount} / {t.target} {unit}
       </p>
       {logs.length > 0 && (
         <ul className="max-h-40 overflow-y-auto rounded-card border text-sm">
@@ -260,41 +300,43 @@ export function TaskPanel(props: {
 }) {
   const { task } = props;
   const today = localToday();
-  const initial = useMemo<Draft>(
-    () => ({
+  const initial = useMemo<Draft>(() => {
+    const dated = task?.taskType === "normal" || task?.taskType === "progress";
+    const dueDate = (dated ? task?.dueDate : null) ?? props.create?.dueDate ?? "";
+    const startDate = (dated ? task?.startDate : null) ?? "";
+    return {
       title: task?.title ?? "",
-      where: task ? whereOf(task) : (props.create?.where ?? ""),
-      planDate: task?.planDate ?? props.create?.planDate ?? "",
-      deadline: task?.startDate ? "range" : task?.dueDate ? "due" : "none",
-      startDate: task?.startDate ?? "",
-      dueDate: task?.dueDate ?? "",
-      link: task?.link ?? "",
       note: task?.note ?? "",
+      where: task ? whereOf(task) : (props.create?.where ?? ""),
       taskType: task?.taskType ?? "normal",
+      ranged: !!(startDate || dueDate),
+      startDate,
+      dueDate,
       rule: task?.repeatRule ?? "daily",
+      planDate: task?.planDate ?? "",
       repeatTotal: task?.repeatTotal?.toString() ?? "",
+      doneCount: task?.taskType === "repeat" ? String(task.count) : "0",
       repeatUntil: task?.repeatUntil ?? "",
       target: task?.target?.toString() ?? "",
       unit: task?.unit ?? "",
-      period: task?.period ?? "all",
-    }),
-    [task, props.create],
-  );
+      link: task?.link ?? "",
+    };
+  }, [task, props.create]);
   const [d, setD] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const m = useTodoMutations();
   const toast = useToast();
   const isSub = task ? task.parentId !== null : props.create?.parentId !== undefined;
 
-  // Dates can move underneath the panel (an occurrence finished / skipped from the list): follow
-  // them unless the user already edited that field.
+  // Counts can move underneath the panel (an occurrence finished from the list): follow them unless
+  // the user already edited that field.
   const prevInitial = useRef(initial);
   useEffect(() => {
     const p = prevInitial.current;
     prevInitial.current = initial;
     setD((x) => {
       const next = { ...x };
-      for (const k of ["planDate", "startDate", "dueDate", "deadline"] as const) if (x[k] === p[k]) (next[k] as string) = initial[k];
+      for (const k of ["doneCount", "startDate", "dueDate", "planDate"] as const) if (x[k] === p[k]) next[k] = initial[k];
       return next;
     });
   }, [initial]);
@@ -305,17 +347,18 @@ export function TaskPanel(props: {
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  /** 每月 / 完成后 / 打卡 start from a date: today unless one is set. */
+  const withStart = (x: Draft): Draft => {
+    const needs = x.taskType === "checkin" || (x.taskType === "repeat" && !counted(x.rule));
+    return needs && !x.planDate ? { ...x, planDate: today } : x;
+  };
   const setType = (v: TaskType) =>
-    setD((x) => ({
-      ...x,
-      taskType: v,
-      rule: v === "checkin" && !/^(daily|weekly)/.test(x.rule) ? "daily" : x.rule,
-      planDate: (v === "checkin" || v === "repeat") && !x.planDate && !x.dueDate ? today : x.planDate,
-    }));
+    setD((x) => withStart({ ...x, taskType: v, rule: v === "checkin" && !/^(daily|weekly)/.test(x.rule) ? "daily" : x.rule }));
+  const setRule = (v: string) => setD((x) => withStart({ ...x, rule: v }));
 
   const whereOptions = props.groups.flatMap((g) => [
     { value: `g:${g.id}`, label: g.name },
-    ...props.goals.filter((o) => o.groupId === g.id).map((o) => ({ value: `o:${o.id}`, label: `　◎ ${o.name}` })),
+    ...props.goals.filter((o) => o.groupId === g.id).map((o) => ({ value: `o:${o.id}`, label: `　${o.name}` })),
   ]);
 
   const num = (s: string) => (s.trim() ? Number(s) : null);
@@ -323,20 +366,24 @@ export function TaskPanel(props: {
     e.preventDefault();
     setError(null);
     const type = d.taskType;
+    const dated = type === "normal" || type === "progress";
+    const repeat = type === "repeat";
+    const byCount = repeat && counted(d.rule);
+    const monthly = repeat && ruleKind(d.rule) === "monthly";
     const fields: TaskPatch = {
       title: d.title,
       note: d.note.trim() || null,
       link: d.link.trim() || null,
-      planDate: d.planDate || null,
-      startDate: type !== "checkin" && d.deadline === "range" ? d.startDate || null : null,
-      dueDate: type === "checkin" || d.deadline === "none" ? null : d.dueDate || null,
       taskType: type,
-      repeatRule: type === "repeat" || type === "checkin" ? d.rule : null,
-      repeatTotal: type === "repeat" || type === "checkin" ? num(d.repeatTotal) : null,
-      repeatUntil: type === "repeat" || type === "checkin" ? d.repeatUntil || null : null,
+      planDate: type === "checkin" || (repeat && !byCount) ? d.planDate || null : null,
+      startDate: dated && d.ranged ? d.startDate || null : null,
+      ...(repeat ? {} : { dueDate: dated && d.ranged ? d.dueDate || null : null }), // a repeat's date comes from Rust
+      repeatRule: repeat || type === "checkin" ? d.rule : null,
+      repeatTotal: byCount || type === "checkin" ? num(d.repeatTotal) : null,
+      repeatUntil: monthly || type === "checkin" ? d.repeatUntil || null : null,
       target: type === "progress" ? num(d.target) : null,
       unit: type === "progress" ? d.unit.trim() || null : null,
-      period: type === "progress" ? d.period : null,
+      ...(byCount ? { doneCount: num(d.doneCount) ?? 0 } : {}),
     };
     try {
       if (!task) {
@@ -354,8 +401,23 @@ export function TaskPanel(props: {
     }
   };
 
-  const typeLocked = props.hasChildren; // only normal tasks can have subtasks
   const saved = task !== null && task.taskType === d.taskType; // type records only for the saved type
+  const range = (
+    <Field label="时间">
+      <div className="space-y-2">
+        <Segmented
+          ariaLabel="时间"
+          value={d.ranged ? "range" : "none"}
+          onChange={(v) => set("ranged", v === "range")}
+          options={[
+            { value: "none", label: "不设" },
+            { value: "range", label: "时间段" },
+          ]}
+        />
+        {d.ranged && <RangeInput start={d.startDate} end={d.dueDate} onStart={(v) => set("startDate", v)} onEnd={(v) => set("dueDate", v)} />}
+      </div>
+    </Field>
+  );
   return (
     <SidePanel
       title={task ? "编辑任务" : isSub ? "添加子任务" : "添加任务"}
@@ -369,12 +431,15 @@ export function TaskPanel(props: {
           : undefined
       }
     >
-      <Field label="任务">
+      <Field label="标题">
         <TextInput autoFocus value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" maxLength={500} />
       </Field>
+      <Field label="内容">
+        <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
+      </Field>
       <Field label="类型">
-        {typeLocked ? (
-          <p className="text-sm text-muted-foreground">有子任务，只能是普通任务</p>
+        {props.hasChildren ? (
+          <p className="text-sm">普通</p>
         ) : (
           <Segmented ariaLabel="类型" value={d.taskType} onChange={setType} options={(Object.keys(TASK_TYPES) as TaskType[]).map((k) => ({ value: k, label: TASK_TYPES[k] }))} />
         )}
@@ -389,35 +454,57 @@ export function TaskPanel(props: {
         )}
       </Field>
 
+      {d.taskType === "normal" && range}
       {d.taskType === "repeat" && (
         <>
           <Field label="重复">
-            <RuleEditor value={d.rule} onChange={(v) => set("rule", v)} />
+            <RuleEditor value={d.rule} onChange={setRule} />
           </Field>
-          <div className="flex gap-4">
-            <Field label="一共几次">
-              <NumberInput label="一共几次" value={d.repeatTotal} onChange={(v) => set("repeatTotal", v)} placeholder="不限" />
+          {counted(d.rule) && (
+            <div className="flex gap-4">
+              <Field label="一共几次">
+                <NumberInput label="一共几次" value={d.repeatTotal} onChange={(v) => set("repeatTotal", v)} placeholder="不限" />
+              </Field>
+              <Field label="已经做了几次">
+                <NumberInput label="已经做了几次" min={0} value={d.doneCount} onChange={(v) => set("doneCount", v)} />
+              </Field>
+            </div>
+          )}
+          {ruleKind(d.rule) === "monthly" && (
+            <Field label="时间段">
+              <RangeInput start={d.planDate} end={d.repeatUntil} onStart={(v) => set("planDate", v)} onEnd={(v) => set("repeatUntil", v)} />
             </Field>
-            <Field label="到哪天结束">
-              <DateInput label="结束日期" value={d.repeatUntil} onChange={(v) => set("repeatUntil", v)} />
+          )}
+          {ruleKind(d.rule) === "after" && (
+            <Field label="开始日期">
+              <DateInput label="开始日期" value={d.planDate} onChange={(v) => set("planDate", v)} />
             </Field>
-          </div>
-          {saved && !task.done && (
+          )}
+          {saved && task.dueDate && d.rule === task.repeatRule && (
             <div className="flex items-center justify-between gap-2 rounded-card border px-3 py-2 text-sm">
-              <span>已完成 {task.count} 次，现在是第 {task.count + 1} 次</span>
-              <Button
-                onClick={() =>
-                  // dates move on in Rust: close so a stale draft can't save the old dates back
-                  m.skip.mutate(task.id, {
-                    onSuccess: () => {
-                      toast("已跳过这一次（⌘Z 撤销）");
-                      props.onDone();
-                    },
-                  })
-                }
-              >
-                跳过这一次
-              </Button>
+              {task.done ? (
+                <span>已全部完成，共 {task.count} 次</span>
+              ) : (
+                <>
+                  <span className="tabular-nums">
+                    第 {task.count + 1} 次：{slashDate(task.dueDate)}
+                    {task.lastDate && task.lastDate !== task.dueDate && <span className="block text-muted-foreground">最后一次：{slashDate(task.lastDate)}</span>}
+                  </span>
+                  <Button
+                    onClick={() =>
+                      // the date moves on in Rust: close so a stale draft can't save over it
+                      m.skip.mutate(task.id, {
+                        onSuccess: () => {
+                          toast("已跳过这一次");
+                          props.onDone();
+                        },
+                      })
+                    }
+                  >
+                    跳过这一次
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </>
@@ -425,7 +512,7 @@ export function TaskPanel(props: {
       {d.taskType === "checkin" && (
         <>
           <Field label="哪些天打卡">
-            <RuleEditor checkin value={d.rule} onChange={(v) => set("rule", v)} />
+            <RuleEditor checkin value={d.rule} onChange={setRule} />
           </Field>
           <div className="flex gap-4">
             <Field label="开始日期">
@@ -448,12 +535,10 @@ export function TaskPanel(props: {
               <NumberInput label="目标数量" value={d.target} onChange={(v) => set("target", v)} placeholder="必填" />
             </Field>
             <Field label="单位">
-              <TextInput value={d.unit} onChange={(e) => set("unit", e.target.value)} placeholder="本、份、次…" maxLength={10} className="w-28" />
+              <TextInput value={d.unit} onChange={(e) => set("unit", e.target.value)} maxLength={10} className="w-28" />
             </Field>
           </div>
-          <Field label="怎么计数">
-            <Segmented ariaLabel="计数周期" value={d.period} onChange={(v) => set("period", v)} options={(Object.keys(PERIODS) as Period[]).map((k) => ({ value: k, label: PERIODS[k] }))} />
-          </Field>
+          {range}
           {saved && (
             <Field label="记一笔">
               <ProgressLog task={task} />
@@ -461,48 +546,8 @@ export function TaskPanel(props: {
           )}
         </>
       )}
-
-      {d.taskType !== "checkin" && (
-        <>
-          <Field label={d.taskType === "repeat" ? "计划哪天做（这一次）" : "计划哪天做"}>
-            <div className="flex items-center gap-2">
-              <DateInput label="计划日期" value={d.planDate} onChange={(v) => set("planDate", v)} />
-              {d.planDate !== today && (
-                <button type="button" className="shrink-0 text-xs text-primary hover:underline" onClick={() => set("planDate", today)}>
-                  今天
-                </button>
-              )}
-            </div>
-          </Field>
-          <Field label="截止">
-            <div className="space-y-2">
-              <Segmented
-                ariaLabel="截止"
-                value={d.deadline}
-                onChange={(v) => set("deadline", v)}
-                options={[
-                  { value: "none", label: "不设" },
-                  { value: "due", label: "截止日期" },
-                  { value: "range", label: "时间段" },
-                ]}
-              />
-              {d.deadline === "due" && <DateInput label="截止日期" value={d.dueDate} onChange={(v) => set("dueDate", v)} />}
-              {d.deadline === "range" && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <DateInput label="开始日期" value={d.startDate} onChange={(v) => set("startDate", v)} />
-                  <span className="text-muted-foreground">到</span>
-                  <DateInput label="结束日期" value={d.dueDate} onChange={(v) => set("dueDate", v)} />
-                </div>
-              )}
-            </div>
-          </Field>
-        </>
-      )}
       <Field label="链接">
-        <TextInput value={d.link} onChange={(e) => set("link", e.target.value)} placeholder="https://…" maxLength={1000} />
-      </Field>
-      <Field label="备注">
-        <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} placeholder="用 **两个星号** 包起来就是加粗" maxLength={5000} />
+        <TextInput value={d.link} onChange={(e) => set("link", e.target.value)} maxLength={1000} />
       </Field>
     </SidePanel>
   );

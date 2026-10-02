@@ -86,6 +86,19 @@ fn reveal_data_dir(app: tauri::AppHandle, state: State<AppState>) -> Result<(), 
         .map_err(|e| format!("无法打开数据目录：{e}"))
 }
 
+/// Opens a task's link in its default app (see `common::link_target` for what counts as a link).
+#[tauri::command]
+fn open_link(app: tauri::AppHandle, link: String) -> Result<(), String> {
+    use modules::common::{link_target, LinkTarget};
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    match link_target(&link, &home)? {
+        LinkTarget::Url(url) => app.opener().open_url(url, None::<&str>),
+        LinkTarget::Path(p) if !p.exists() => return Err(format!("找不到这个文件：{}", p.display())),
+        LinkTarget::Path(p) => app.opener().open_path(p.display().to_string(), None::<&str>),
+    }
+    .map_err(|e| format!("打不开这个链接：{e}"))
+}
+
 #[tauri::command]
 fn settings_get(state: State<AppState>, key: String) -> Result<Option<Value>, String> {
     state.with_db(|c| settings::get(c, &key))
@@ -109,6 +122,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             reveal_data_dir,
+            open_link,
             settings_get,
             settings_set,
             transfer::import_preview,

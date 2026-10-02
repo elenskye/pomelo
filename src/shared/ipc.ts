@@ -36,6 +36,8 @@ export const api = {
   backupRestore: (fileName: string) => invoke<{ safety: BackupInfo }>("backup_restore", { fileName }),
   revealBackupsDir: () => invoke<void>("reveal_backups_dir"),
   revealDataDir: () => invoke<void>("reveal_data_dir"),
+  /** URL (any scheme), local path, or bare address (→ https); rules in Rust. */
+  openLink: (link: string) => invoke<void>("open_link", { link }),
   /** label = the step undone / redone; null = nothing to do. */
   undo: () => invoke<{ label: string | null }>("undo_last"),
   redo: () => invoke<{ label: string | null }>("redo_last"),

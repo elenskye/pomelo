@@ -1,13 +1,15 @@
-// 一步一步: left nav (今天 · 月历 · 回看 · groups → goals, draggable) + right content. Modeled on GoalMap.
+// 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder, fold a group's goals)
+// + right content. Modeled on GoalMap. Goals carry no icon (names can start with an emoji).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, FolderPlus, Pencil, Plus, Sun, Target } from "lucide-react";
+import { CalendarCheck, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, FolderPlus, Pencil, Plus, Sun, Target } from "lucide-react";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { addDays, formatDay, localToday, mondayOf, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
+import { api } from "@/shared/ipc";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
-import { DragHandle, useSortable } from "@/shared/sortable";
+import { useSortable } from "@/shared/sortable";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar } from "@/shared/ui";
 import {
   GOAL_STATUS,
@@ -43,43 +45,82 @@ function useToday() {
   return today;
 }
 
-function NavButton(props: { active: boolean; onClick: () => void; children: ReactNode; indent?: boolean; grip?: ReactNode }) {
+type DragProps = ReturnType<ReturnType<typeof useSortable>["handle"]>;
+
+function NavButton(props: { active: boolean; onClick: () => void; children: ReactNode; indent?: boolean; drag?: DragProps; trailing?: ReactNode }) {
   return (
-    <div className={`group flex items-center rounded-control transition-colors duration-150 ${props.active ? "bg-accent" : "hover:bg-muted/70"}`}>
-      {props.grip !== undefined && <span className="flex w-3 shrink-0 justify-center">{props.grip}</span>}
+    <div {...props.drag} className={`flex items-center rounded-control transition-colors duration-150 ${props.active ? "bg-accent" : "hover:bg-muted/70"}`}>
       <button
         type="button"
         aria-current={props.active}
         onClick={props.onClick}
         className={`flex min-w-0 flex-1 items-center gap-2 rounded-control py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-          props.indent ? "pr-2.5 pl-4" : props.grip !== undefined ? "pr-2.5 pl-1" : "px-2.5"
+          props.indent ? "pr-2.5 pl-6" : "px-2.5"
         }`}
       >
         {props.children}
       </button>
+      {props.trailing}
     </div>
   );
 }
 
-/** Groups (and each group's goals) in the nav, draggable to reorder. */
+const NAV_COLLAPSED = "todo.nav_collapsed";
+
+/** Group ids whose goals are folded in the nav (kept in settings, outside undo). */
+function useFoldedGroups() {
+  const [ids, setIds] = useState<number[]>([]);
+  useEffect(() => {
+    api
+      .settingsGet<number[]>(NAV_COLLAPSED)
+      .then((v) => Array.isArray(v) && setIds(v))
+      .catch(() => {});
+  }, []);
+  const toggle = (id: number) => {
+    const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+    setIds(next);
+    api.settingsSet(NAV_COLLAPSED, next).catch(() => {});
+  };
+  return [ids, toggle] as const;
+}
+
+/** Groups (and each group's goals) in the nav; drag a row to reorder, fold a group's goals on the right. */
 function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (v: View) => void }) {
   const m = useTodoMutations();
   const sort = useSortable((ids) => m.reorderGroups.mutate(ids));
+  const [folded, toggle] = useFoldedGroups();
   return (
     <div ref={sort.listRef}>
-      {props.groups.map((g) => (
-        <div key={g.id} {...sort.item(g.id)} className="bg-background">
-          <NavButton
-            active={props.view.kind === "group" && props.view.id === g.id}
-            onClick={() => props.go({ kind: "group", id: g.id })}
-            grip={props.groups.length > 1 ? <DragHandle {...sort.handle(g.id)} label="拖动分组排序" /> : null}
-          >
-            <span className="min-w-0 flex-1 truncate">{g.name}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">{g.open || ""}</span>
-          </NavButton>
-          <GoalNav goals={props.goals.filter((o) => o.groupId === g.id)} groupId={g.id} view={props.view} go={props.go} />
-        </div>
-      ))}
+      {props.groups.map((g) => {
+        const goals = props.goals.filter((o) => o.groupId === g.id);
+        const open = !folded.includes(g.id);
+        return (
+          <div key={g.id} {...sort.item(g.id)} className="bg-background">
+            <NavButton
+              active={props.view.kind === "group" && props.view.id === g.id}
+              onClick={() => props.go({ kind: "group", id: g.id })}
+              drag={props.groups.length > 1 ? sort.handle(g.id) : undefined}
+              trailing={
+                goals.length > 0 && (
+                  <button
+                    type="button"
+                    aria-label={open ? `收起「${g.name}」的目标` : `展开「${g.name}」的目标`}
+                    aria-expanded={open}
+                    onClick={() => toggle(g.id)}
+                    className="mr-1.5 rounded p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ChevronDown size={13} className={`transition-transform duration-150 ${open ? "" : "-rotate-90"}`} />
+                  </button>
+                )
+              }
+            >
+              <span className="min-w-0 flex-1 truncate">{g.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{g.open || ""}</span>
+            </NavButton>
+            {open && <GoalNav goals={goals} groupId={g.id} view={props.view} go={props.go} />}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -95,7 +136,7 @@ function GoalNav(props: { goals: Goal[]; groupId: number; view: View; go: (v: Vi
             indent
             active={props.view.kind === "goal" && props.view.id === o.id}
             onClick={() => props.go({ kind: "goal", id: o.id })}
-            grip={props.goals.length > 1 ? <DragHandle {...sort.handle(o.id)} label="拖动目标排序" /> : null}
+            drag={props.goals.length > 1 ? sort.handle(o.id) : undefined}
           >
             <GoalNavLabel goal={o} />
           </NavButton>
@@ -111,7 +152,6 @@ function GoalNavLabel({ goal }: { goal: Goal }) {
   const closed = closedGoal(goal.status);
   return (
     <>
-      <Target size={13} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
       <span className={`min-w-0 flex-1 truncate text-sm ${closed ? "text-muted-foreground" : ""} ${goal.status === "abandoned" ? "line-through" : ""}`}>
         {goal.name}
       </span>
@@ -249,14 +289,14 @@ export default function TodoPage() {
     const subs = placeTasks.some((x) => x.parentId === t.id);
     const ok = await confirm({
       title: `删除「${t.title.replace(/\*\*/g, "")}」？`,
-      message: `${subs ? "它下面的子任务会一起删除。" : ""}删错了可以按 ⌘Z 撤销。`,
+      message: subs ? "它下面的子任务会一起删除。" : undefined,
       confirmLabel: "删除",
       danger: true,
     });
     if (!ok) return;
     mut.deleteTask.mutate(t.id, {
       onSuccess: () => {
-        toast("已删除（⌘Z 撤销）");
+        toast("已删除");
         panel.done();
       },
     });
@@ -303,8 +343,8 @@ export default function TodoPage() {
           {gid !== null && (
             <QuickAdd
               inputRef={quickRef}
-              placeholder="添加今天要做的事，回车保存"
-              onAdd={(title) => mut.createTask.mutateAsync({ title, groupId: gid, planDate: today })}
+              placeholder="添加今天要做的事"
+              onAdd={(title) => mut.createTask.mutateAsync({ title, groupId: gid, dueDate: today })}
               extra={
                 <Dropdown
                   ariaLabel="加到哪个分组"
@@ -375,7 +415,6 @@ export default function TodoPage() {
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className={`flex min-w-0 items-center gap-1.5 ${closedGoal(g.status) ? "text-muted-foreground" : ""}`}>
-          <Target size={14} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
           <span className="truncate">{g.name}</span>
           {g.status !== "active" && <span className="shrink-0 rounded bg-muted px-1.5 text-xs text-muted-foreground">{GOAL_STATUS[g.status]}</span>}
         </span>
@@ -412,7 +451,7 @@ export default function TodoPage() {
           <Section title={gs.length > 0 ? "其他任务" : "任务"}>
             <div className="space-y-3">
               <TaskTree tasks={placeTasks} today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} onAddSub={addSub} />
-              <QuickAdd inputRef={quickRef} placeholder="添加任务，回车保存" onAdd={(title) => mut.createTask.mutateAsync({ title, groupId: grp.id })} />
+              <QuickAdd inputRef={quickRef} placeholder="添加任务" onAdd={(title) => mut.createTask.mutateAsync({ title, groupId: grp.id })} />
             </div>
           </Section>
         </div>
@@ -460,9 +499,8 @@ export default function TodoPage() {
             selectedId={selectedId}
             onOpen={(t) => void openEdit(t)}
             onAddSub={addSub}
-            empty={<p className="px-1 text-sm text-muted-foreground">把目标拆成一步一步的任务吧</p>}
           />
-          <QuickAdd inputRef={quickRef} placeholder="添加任务，回车保存" onAdd={(title) => mut.createTask.mutateAsync({ title, goalId: g.id })} />
+          <QuickAdd inputRef={quickRef} placeholder="添加任务" onAdd={(title) => mut.createTask.mutateAsync({ title, goalId: g.id })} />
         </div>
       </>
     );
@@ -514,7 +552,6 @@ export default function TodoPage() {
       {groupsPending ? null : groups.length === 0 ? (
         <EmptyState
           title="一步一步，先建一个分组吧"
-          hint="比如「📌 Pick Up」「🖥️ Diploma」；也可以在「设置 → 导入」里导入整理好的待办"
           action={
             <Button variant="primary" onClick={() => setGroupDialog({ group: null })}>
               <FolderPlus size={14} /> 新分组

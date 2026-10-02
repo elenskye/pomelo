@@ -98,7 +98,6 @@ export function KindManager(props: {
         <p className="text-base font-bold">管理{noun}</p>
         <span className="text-xs text-muted-foreground">{props.moduleLabel}</span>
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">点名字可以直接改名，按回车保存。</p>
 
       <ul className="mt-3 max-h-80 space-y-0.5 overflow-y-auto">
         {kinds.map((k, i) => (

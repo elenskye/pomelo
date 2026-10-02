@@ -63,7 +63,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## 验证方法
 
-- **界面**：后台运行 `pnpm dev`，再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据）。改了 mock 要刷新页面（HMR 不会重置它）。浏览器面板的截图有时慢一拍，关键结果用 JS 读页面确认。
+- **界面**：后台运行 `pnpm dev`，再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据）。改了 mock 要刷新页面（HMR 不会重置它）。浏览器面板的截图有时慢一拍，关键结果用 JS 读页面确认。拖拽排序可以用 `left_click_drag` 测（它一步跳到终点，拖拽代码要能接住）。
 - **真实窗口**：`pnpm app:build` 后 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"`，测完删掉这个 `.app`。这台 Mac 经常截不了屏（显示器休眠），这时只能靠浏览器和测试。
 - **真实数据**：`POMELO_SEED_DB=<临时目录>/pomelo.db cargo test --manifest-path src-tauri/Cargo.toml seed_scratch_db -- --ignored` 生成临时数据库（含 Excel 和待办导入文件）；想直接打开某页，改 `settings` 表的 `ui.last_route`。
 

@@ -38,5 +38,4 @@ export type CollectionConfig = {
   creatorLabel: string; // "作者" | "导演"
   statusLabels: StatusLabels;
   emptyTitle: string;
-  emptyHint: string;
 };

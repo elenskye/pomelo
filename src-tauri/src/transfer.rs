@@ -1,8 +1,9 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":2,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":4,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
-//! types / logs. All older versions are read.
+//! types / logs; v3 = repeat occurrence in planDate, no doneBefore (todo.rs adapts). All older
+//! versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds list (if present) replaces its kinds first — only for modules
 //! in the file. Overwriting existing data requires `overwrite = true` and takes a snapshot first.
@@ -20,7 +21,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -396,7 +397,7 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 3);
+        assert_eq!(v["formatVersion"], 4);
         assert_eq!(v["kinds"]["books"], json!(["虚构", "非虚构", "漫画书", "没用上的类型"]));
         assert_eq!(v["kinds"]["films"], json!(["动漫", "剧集", "电影"]));
         assert_eq!(v["modules"]["drawing"][0]["name"], "B 课");
