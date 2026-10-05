@@ -2,6 +2,7 @@
 // Mirrors the Rust command surface loosely (not the source of truth — Rust rules/tests are).
 // Keep in sync when adding commands. Never imported in production builds (guarded in main.tsx).
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { nextOnOrAfter } from "@/modules/finance/money";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
 
 type Args = Record<string, unknown>;
@@ -247,7 +248,7 @@ const ruleNext = (rule: string, anchor: string, completed: string): string => {
   if (kind === "every") return addDays(anchor, arg.endsWith("w") ? 7 * n : n);
   return addDays(completed, n); // after
 };
-const counted = (rule: string | null) => !!rule && /^(daily|weekly|every)/.test(rule);
+const counted = (rule: string | null) => !!rule && !rule.startsWith("after");
 const firstFrom = (rule: string, day: string) => (/^(weekly|monthly)/.test(rule) ? ruleNext(rule, addDays(day, -1), day) : day);
 const scheduled = (rule: string | null, d: string) => rule === "daily" || (!!rule?.startsWith("weekly:") && rule.slice(7).split(",").map(Number).includes(isoWeekday(d)));
 const tTaskOut = (t: TTask) => {
@@ -259,7 +260,7 @@ const tTaskOut = (t: TTask) => {
     const days = new Set(ls.map((l) => l.day));
     for (let i = 0; i < 400; i++) {
       const d = addDays(today, -i);
-      if (t.planDate && d < t.planDate) break;
+      if (t.startDate && d < t.startDate) break;
       if (!scheduled(t.repeatRule, d)) continue;
       if (days.has(d)) streak++;
       else if (i > 0) break;
@@ -289,7 +290,17 @@ const markDone = (t: TTask) => {
 const settle = (t: TTask) => {
   const o = tTaskOut(t);
   const reached =
-    t.taskType === "checkin" || t.taskType === "repeat" ? (t.repeatTotal ? o.count >= t.repeatTotal : null) : t.taskType === "progress" ? o.totalAmount >= (t.target ?? Infinity) : null;
+    t.taskType === "repeat"
+      ? t.repeatTotal
+        ? o.count >= t.repeatTotal
+        : null
+      : t.taskType === "checkin"
+        ? t.dueDate
+          ? t.dueDate < mockToday()
+          : null
+        : t.taskType === "progress"
+          ? o.totalAmount >= (t.target ?? Infinity)
+          : null;
   if (reached === true && !t.done) markDone(t);
   if (reached === false && t.done) Object.assign(t, { done: false, doneAt: null });
 };
@@ -315,15 +326,11 @@ const normalize = (t: TTask) => {
     else t.period = "all";
   } else if (t.taskType === "repeat") {
     if (!t.repeatRule) throw "请设置重复规则";
-    if (counted(t.repeatRule)) Object.assign(t, { planDate: null, repeatUntil: null });
-    else {
-      t.repeatTotal = null;
-      if (!t.repeatRule.startsWith("monthly")) t.repeatUntil = null;
-    }
-    Object.assign(t, { startDate: null, target: null, unit: null, period: null });
+    if (counted(t.repeatRule)) t.planDate = null;
+    else t.repeatTotal = null;
+    Object.assign(t, { startDate: null, repeatUntil: null, target: null, unit: null, period: null });
   } else {
-    if (!t.planDate) throw "打卡要有开始日期";
-    Object.assign(t, { startDate: null, dueDate: null, target: null, unit: null, period: null });
+    Object.assign(t, { planDate: null, repeatTotal: null, repeatUntil: null, target: null, unit: null, period: null });
   }
   if (t.startDate && !t.dueDate) throw "时间段要有结束日期";
 };
@@ -432,7 +439,7 @@ const doneItems = (from: string, to: string) => {
   const site = addTGoal(proj.id, "个人网站上线", { startDate: dayOffset(-10), endDate: dayOffset(40), note: "先做简单版" });
   ["选框架", "写首页", "买域名"].forEach((t, i) => addTTask({ goalId: site.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null, dueDate: i === 1 ? dayOffset(0) : null }));
   const jp = addTGoal(proj.id, "学日语");
-  const words = addTTask({ goalId: jp.id, title: "背单词", taskType: "checkin", repeatRule: "daily", planDate: dayOffset(-10), repeatTotal: 30 });
+  const words = addTTask({ goalId: jp.id, title: "背单词", taskType: "checkin", repeatRule: "daily", startDate: dayOffset(-10), dueDate: dayOffset(20) });
   [1, 2, 3, 5, 6].forEach((i) => addLog(words.id, dayOffset(-i)));
   const read = addTTask({ groupId: proj.id, title: "今年读 20 本书", taskType: "progress", target: 20, unit: "本", startDate: `${mockToday().slice(0, 4)}-01-01`, dueDate: `${mockToday().slice(0, 4)}-12-31` });
   addLog(read.id, dayOffset(-20), 5);
@@ -445,8 +452,8 @@ const doneItems = (from: string, to: string) => {
 }
 // Undo / redo mock: whole-state snapshots of the todo tables around each edit.
 type Snap = { label: string; before: string; after: string };
-const snapState = () => JSON.stringify({ tGroups, tGoals, tTasks, tLogs });
-const loadState = (s: string) => ({ tGroups, tGoals, tTasks, tLogs } = JSON.parse(s));
+const snapState = () => JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin });
+const loadState = (s: string) => ({ tGroups, tGoals, tTasks, tLogs, fin } = JSON.parse(s));
 let undoStack: Snap[] = [];
 let redoStack: Snap[] = [];
 const undoable = (label: string, f: (a: Args) => unknown) => (a: Args) => {
@@ -587,7 +594,7 @@ const todoHandlers: Record<string, (a: Args) => unknown> = {
     const doneToday: ReturnType<typeof placedOut>[] = [];
     for (const t of tTasks.filter((x) => !x.done && active(x)).sort(byPlace)) {
       const o = placedOut(t);
-      const started = (!t.planDate || t.planDate <= today) && (!t.repeatUntil || today <= t.repeatUntil);
+      const started = (!t.startDate || t.startDate <= today) && (!t.dueDate || today <= t.dueDate);
       if (t.taskType === "checkin") {
         if (o.loggedToday) doneToday.push(o);
         else if (started && scheduled(t.repeatRule, today)) due.push(o);
@@ -645,17 +652,266 @@ const todoHandlers: Record<string, (a: Args) => unknown> = {
   },
 };
 
+// ---- 钱来钱往 (finance): mirrors finance.rs loosely (currency per account, posting 固定支出, totals) ----
+type Cur = "CNY" | "SGD" | "HKD" | "USD";
+type FAccount = { id: number; name: string; kind: string; currency: Cur; closed: boolean; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type FEntry = { id: number; flow: "out" | "in"; amount: number; currency: Cur; day: string; kindId: number | null; accountId: number | null; fixedId: number | null; note: string | null; createdAt: string; updatedAt: string };
+type FFixed = { id: number; name: string; flow: "out" | "in"; amount: number; currency: Cur; kindId: number | null; accountId: number | null; rule: string; nextDay: string; stopped: boolean; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+let fin = {
+  accounts: [] as FAccount[],
+  balances: [] as { accountId: number; month: string; amount: number }[],
+  rates: [] as { month: string; currency: Cur; rate: number }[],
+  holdings: [] as { id: number; accountId: number; month: string; name: string; quantity: number | null; value: number }[],
+  fixed: [] as FFixed[],
+  entries: [] as FEntry[],
+  budgets: [] as { kindId: number; currency: Cur; amount: number }[],
+};
+(
+  [
+    ["fin_out", ["餐饮", "交通", "购物", "住房", "通讯", "订阅", "学习", "娱乐", "医疗", "旅行", "其他"]],
+    ["fin_in", ["津贴", "奖学金", "家里", "投资收益", "其他"]],
+  ] as const
+).forEach(([m, names]) => names.forEach((n) => addKind(m, n)));
+itemsUsing.fin_out = () => [...fin.entries, ...fin.fixed] as never;
+itemsUsing.fin_in = () => [...fin.entries, ...fin.fixed] as never;
+const finAccount = (id: number) => {
+  const a = fin.accounts.find((x) => x.id === id);
+  if (!a) throw "找不到这个账户，可能已经被删除了";
+  return a;
+};
+const accountOut = (a: FAccount) => {
+  const last = fin.balances.filter((b) => b.accountId === a.id).sort((x, y) => y.month.localeCompare(x.month))[0];
+  return { ...a, lastMonth: last?.month ?? null, lastAmount: last?.amount ?? null };
+};
+const checkMoney = (flow: string, currency: Cur, kindId: number | null, accountId: number | null) => {
+  if (kindId !== null && kinds.find((k) => k.id === kindId)?.module !== (flow === "in" ? "fin_in" : "fin_out")) throw "选择的分类不存在，或者不是这一类（支出 / 收入）的";
+  if (accountId !== null) {
+    const a = finAccount(accountId);
+    if (a.currency !== currency) throw `「${a.name}」是 ${a.currency} 账户，币种要一致`;
+  }
+};
+const checkEntry = (e: FEntry) => {
+  if (!(e.amount > 0)) throw "金额要大于 0";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e.day)) throw "日期不对";
+  checkMoney(e.flow, e.currency, e.kindId, e.accountId);
+};
+const newEntry = (p: Partial<FEntry>): FEntry => ({
+  id: nextId++, flow: "out", amount: 0, currency: "CNY", day: mockToday(), kindId: null, accountId: null, fixedId: null, note: null, createdAt: now(), updatedAt: now(), ...p,
+});
+const postDue = (today: string) => {
+  let n = 0;
+  for (const f of fin.fixed.filter((x) => !x.stopped && x.nextDay <= today)) {
+    for (let k = 0; k < 240 && f.nextDay <= today; k++) {
+      fin.entries.push(newEntry({ flow: f.flow, amount: f.amount, currency: f.currency, day: f.nextDay, kindId: f.kindId, accountId: f.accountId, fixedId: f.id, note: f.name }));
+      f.nextDay = nextOnOrAfter(f.rule, addDays(f.nextDay, 1));
+      n++;
+    }
+  }
+  return n;
+};
+const assetsOut = () => {
+  const balances = [...fin.balances].sort((a, b) => a.month.localeCompare(b.month) || a.accountId - b.accountId);
+  const rates = [...fin.rates].sort((a, b) => a.month.localeCompare(b.month) || a.currency.localeCompare(b.currency));
+  const totals: { month: string; totalCny: number | null; missing: Cur[] }[] = [];
+  for (const b of balances) {
+    if (totals[totals.length - 1]?.month !== b.month) totals.push({ month: b.month, totalCny: 0, missing: [] });
+    const t = totals[totals.length - 1];
+    const c = finAccount(b.accountId).currency;
+    const r = c === "CNY" ? 1 : rates.find((x) => x.month === b.month && x.currency === c)?.rate;
+    if (r === undefined) {
+      if (!t.missing.includes(c)) t.missing.push(c);
+    } else if (t.totalCny !== null) t.totalCny += Math.round(b.amount * r);
+  }
+  for (const t of totals) if (t.missing.length) t.totalCny = null;
+  return { balances, rates, totals };
+};
+{
+  const fk = (n: string) => kindId("fin_out", n);
+  const ik = (n: string) => kindId("fin_in", n);
+  const mk = (name: string, kind: string, currency: Cur) => {
+    const a: FAccount = { id: nextId++, name, kind, currency, closed: false, note: null, sortOrder: fin.accounts.length + 1, createdAt: now(), updatedAt: now() };
+    fin.accounts.push(a);
+    return a;
+  };
+  const cmb = mk("招行", "bank", "CNY");
+  const dbs = mk("DBS", "bank", "SGD");
+  const ali = mk("支付宝", "wallet", "CNY");
+  const ib = mk("嘉信", "broker", "USD");
+  const thisM = mockToday().slice(0, 7);
+  const ym = (k: number) => toYmd(new Date(Number(thisM.slice(0, 4)), Number(thisM.slice(5)) - 1 + k, 1)).slice(0, 7);
+  for (let k = -5; k <= -1; k++) {
+    const i = k + 5;
+    fin.balances.push(
+      { accountId: cmb.id, month: ym(k), amount: 2_850_000 + i * 120_000 },
+      { accountId: dbs.id, month: ym(k), amount: 1_240_000 - i * 45_000 + (i % 2) * 90_000 },
+      { accountId: ali.id, month: ym(k), amount: 180_000 + i * 15_000 },
+      { accountId: ib.id, month: ym(k), amount: 420_000 + i * 18_000 },
+    );
+    fin.rates.push({ month: ym(k), currency: "SGD", rate: 5.31 + i * 0.02 }, { month: ym(k), currency: "USD", rate: 7.18 - i * 0.01 });
+  }
+  fin.holdings.push(
+    { id: nextId++, accountId: ib.id, month: ym(-1), name: "VOO", quantity: 4, value: 252_000 },
+    { id: nextId++, accountId: ib.id, month: ym(-1), name: "AAPL", quantity: 6, value: 140_000 },
+    { id: nextId++, accountId: ib.id, month: ym(-1), name: "现金", quantity: null, value: 100_000 },
+  );
+  const fx = (name: string, amount: number, currency: Cur, kind: number, account: number | null, rule: string) =>
+    fin.fixed.push({ id: nextId++, name, flow: "out", amount, currency, kindId: kind, accountId: account, rule, nextDay: nextOnOrAfter(rule, `${ym(-3)}-01`), stopped: false, note: null, sortOrder: fin.fixed.length + 1, createdAt: now(), updatedAt: now() });
+  fx("房租", 150_000, "SGD", fk("住房"), dbs.id, "monthly:1");
+  fx("话费", 3_000, "CNY", fk("通讯"), cmb.id, "monthly:20");
+  fx("iCloud", 299, "USD", fk("订阅"), null, "monthly:5");
+  postDue(mockToday());
+  for (let k = -3; k <= 0; k++) {
+    const day = (d: number) => `${ym(k)}-${String(d).padStart(2, "0")}`;
+    const add = (d: number, p: Partial<FEntry>) => day(d) <= mockToday() && fin.entries.push(newEntry({ day: day(d), ...p }));
+    add(1, { flow: "in", amount: 200_000, currency: "SGD", kindId: ik("津贴"), accountId: dbs.id, note: "实习津贴" });
+    [7, 14, 21, 28].forEach((d, i) => add(d, { amount: 9_000 + i * 2_300 + (k + 3) * 700, currency: "SGD", kindId: fk("餐饮"), accountId: dbs.id, note: "本周小额" }));
+    [7, 21].forEach((d) => add(d, { amount: 4_200 + (k + 3) * 300, currency: "SGD", kindId: fk("交通"), accountId: dbs.id, note: "本周小额" }));
+    add(12, { amount: 38_900 - (k + 3) * 5_000, currency: "SGD", kindId: fk("购物"), accountId: dbs.id, note: "显示器支架" });
+    add(16, { amount: 45_000, currency: "CNY", kindId: fk("餐饮"), accountId: ali.id, note: "请客" });
+    if (k === -2) add(3, { flow: "in", amount: 300_000, currency: "CNY", kindId: ik("家里"), accountId: cmb.id });
+    if (k === -1) add(9, { amount: 128_000, currency: "SGD", kindId: fk("旅行"), accountId: dbs.id, note: "机票" });
+  }
+  fin.budgets.push({ kindId: fk("餐饮"), currency: "SGD", amount: 60_000 }, { kindId: fk("交通"), currency: "SGD", amount: 15_000 }, { kindId: fk("购物"), currency: "SGD", amount: 30_000 });
+}
+const finHandlers: Record<string, (a: Args) => unknown> = {
+  fin_accounts: () => [...fin.accounts].sort((a, b) => a.sortOrder - b.sortOrder).map(accountOut),
+  fin_account_create: undoable("添加账户", (a) => {
+    const p = a.patch as Partial<FAccount>;
+    const name = (p.name ?? "").trim();
+    if (!name) throw "账户名不能为空";
+    if (fin.accounts.some((x) => x.name === name)) throw `已经有叫「${name}」的账户了`;
+    if (!p.currency) throw "请选择币种";
+    const acc: FAccount = { id: nextId++, name, kind: p.kind ?? "bank", currency: p.currency, closed: p.closed ?? false, note: p.note ?? null, sortOrder: fin.accounts.length + 1, createdAt: now(), updatedAt: now() };
+    fin.accounts.push(acc);
+    return accountOut(acc);
+  }),
+  fin_account_update: undoable("修改账户", (a) => {
+    const acc = finAccount(a.id as number);
+    const p = a.patch as Partial<FAccount>;
+    const used = fin.balances.some((b) => b.accountId === acc.id) || fin.entries.some((e) => e.accountId === acc.id);
+    if (p.currency && p.currency !== acc.currency && used) throw "这个账户已经有记录了，不能改币种；可以新建一个账户";
+    Object.assign(acc, p, { name: (p.name ?? acc.name).trim(), updatedAt: now() });
+    return accountOut(acc);
+  }),
+  fin_account_delete: undoable("删除账户", (a) => {
+    fin.accounts = fin.accounts.filter((x) => x.id !== a.id);
+    fin.balances = fin.balances.filter((b) => b.accountId !== a.id);
+    fin.holdings = fin.holdings.filter((h) => h.accountId !== a.id);
+    for (const e of [...fin.entries, ...fin.fixed]) if (e.accountId === a.id) e.accountId = null;
+    return null;
+  }),
+  fin_accounts_reorder: undoable("调整顺序", (a) => reorderPart(fin.accounts, a.ids as number[])),
+  fin_assets: () => assetsOut(),
+  fin_month_save: undoable("更新余额", (a) => {
+    const month = String(a.month);
+    for (const b of a.balances as { accountId: number; amount: number | null }[]) {
+      fin.balances = fin.balances.filter((x) => !(x.accountId === b.accountId && x.month === month));
+      if (b.amount !== null) fin.balances.push({ accountId: b.accountId, month, amount: b.amount });
+    }
+    for (const r of a.rates as { currency: Cur; rate: number | null }[]) {
+      if (r.rate !== null && !(r.rate > 0)) throw "汇率要大于 0";
+      fin.rates = fin.rates.filter((x) => !(x.month === month && x.currency === r.currency));
+      if (r.rate !== null) fin.rates.push({ month, currency: r.currency, rate: r.rate });
+    }
+    return null;
+  }),
+  fin_holdings: () => [...fin.holdings].sort((a, b) => a.accountId - b.accountId || a.month.localeCompare(b.month)),
+  fin_holdings_save: undoable("更新持仓", (a) => {
+    if (finAccount(a.accountId as number).kind !== "broker") throw "只有券商账户能记持仓";
+    fin.holdings = fin.holdings.filter((h) => !(h.accountId === a.accountId && h.month === a.month));
+    for (const r of a.rows as { name: string; quantity: number | null; value: number }[])
+      fin.holdings.push({ id: nextId++, accountId: a.accountId as number, month: String(a.month), name: r.name.trim(), quantity: r.quantity, value: r.value });
+    return null;
+  }),
+  fin_entries: (a) => fin.entries.filter((e) => e.day.startsWith(String(a.month))).sort((x, y) => y.day.localeCompare(x.day) || y.id - x.id),
+  fin_entry_create: undoable("记一笔", (a) => {
+    const e = newEntry(a.patch as Partial<FEntry>);
+    checkEntry(e);
+    fin.entries.push(e);
+    return e;
+  }),
+  fin_entries_create: undoable("记一周小额", (a) => {
+    const es = (a.patches as Partial<FEntry>[]).map(newEntry);
+    es.forEach(checkEntry);
+    fin.entries.push(...es);
+    return es.length;
+  }),
+  fin_entry_update: undoable("修改记录", (a) => {
+    const e = fin.entries.find((x) => x.id === a.id);
+    if (!e) throw "找不到这个记录，可能已经被删除了";
+    const next = { ...e, ...(a.patch as Partial<FEntry>), updatedAt: now() };
+    checkEntry(next);
+    Object.assign(e, next);
+    return e;
+  }),
+  fin_entry_delete: undoable("删除记录", (a) => void (fin.entries = fin.entries.filter((e) => e.id !== a.id))),
+  fin_fixed: () => [...fin.fixed].sort((a, b) => a.sortOrder - b.sortOrder),
+  fin_fixed_create: undoable("添加固定支出", (a) => {
+    const p = a.patch as Partial<FFixed>;
+    const name = (p.name ?? "").trim();
+    if (!name) throw "名称不能为空";
+    if (fin.fixed.some((f) => f.name === name)) throw `已经有叫「${name}」的固定支出了`;
+    const f: FFixed = { id: nextId++, flow: "out", amount: 0, currency: "CNY", kindId: null, accountId: null, rule: "monthly:1", stopped: false, note: null, sortOrder: fin.fixed.length + 1, createdAt: now(), updatedAt: now(), ...p, name, nextDay: p.nextDay ?? nextOnOrAfter(p.rule ?? "monthly:1", mockToday()) } as FFixed;
+    if (!(f.amount > 0)) throw "金额要大于 0";
+    checkMoney(f.flow, f.currency, f.kindId, f.accountId);
+    fin.fixed.push(f);
+    postDue(mockToday());
+    return f;
+  }),
+  fin_fixed_update: undoable("修改固定支出", (a) => {
+    const f = fin.fixed.find((x) => x.id === a.id)!;
+    const next = { ...f, ...(a.patch as Partial<FFixed>), updatedAt: now() };
+    if (!(next.amount > 0)) throw "金额要大于 0";
+    checkMoney(next.flow, next.currency, next.kindId, next.accountId);
+    Object.assign(f, next);
+    postDue(mockToday());
+    return f;
+  }),
+  fin_fixed_delete: undoable("删除固定支出", (a) => {
+    fin.fixed = fin.fixed.filter((f) => f.id !== a.id);
+    for (const e of fin.entries) if (e.fixedId === a.id) e.fixedId = null;
+    return null;
+  }),
+  fin_fixed_reorder: undoable("调整顺序", (a) => reorderPart(fin.fixed, a.ids as number[])),
+  fin_budgets: () => [...fin.budgets],
+  fin_budgets_save: undoable("设预算", (a) => {
+    for (const r of a.rows as { kindId: number; amount: number | null }[]) {
+      fin.budgets = fin.budgets.filter((b) => !(b.kindId === r.kindId && b.currency === a.currency));
+      if (r.amount !== null) fin.budgets.push({ kindId: r.kindId, currency: a.currency as Cur, amount: r.amount });
+    }
+    return null;
+  }),
+  fin_totals: () => {
+    const m = new Map<string, { month: string; currency: Cur; flow: string; kindId: number | null; amount: number; count: number }>();
+    for (const e of fin.entries) {
+      const k = `${e.day.slice(0, 7)}|${e.currency}|${e.flow}|${e.kindId}`;
+      const t = m.get(k) ?? { month: e.day.slice(0, 7), currency: e.currency, flow: e.flow, kindId: e.kindId, amount: 0, count: 0 };
+      t.amount += e.amount;
+      t.count += 1;
+      m.set(k, t);
+    }
+    return [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
+  },
+  daily_sweep: () => {
+    const today = mockToday();
+    let closed = 0;
+    for (const t of tTasks) if (t.taskType === "checkin" && !t.done && t.dueDate && t.dueDate < today) (markDone(t), closed++);
+    return { closed, posted: postDue(today) };
+  },
+};
+
 const handlers: Record<string, (a: Args) => unknown> = {
   app_info: () => ({
     appVersion: "0.1.0-mock",
     isDev: true,
     dataDir: "/mock/Pomelo OS Dev",
     dbPath: "/mock/Pomelo OS Dev/pomelo.db",
-    schemaVersion: 10,
+    schemaVersion: 12,
     startupError: null,
   }),
   reveal_data_dir: () => null,
   ...todoHandlers,
+  ...finHandlers,
   settings_get: (a) => settings.get(a.key as string) ?? null,
   settings_set: (a) => void settings.set(a.key as string, a.value),
 

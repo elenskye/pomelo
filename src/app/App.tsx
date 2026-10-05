@@ -36,16 +36,26 @@ function useRouteMemory(enabled: boolean) {
   }, [restored, location.pathname]);
 }
 
-/** Rust takes the day's first snapshot at launch; this covers an app left open past midnight. */
-function useDailyBackup(enabled: boolean) {
+/** Daily chores: Rust takes the day's first snapshot at launch (this covers an app left open past
+ * midnight), and the sweep completes finished check-ins and posts due 固定支出 (launch + new day). */
+function useDailyChores(enabled: boolean) {
   const qc = useQueryClient();
   useEffect(() => {
     if (!enabled) return;
+    const sweep = () =>
+      api
+        .dailySweep()
+        .then((r) => {
+          if (r.closed || r.posted) void qc.invalidateQueries();
+        })
+        .catch(() => {});
+    void sweep();
     let day = new Date().toDateString();
     const check = () => {
       const today = new Date().toDateString();
       if (today === day) return;
       day = today;
+      void sweep();
       api
         .backupDaily()
         .then((b) => b && qc.invalidateQueries({ queryKey: ["backups"] }))
@@ -105,7 +115,7 @@ export function App() {
   const info = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
   const ok = !!info.data && !info.data.startupError;
   useRouteMemory(ok);
-  useDailyBackup(ok);
+  useDailyChores(ok);
   useUndoKeys(ok);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;

@@ -13,6 +13,8 @@ const TABLES: &[(&str, &[&str])] = &[
     ("films", &["films"]),
     ("drawing", &["drawing_lessons"]),
     ("packing", &["packing_template_items", "trip_items"]), // 类别
+    ("fin_out", &["fin_entries", "fin_fixed"]), // 支出分类 (budgets cascade on delete)
+    ("fin_in", &["fin_entries", "fin_fixed"]),  // 收入分类
 ];
 
 fn tables(module: &str) -> Result<&'static [&'static str], String> {

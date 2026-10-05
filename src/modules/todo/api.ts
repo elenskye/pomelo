@@ -36,10 +36,10 @@ export type Task = {
   title: string;
   note: string | null;
   link: string | null;
-  /** Repeat (monthly / after) and check-in: series start. */
+  /** Repeat (完成后): series start. */
   planDate: string | null;
-  startDate: string | null; // normal / progress: optional start of the 时间段 ending at dueDate
-  /** Normal / progress: deadline (end of the 时间段). Repeat: the current occurrence. */
+  startDate: string | null; // normal / check-in / progress: optional start of the 时间段 ending at dueDate
+  /** Normal / check-in / progress: end of the 时间段. Repeat: the current occurrence. */
   dueDate: string | null;
   done: boolean;
   doneAt: string | null;
@@ -50,8 +50,8 @@ export type Task = {
   taskType: TaskType;
   /** daily | weekly:1,3 (Mon=1) | monthly:1,15 | every:3d | every:2w | after:30d */
   repeatRule: string | null;
-  repeatTotal: number | null; // repeat (daily / weekly / every): occurrences; checkin: target days
-  repeatUntil: string | null; // repeat (monthly) / checkin: series end
+  repeatTotal: number | null; // repeat (all but 完成后): occurrences
+  repeatUntil: string | null; // unused since v11
   target: number | null; // progress
   unit: string | null;
   /** Derived: repeat = occurrences done; checkin = days checked; progress = amount so far. */

@@ -6,7 +6,7 @@
 // clicks (open, buttons inside) still work, and the click that ends a drag is swallowed. Moves are
 // followed on window, so a fast flick that leaves the row still drags.
 // Only direct children carrying data-sort-id take part; the new order is read from the DOM.
-import { useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { GripVertical } from "lucide-react";
 
 type Rect = { id: number; mid: number; height: number };
@@ -77,6 +77,8 @@ export function useSortable<E extends HTMLElement = HTMLDivElement>(onReorder: (
       window.addEventListener("pointerup", up);
       window.addEventListener("pointercancel", cancel);
     },
+    // links / images inside a row would start a native drag and cancel the pointer stream
+    onDragStart: (e: DragEvent<HTMLElement>) => e.preventDefault(),
     onClickCapture: (e: MouseEvent<HTMLElement>) => {
       if (!dragged.current) return;
       dragged.current = false;

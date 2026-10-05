@@ -38,6 +38,8 @@ export const api = {
   revealDataDir: () => invoke<void>("reveal_data_dir"),
   /** URL (any scheme), local path, or bare address (→ https); rules in Rust. */
   openLink: (link: string) => invoke<void>("open_link", { link }),
+  /** Day-change chores in Rust: finished check-ins completed, due 固定支出 posted. */
+  dailySweep: () => invoke<{ closed: number; posted: number }>("daily_sweep"),
   /** label = the step undone / redone; null = nothing to do. */
   undo: () => invoke<{ label: string | null }>("undo_last"),
   redo: () => invoke<{ label: string | null }>("redo_last"),

@@ -8,6 +8,7 @@ import BooksPage from "@/modules/books/BooksPage";
 import FilmsPage from "@/modules/films/FilmsPage";
 import DrawingPage from "@/modules/drawing/DrawingPage";
 import PackingPage from "@/modules/packing/PackingPage";
+import FinancePage from "@/modules/finance/FinancePage";
 import TodoPage from "@/modules/todo/TodoPage";
 import SettingsPage from "@/settings/SettingsPage";
 import { ToastProvider } from "@/shared/feedback";
@@ -36,6 +37,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="films" element={<FilmsPage />} />
             <Route path="drawing" element={<DrawingPage />} />
             <Route path="packing" element={<PackingPage />} />
+            <Route path="finance" element={<FinancePage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
           </Route>

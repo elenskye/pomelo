@@ -1,16 +1,16 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":4,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":5,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
-//! types / logs; v3 = repeat occurrence in planDate, no doneBefore (todo.rs adapts). All older
-//! versions are read.
+//! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in
+//! planDate / repeatUntil, no finance (todo.rs adapts). All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
-//! transaction. A module's kinds list (if present) replaces its kinds first — only for modules
-//! in the file. Overwriting existing data requires `overwrite = true` and takes a snapshot first.
+//! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
+//! in the file (finance has two: fin_out / fin_in). Overwriting existing data requires `overwrite = true` and takes a snapshot first.
 //! Export → import into an empty DB reproduces everything except ids (see roundtrip test).
 //! Adding a module: new `Payload` variant + arms below + `export_payloads`.
 
-use crate::modules::{books, drawing, films, kinds, packing, todo};
+use crate::modules::{books, drawing, films, finance, kinds, packing, todo};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -21,7 +21,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +40,7 @@ enum Payload {
     Drawing(Vec<drawing::CourseRecord>),
     Packing(packing::PackingRecord),
     Todo(todo::TodoRecord),
+    Finance(finance::FinanceRecord),
 }
 
 impl Payload {
@@ -50,6 +51,7 @@ impl Payload {
             Payload::Drawing(_) => drawing::KEY,
             Payload::Packing(_) => packing::KEY,
             Payload::Todo(_) => todo::KEY,
+            Payload::Finance(_) => finance::KEY,
         }
     }
     fn label(&self) -> &'static str {
@@ -59,6 +61,7 @@ impl Payload {
             Payload::Drawing(_) => drawing::LABEL,
             Payload::Packing(_) => packing::LABEL,
             Payload::Todo(_) => todo::LABEL,
+            Payload::Finance(_) => finance::LABEL,
         }
     }
     fn len(&self) -> usize {
@@ -68,6 +71,7 @@ impl Payload {
             Payload::Drawing(r) => r.len(),
             Payload::Packing(r) => r.len(),
             Payload::Todo(r) => r.len(),
+            Payload::Finance(r) => r.len(),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
@@ -77,6 +81,7 @@ impl Payload {
             Payload::Drawing(_) => drawing::count(conn),
             Payload::Packing(_) => packing::count(conn),
             Payload::Todo(_) => todo::count(conn),
+            Payload::Finance(_) => finance::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
@@ -86,6 +91,18 @@ impl Payload {
             Payload::Drawing(r) => drawing::replace_all(conn, r),
             Payload::Packing(r) => packing::replace_all(conn, r),
             Payload::Todo(r) => todo::replace_all(conn, r),
+            Payload::Finance(r) => finance::replace_all(conn, r),
+        }
+    }
+    /// kinds.rs modules this payload's kinds lists live under.
+    fn kind_modules(&self) -> &'static [&'static str] {
+        match self {
+            Payload::Books(_) => &[books::KEY],
+            Payload::Films(_) => &[films::KEY],
+            Payload::Drawing(_) => &[drawing::KEY],
+            Payload::Packing(_) => &[packing::KEY],
+            Payload::Todo(_) => &[],
+            Payload::Finance(_) => &[finance::OUT_KINDS, finance::IN_KINDS],
         }
     }
     fn to_json(&self) -> Result<Value, String> {
@@ -95,6 +112,7 @@ impl Payload {
             Payload::Drawing(r) => serde_json::to_value(r),
             Payload::Packing(r) => serde_json::to_value(r),
             Payload::Todo(r) => serde_json::to_value(r),
+            Payload::Finance(r) => serde_json::to_value(r),
         }
         .map_err(err)
     }
@@ -150,6 +168,12 @@ fn parse(text: &str) -> Result<Parsed, String> {
                 todo::validate_records(&rec)?;
                 payloads.push(Payload::Todo(rec));
             }
+            finance::KEY => {
+                let rec: finance::FinanceRecord = serde_json::from_value(value)
+                    .map_err(|e| format!("{}的数据格式不对：{e}", finance::LABEL))?;
+                finance::validate_records(&rec)?;
+                payloads.push(Payload::Finance(rec));
+            }
             _ => skipped.push(key),
         }
     }
@@ -158,9 +182,11 @@ fn parse(text: &str) -> Result<Parsed, String> {
     }
     let mut kind_lists = Vec::new();
     for p in &payloads {
-        if let Some(names) = file.kinds.get(p.key()) {
-            kinds::validate_names(p.label(), names)?;
-            kind_lists.push((p.key(), names.clone()));
+        for &module in p.kind_modules() {
+            if let Some(names) = file.kinds.get(module) {
+                kinds::validate_names(p.label(), names)?;
+                kind_lists.push((module, names.clone()));
+            }
         }
     }
     Ok(Parsed { payloads, kinds: kind_lists, skipped })
@@ -241,6 +267,7 @@ fn export_payloads(conn: &Connection) -> Result<Vec<Payload>, String> {
         Payload::Drawing(drawing::export(conn)?),
         Payload::Packing(packing::export(conn)?),
         Payload::Todo(todo::export(conn)?),
+        Payload::Finance(finance::export(conn)?),
     ])
 }
 
@@ -384,9 +411,21 @@ mod tests {
         todo::create_task(&a, serde_json::from_value(json!({"parentId": root, "title": "Poster"})).unwrap()).unwrap();
         todo::create_task(&a, serde_json::from_value(json!({"groupId": tg, "title": "窗口", "startDate": "2027-01-22", "dueDate": "2027-01-25"})).unwrap()).unwrap();
         todo::set_done(&a, kid, true).unwrap();
+        // finance: a renamed 分类, an account with a balance, a 固定支出 that already posted once
+        let fin_food = crate::modules::kinds::tests::kind_id(&a, finance::OUT_KINDS, "餐饮");
+        crate::modules::kinds::rename(&a, fin_food, "吃饭").unwrap();
+        let acc = finance::create_account(&a, serde_json::from_value(json!({"name": "DBS", "currency": "SGD"})).unwrap()).unwrap().id;
+        finance::save_month(&a, "2026-09", &[finance::BalanceInput { account_id: acc, amount: Some(123456) }], &[]).unwrap();
+        finance::create_fixed(
+            &a,
+            serde_json::from_value(json!({"name": "饭卡", "amount": 5000, "currency": "SGD", "kindId": fin_food, "accountId": acc, "rule": "monthly:1", "nextDay": "2026-09-01"}))
+                .unwrap(),
+            "2026-09-15",
+        )
+        .unwrap();
 
         let (text, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 6)]);
+        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 6), ("finance", 3)]);
 
         let dir = temp_dir("roundtrip");
         let mut b = memory_db();
@@ -397,7 +436,7 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 4);
+        assert_eq!(v["formatVersion"], 5);
         assert_eq!(v["kinds"]["books"], json!(["虚构", "非虚构", "漫画书", "没用上的类型"]));
         assert_eq!(v["kinds"]["films"], json!(["动漫", "剧集", "电影"]));
         assert_eq!(v["modules"]["drawing"][0]["name"], "B 课");
@@ -522,7 +561,7 @@ mod tests {
         let mut a = memory_db();
         apply(&mut a, &text, false, &temp_dir("real-rt")).unwrap();
         let (out, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| m.incoming).collect::<Vec<_>>(), [21, 50, 5, 3, 0]);
+        assert_eq!(counts.iter().map(|m| m.incoming).collect::<Vec<_>>(), [21, 50, 5, 3, 0, 0]);
         let mut b = memory_db();
         apply(&mut b, &out, false, &temp_dir("real-rt")).unwrap();
         assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));

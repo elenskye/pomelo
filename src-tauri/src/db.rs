@@ -23,6 +23,8 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 8, name: "todo", sql: include_str!("../migrations/0008_todo.sql") },
     Migration { version: 9, name: "todo_types", sql: include_str!("../migrations/0009_todo_types.sql") },
     Migration { version: 10, name: "todo_dates", sql: include_str!("../migrations/0010_todo_dates.sql") },
+    Migration { version: 11, name: "todo_checkin", sql: include_str!("../migrations/0011_todo_checkin.sql") },
+    Migration { version: 12, name: "finance", sql: include_str!("../migrations/0012_finance.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -237,7 +239,7 @@ pub mod tests {
                (1, 'checkin', 6, '2026-09-01', NULL, NULL, 'checkin', 'daily');",
         )
         .unwrap();
-        migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..10], &dir.join("backups")).unwrap();
         let rows: Vec<(Option<String>, Option<String>, Option<String>, i64)> = c
             .prepare("SELECT plan_date, start_date, due_date, done_before FROM todo_tasks ORDER BY id")
             .unwrap()
@@ -257,6 +259,43 @@ pub mod tests {
                 (s("2026-09-01"), None, None, 0),
             ]
         );
+    }
+
+    #[test]
+    fn v10_checkins_use_ranges_and_monthly_repeats_count() {
+        let dir = temp_dir("v10-checkin");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..10], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            "INSERT INTO todo_groups (name, sort_order) VALUES ('A', 1);
+             INSERT INTO todo_tasks (group_id, title, sort_order, plan_date, repeat_until, repeat_total, due_date, task_type, repeat_rule) VALUES
+               (1, 'ranged', 1, '2026-09-01', '2026-12-31', 30, NULL, 'checkin', 'daily'),
+               (1, 'open', 2, '2026-09-01', NULL, 30, NULL, 'checkin', 'weekly:1'),
+               (1, 'rent', 3, '2026-09-01', '2026-12-31', NULL, '2026-10-01', 'repeat', 'monthly:1'),
+               (1, 'hair', 4, '2026-09-01', NULL, NULL, '2026-10-01', 'repeat', 'after:30d');",
+        )
+        .unwrap();
+        migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap();
+        type R = (Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>);
+        let rows: Vec<R> = c
+            .prepare("SELECT plan_date, start_date, due_date, repeat_until, repeat_total FROM todo_tasks ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            rows,
+            [
+                (None, s("2026-09-01"), s("2026-12-31"), None, None),
+                (None, None, None, None, None),
+                (None, None, s("2026-10-01"), None, None),
+                (s("2026-09-01"), None, s("2026-10-01"), None, None),
+            ]
+        );
+        let n: i64 = c.query_row("SELECT count(*) FROM kinds WHERE module = 'fin_out'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 11);
     }
 
     #[test]

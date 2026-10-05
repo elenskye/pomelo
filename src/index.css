@@ -33,6 +33,19 @@
   --module-drawing: #cc5540;
   --module-packing: #588a2c;
   --module-todo: #b07a10;
+  --module-finance: #2e8b80;
+
+  /* Charts: categorical slots in fixed order (validated: dataviz validate_palette.js, light on #ffffff,
+     dark on #292724); single-series charts use --chart-1. Text never wears these colors. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-other: #c3c0b8;
+  --chart-grid: #ece8df;
+  --chart-axis: #d6d0c4;
 
   color-scheme: light dark;
 }
@@ -63,6 +76,16 @@
     --status-doing-fg: #e8c063;
     --status-done-bg: #25341e;
     --status-done-fg: #93c77a;
+
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-5: #d55181;
+    --chart-6: #008300;
+    --chart-other: #5a5650;
+    --chart-grid: #34312e;
+    --chart-axis: #4a4642;
   }
 }
 

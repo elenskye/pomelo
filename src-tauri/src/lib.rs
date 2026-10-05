@@ -99,6 +99,23 @@ fn open_link(app: tauri::AppHandle, link: String) -> Result<(), String> {
     .map_err(|e| format!("打不开这个链接：{e}"))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sweep {
+    closed: usize,
+    posted: usize,
+}
+
+/// Day-change chores (launch + when the date moves on): check-ins whose 时间段 ended are completed,
+/// 固定支出 due by today are posted. Not undoable (it would just happen again).
+#[tauri::command]
+fn daily_sweep(state: State<AppState>) -> Result<Sweep, String> {
+    state.with_db(|c| {
+        let today = modules::todo::today(c)?;
+        Ok(Sweep { closed: modules::todo::close_ended(c, &today)?, posted: modules::finance::post_due(c, &today)? })
+    })
+}
+
 #[tauri::command]
 fn settings_get(state: State<AppState>, key: String) -> Result<Option<Value>, String> {
     state.with_db(|c| settings::get(c, &key))
@@ -123,6 +140,7 @@ pub fn run() {
             app_info,
             reveal_data_dir,
             open_link,
+            daily_sweep,
             settings_get,
             settings_set,
             transfer::import_preview,
@@ -161,6 +179,28 @@ pub fn run() {
             modules::packing::packing_templates,
             modules::packing::packing_templates_reorder,
             modules::packing::packing_items_reorder,
+            modules::finance::fin_accounts,
+            modules::finance::fin_account_create,
+            modules::finance::fin_account_update,
+            modules::finance::fin_account_delete,
+            modules::finance::fin_accounts_reorder,
+            modules::finance::fin_assets,
+            modules::finance::fin_month_save,
+            modules::finance::fin_holdings,
+            modules::finance::fin_holdings_save,
+            modules::finance::fin_entries,
+            modules::finance::fin_entry_create,
+            modules::finance::fin_entries_create,
+            modules::finance::fin_entry_update,
+            modules::finance::fin_entry_delete,
+            modules::finance::fin_fixed,
+            modules::finance::fin_fixed_create,
+            modules::finance::fin_fixed_update,
+            modules::finance::fin_fixed_delete,
+            modules::finance::fin_fixed_reorder,
+            modules::finance::fin_budgets,
+            modules::finance::fin_budgets_save,
+            modules::finance::fin_totals,
             modules::packing::packing_template_create,
             modules::packing::packing_template_update,
             modules::packing::packing_template_delete,

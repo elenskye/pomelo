@@ -5,6 +5,7 @@ pub mod books;
 pub mod common;
 pub mod drawing;
 pub mod films;
+pub mod finance;
 pub mod kinds;
 pub mod packing;
 pub mod todo;

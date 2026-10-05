@@ -45,8 +45,10 @@ export function Button({ variant = "secondary", className, type, ...rest }: Butt
   );
 }
 
-export const inputClass =
-  "w-full rounded-control border bg-card px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring";
+/** Input look without a width — add one (w-24, w-auto…); inputClass is the full-width version. */
+export const fieldClass =
+  "rounded-control border bg-card px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring";
+export const inputClass = `w-full ${fieldClass}`;
 
 export function TextInput({ className, ...rest }: ComponentProps<"input">) {
   return <input type="text" autoComplete="off" spellCheck={false} className={`${inputClass} ${className ?? ""}`} {...rest} />;

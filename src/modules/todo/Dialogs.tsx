@@ -1,43 +1,11 @@
 // Modals for groups (name only) and goals (name, group, dates, status, note, 复盘).
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
+import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, Field, inputClass, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { GOAL_STATUS, useTodoMutations, type Goal, type GoalStatus, type TodoGroup } from "./api";
-
-function Modal(props: { title: string; onClose: () => void; onSubmit: (e: FormEvent) => void; error: string | null; children: ReactNode; footerLeft?: ReactNode; submitLabel: string; extra?: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-  }, []);
-  return (
-    <dialog
-      ref={ref}
-      onCancel={(e) => {
-        e.preventDefault();
-        props.onClose();
-      }}
-      className="m-auto h-fit w-[440px] rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30"
-    >
-      <form onSubmit={props.onSubmit} className="space-y-4">
-        <p className="text-base font-bold">{props.title}</p>
-        {props.children}
-        {props.error && <p className="text-sm text-destructive">{props.error}</p>}
-        <div className="flex items-center gap-2 pt-1">
-          {props.footerLeft}
-          <div className="flex-1" />
-          <Button onClick={props.onClose}>取消</Button>
-          <Button type="submit" variant="primary">
-            {props.submitLabel}
-          </Button>
-        </div>
-      </form>
-      {props.extra}
-    </dialog>
-  );
-}
 
 export function GroupDialog(props: { group: TodoGroup | null; goalCount: number; onClose: () => void; onCreated?: (g: TodoGroup) => void; onDeleted?: () => void }) {
   const { group } = props;

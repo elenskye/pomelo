@@ -1,26 +1,24 @@
 // 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder, fold a group's goals)
 // + right content. Modeled on GoalMap. Goals carry no icon (names can start with an emoji).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, FolderPlus, Pencil, Plus, Sun, Target } from "lucide-react";
+import { CalendarCheck, CalendarDays, ChevronDown, FolderPlus, Plus, Sun, Target } from "lucide-react";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
-import { addDays, formatDay, localToday, mondayOf, weekday } from "@/shared/dates";
+import { formatDay, localToday, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
-import { api } from "@/shared/ipc";
+import { isNumberArray, useSetting } from "@/shared/settings";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { useSortable } from "@/shared/sortable";
-import { Button, EmptyState, IconButton, PageHeader, ProgressBar } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, ProgressBar } from "@/shared/ui";
 import {
   GOAL_STATUS,
   pct,
   useAgenda,
-  useDoneBetween,
   useGoals,
   useGroups,
   useTasks,
   useTodoMutations,
-  type DoneItem,
   type Goal,
   type GoalStatus,
   type PlacedTask,
@@ -28,7 +26,9 @@ import {
   type TodoGroup,
 } from "./api";
 import { GoalDialog, GroupDialog } from "./Dialogs";
+import { Section, ViewHeader } from "./layout";
 import { MonthView } from "./MonthView";
+import { ReviewView } from "./ReviewView";
 import { PlacedList, TaskTree } from "./TaskList";
 import { TaskPanel, type NewTask } from "./TaskPanel";
 
@@ -69,18 +69,8 @@ const NAV_COLLAPSED = "todo.nav_collapsed";
 
 /** Group ids whose goals are folded in the nav (kept in settings, outside undo). */
 function useFoldedGroups() {
-  const [ids, setIds] = useState<number[]>([]);
-  useEffect(() => {
-    api
-      .settingsGet<number[]>(NAV_COLLAPSED)
-      .then((v) => Array.isArray(v) && setIds(v))
-      .catch(() => {});
-  }, []);
-  const toggle = (id: number) => {
-    const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
-    setIds(next);
-    api.settingsSet(NAV_COLLAPSED, next).catch(() => {});
-  };
+  const [ids, setIds] = useSetting<number[]>(NAV_COLLAPSED, [], isNumberArray);
+  const toggle = (id: number) => setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   return [ids, toggle] as const;
 }
 
@@ -197,34 +187,6 @@ function QuickAdd(props: { inputRef: RefObject<HTMLInputElement | null>; placeho
   );
 }
 
-function ViewHeader(props: { title: ReactNode; sub?: ReactNode; onEdit?: () => void; editLabel?: string; actions?: ReactNode }) {
-  return (
-    <div className="flex shrink-0 items-start justify-between gap-4 pb-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-1">
-          <h2 className="truncate text-lg font-bold">{props.title}</h2>
-          {props.onEdit && (
-            <IconButton label={props.editLabel ?? "编辑"} onClick={props.onEdit}>
-              <Pencil size={14} />
-            </IconButton>
-          )}
-        </div>
-        {props.sub && <div className="text-sm text-muted-foreground">{props.sub}</div>}
-      </div>
-      {props.actions && <div className="flex shrink-0 gap-2">{props.actions}</div>}
-    </div>
-  );
-}
-
-function Section(props: { title: ReactNode; danger?: boolean; children: ReactNode }) {
-  return (
-    <section>
-      <h3 className={`mb-1.5 px-1 text-sm ${props.danger ? "text-destructive" : "text-muted-foreground"}`}>{props.title}</h3>
-      {props.children}
-    </section>
-  );
-}
-
 export default function TodoPage() {
   const m = moduleById("todo");
   const today = useToday();
@@ -234,7 +196,6 @@ export default function TodoPage() {
   const agenda = agendaQ.data;
   const [view, setView] = useState<View>({ kind: "today" });
   const [todayGroupId, setTodayGroupId] = useState<number | null>(null);
-  const [weekOffset, setWeekOffset] = useState(0);
   const [groupDialog, setGroupDialog] = useState<{ group: TodoGroup | null } | null>(null);
   const [goalDialog, setGoalDialog] = useState<{ goal: Goal | null; groupId: number; presetStatus?: GoalStatus } | null>(null);
   const panel = usePanelSelection<string>();
@@ -257,8 +218,6 @@ export default function TodoPage() {
   const placeQ = useTasks(place);
   const placeTasks = useMemo(() => placeQ.data ?? [], [placeQ.data]);
 
-  const week = { from: addDays(mondayOf(today), weekOffset * 7), to: addDays(mondayOf(today), weekOffset * 7 + 6) };
-  const doneQ = useDoneBetween(week.from, week.to);
 
   const go = async (v: View) => {
     if (await panel.request(null)) setView(v);
@@ -361,45 +320,6 @@ export default function TodoPage() {
             <Section title={`今天完成了 ${agenda.doneToday.length} 件`}>
               <PlacedList items={agenda.doneToday} today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} />
             </Section>
-          )}
-        </div>
-      </>
-    );
-  };
-
-  const reviewView = () => {
-    const items = doneQ.data ?? [];
-    const byDay = new Map<string, DoneItem[]>();
-    for (const t of [...items].reverse()) byDay.set(t.day, [...(byDay.get(t.day) ?? []), t]);
-    const label = weekOffset === 0 ? "本周" : weekOffset === -1 ? "上周" : `${formatDay(week.from)} 那一周`;
-    return (
-      <>
-        <ViewHeader
-          title="回看"
-          sub={`${label} · ${formatDay(week.from)} – ${formatDay(week.to)} · 完成了 ${items.length} 件`}
-          actions={
-            <>
-              <IconButton label="上一周" onClick={() => setWeekOffset((w) => w - 1)}>
-                <ChevronLeft size={16} />
-              </IconButton>
-              <Button variant="ghost" disabled={weekOffset === 0} onClick={() => setWeekOffset(0)}>
-                本周
-              </Button>
-              <IconButton label="下一周" disabled={weekOffset >= 0} onClick={() => setWeekOffset((w) => w + 1)}>
-                <ChevronRight size={16} />
-              </IconButton>
-            </>
-          }
-        />
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4">
-          {items.length === 0 && !doneQ.isPending ? (
-            <p className="py-10 text-center text-muted-foreground">这一周还没有完成的事</p>
-          ) : (
-            [...byDay.entries()].map(([day, ts]) => (
-              <Section key={day} title={`${formatDay(day)} ${weekday(day)} · ${ts.length} 件`}>
-                <PlacedList items={ts} today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} />
-              </Section>
-            ))
           )}
         </div>
       </>
@@ -564,7 +484,7 @@ export default function TodoPage() {
           <section className="flex min-w-0 flex-1 flex-col">
             {view.kind === "today" && todayView()}
             {view.kind === "month" && <MonthView today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} />}
-            {view.kind === "review" && reviewView()}
+            {view.kind === "review" && <ReviewView today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} />}
             {group && groupView(group)}
             {goal && goalView(goal)}
           </section>
