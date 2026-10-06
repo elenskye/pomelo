@@ -3,7 +3,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
-import { Button, Field, inputClass, TextArea, TextInput } from "@/shared/ui";
+import { DateInput } from "@/shared/DateInput";
+import { Button, Field, TextArea, TextInput } from "@/shared/ui";
 import { usePackingMutations, type Template, type Trip } from "./api";
 
 export function TripDialog(props: {
@@ -111,7 +112,9 @@ export function TripDialog(props: {
           />
         </Field>
         <Field label="出发日期">
-          <input type="date" value={departOn} onChange={(e) => setDepartOn(e.target.value)} className={inputClass} aria-label="出发日期" />
+          <div>
+            <DateInput clearable ariaLabel="出发日期" value={departOn} onChange={setDepartOn} />
+          </div>
         </Field>
         <Field label="备注">
           <TextArea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />

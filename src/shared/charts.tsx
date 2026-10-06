@@ -20,12 +20,13 @@ function useWidth() {
   return [ref, w] as const;
 }
 
-/** min … max in clean steps (1 / 2 / 2.5 / 5 × 10^k); min defaults to 0. */
-export function niceTicks(max: number, count = 4, min = 0): number[] {
+/** min … max in clean steps (1 / 2 / 2.5 / 5 × 10^k); min defaults to 0. `integer`: whole steps (counts). */
+export function niceTicks(max: number, count = 4, min = 0, integer = false): number[] {
   if (!(max > min)) return max > 0 ? [0, max] : [0, 1];
   const raw = (max - min) / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw)!;
+  const nice = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw)!;
+  const step = integer ? Math.max(1, Math.ceil(nice)) : nice;
   const ticks: number[] = [];
   for (let v = Math.floor(min / step) * step; v < max + step * 0.001; v += step) ticks.push(v);
   if (ticks[ticks.length - 1] < max) ticks.push(ticks[ticks.length - 1] + step);
@@ -108,13 +109,15 @@ export function ColumnChart(props: {
   title?: (i: number) => string;
   /** Show every nth x label (others stay in the tooltip). */
   labelEvery?: number;
+  /** Values are counts: whole-number ticks. */
+  integer?: boolean;
 }) {
   const [ref, width] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const height = props.height ?? 180;
   const n = props.labels.length;
   const max = Math.max(0, ...props.values.flat());
-  const ticks = niceTicks(max);
+  const ticks = niceTicks(max, 4, 0, props.integer);
   const top = ticks[ticks.length - 1];
   const axisFmt = props.axisFormat ?? props.format;
   const left = leftFor(ticks.map(axisFmt));
@@ -343,6 +346,67 @@ export function Meter(props: { value: number; max: number }) {
   return (
     <div className="h-2 overflow-hidden rounded-full bg-muted" role="meter" aria-valuenow={props.value} aria-valuemax={props.max}>
       <div className="h-full rounded-full" style={{ width: `${Math.min(1, ratio) * 100}%`, background: color }} />
+    </div>
+  );
+}
+
+/** Activity grid (after Flomo / GitHub): one column per week, Monday on top, the last `weeks` weeks
+ * up to `today`; 4 steps of --chart-3 by share of the busiest day. Hover = native title; click a
+ * day with entries to select it (the page lists them, so nothing is hover-only). */
+export function Heatmap(props: {
+  counts: Map<string, number>;
+  today: string;
+  weeks?: number;
+  selected?: string | null;
+  onSelect?: (day: string) => void;
+  title: (day: string, n: number) => string;
+}) {
+  const weeks = props.weeks ?? 16;
+  const t = new Date(`${props.today}T00:00:00`);
+  const monday = new Date(t);
+  monday.setDate(t.getDate() - ((t.getDay() + 6) % 7) - (weeks - 1) * 7);
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const cols: { day: string; month: number; date: number }[][] = [];
+  for (let w = 0; w < weeks; w++) {
+    const col = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + w * 7 + i);
+      col.push({ day: ymd(d), month: d.getMonth() + 1, date: d.getDate() });
+    }
+    cols.push(col);
+  }
+  const max = Math.max(1, ...cols.flat().map((c) => props.counts.get(c.day) ?? 0));
+  const fill = (n: number) =>
+    n === 0 ? "var(--chart-grid)" : `color-mix(in srgb, var(--chart-3) ${[0, 35, 60, 80, 100][Math.min(4, Math.ceil((n / max) * 4))]}%, transparent)`;
+  return (
+    <div role="group" aria-label="每天记了几条">
+      <div className="mb-1 grid gap-[3px] text-[10px] leading-none text-muted-foreground" style={{ gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))` }}>
+        {cols.map((col, w) => {
+          const first = col.find((c) => c.date === 1);
+          return <span key={w} className="overflow-visible whitespace-nowrap">{first ? `${first.month}月` : w === 0 && !cols.slice(1, 3).flat().some((c) => c.date === 1) ? `${col[0].month}月` : ""}</span>;
+        })}
+      </div>
+      <div className="grid grid-flow-col grid-rows-7 gap-[3px]" style={{ gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))` }}>
+        {cols.flat().map((c) => {
+          if (c.day > props.today) return <span key={c.day} />;
+          const n = props.counts.get(c.day) ?? 0;
+          const on = props.selected === c.day;
+          return (
+            <button
+              key={c.day}
+              type="button"
+              title={props.title(c.day, n)}
+              aria-label={props.title(c.day, n)}
+              aria-pressed={on}
+              disabled={n === 0 && !on}
+              onClick={() => props.onSelect?.(c.day)}
+              className={`aspect-square rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ring ${on ? "ring-2 ring-foreground" : ""}`}
+              style={{ background: fill(n) }}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

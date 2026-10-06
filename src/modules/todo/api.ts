@@ -48,7 +48,7 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   taskType: TaskType;
-  /** daily | weekly:1,3 (Mon=1) | monthly:1,15 | every:3d | every:2w | after:30d */
+  /** daily | weekly:1,3 (Mon=1) | monthly:1,15 | yearly:12-31 | yearly:03-01/3 (every 3 years) | every:3d | every:2w | after:30d · 2w · 6m · 1y */
   repeatRule: string | null;
   repeatTotal: number | null; // repeat (all but 完成后): occurrences
   repeatUntil: string | null; // unused since v11

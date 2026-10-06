@@ -315,7 +315,7 @@ fn check_rate(rate: f64) -> Result<(), String> {
 /// 更新余额: a month's balances and rates in one go (None clears that row).
 pub fn save_month(conn: &Connection, month: &str, balances: &[BalanceInput], rates: &[RateInput]) -> Result<(), String> {
     check_month(month)?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     for b in balances {
         account(&tx, b.account_id)?;
         match b.amount {
@@ -413,7 +413,7 @@ pub fn save_holdings(conn: &Connection, account_id: i64, month: &str, rows: &[Ho
     if account(conn, account_id)?.kind != AccountKind::Broker {
         return Err("只有券商账户能记持仓".into());
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     tx.execute("DELETE FROM fin_holdings WHERE account_id = ?1 AND month = ?2", params![account_id, month]).map_err(err)?;
     for (i, h) in rows.iter().enumerate() {
         let name = check_holding(h)?;
@@ -563,7 +563,7 @@ pub fn create_entries(conn: &Connection, patches: Vec<EntryPatch>) -> Result<usi
         return Err("没有要记的".into());
     }
     let n = patches.len();
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     for p in patches {
         let f = EntryFields::from_patch(None, p)?;
         f.check(&tx)?;
@@ -771,7 +771,7 @@ fn fixed_fields(conn: &Connection, old: Option<&Fixed>, p: FixedPatch, today: &s
 
 /// Posts every running 固定支出 due on or before `today`, moving `next_day` past today.
 pub fn post_due(conn: &Connection, today: &str) -> Result<usize, String> {
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     let n = post_due_in(&tx, today)?;
     tx.commit().map_err(err)?;
     Ok(n)
@@ -811,7 +811,7 @@ fn post_due_in(conn: &Connection, today: &str) -> Result<usize, String> {
 
 pub fn create_fixed(conn: &Connection, p: FixedPatch, today: &str) -> Result<Fixed, String> {
     let f = fixed_fields(conn, None, p, today)?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     tx.execute(
         "INSERT INTO fin_fixed (name, flow, amount, currency, kind_id, account_id, rule, next_day, stopped, note, sort_order)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, (SELECT coalesce(max(sort_order), 0) + 1 FROM fin_fixed))",
@@ -827,7 +827,7 @@ pub fn create_fixed(conn: &Connection, p: FixedPatch, today: &str) -> Result<Fix
 pub fn update_fixed(conn: &Connection, id: i64, p: FixedPatch, today: &str) -> Result<Fixed, String> {
     let old = fixed(conn, id)?;
     let f = fixed_fields(conn, Some(&old), p, today)?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     tx.execute(
         &format!(
             "UPDATE fin_fixed SET name = ?1, flow = ?2, amount = ?3, currency = ?4, kind_id = ?5, account_id = ?6, rule = ?7,
@@ -877,7 +877,7 @@ pub struct BudgetInput {
 
 /// Sets one currency's monthly budgets (listed 支出分类 only; others unchanged).
 pub fn save_budgets(conn: &Connection, currency: Currency, rows: &[BudgetInput]) -> Result<(), String> {
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     for b in rows {
         kinds::check(&tx, OUT_KINDS, Some(b.kind_id)).map_err(|_| "预算只能按支出分类设".to_string())?;
         match b.amount {

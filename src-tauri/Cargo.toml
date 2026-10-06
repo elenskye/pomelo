@@ -18,6 +18,17 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40.2", features = ["bundled", "backup", "session"] }
 tauri-plugin-dialog = "2"
+# 芝麻开门: Argon2id (master password → key), XChaCha20-Poly1305 (entries), keychain + Touch ID + pasteboard
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+zeroize = "1"
+security-framework = "3"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
 
 [profile.release]
 codegen-units = 1

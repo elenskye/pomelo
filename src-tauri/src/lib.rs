@@ -6,6 +6,7 @@ mod backup;
 mod db;
 mod modules;
 mod paths;
+mod secure;
 mod settings;
 mod transfer;
 mod undo;
@@ -23,6 +24,8 @@ pub struct AppState {
     db: Mutex<Option<Connection>>,
     /// Undo / redo stacks for UI edits (see undo.rs).
     history: Mutex<undo::History>,
+    /// 芝麻开门: the open vault key, in memory only (see modules/vault.rs).
+    vault: Mutex<modules::vault::Session>,
     /// Set when the DB could not be opened/migrated; UI shows it instead of crashing.
     startup_error: Option<String>,
 }
@@ -42,8 +45,8 @@ impl AppState {
             Ok(conn)
         });
         match opened {
-            Ok(conn) => Self { paths, db: Mutex::new(Some(conn)), history: Mutex::default(), startup_error: None },
-            Err(e) => Self { paths, db: Mutex::new(None), history: Mutex::default(), startup_error: Some(e) },
+            Ok(conn) => Self { paths, db: Mutex::new(Some(conn)), history: Mutex::default(), vault: Mutex::default(), startup_error: None },
+            Err(e) => Self { paths, db: Mutex::new(None), history: Mutex::default(), vault: Mutex::default(), startup_error: Some(e) },
         }
     }
 
@@ -201,6 +204,36 @@ pub fn run() {
             modules::finance::fin_budgets,
             modules::finance::fin_budgets_save,
             modules::finance::fin_totals,
+            modules::jobs::job_statuses,
+            modules::jobs::job_status_create,
+            modules::jobs::job_status_update,
+            modules::jobs::job_status_delete,
+            modules::jobs::job_statuses_reorder,
+            modules::jobs::jobs_list,
+            modules::jobs::job_create,
+            modules::jobs::job_update,
+            modules::jobs::job_follow_up,
+            modules::jobs::job_delete,
+            modules::notes::notes_list,
+            modules::notes::notes_overview,
+            modules::notes::note_create,
+            modules::notes::note_update,
+            modules::notes::note_delete,
+            modules::notes::notes_tag_rename,
+            modules::vault::vault_status,
+            modules::vault::vault_setup,
+            modules::vault::vault_unlock,
+            modules::vault::vault_unlock_touch,
+            modules::vault::vault_lock,
+            modules::vault::vault_touch,
+            modules::vault::vault_change_password,
+            modules::vault::vault_list,
+            modules::vault::vault_get,
+            modules::vault::vault_create,
+            modules::vault::vault_update,
+            modules::vault::vault_delete,
+            modules::vault::vault_copy,
+            modules::vault::vault_generate,
             modules::packing::packing_template_create,
             modules::packing::packing_template_update,
             modules::packing::packing_template_delete,

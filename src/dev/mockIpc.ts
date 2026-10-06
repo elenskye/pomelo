@@ -3,6 +3,7 @@
 // Keep in sync when adding commands. Never imported in production builds (guarded in main.tsx).
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { nextOnOrAfter } from "@/modules/finance/money";
+import { excerpt, tagSpans } from "@/modules/notes/NoteBody";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
 
 type Args = Record<string, unknown>;
@@ -244,12 +245,26 @@ const ruleNext = (rule: string, anchor: string, completed: string): string => {
       }
     }
   }
+  if (kind === "yearly") {
+    const [md, every = "1"] = arg.split("/");
+    const [m, day] = md.split("-").map(Number);
+    const on = (y: number) => ymd(new Date(y, m - 1, Math.min(day, new Date(y, m, 0).getDate())));
+    const y = Number(anchor.slice(0, 4));
+    return on((on(y) > anchor ? y : y + 1) + Number(every) - 1);
+  }
   const n = Number(arg.slice(0, -1));
   if (kind === "every") return addDays(anchor, arg.endsWith("w") ? 7 * n : n);
-  return addDays(completed, n); // after
+  const u = arg.slice(-1); // after
+  if (u === "m" || u === "y") {
+    const d = parseYmd(completed);
+    const k = u === "y" ? 12 * n : n;
+    return ymd(new Date(d.getFullYear(), d.getMonth() + k, Math.min(d.getDate(), new Date(d.getFullYear(), d.getMonth() + k + 1, 0).getDate())));
+  }
+  return addDays(completed, u === "w" ? 7 * n : n);
 };
 const counted = (rule: string | null) => !!rule && !rule.startsWith("after");
-const firstFrom = (rule: string, day: string) => (/^(weekly|monthly)/.test(rule) ? ruleNext(rule, addDays(day, -1), day) : day);
+const firstFrom = (rule: string, day: string) =>
+  /^(weekly|monthly)/.test(rule) ? ruleNext(rule, addDays(day, -1), day) : rule.startsWith("yearly:") ? ruleNext(rule.split("/")[0], addDays(day, -1), day) : day;
 const scheduled = (rule: string | null, d: string) => rule === "daily" || (!!rule?.startsWith("weekly:") && rule.slice(7).split(",").map(Number).includes(isoWeekday(d)));
 const tTaskOut = (t: TTask) => {
   const today = mockToday();
@@ -287,6 +302,12 @@ const markDone = (t: TTask) => {
     c = p;
   }
 };
+/** Check-in: every scheduled day from the start (or the day it was added) to the end is checked. */
+const allChecked = (t: TTask) => {
+  const days: string[] = [];
+  for (let d = t.startDate ?? toYmd(new Date(t.createdAt)); d <= t.dueDate! && days.length < 3700; d = addDays(d, 1)) if (scheduled(t.repeatRule, d)) days.push(d);
+  return days.length > 0 && days.every((d) => logsOf(t.id).some((l) => l.day === d));
+};
 const settle = (t: TTask) => {
   const o = tTaskOut(t);
   const reached =
@@ -296,7 +317,7 @@ const settle = (t: TTask) => {
         : null
       : t.taskType === "checkin"
         ? t.dueDate
-          ? t.dueDate < mockToday()
+          ? t.dueDate < mockToday() || allChecked(t)
           : null
         : t.taskType === "progress"
           ? o.totalAmount >= (t.target ?? Infinity)
@@ -452,8 +473,12 @@ const doneItems = (from: string, to: string) => {
 }
 // Undo / redo mock: whole-state snapshots of the todo tables around each edit.
 type Snap = { label: string; before: string; after: string };
-const snapState = () => JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin });
-const loadState = (s: string) => ({ tGroups, tGoals, tTasks, tLogs, fin } = JSON.parse(s));
+const snapState = () => JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, vItems: vt.items });
+const loadState = (s: string) => {
+  let vItems: VRow[];
+  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, vItems } = JSON.parse(s));
+  vt.items = vItems;
+};
 let undoStack: Snap[] = [];
 let redoStack: Snap[] = [];
 const undoable = (label: string, f: (a: Args) => unknown) => (a: Args) => {
@@ -895,9 +920,359 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
   daily_sweep: () => {
     const today = mockToday();
     let closed = 0;
-    for (const t of tTasks) if (t.taskType === "checkin" && !t.done && t.dueDate && t.dueDate < today) (markDone(t), closed++);
+    for (const t of tTasks) if (t.taskType === "checkin" && !t.done && t.dueDate && (t.dueDate < today || allChecked(t))) (markDone(t), closed++);
     return { closed, posted: postDue(today) };
   },
+};
+
+// ---- 投石问路 (jobs): mirrors jobs.rs loosely (stages, stamps, reached, follow-up, linked task) ----
+type JStage = "wish" | "applied" | "active" | "got" | "closed";
+type JStatus = { id: number; name: string; stage: JStage; sortOrder: number };
+type JRow = {
+  id: number; company: string; position: string | null; location: string | null; link: string | null; kindId: number | null;
+  resume: string | null; coverLetter: string | null; deadline: string | null; salary: string | null; note: string | null;
+  statusId: number; appliedOn: string | null; stepOn: string | null; followedOn: string | null; reachedId: number | null; taskId: number | null;
+  createdAt: string; updatedAt: string;
+};
+let jb = { statuses: [] as JStatus[], jobs: [] as JRow[] };
+(
+  [["想投", "wish"], ["已投递", "applied"], ["网申测评 / 笔试", "active"], ["面试", "active"], ["Offer", "got"], ["已接受", "got"], ["被拒", "closed"]] as const
+).forEach(([name, stage], i) => jb.statuses.push({ id: nextId++, name, stage, sortOrder: i + 1 }));
+["官网", "内推", "Boss 直聘", "牛客", "LinkedIn", "学校", "其他"].forEach((n) => addKind("job_channel", n));
+itemsUsing.job_channel = () => jb.jobs as never;
+const jStatus = (id: number) => jb.statuses.find((x) => x.id === id)!;
+const jStatusNamed = (n: string) => jb.statuses.find((x) => x.name === n)!;
+const jobOut = (j: JRow) => {
+  const stage = jStatus(j.statusId).stage;
+  const since = [j.appliedOn, j.followedOn].filter(Boolean).sort().pop() ?? null;
+  const waitingDays = stage === "applied" && since ? Math.round((parseYmd(mockToday()).getTime() - parseYmd(since).getTime()) / 86400000) : null;
+  return { ...j, stage, waitingDays, followUp: waitingDays !== null && waitingDays >= 14 };
+};
+const jobTask = (j: JRow) => {
+  const st = jStatus(j.statusId);
+  const label = j.position ? `${j.company} · ${j.position}` : j.company;
+  const want = st.stage === "wish" && j.deadline ? [`投递 ${label}`, j.deadline] : st.stage === "active" && j.stepOn ? [`${st.name} ${label}`, j.stepOn] : null;
+  const task = tTasks.find((t) => t.id === j.taskId);
+  if (want && task) {
+    if (task.title !== want[0] || task.dueDate !== want[1]) Object.assign(task, { title: want[0], dueDate: want[1], startDate: null, done: false, doneAt: null });
+  } else if (want) {
+    const linked = jb.jobs.map((x) => tTasks.find((t) => t.id === x.taskId)).find(Boolean);
+    const group = linked?.groupId ?? tGroups.find((g) => g.name === "💼 求职")?.id ?? addTGroup("💼 求职").id;
+    j.taskId = addTTask({ groupId: group, title: want[0], dueDate: want[1] }).id;
+  } else if (task && !task.done) markDone(task);
+};
+const jobSave = (j: JRow, p: Partial<JRow>, today: string) => {
+  const statusChanged = p.statusId !== undefined && p.statusId !== j.statusId;
+  if (statusChanged && !("stepOn" in p)) j.stepOn = null;
+  Object.assign(j, p, { updatedAt: now() });
+  if (!j.company?.trim()) throw "公司不能为空";
+  j.company = j.company.trim();
+  const st = jStatus(j.statusId);
+  if (["applied", "active", "got"].includes(st.stage) && !j.appliedOn) j.appliedOn = today;
+  const reached = j.reachedId ? jStatus(j.reachedId) : undefined;
+  if (st.stage !== "closed" && (!reached || reached.sortOrder < st.sortOrder)) j.reachedId = st.id;
+  jobTask(j);
+};
+{
+  const ch = (n: string) => kindId("job_channel", n);
+  const add = (p: Partial<JRow>) => {
+    const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, coverLetter: null, deadline: null, salary: null, note: null, statusId: jStatusNamed("想投").id, appliedOn: null, stepOn: null, followedOn: null, reachedId: null, taskId: null, createdAt: now(), updatedAt: now() };
+    jb.jobs.push(j);
+    const { statusId, ...rest } = p;
+    jobSave(j, { ...rest, statusId: statusId ?? j.statusId }, mockToday());
+    if (p.reachedId) j.reachedId = p.reachedId;
+    return j;
+  };
+  add({ company: "KeyReply", position: "软件开发实习", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/template-it-cv-v1.docx", statusId: jStatusNamed("被拒").id, reachedId: jStatusNamed("已投递").id, note: "CV 阶段被拒" });
+  add({ company: "中国银行新加坡分行", position: "Application Development Assistant（实习）", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/template-it-cv-v1.docx", statusId: jStatusNamed("已接受").id, stepOn: "2026-08-13", reachedId: jStatusNamed("已接受").id, note: "2026-09-07 入职，金融科技部" });
+  add({ company: "NUS-ISS 学院代投", position: "实习（学院转投）", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/seek-it-iss-cv-v3.docx", statusId: jStatusNamed("已投递").id, appliedOn: dayOffset(-30) });
+  add({ company: "腾讯", position: "后台开发", location: "深圳", kindId: ch("官网"), statusId: jStatusNamed("面试").id, appliedOn: dayOffset(-9), stepOn: dayOffset(2), link: "https://join.qq.com" });
+  add({ company: "字节跳动", position: "后端开发", location: "北京", kindId: ch("内推"), statusId: jStatusNamed("已投递").id, appliedOn: dayOffset(-16) });
+  add({ company: "美团", position: "Java 开发", location: "北京", kindId: ch("牛客"), statusId: jStatusNamed("网申测评 / 笔试").id, appliedOn: dayOffset(-5), stepOn: dayOffset(1) });
+  add({ company: "阿里巴巴", position: "Java 开发", location: "杭州", kindId: ch("官网"), deadline: dayOffset(10), salary: "25k × 16" });
+  add({ company: "招商银行", position: "信息技术岗", location: "深圳", kindId: ch("官网"), statusId: jStatusNamed("被拒").id, appliedOn: dayOffset(-20), reachedId: jStatusNamed("网申测评 / 笔试").id });
+}
+const jobHandlers: Record<string, (a: Args) => unknown> = {
+  job_statuses: () => [...jb.statuses].sort((a, b) => a.sortOrder - b.sortOrder).map((st) => ({ ...st, count: jb.jobs.filter((j) => j.statusId === st.id).length })),
+  job_status_create: undoable("添加状态", (a) => {
+    const name = String(a.name).trim();
+    if (!name) throw "状态名不能为空";
+    if (jb.statuses.some((x) => x.name === name)) throw `已经有「${name}」这个状态了`;
+    const st = { id: nextId++, name, stage: a.stage as JStage, sortOrder: jb.statuses.length + 1 };
+    jb.statuses.push(st);
+    return { ...st, count: 0 };
+  }),
+  job_status_update: undoable("修改状态", (a) => {
+    const st = jStatus(a.id as number);
+    if (a.name != null) st.name = String(a.name).trim();
+    if (a.stage != null) st.stage = a.stage as JStage;
+    jb.jobs.filter((j) => j.statusId === st.id).forEach(jobTask);
+    return { ...st, count: jb.jobs.filter((j) => j.statusId === st.id).length };
+  }),
+  job_status_delete: undoable("删除状态", (a) => {
+    const n = jb.jobs.filter((j) => j.statusId === a.id).length;
+    if (n) throw `还有 ${n} 条投递是「${jStatus(a.id as number).name}」，先把它们改成别的状态`;
+    jb.statuses = jb.statuses.filter((x) => x.id !== a.id);
+    for (const j of jb.jobs) if (j.reachedId === a.id) j.reachedId = null;
+    return null;
+  }),
+  job_statuses_reorder: undoable("调整顺序", (a) => reorderPart(jb.statuses, a.ids as number[])),
+  jobs_list: () =>
+    [...jb.jobs]
+      .sort((x, y) => jStatus(x.statusId).sortOrder - jStatus(y.statusId).sortOrder || (y.appliedOn ?? y.createdAt).localeCompare(x.appliedOn ?? x.createdAt))
+      .map(jobOut),
+  job_create: undoable("添加投递", (a) => {
+    const p = a.patch as Partial<JRow>;
+    const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, coverLetter: null, deadline: null, salary: null, note: null, statusId: (jb.statuses.find((x) => x.stage === "wish") ?? jb.statuses[0]).id, appliedOn: null, stepOn: null, followedOn: null, reachedId: null, taskId: null, createdAt: now(), updatedAt: now() };
+    jobSave(j, p, mockToday());
+    jb.jobs.push(j);
+    return jobOut(j);
+  }),
+  job_update: undoable("修改投递", (a) => {
+    const j = jb.jobs.find((x) => x.id === a.id);
+    if (!j) throw "找不到这个投递，可能已经被删除了";
+    const copy = { ...j };
+    jobSave(copy, a.patch as Partial<JRow>, mockToday());
+    Object.assign(j, copy);
+    return jobOut(j);
+  }),
+  job_follow_up: undoable("已跟进", (a) => {
+    const j = jb.jobs.find((x) => x.id === a.id)!;
+    j.followedOn = mockToday();
+    return jobOut(j);
+  }),
+  job_delete: undoable("删除投递", (a) => {
+    const j = jb.jobs.find((x) => x.id === a.id)!;
+    const t = tTasks.find((x) => x.id === j.taskId);
+    if (t && !t.done) tTasks = tTasks.filter((x) => x.id !== t.id);
+    jb.jobs = jb.jobs.filter((x) => x.id !== a.id);
+    return null;
+  }),
+};
+
+// ---- 念念不忘 (notes): mirrors notes.rs loosely (inline tags incl. sub-tags, refs both ways, rename) ----
+type NRow = { id: number; content: string; pinned: boolean; refs: number[]; createdAt: string; updatedAt: string };
+let nt = { notes: [] as NRow[] };
+const nTags = (c: string) => [...new Set(c.split("\n").flatMap((l) => tagSpans(l).map((t) => t.value)))];
+const nUnder = (t: string, root: string) => t === root || t.startsWith(`${root}/`);
+const nBrief = (n: NRow) => ({ id: n.id, createdAt: n.createdAt, excerpt: excerpt(n.content) });
+const nOut = (n: NRow) => ({
+  ...n,
+  tags: nTags(n.content),
+  refs: n.refs.map((r) => nt.notes.find((x) => x.id === r)).filter((x): x is NRow => !!x).map(nBrief),
+  backrefs: nt.notes.filter((x) => x.refs.includes(n.id)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(nBrief),
+});
+const nClean = (c: unknown) => {
+  const v = String(c ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!v) throw "笔记不能是空的";
+  return v;
+};
+{
+  const at = (daysAgo: number, hm: string) => {
+    const d = parseYmd(dayOffset(-daysAgo));
+    const [h, m] = hm.split(":").map(Number);
+    d.setHours(h, m, Math.floor(Math.random() * 60));
+    return d.toISOString();
+  };
+  const add = (daysAgo: number, hm: string, content: string, extra: Partial<NRow> = {}) => {
+    const n: NRow = { id: nextId++, content, pinned: false, refs: [], createdAt: at(daysAgo, hm), updatedAt: at(daysAgo, hm), ...extra };
+    nt.notes.push(n);
+    return n;
+  };
+  const a = add(80, "21:10", "#读书/摘抄 \n「真正的发现之旅不在于寻找新风景，而在于拥有新眼光。」\n——普鲁斯特");
+  add(64, "09:30", "#工作/会议 周会\n- 下周一交 **需求文档**\n  - 先给组长看一眼\n- 整理 ==上线清单==\n1. 测试\n2. 发布");
+  const c = add(41, "23:02", "#想法 每天花五分钟回看今天记下的东西，比记更多东西有用。");
+  add(40, "08:15", "#想法 关于 C++ 和 Rust 的一点 ++随想++：工具只是工具。", { refs: [c.id] });
+  add(33, "12:40", "#读书/书单 想读：《置身事内》《枪炮、病菌与钢铁》 https://book.douban.com/");
+  add(20, "19:05", "#生活/新加坡 周末去植物园，雨后很凉快。");
+  add(12, "22:30", "#读书/摘抄 \n" + Array.from({ length: 14 }, (_, i) => `第 ${i + 1} 段：很长的摘抄，用来看折叠效果。这一段写得长一点，让卡片超过折叠的高度。`).join("\n"), { refs: [a.id] });
+  add(3, "10:00", "#想法 #工作 把「念念不忘」当收件箱：想到就记，周末再整理。", { pinned: true });
+  add(1, "16:20", "随手记一句，没有标签。");
+  add(0, "09:05", "#生活 今天早点睡。");
+}
+const noteHandlers: Record<string, (a: Args) => unknown> = {
+  notes_list: (a) => {
+    const f = (a.filter ?? {}) as { tag?: string; day?: string; q?: string; id?: number };
+    const words = (f.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const filtered = f.tag || f.day || words.length || f.id != null;
+    return nt.notes
+      .filter((n) => f.id == null || n.id === f.id)
+      .filter((n) => !f.tag || nTags(n.content).some((t) => nUnder(t, f.tag!.replace(/^#/, ""))))
+      .filter((n) => !f.day || toYmd(new Date(n.createdAt)) === f.day)
+      .filter((n) => words.every((w) => n.content.toLowerCase().includes(w)))
+      .sort((x, y) => (filtered ? 0 : Number(y.pinned) - Number(x.pinned)) || y.createdAt.localeCompare(x.createdAt))
+      .map(nOut);
+  },
+  notes_overview: () => {
+    const days = new Map<string, number>();
+    const under = new Map<string, Set<number>>();
+    for (const n of nt.notes) {
+      const d = toYmd(new Date(n.createdAt));
+      days.set(d, (days.get(d) ?? 0) + 1);
+      for (const t of nTags(n.content)) {
+        const segs = t.split("/");
+        segs.forEach((_, i) => {
+          const p = segs.slice(0, i + 1).join("/");
+          under.set(p, (under.get(p) ?? new Set()).add(n.id));
+        });
+      }
+    }
+    return {
+      total: nt.notes.length,
+      days: [...days].sort().map(([day, count]) => ({ day, count })),
+      tags: [...under].sort().map(([tag, ids]) => ({ tag, count: ids.size })),
+    };
+  },
+  note_create: undoable("添加笔记", (a) => {
+    const p = a.patch as { content?: string; pinned?: boolean; refs?: number[] };
+    const n: NRow = { id: nextId++, content: nClean(p.content), pinned: !!p.pinned, refs: [...new Set(p.refs ?? [])], createdAt: now(), updatedAt: now() };
+    nt.notes.push(n);
+    return nOut(n);
+  }),
+  note_update: undoable("修改笔记", (a) => {
+    const n = nt.notes.find((x) => x.id === a.id);
+    if (!n) throw "找不到这条笔记，可能已经被删除了";
+    const p = a.patch as { content?: string; pinned?: boolean; refs?: number[] };
+    if (p.content !== undefined) Object.assign(n, { content: nClean(p.content), updatedAt: now() });
+    if (p.refs) {
+      if (p.refs.includes(n.id)) throw "笔记不能引用它自己";
+      n.refs = [...new Set(p.refs)];
+    }
+    if (p.pinned !== undefined) n.pinned = p.pinned;
+    return nOut(n);
+  }),
+  note_delete: undoable("删除笔记", (a) => {
+    nt.notes = nt.notes.filter((x) => x.id !== a.id);
+    for (const n of nt.notes) n.refs = n.refs.filter((r) => r !== a.id);
+    return null;
+  }),
+  notes_tag_rename: undoable("标签改名", (a) => {
+    const from = String(a.from).replace(/^#/, "");
+    const to = String(a.to).trim().replace(/^#/, "").replace(/\/+$/, "");
+    if (!to) throw "标签不能为空";
+    if (/[\s#]/.test(to)) throw "标签里不能有空格或 #";
+    if (to === from) return 0;
+    let k = 0;
+    for (const n of nt.notes) {
+      if (!nTags(n.content).some((t) => nUnder(t, from))) continue;
+      n.content = n.content
+        .split("\n")
+        .map((l) => {
+          let out = "";
+          let last = 0;
+          for (const t of tagSpans(l)) {
+            if (!nUnder(t.value, from)) continue;
+            out += l.slice(last, t.start + 1) + to + t.value.slice(from.length);
+            last = t.end;
+          }
+          return out + l.slice(last);
+        })
+        .join("\n");
+      k++;
+    }
+    if (!k) throw `没有笔记用到「#${from}」`;
+    return k;
+  }),
+};
+
+// ---- 芝麻开门 (vault): no crypto here — a known test master password and plain rows. URL:
+// `&vault=new|open` picks the start (default locked), `&touch=fail|none` how Touch ID behaves.
+type VRow = { id: number; name: string; link: string | null; username: string | null; account: string | null; password: string | null; note: string | null; createdAt: string; updatedAt: string };
+const vParams = new URLSearchParams(location.search);
+const vt = {
+  master: vParams.get("vault") === "new" ? null : ("mock-master-1" as string | null),
+  open: vParams.get("vault") === "open",
+  failed: false,
+  touch: vParams.get("touch") !== "none",
+  items: [] as VRow[],
+};
+{
+  const add = (p: Partial<VRow>) => vt.items.push({ id: nextId++, name: "", link: null, username: null, account: null, password: null, note: null, createdAt: now(), updatedAt: now(), ...p });
+  add({ name: "GitHub", link: "https://github.com/login", username: "pomelo-dev", account: "me@example.com", password: "kfwmqa-Pzhtdv-xr4ena" });
+  add({ name: "网易云音乐", link: "music.163.com", account: "138 0000 0000", password: "示例密码 123" });
+  add({ name: "学校 VPN", username: "e1234567", password: "abc", note: "每学期要改一次" });
+  add({ name: "Wi-Fi 家里", password: "home-wifi-2026" });
+}
+const vStatus = () =>
+  vt.master === null
+    ? { state: "new", touch: false, reason: null }
+    : vt.open
+      ? { state: "open", touch: false, reason: null }
+      : { state: "locked", touch: vt.touch && !vt.failed, reason: !vt.touch ? "none" : vt.failed ? "failed" : null };
+const vOpen = () => {
+  if (!vt.open) throw "芝麻开门已经锁上了";
+};
+const vFields = (f: Partial<VRow>) => {
+  const t = (s: unknown) => (typeof s === "string" && s.trim() ? s.trim() : null);
+  if (!String(f.name ?? "").trim()) throw "名称不能为空";
+  return { name: String(f.name).trim(), link: t(f.link), username: t(f.username), account: t(f.account), password: f.password || null, note: t(f.note) };
+};
+const vaultHandlers: Record<string, (a: Args) => unknown> = {
+  vault_status: vStatus,
+  vault_setup: (a) => {
+    if (vt.master !== null) throw "已经设置过主密码了";
+    if (String(a.password).length < 8) throw "主密码至少要 8 个字符";
+    vt.master = String(a.password);
+    vt.open = true;
+    return vStatus();
+  },
+  vault_unlock: (a) => {
+    if (a.password !== vt.master) throw "主密码不对";
+    Object.assign(vt, { open: true, failed: false });
+    return vStatus();
+  },
+  vault_unlock_touch: async () => {
+    await new Promise((r) => setTimeout(r, 600)); // the system prompt
+    if (vParams.get("touch") === "fail") {
+      vt.failed = true;
+      throw "Touch ID 没有通过，请输入主密码";
+    }
+    vt.open = true;
+    return vStatus();
+  },
+  vault_lock: () => void (vt.open = false),
+  vault_touch: () => vt.open,
+  vault_change_password: (a) => {
+    if (a.old !== vt.master) throw "原来的主密码不对";
+    if (String(a.new).length < 8) throw "主密码至少要 8 个字符";
+    if (a.old === a.new) throw "新主密码和原来的一样";
+    Object.assign(vt, { master: String(a.new), open: true, failed: false });
+    return vStatus();
+  },
+  vault_list: () => {
+    vOpen();
+    return vt.items.map(({ password, note, createdAt: _c, ...r }) => ({ ...r, hasPassword: !!password, hasNote: !!note }));
+  },
+  vault_get: (a) => {
+    vOpen();
+    const r = vt.items.find((x) => x.id === a.id);
+    if (!r) throw "找不到这条密码，可能已经被删除了";
+    return { ...r };
+  },
+  vault_create: undoable("添加密码", (a) => {
+    vOpen();
+    const r: VRow = { id: nextId++, ...vFields(a.fields as Partial<VRow>), createdAt: now(), updatedAt: now() };
+    vt.items.push(r);
+    return r;
+  }),
+  vault_update: undoable("修改密码", (a) => {
+    vOpen();
+    const r = vt.items.find((x) => x.id === a.id)!;
+    Object.assign(r, vFields(a.fields as Partial<VRow>), { updatedAt: now() });
+    return r;
+  }),
+  vault_delete: undoable("删除密码", (a) => {
+    vOpen();
+    vt.items = vt.items.filter((x) => x.id !== a.id);
+    return null;
+  }),
+  vault_copy: (a) => {
+    vOpen();
+    const r = vt.items.find((x) => x.id === a.id)!;
+    (window as unknown as { __mockClipboard: unknown }).__mockClipboard = r[a.field as "password"];
+    return null;
+  },
+  vault_generate: () => "kfwmqa-Pzhtdv-xr4ena",
 };
 
 const handlers: Record<string, (a: Args) => unknown> = {
@@ -906,12 +1281,15 @@ const handlers: Record<string, (a: Args) => unknown> = {
     isDev: true,
     dataDir: "/mock/Pomelo OS Dev",
     dbPath: "/mock/Pomelo OS Dev/pomelo.db",
-    schemaVersion: 12,
+    schemaVersion: 15,
     startupError: null,
   }),
   reveal_data_dir: () => null,
   ...todoHandlers,
   ...finHandlers,
+  ...jobHandlers,
+  ...noteHandlers,
+  ...vaultHandlers,
   settings_get: (a) => settings.get(a.key as string) ?? null,
   settings_set: (a) => void settings.set(a.key as string, a.value),
 
@@ -1072,7 +1450,17 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
 };
 
-export function installMockIpc() {
+/** `?mock&notes=prototype`: the converted Flomo notes (prototype/notes-import.json, local only) instead of the samples. */
+async function loadPrototypeNotes() {
+  if (!new URLSearchParams(location.search).has("notes")) return;
+  const r = await fetch("/prototype/notes-import.json").catch(() => null);
+  if (!r?.ok) return console.warn("[mock] prototype/notes-import.json not found (pnpm import:flomo)");
+  const file = (await r.json()) as { modules: { notes: { notes: { content: string; pinned?: boolean; createdAt: string }[] } } };
+  nt.notes = file.modules.notes.notes.map((n) => ({ id: nextId++, content: n.content, pinned: !!n.pinned, refs: [], createdAt: n.createdAt, updatedAt: n.createdAt }));
+}
+
+export async function installMockIpc() {
+  await loadPrototypeNotes();
   mockWindows("main");
   mockIPC((cmd, payload) => {
     const h = handlers[cmd];

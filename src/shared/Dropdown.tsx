@@ -21,6 +21,8 @@ export function Dropdown<T>(props: {
   triggerClassName?: string;
   placeholder?: string;
   menuMaxHeight?: number;
+  /** Action menu: no check column. */
+  plain?: boolean;
 }) {
   const { options, actions = [] } = props;
   const [open, setOpen] = useState(false);
@@ -123,11 +125,11 @@ export function Dropdown<T>(props: {
       aria-selected={isSelected}
       onMouseEnter={() => setActive(i)}
       onClick={() => choose(i)}
-      className={`flex cursor-default items-center gap-2 rounded-md py-1.5 pr-3 pl-2 text-sm whitespace-nowrap ${
+      className={`flex cursor-default items-center gap-2 rounded-md py-1.5 pr-3 ${props.plain ? "pl-3" : "pl-2"} text-sm whitespace-nowrap ${
         i === active ? "bg-muted" : ""
       } ${muted ? "text-muted-foreground" : ""}`}
     >
-      <Check size={14} className={`shrink-0 text-primary ${isSelected ? "" : "invisible"}`} />
+      {!props.plain && <Check size={14} className={`shrink-0 text-primary ${isSelected ? "" : "invisible"}`} />}
       {content}
     </div>
   );

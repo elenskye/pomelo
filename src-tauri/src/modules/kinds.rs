@@ -15,6 +15,7 @@ const TABLES: &[(&str, &[&str])] = &[
     ("packing", &["packing_template_items", "trip_items"]), // 类别
     ("fin_out", &["fin_entries", "fin_fixed"]), // 支出分类 (budgets cascade on delete)
     ("fin_in", &["fin_entries", "fin_fixed"]),  // 收入分类
+    ("job_channel", &["jobs"]),                // 渠道
 ];
 
 fn tables(module: &str) -> Result<&'static [&'static str], String> {
@@ -122,7 +123,7 @@ pub fn reorder(conn: &Connection, module: &str, ids: &[i64]) -> Result<Vec<Kind>
     if current != wanted {
         return Err("类型列表已经变了，请重新打开后再试".into());
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     for (i, id) in ids.iter().enumerate() {
         tx.execute("UPDATE kinds SET sort_order = ?1 WHERE id = ?2", params![i as i64 + 1, id])
             .map_err(err)?;

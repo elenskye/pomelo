@@ -25,6 +25,9 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 10, name: "todo_dates", sql: include_str!("../migrations/0010_todo_dates.sql") },
     Migration { version: 11, name: "todo_checkin", sql: include_str!("../migrations/0011_todo_checkin.sql") },
     Migration { version: 12, name: "finance", sql: include_str!("../migrations/0012_finance.sql") },
+    Migration { version: 13, name: "jobs", sql: include_str!("../migrations/0013_jobs.sql") },
+    Migration { version: 14, name: "notes", sql: include_str!("../migrations/0014_notes.sql") },
+    Migration { version: 15, name: "vault", sql: include_str!("../migrations/0015_vault.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -296,6 +299,36 @@ pub mod tests {
         );
         let n: i64 = c.query_row("SELECT count(*) FROM kinds WHERE module = 'fin_out'", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 11);
+    }
+
+    /// Phase 2–4 installs are at v13; v14 (念念不忘) only adds tables, backing up first.
+    #[test]
+    fn v13_upgrades_to_notes() {
+        let dir = temp_dir("v13-notes");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..13], &dir.join("backups")).unwrap();
+        c.execute_batch("INSERT INTO jobs (company, status_id) VALUES ('X', 1);").unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..14], &dir.join("backups")).unwrap(), 14);
+        c.execute("INSERT INTO notes (content) VALUES ('#想法 一条')", []).unwrap();
+        let n: i64 = c.query_row("SELECT count(*) FROM jobs", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_str().unwrap().ends_with("-before-v14.db"));
+    }
+
+    /// Phase 5 installs are at v14; v15 (芝麻开门) only adds empty tables (no master password yet).
+    #[test]
+    fn v14_upgrades_to_vault() {
+        let dir = temp_dir("v14-vault");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..14], &dir.join("backups")).unwrap();
+        c.execute("INSERT INTO notes (content) VALUES ('#想法 一条')", []).unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..15], &dir.join("backups")).unwrap(), 15);
+        let n: i64 = c.query_row("SELECT (SELECT count(*) FROM notes) * 10 + (SELECT count(*) FROM vault_meta)", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 10);
+        let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(files[0].to_str().unwrap().ends_with("-before-v15.db"));
     }
 
     #[test]

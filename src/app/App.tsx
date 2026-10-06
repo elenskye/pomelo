@@ -5,6 +5,7 @@ import { FolderOpen, TriangleAlert } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { api, SETTING_LAST_ROUTE, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
+import { IDLE_MS, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "@/modules/vault/api";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_ROUTE, MODULES } from "./modules";
 
@@ -97,6 +98,39 @@ function useUndoKeys(enabled: boolean) {
   }, [enabled, qc, toast]);
 }
 
+/** 芝麻开门 stays open only while the app is in use: activity anywhere keeps Rust's timer fresh (at most
+ * every 20 s); 5 minutes without any input locks it (Rust also refuses an idle key on its own). */
+function useVaultIdleLock(enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    const isOpen = () => qc.getQueryData<VaultStatus>(VAULT_STATUS_KEY)?.state === "open";
+    let last = Date.now();
+    let pinged = 0;
+    const refresh = () => void qc.invalidateQueries({ queryKey: VAULT_KEY });
+    const onActive = () => {
+      last = Date.now();
+      if (isOpen() && last - pinged > 20_000) {
+        pinged = last;
+        vaultApi
+          .touch()
+          .then((open) => !open && refresh())
+          .catch(() => {});
+      }
+    };
+    const tick = () => {
+      if (isOpen() && Date.now() - last >= IDLE_MS) void vaultApi.lock().finally(refresh);
+    };
+    const events = ["pointerdown", "pointermove", "keydown", "wheel"] as const;
+    events.forEach((e) => window.addEventListener(e, onActive, { passive: true }));
+    const timer = setInterval(tick, 10_000);
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, onActive));
+      clearInterval(timer);
+    };
+  }, [enabled, qc]);
+}
+
 function StartupError({ info }: { info: AppInfo }) {
   return (
     <div data-tauri-drag-region className="flex h-full flex-col items-center justify-center gap-3 px-16 text-center">
@@ -117,6 +151,7 @@ export function App() {
   useRouteMemory(ok);
   useDailyChores(ok);
   useUndoKeys(ok);
+  useVaultIdleLock(ok);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (

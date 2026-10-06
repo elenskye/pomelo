@@ -12,7 +12,9 @@
     "app:install": "bash scripts/install-app.sh",
     "check": "tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml",
     "import:xlsx": "node scripts/xlsx-to-pomelo/convert.ts",
-    "import:todo": "node scripts/md-todo-to-pomelo/convert.ts"
+    "import:todo": "node scripts/md-todo-to-pomelo/convert.ts",
+    "import:seeker": "node scripts/seeker-to-pomelo/convert.ts",
+    "import:flomo": "node scripts/flomo-to-pomelo/convert.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.0",

@@ -5,6 +5,7 @@
 // (skip / check-in calendar / amounts) act immediately.
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";
 import { addDays, formatDay, localToday, mondayOf, parseYmd, slashDate, toYmd } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
@@ -44,34 +45,13 @@ const ruleKind = (rule: string) => rule.split(":")[0];
 /** Rules whose series ends by count (一共几次 / 已经做了几次); 完成后 runs from a start date instead. */
 const counted = (rule: string) => ruleKind(rule) !== "after";
 
-const dateClass = "rounded-control border bg-card px-2 py-1.5 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-function DateInput(props: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex shrink-0 items-center gap-0.5">
-      <input type="date" aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} className={dateClass} />
-      {props.value && (
-        <button
-          type="button"
-          aria-label={`清除${props.label}`}
-          title={`清除${props.label}`}
-          onClick={() => props.onChange("")}
-          className="rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <X size={13} />
-        </button>
-      )}
-    </div>
-  );
-}
-
 /** One row: start (clearable: a deadline only) 到 end. */
 function RangeInput(props: { start: string; end: string; onStart: (v: string) => void; onEnd: (v: string) => void }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <DateInput label="开始日期" value={props.start} onChange={props.onStart} />
+    <div className="flex flex-wrap items-center gap-1.5">
+      <DateInput clearable ariaLabel="开始日期" value={props.start} onChange={props.onStart} max={props.end || undefined} />
       <span className="shrink-0 text-muted-foreground">到</span>
-      <input type="date" aria-label="结束日期" value={props.end} onChange={(e) => props.onEnd(e.target.value)} className={dateClass} />
+      <DateInput ariaLabel="结束日期" value={props.end} onChange={props.onEnd} min={props.start || undefined} />
     </div>
   );
 }
@@ -113,15 +93,39 @@ function DayPicker(props: { days: number[]; labels: (d: number) => string; value
   );
 }
 
-type Mode = "daily" | "weekly" | "monthly" | "every" | "after";
+type Mode = "daily" | "weekly" | "monthly" | "yearly" | "every" | "after";
+const MODES: Mode[] = ["daily", "weekly", "monthly", "yearly", "every", "after"];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+/** Days in month m of a leap year (02-29 allowed; Rust uses 02-28 in other years). */
+const monthDays = (m: number) => new Date(2000, m, 0).getDate();
+
+/** 每年: 每 [n] 年的 [月] [日] → yearly:MM-DD or yearly:MM-DD/n. */
+function YearlyEditor(props: { arg: string; onChange: (v: string) => void }) {
+  const [md, every = "1"] = props.arg.split("/");
+  const [m, d] = md.split("-").map(Number);
+  const emit = (mm: number, dd: number, n: string) => props.onChange(`yearly:${pad2(mm)}-${pad2(Math.min(dd, monthDays(mm)))}${n === "1" ? "" : `/${n}`}`);
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      每 <NumberInput label="每几年" value={every} onChange={(v) => emit(m, d, v)} /> 年的
+      <Dropdown ariaLabel="月" value={m} onChange={(v) => emit(v, d, every)} menuMaxHeight={260} options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` }))} />
+      <Dropdown
+        ariaLabel="日"
+        value={d}
+        onChange={(v) => emit(m, v, every)}
+        menuMaxHeight={260}
+        options={Array.from({ length: monthDays(m) }, (_, i) => ({ value: i + 1, label: `${i + 1} 日` }))}
+      />
+    </div>
+  );
+}
 
 /** Repeat rule builder. `checkin` limits it to 每天 / 每周几天. */
 function RuleEditor(props: { value: string; onChange: (v: string) => void; checkin?: boolean }) {
   const [kind, arg = ""] = props.value.split(":");
-  const mode = (["daily", "weekly", "monthly", "every", "after"].includes(kind) ? kind : "daily") as Mode;
+  const mode = (MODES.includes(kind as Mode) ? kind : "daily") as Mode;
   const list = mode === "weekly" || mode === "monthly" ? arg.split(",").filter(Boolean).map(Number) : [];
   const n = mode === "every" || mode === "after" ? arg.slice(0, -1) : "";
-  const unit = mode === "every" && arg.endsWith("w") ? "w" : "d";
+  const unit = (mode === "every" || mode === "after") && /[dwmy]$/.test(arg) ? arg.slice(-1) : "d";
   const modes: { value: Mode; label: string }[] = props.checkin
     ? [
         { value: "daily", label: "每天" },
@@ -131,6 +135,7 @@ function RuleEditor(props: { value: string; onChange: (v: string) => void; check
         { value: "daily", label: "每天" },
         { value: "weekly", label: "每周" },
         { value: "monthly", label: "每月" },
+        { value: "yearly", label: "每年" },
         { value: "every", label: "每隔" },
         { value: "after", label: "完成后" },
       ];
@@ -141,6 +146,7 @@ function RuleEditor(props: { value: string; onChange: (v: string) => void; check
         daily: "daily",
         weekly: `weekly:${((today.getDay() + 6) % 7) + 1}`,
         monthly: `monthly:${today.getDate()}`,
+        yearly: `yearly:${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`,
         every: "every:2d",
         after: "after:7d",
       }[m],
@@ -161,6 +167,7 @@ function RuleEditor(props: { value: string; onChange: (v: string) => void; check
           onChange={(ds) => props.onChange(`monthly:${ds.join(",")}`)}
         />
       )}
+      {mode === "yearly" && <YearlyEditor arg={arg} onChange={props.onChange} />}
       {mode === "every" && (
         <div className="flex items-center gap-2 text-sm">
           每隔 <NumberInput label="间隔" value={n} onChange={(v) => props.onChange(`every:${v}${unit}`)} />
@@ -176,8 +183,20 @@ function RuleEditor(props: { value: string; onChange: (v: string) => void; check
         </div>
       )}
       {mode === "after" && (
-        <div className="flex items-center gap-2 text-sm">
-          完成后过 <NumberInput label="天数" value={n} onChange={(v) => props.onChange(`after:${v}d`)} /> 天再出现
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          完成后过 <NumberInput label="过多久" value={n} onChange={(v) => props.onChange(`after:${v}${unit}`)} />
+          <Segmented
+            ariaLabel="单位"
+            value={unit}
+            onChange={(u) => props.onChange(`after:${n}${u}`)}
+            options={[
+              { value: "d", label: "天" },
+              { value: "w", label: "周" },
+              { value: "m", label: "月" },
+              { value: "y", label: "年" },
+            ]}
+          />
+          再出现
         </div>
       )}
     </div>
@@ -261,7 +280,7 @@ function ProgressLog(props: { task: Task }) {
       <div className="flex items-center gap-2">
         <NumberInput label="数量" value={amount} onChange={setAmount} />
         <span className="text-sm">{unit}</span>
-        <input type="date" aria-label="日期" value={day} max={today} onChange={(e) => setDay(e.target.value)} className={`${fieldClass} w-auto`} />
+        <DateInput ariaLabel="日期" value={day} max={today} onChange={setDay} />
         <Button onClick={() => m.log.mutate({ taskId: t.id, day, amount: Number(amount) || 1 })}>记上</Button>
       </div>
       <p className="text-xs text-muted-foreground">
@@ -413,7 +432,7 @@ export function TaskPanel(props: {
   );
   return (
     <SidePanel
-      title={task ? "编辑任务" : isSub ? "添加子任务" : "添加任务"}
+      title={task ? "编辑任务" : isSub ? "添加子任务" : "新任务"}
       onClose={props.onClose}
       onSubmit={save}
       onDelete={props.onDelete}
@@ -465,7 +484,9 @@ export function TaskPanel(props: {
           )}
           {ruleKind(d.rule) === "after" && (
             <Field label="开始日期">
-              <DateInput label="开始日期" value={d.planDate} onChange={(v) => set("planDate", v)} />
+              <div>
+                <DateInput clearable ariaLabel="开始日期" value={d.planDate} onChange={(v) => set("planDate", v)} />
+              </div>
             </Field>
           )}
           {saved && task.dueDate && d.rule === task.repeatRule && (

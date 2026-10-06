@@ -4,6 +4,7 @@ import { Plus, X } from "lucide-react";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { SidePanel } from "@/shared/panel";
+import { DateInput } from "@/shared/DateInput";
 import { Field, IconButton, fieldClass, inputClass, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { ACCOUNT_KINDS, useAccounts, useAssets, useFinMutations, useHoldings, type Account, type AccountKind } from "./api";
 import { AmountInput, CurrencyPicker } from "./fields";
@@ -58,7 +59,9 @@ export function MonthDialog(props: { onClose: () => void }) {
   return (
     <Modal title="更新余额" onClose={props.onClose} onSubmit={save} error={error} submitLabel="保存" wide>
       <Field label="月份">
-        <input type="month" aria-label="月份" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} className={`${fieldClass} w-auto`} />
+        <div>
+          <DateInput month ariaLabel="月份" value={month} onChange={setMonth} />
+        </div>
       </Field>
       {active.length === 0 ? (
         <p className="text-sm text-muted-foreground">还没有账户</p>
@@ -227,7 +230,9 @@ export function HoldingsDialog(props: { account: Account; onClose: () => void })
   return (
     <Modal title={`${a.name} · 持仓`} onClose={props.onClose} onSubmit={save} error={error} submitLabel="保存" wide>
       <Field label="月份">
-        <input type="month" aria-label="月份" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} className={`${fieldClass} w-auto`} />
+        <div>
+          <DateInput month ariaLabel="月份" value={month} onChange={setMonth} />
+        </div>
       </Field>
       <div className="space-y-2">
         <div className="grid grid-cols-[1fr_6rem_9rem_2rem] gap-2 text-xs text-muted-foreground">

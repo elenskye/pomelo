@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { localToday } from "@/shared/dates";
 import { SidePanel } from "@/shared/panel";
+import { DateInput } from "@/shared/DateInput";
 import { Field, fieldClass, Segmented, TextInput } from "@/shared/ui";
 import { useAccounts, useFinMutations, useFixed, type Entry, type Fixed, type Flow } from "./api";
 import { AccountPicker, AmountInput, CurrencyPicker, FLOW_OPTIONS, KindPicker } from "./fields";
@@ -135,7 +136,9 @@ export function EntryPanel(props: {
     >
       <MoneyFields d={d} set={set} onManageKinds={() => props.onManageKinds(d.flow)} autoFocus />
       <Field label="日期">
-        <input type="date" aria-label="日期" value={d.day} onChange={(ev) => set("day", ev.target.value)} className={`${fieldClass} w-auto`} />
+        <div>
+          <DateInput ariaLabel="日期" value={d.day} onChange={(v) => set("day", v)} />
+        </div>
       </Field>
       <Field label="备注">
         <TextInput value={d.note} onChange={(ev) => set("note", ev.target.value)} maxLength={1000} />
@@ -282,7 +285,9 @@ export function FixedPanel(props: {
         </div>
       </Field>
       <Field label="下次哪天记">
-        <input type="date" aria-label="下次哪天记" value={d.nextDay} onChange={(ev) => ev.target.value && set("nextDay", ev.target.value)} className={`${fieldClass} w-auto`} />
+        <div>
+          <DateInput ariaLabel="下次哪天记" value={d.nextDay} onChange={(v) => set("nextDay", v)} />
+        </div>
       </Field>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={d.stopped} onChange={(ev) => set("stopped", ev.target.checked)} className="size-4 accent-[var(--primary)]" />

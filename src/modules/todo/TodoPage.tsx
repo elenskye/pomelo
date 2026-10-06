@@ -1,7 +1,7 @@
 // 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder, fold a group's goals)
 // + right content. Modeled on GoalMap. Goals carry no icon (names can start with an emoji).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, CalendarDays, ChevronDown, FolderPlus, Plus, Sun, Target } from "lucide-react";
+import { CalendarCheck, CalendarDays, ChevronDown, ChevronRight, FolderPlus, ListPlus, Plus, Sun, Target } from "lucide-react";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { formatDay, localToday, weekday } from "@/shared/dates";
@@ -196,6 +196,7 @@ export default function TodoPage() {
   const agenda = agendaQ.data;
   const [view, setView] = useState<View>({ kind: "today" });
   const [todayGroupId, setTodayGroupId] = useState<number | null>(null);
+  const [showClosedGoals, setShowClosedGoals] = useState(false);
   const [groupDialog, setGroupDialog] = useState<{ group: TodoGroup | null } | null>(null);
   const [goalDialog, setGoalDialog] = useState<{ goal: Goal | null; groupId: number; presetStatus?: GoalStatus } | null>(null);
   const panel = usePanelSelection<string>();
@@ -237,8 +238,10 @@ export default function TodoPage() {
   const whereHere = view.kind === "group" ? `g:${view.id}` : view.kind === "goal" ? `o:${view.id}` : `g:${todayGroupId ?? groups[0]?.id ?? ""}`;
   const addSub = (t: Task) => void openNew({ where: whereHere, parentId: t.id, parentTitle: t.title });
 
+  // ⌘N: 今天 → the quick add; a group / goal → 新任务
+  const newHere = view.kind === "group" || view.kind === "goal" ? () => void openNew({ where: whereHere }) : undefined;
   usePageKeys({
-    onNew: groups.length > 0 ? () => quickRef.current?.focus() : undefined,
+    onNew: groups.length > 0 ? (newHere ?? (() => quickRef.current?.focus())) : undefined,
     onEscape: panel.selection !== null ? () => void panel.request(null) : undefined,
   });
 
@@ -347,33 +350,60 @@ export default function TodoPage() {
     </button>
   );
 
+  const newTaskButton = (
+    <Button onClick={() => newHere?.()}>
+      <ListPlus size={14} /> 新任务
+    </Button>
+  );
+
   const groupView = (grp: TodoGroup) => {
     const gs = goals.filter((g) => g.groupId === grp.id);
+    const openGoals = gs.filter((g) => !closedGoal(g.status));
+    const closedGoals = gs.filter((g) => closedGoal(g.status));
+    const abandoned = closedGoals.filter((g) => g.status === "abandoned").length;
     return (
       <>
         <ViewHeader
           title={grp.name}
           onEdit={() => setGroupDialog({ group: grp })}
           editLabel="编辑分组"
-          sub={[gs.length > 0 && `${gs.length} 个目标`, `${grp.open} 件没做完`].filter(Boolean).join(" · ")}
+          sub={[openGoals.length > 0 && `${openGoals.length} 个目标`, `${grp.open} 件没做完`].filter(Boolean).join(" · ")}
           actions={
-            <Button onClick={() => setGoalDialog({ goal: null, groupId: grp.id })}>
-              <Target size={14} /> 新目标
-            </Button>
+            <>
+              <Button onClick={() => setGoalDialog({ goal: null, groupId: grp.id })}>
+                <Target size={14} /> 新目标
+              </Button>
+              {newTaskButton}
+            </>
           }
         />
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4">
-          {gs.length > 0 && (
+          {openGoals.length > 0 && (
             <Section title="目标">
-              <div className="rounded-card border bg-card">{gs.map(goalCard)}</div>
+              <div className="rounded-card border bg-card">{openGoals.map(goalCard)}</div>
             </Section>
           )}
-          <Section title={gs.length > 0 ? "其他任务" : "任务"}>
-            <div className="space-y-3">
+          {closedGoals.length > 0 && (
+            <section>
+              <button
+                type="button"
+                aria-expanded={showClosedGoals}
+                onClick={() => setShowClosedGoals((v) => !v)}
+                className="mb-1.5 flex items-center gap-1 px-1 text-sm text-muted-foreground hover:text-foreground"
+              >
+                {showClosedGoals ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {closedGoals.length > abandoned ? `已完成的目标 ${closedGoals.length - abandoned}${abandoned ? ` · 已放弃 ${abandoned}` : ""}` : `已放弃的目标 ${abandoned}`}
+              </button>
+              {showClosedGoals && <div className="rounded-card border bg-card">{closedGoals.map(goalCard)}</div>}
+            </section>
+          )}
+          {placeTasks.length > 0 ? (
+            <Section title={gs.length > 0 ? "其他任务" : "任务"}>
               <TaskTree tasks={placeTasks} today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} onAddSub={addSub} />
-              <QuickAdd inputRef={quickRef} placeholder="添加任务" onAdd={(title) => mut.createTask.mutateAsync({ title, groupId: grp.id })} />
-            </div>
-          </Section>
+            </Section>
+          ) : (
+            gs.length === 0 && placeQ.data && <p className="py-10 text-center text-muted-foreground">这一组还空着</p>
+          )}
         </div>
       </>
     );
@@ -393,6 +423,7 @@ export default function TodoPage() {
           }
           onEdit={() => setGoalDialog({ goal: g, groupId: g.groupId })}
           editLabel="编辑目标"
+          actions={newTaskButton}
           sub={[grp?.name, (g.startDate || g.endDate) && [formatDay(g.startDate), formatDay(g.endDate)].filter(Boolean).join(" – "), `${g.done} / ${g.total} · ${pct(g.done, g.total)}%`]
             .filter(Boolean)
             .join(" · ")}
@@ -420,7 +451,7 @@ export default function TodoPage() {
             onOpen={(t) => void openEdit(t)}
             onAddSub={addSub}
           />
-          <QuickAdd inputRef={quickRef} placeholder="添加任务" onAdd={(title) => mut.createTask.mutateAsync({ title, goalId: g.id })} />
+          {placeQ.data && placeTasks.length === 0 && <p className="py-10 text-center text-muted-foreground">还没有任务</p>}
         </div>
       </>
     );

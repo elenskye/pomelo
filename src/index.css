@@ -34,6 +34,9 @@
   --module-packing: #588a2c;
   --module-todo: #b07a10;
   --module-finance: #2e8b80;
+  --module-jobs: #9c5b8f;
+  --module-notes: #9a6b4a;
+  --module-vault: #64748b;
 
   /* Charts: categorical slots in fixed order (validated: dataviz validate_palette.js, light on #ffffff,
      dark on #292724); single-series charts use --chart-1. Text never wears these colors. */

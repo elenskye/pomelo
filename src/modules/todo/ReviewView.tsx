@@ -147,6 +147,7 @@ export function ReviewView(props: { today: string; selectedId: number | null; on
                   values={[counts]}
                   format={fmt}
                   axisFormat={String}
+                  integer
                   labelEvery={b.keys.length > 16 ? 5 : 1}
                   title={(i) => (b.unit === "day" ? `${formatDay(b.keys[i])} ${weekday(b.keys[i])}` : b.unit === "month" ? monthLabel(b.keys[i]) : `${b.keys[i]} 年`)}
                 />

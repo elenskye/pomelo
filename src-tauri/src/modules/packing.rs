@@ -197,7 +197,7 @@ pub fn create_trip(conn: &Connection, patch: TripPatch, template_id: Option<i64>
     if let Some(t) = template_id {
         template(conn, t)?;
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     tx.execute(
         "INSERT INTO trips (name, template_id, depart_on, note) VALUES (?1, ?2, ?3, ?4)",
         params![name, template_id, depart_on, note],

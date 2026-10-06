@@ -4,7 +4,8 @@ import { localToday } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { useKinds } from "@/shared/kinds/api";
 import { Modal } from "@/shared/Modal";
-import { Field, fieldClass, TextInput } from "@/shared/ui";
+import { DateInput } from "@/shared/DateInput";
+import { Field, TextInput } from "@/shared/ui";
 import { OUT_KINDS, useAccounts, useFinMutations } from "./api";
 import { AccountPicker, AmountInput, CurrencyPicker } from "./fields";
 import { CURRENCY_NAME, money, parseMoney, type Currency } from "./money";
@@ -44,7 +45,9 @@ export function WeekDialog(props: { defaultCurrency: Currency; onClose: () => vo
     <Modal title="记一周小额" onClose={props.onClose} onSubmit={save} error={error} submitLabel="记上" wide>
       <div className="grid grid-cols-2 gap-4">
         <Field label="日期">
-          <input type="date" aria-label="日期" value={day} onChange={(e) => e.target.value && setDay(e.target.value)} className={`${fieldClass} w-auto`} />
+          <div>
+            <DateInput ariaLabel="日期" value={day} onChange={setDay} />
+          </div>
         </Field>
         <Field label="账户">
           <AccountPicker

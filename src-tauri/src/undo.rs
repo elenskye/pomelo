@@ -11,8 +11,8 @@ use serde::Serialize;
 use tauri::State;
 
 const LIMIT: usize = 100;
-/// Not user data (UI state like the last page); never undone.
-const SKIP: &[&str] = &["settings"];
+/// Not user data (UI state like the last page; 芝麻开门 unlock state); never undone.
+const SKIP: &[&str] = &["settings", "vault_meta"];
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -216,6 +216,29 @@ mod tests {
         // a new edit clears redo
         step(&c, &mut h, "新增", |c| todo::create_task(c, serde_json::from_value(json!({"groupId": g, "title": "x"})).unwrap()).map(|_| ()));
         assert_eq!(redo(&c, &mut h).unwrap(), None);
+    }
+
+    /// Notes: derived tags and links in both directions come back with the note.
+    #[test]
+    fn notes_delete_and_tag_rename_undo() {
+        use crate::modules::notes;
+        let c = memory_db();
+        let mut h = History::default();
+        let np = |v| serde_json::from_value::<notes::NotePatch>(v).unwrap();
+        let a = notes::create(&c, np(json!({"content": "#读书 a"}))).unwrap().id;
+        let b = notes::create(&c, np(json!({"content": "#读书/摘抄 b", "refs": [a]}))).unwrap().id;
+        let q = notes::create(&c, np(json!({"content": "q", "refs": [b]}))).unwrap().id;
+        step(&c, &mut h, "删除笔记", |c| notes::delete(c, b));
+        assert_eq!((n(&c, "notes"), n(&c, "note_tags"), n(&c, "note_refs")), (2, 1, 0));
+        undo(&c, &mut h).unwrap();
+        assert_eq!((n(&c, "notes"), n(&c, "note_tags"), n(&c, "note_refs")), (3, 2, 2));
+        assert_eq!(notes::get(&c, q).unwrap().refs[0].id, b);
+        step(&c, &mut h, "标签改名", |c| notes::rename_tag(c, "读书", "阅读").map(|_| ()));
+        assert_eq!(notes::get(&c, b).unwrap().content, "#阅读/摘抄 b");
+        undo(&c, &mut h).unwrap();
+        assert_eq!(notes::get(&c, b).unwrap().content, "#读书/摘抄 b");
+        let tags: Vec<String> = c.prepare("SELECT tag FROM note_tags ORDER BY tag").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(tags, ["读书", "读书/摘抄"]);
     }
 
     #[test]

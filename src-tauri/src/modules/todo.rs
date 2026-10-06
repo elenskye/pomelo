@@ -264,7 +264,7 @@ pub fn update_goal(conn: &Connection, id: i64, patch: GoalPatch) -> Result<Goal,
         note: patch.note.unwrap_or(old.note),
         review: patch.review.unwrap_or(old.review),
     })?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     if f.group_id != old.group_id {
         group(&tx, f.group_id)?;
         tx.execute(
@@ -311,16 +311,33 @@ str_enum!(Period, default = All, {
     Month => "month",
 });
 
-/// Parsed `repeat_rule`: daily | weekly:<1-7,…> (Mon=1) | monthly:<1-31,…> | every:<n>d | every:<n>w | after:<n>d.
-/// Monthly days past a month's end fall on its last day.
+/// Parsed `repeat_rule`: daily | weekly:<1-7,…> (Mon=1) | monthly:<1-31,…> | yearly:<MM-DD>[/<n> years]
+/// | every:<n>d | every:<n>w | after:<n><d|w|m|y>. Monthly days past a month's end fall on its last
+/// day; yearly 02-29 falls on 02-28 in other years; after-months keep the day (or the month's end).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rule {
     Daily,
     Weekly(Vec<u32>),
     Monthly(Vec<u32>),
+    /// Month, day, every how many years.
+    Yearly(u32, u32, i64),
     EveryDays(i64),
     EveryWeeks(i64),
-    AfterDays(i64),
+    /// 完成后: n of a unit (d / w / m / y) after the day it was done.
+    After(i64, char),
+}
+
+/// `d` moved by `n` months, the day kept or clamped to the month's end.
+fn add_months(d: &str, n: i64) -> String {
+    let (y, m, day) = (d[..4].parse::<i64>().unwrap(), d[5..7].parse::<i64>().unwrap(), d[8..10].parse::<u32>().unwrap());
+    let k = y * 12 + (m - 1) + n;
+    let (y, m) = (k.div_euclid(12), (k.rem_euclid(12) + 1) as u32);
+    format!("{y:04}-{m:02}-{:02}", day.min(common::days_in_month(y, m)))
+}
+
+/// MM-DD in year `y` (02-29 → 02-28 when not a leap year).
+fn on_year(y: i64, m: u32, d: u32) -> String {
+    format!("{y:04}-{m:02}-{:02}", d.min(common::days_in_month(y, m)))
 }
 
 impl Rule {
@@ -338,12 +355,29 @@ impl Rule {
             None if s == "daily" => Rule::Daily,
             Some(("weekly", ds)) => Rule::Weekly(days(ds, 7)?),
             Some(("monthly", ds)) => Rule::Monthly(days(ds, 31)?),
+            Some(("yearly", v)) => {
+                let (md, every) = v.split_once('/').map_or((v, "1"), |(a, b)| (a, b));
+                let (m, d) = md.split_once('-').ok_or_else(bad)?;
+                let m = num(m, 12)? as u32;
+                let d = num(d, common::days_in_month(2000, m) as i64)? as u32; // 2000: leap, so 02-29 is fine
+                Rule::Yearly(m, d, num(every, 50)?)
+            }
             Some(("every", n)) => match (unit(n, 'd'), unit(n, 'w')) {
                 (Some(d), _) => Rule::EveryDays(num(&d, 365)?),
                 (_, Some(w)) => Rule::EveryWeeks(num(&w, 52)?),
                 _ => return Err(bad()),
             },
-            Some(("after", n)) => Rule::AfterDays(num(&unit(n, 'd').ok_or_else(bad)?, 365)?),
+            Some(("after", n)) => {
+                let u = n.chars().last().ok_or_else(bad)?;
+                let max = match u {
+                    'd' => 365,
+                    'w' => 52,
+                    'm' => 120,
+                    'y' => 20,
+                    _ => return Err(bad()),
+                };
+                Rule::After(num(&n[..n.len() - 1], max)?, u)
+            }
             _ => return Err(bad()),
         })
     }
@@ -363,9 +397,20 @@ impl Rule {
                     (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
                 }
             }
+            Rule::Yearly(m, d, every) => {
+                // the first MM-DD after the anchor, then every-1 more years
+                let y = anchor[..4].parse::<i64>().unwrap();
+                let first = if on_year(y, *m, *d).as_str() > anchor { y } else { y + 1 };
+                on_year(first + every - 1, *m, *d)
+            }
             Rule::EveryDays(n) => common::add_days(anchor, *n),
             Rule::EveryWeeks(n) => common::add_days(anchor, 7 * n),
-            Rule::AfterDays(n) => common::add_days(completed, *n),
+            Rule::After(n, u) => match u {
+                'w' => common::add_days(completed, 7 * n),
+                'm' => add_months(completed, *n),
+                'y' => add_months(completed, 12 * n),
+                _ => common::add_days(completed, *n),
+            },
         }
     }
 
@@ -373,13 +418,14 @@ impl Rule {
     pub fn first_from(&self, day: &str) -> String {
         match self {
             Rule::Weekly(_) | Rule::Monthly(_) => self.next(&common::add_days(day, -1), day),
+            Rule::Yearly(m, d, _) => Rule::Yearly(*m, *d, 1).next(&common::add_days(day, -1), day),
             _ => day.to_string(),
         }
     }
 
     /// Series that end by count (一共几次); after-rules (完成后) run from a start date and never end.
     fn counted(&self) -> bool {
-        !matches!(self, Rule::AfterDays(_))
+        !matches!(self, Rule::After(..))
     }
 
     /// Check-in schedule (daily / weekly rules only).
@@ -845,7 +891,7 @@ pub fn create_task_on(conn: &Connection, patch: TaskPatch, today: &str) -> Resul
         f.set_done_count(patch.done_count, 0)?;
         f.due_date = Some(f.first_due(today)?);
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     tx.execute(
         "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date, collapsed, sort_order,
            task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before)
@@ -885,7 +931,7 @@ pub fn update_task_on(conn: &Connection, id: i64, patch: TaskPatch, today: &str)
             f.due_date = Some(f.first_due(today)?);
         }
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     let moving = patch.group_id.is_some_and(|g| g != old.group_id) || patch.goal_id.is_some_and(|g| g != old.goal_id);
     if moving {
         if old.parent_id.is_some() {
@@ -955,7 +1001,7 @@ fn mark_undone(conn: &Connection, id: i64) -> Result<(), String> {
 }
 
 /// Completes / reopens a counted repeat or progress task from its count, and a check-in whose
-/// 时间段 is over.
+/// 时间段 is over or fully checked (un-checking a day before the end reopens it).
 fn settle(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
     let mut t = task(conn, id)?;
     enrich(conn, &mut t, today)?;
@@ -965,7 +1011,7 @@ fn settle(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
             None => return Ok(()),
         },
         TaskType::Checkin => match &t.due_date {
-            Some(end) => end.as_str() < today, // its 时间段 is over
+            Some(end) => end.as_str() < today || all_checked(conn, &t, end)?, // over, or nothing left to check
             None => return Ok(()),
         },
         TaskType::Progress => t.total_amount >= t.target.unwrap_or(i64::MAX),
@@ -976,6 +1022,21 @@ fn settle(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
         (false, true) => mark_undone(conn, id),
         _ => Ok(()),
     }
+}
+
+/// Check-in with an end: every scheduled day from the start (or the day it was added) to the end
+/// has its check. A range without any scheduled day doesn't count (it ends with the range).
+fn all_checked(conn: &Connection, t: &Task, end: &str) -> Result<bool, String> {
+    let Ok(rule) = Rule::parse(t.repeat_rule.as_deref().unwrap_or_default()) else { return Ok(false) };
+    let start = match &t.start_date {
+        Some(s) => s.clone(),
+        None => conn.query_row("SELECT date(?1, 'localtime')", [&t.created_at], |r| r.get(0)).map_err(err)?,
+    };
+    let mut st = conn.prepare("SELECT day FROM todo_logs WHERE task_id = ?1").map_err(err)?;
+    let logged: std::collections::HashSet<String> = st.query_map([t.id], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let (a, b) = (common::day_number(&start), common::day_number(end));
+    let days: Vec<String> = (a..=b.min(a + 3660)).map(common::from_day_number).filter(|d| rule.scheduled(d)).collect();
+    Ok(!days.is_empty() && days.iter().all(|d| logged.contains(d)))
 }
 
 /// Moves a repeat task (`count` occurrences done) to its next occurrence, or ends the series when
@@ -999,7 +1060,7 @@ fn advance(conn: &Connection, t: &Task, completed: &str, count: i64) -> Result<(
 /// repeat / progress task reopens it.
 pub fn set_done_on(conn: &Connection, id: i64, done: bool, today: &str) -> Result<(), String> {
     let t = task(conn, id)?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     match (t.task_type, done) {
         (TaskType::Normal, true) => mark_done(&tx, id)?,
         (TaskType::Normal, false) => mark_undone(&tx, id)?,
@@ -1030,18 +1091,20 @@ pub fn set_done_on(conn: &Connection, id: i64, done: bool, today: &str) -> Resul
     tx.commit().map_err(err)
 }
 
-/// Daily sweep: check-ins whose 时间段 ended before `today` are completed. Returns how many.
+/// Daily sweep: check-ins whose 时间段 ended before `today`, or whose every day is already checked
+/// (e.g. checked in before that rule existed), are completed. Returns how many.
 pub fn close_ended(conn: &Connection, today: &str) -> Result<usize, String> {
     let mut st = conn
-        .prepare("SELECT id FROM todo_tasks WHERE task_type = 'checkin' AND done = 0 AND due_date < ?1")
+        .prepare("SELECT id FROM todo_tasks WHERE task_type = 'checkin' AND done = 0 AND due_date IS NOT NULL")
         .map_err(err)?;
-    let ids: Vec<i64> = st.query_map([today], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let ids: Vec<i64> = st.query_map([], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     for id in &ids {
-        mark_done(&tx, *id)?;
+        settle(&tx, *id, today)?;
     }
+    let closed = ids.iter().map(|id| task(&tx, *id).map(|t| t.done)).filter(|d| matches!(d, Ok(true))).count();
     tx.commit().map_err(err)?;
-    Ok(ids.len())
+    Ok(closed)
 }
 
 pub fn set_done(conn: &Connection, id: i64, done: bool) -> Result<(), String> {
@@ -1054,7 +1117,7 @@ pub fn skip_on(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
     if t.task_type != TaskType::Repeat || t.done {
         return Err("只有没结束的重复任务能跳过".into());
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     let count = t.done_before + count_of(&tx, "SELECT count(*) FROM todo_logs WHERE task_id = ?1", &[&id])?;
     advance(&tx, &t, today, count)?;
     tx.commit().map_err(err)
@@ -1100,7 +1163,7 @@ pub fn log_on(conn: &Connection, task_id: i64, day: &str, amount: i64, today: &s
     if day > today {
         return Err("不能记未来的日子".into());
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     match t.task_type {
         TaskType::Progress => {
             if !(1..=100000).contains(&amount) {
@@ -1130,7 +1193,7 @@ pub fn delete_log(conn: &Connection, id: i64) -> Result<(), String> {
         .optional()
         .map_err(err)?
         .ok_or_else(|| gone("记录"))?;
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = common::Tx::begin(conn)?;
     tx.execute("DELETE FROM todo_logs WHERE id = ?1", [id]).map_err(err)?;
     settle(&tx, task_id, &today(&tx)?)?;
     tx.commit().map_err(err)
@@ -2099,7 +2162,20 @@ mod tests {
         assert_eq!(next("every:3d", "2026-09-30", ""), "2026-10-03");
         assert_eq!(next("after:30d", "2026-09-01", "2026-09-30"), "2026-10-30");
         assert_eq!(next("daily", "2026-12-31", ""), "2027-01-01");
-        for bad in ["weekly:", "weekly:8", "monthly:0", "every:3", "every:0d", "after:2w", "hourly", ""] {
+        // 每年: the next MM-DD; every n years; 02-29 outside leap years → 02-28
+        assert_eq!(next("yearly:12-31", "2026-12-31", ""), "2027-12-31");
+        assert_eq!(next("yearly:12-31", "2027-01-05", "2027-01-05"), "2027-12-31"); // done late: this year's still counts
+        assert_eq!(next("yearly:03-01/3", "2026-03-01", ""), "2029-03-01");
+        assert_eq!(next("yearly:02-29", "2024-02-29", ""), "2025-02-28");
+        assert_eq!(next("yearly:02-29", "2027-03-01", ""), "2028-02-29");
+        assert_eq!((first("yearly:10-06", "2026-10-06"), first("yearly:10-05/3", "2026-10-06")), ("2026-10-06".into(), "2027-10-05".into()));
+        // 完成后 in weeks / months / years (month ends kept)
+        assert_eq!(next("after:2w", "", "2026-10-06"), "2026-10-20");
+        assert_eq!(next("after:1m", "", "2026-01-31"), "2026-02-28");
+        assert_eq!(next("after:1y", "", "2024-02-29"), "2025-02-28");
+        assert_eq!(next("after:3y", "", "2026-10-06"), "2029-10-06");
+        assert!(!Rule::parse("after:3y").unwrap().counted() && Rule::parse("yearly:01-01").unwrap().counted());
+        for bad in ["weekly:", "weekly:8", "monthly:0", "every:3", "every:0d", "after:2x", "after:21y", "after:", "yearly:13-01", "yearly:02-30", "yearly:12-31/0", "yearly:1231", "hourly", ""] {
             assert!(Rule::parse(bad).is_err(), "{bad}");
         }
     }
@@ -2203,6 +2279,43 @@ mod tests {
         assert!(task(&c, t.id).unwrap().done && !task(&c, open.id).unwrap().done);
         // moving the end later reopens it
         assert!(!update_task_on(&c, t.id, tp(json!({"dueDate": "2026-10-31"})), "2026-10-03").unwrap().done);
+    }
+
+    /// Every scheduled day of the 时间段 checked → done at once (not only when the range is over);
+    /// un-checking one of them reopens it. Without a start the range begins on the day it was added.
+    #[test]
+    fn checkin_done_when_every_day_is_checked() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        let g = create_goal(&c, serde_json::from_value(json!({"groupId": a, "name": "G"})).unwrap()).unwrap().id;
+        let t = create_task(&c, tp(json!({"goalId": g, "title": "早起", "taskType": "checkin", "repeatRule": "daily", "startDate": "2026-10-05", "dueDate": "2026-10-07"}))).unwrap();
+        log_on(&c, t.id, "2026-10-05", 1, "2026-10-07").unwrap();
+        log_on(&c, t.id, "2026-10-06", 1, "2026-10-07").unwrap();
+        assert!(!task(&c, t.id).unwrap().done);
+        set_done_on(&c, t.id, true, "2026-10-07").unwrap(); // the last day
+        assert!(task(&c, t.id).unwrap().done);
+        assert_eq!((goal(&c, g).unwrap().done, goal(&c, g).unwrap().total), (1, 1)); // the goal sees it
+        log_on(&c, t.id, "2026-10-06", 1, "2026-10-07").unwrap(); // un-check a day
+        assert!(!task(&c, t.id).unwrap().done);
+        // weekly: only the scheduled days matter
+        let w = create_task(&c, tp(json!({"groupId": a, "title": "周会", "taskType": "checkin", "repeatRule": "weekly:1", "startDate": "2026-10-05", "dueDate": "2026-10-11"}))).unwrap();
+        log_on(&c, w.id, "2026-10-05", 1, "2026-10-06").unwrap();
+        assert!(task(&c, w.id).unwrap().done);
+        // only an end date: from the day it was added (the screenshot's case)
+        let today = today(&c).unwrap();
+        let s = create_task(&c, tp(json!({"groupId": a, "title": "今天", "taskType": "checkin", "repeatRule": "daily", "dueDate": today}))).unwrap();
+        set_done_on(&c, s.id, true, &today).unwrap();
+        assert!(task(&c, s.id).unwrap().done);
+        // checked in under the old rule (still open) → the daily sweep completes it
+        let old = create_task(&c, tp(json!({"groupId": a, "title": "旧", "taskType": "checkin", "repeatRule": "daily", "startDate": "2026-10-05", "dueDate": "2026-10-06"}))).unwrap();
+        c.execute("INSERT INTO todo_logs (task_id, day) VALUES (?1, '2026-10-05'), (?1, '2026-10-06')", [old.id]).unwrap();
+        assert!(!task(&c, old.id).unwrap().done);
+        assert_eq!(close_ended(&c, "2026-10-06").unwrap(), 1);
+        assert!(task(&c, old.id).unwrap().done);
+        // no end date: never completes by itself
+        let open = create_task(&c, tp(json!({"groupId": a, "title": "一直", "taskType": "checkin", "repeatRule": "daily"}))).unwrap();
+        set_done_on(&c, open.id, true, &today).unwrap();
+        assert!(!task(&c, open.id).unwrap().done);
     }
 
     #[test]

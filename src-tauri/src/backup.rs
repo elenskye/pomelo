@@ -238,6 +238,7 @@ pub fn backup_restore(state: State<AppState>, file_name: String) -> Result<Resto
     let dir = state.paths.backups.clone();
     let safety = state.with_db(|c| restore(c, &dir, &file_name))?;
     state.clear_history();
+    state.vault_lock(); // the restored vault may have another master password
     Ok(RestoreResult { safety: info_of(&safety)? })
 }
 

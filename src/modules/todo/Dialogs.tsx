@@ -4,7 +4,8 @@ import { Trash2 } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
-import { Button, Field, inputClass, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { DateInput } from "@/shared/DateInput";
+import { Button, Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { GOAL_STATUS, useTodoMutations, type Goal, type GoalStatus, type TodoGroup } from "./api";
 
 export function GroupDialog(props: { group: TodoGroup | null; goalCount: number; onClose: () => void; onCreated?: (g: TodoGroup) => void; onDeleted?: () => void }) {
@@ -152,9 +153,9 @@ export function GoalDialog(props: {
       </Field>
       <Field label="时间">
         <div className="flex items-center gap-2">
-          <input type="date" aria-label="开始日期" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
+          <DateInput clearable ariaLabel="开始日期" value={startDate} onChange={setStartDate} max={endDate || undefined} />
           <span className="text-muted-foreground">到</span>
-          <input type="date" aria-label="结束日期" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
+          <DateInput clearable ariaLabel="结束日期" value={endDate} onChange={setEndDate} min={startDate || undefined} />
         </div>
       </Field>
       {goal && (

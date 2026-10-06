@@ -82,6 +82,40 @@ pub fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Nestable transaction (a SAVEPOINT): module functions call each other (投石问路 → 一步一步) and
+/// run inside an import's transaction, where a plain BEGIN would fail. Rolls back unless committed.
+pub struct Tx<'c> {
+    conn: &'c Connection,
+    open: bool,
+}
+
+impl<'c> Tx<'c> {
+    pub fn begin(conn: &'c Connection) -> Result<Self, String> {
+        conn.execute_batch("SAVEPOINT pomelo_tx").map_err(err)?;
+        Ok(Tx { conn, open: true })
+    }
+
+    pub fn commit(mut self) -> Result<(), String> {
+        self.open = false;
+        self.conn.execute_batch("RELEASE pomelo_tx").map_err(err)
+    }
+}
+
+impl std::ops::Deref for Tx<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn
+    }
+}
+
+impl Drop for Tx<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self.conn.execute_batch("ROLLBACK TO pomelo_tx; RELEASE pomelo_tx");
+        }
+    }
+}
+
 /// Trim; empty → None.
 pub fn clean(s: Option<String>) -> Option<String> {
     s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
@@ -210,7 +244,7 @@ pub fn reorder(conn: &Connection, table: &str, scope: &str, args: &[&dyn rusqlit
     for slot in order.iter_mut().filter(|id| wanted.contains(id)) {
         *slot = *next.next().unwrap();
     }
-    let tx = conn.unchecked_transaction().map_err(err)?;
+    let tx = Tx::begin(conn)?;
     for (i, id) in order.iter().enumerate() {
         tx.execute(&format!("UPDATE {table} SET sort_order = ?1 WHERE id = ?2"), rusqlite::params![i as i64 + 1, id])
             .map_err(err)?;

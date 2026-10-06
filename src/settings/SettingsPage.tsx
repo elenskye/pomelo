@@ -5,6 +5,7 @@ import { Button, PageHeader } from "@/shared/ui";
 import { BackupsSection } from "./Backups";
 import { Path, Row, Section } from "./layout";
 import { ExportRow, ImportRow } from "./Transfer";
+import { VaultSection } from "./Vault";
 
 export default function SettingsPage() {
   const { data: info } = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
@@ -37,6 +38,7 @@ export default function SettingsPage() {
           <ImportRow />
         </Section>
         <BackupsSection />
+        <VaultSection />
         <Section title="关于">
           <Row label="版本">{info.appVersion}</Row>
           <Row label="运行方式" help={info.isDev ? "开发版使用测试数据，和正式版的数据完全分开。" : undefined}>

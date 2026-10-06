@@ -1,16 +1,16 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":5,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":7,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
 //! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in
-//! planDate / repeatUntil, no finance (todo.rs adapts). All older versions are read.
+//! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes. All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
 //! in the file (finance has two: fin_out / fin_in). Overwriting existing data requires `overwrite = true` and takes a snapshot first.
 //! Export → import into an empty DB reproduces everything except ids (see roundtrip test).
 //! Adding a module: new `Payload` variant + arms below + `export_payloads`.
 
-use crate::modules::{books, drawing, films, finance, kinds, packing, todo};
+use crate::modules::{books, drawing, films, finance, jobs, kinds, notes, packing, todo};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -21,7 +21,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 7;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +41,8 @@ enum Payload {
     Packing(packing::PackingRecord),
     Todo(todo::TodoRecord),
     Finance(finance::FinanceRecord),
+    Jobs(jobs::JobsRecord),
+    Notes(notes::NotesRecord),
 }
 
 impl Payload {
@@ -52,6 +54,8 @@ impl Payload {
             Payload::Packing(_) => packing::KEY,
             Payload::Todo(_) => todo::KEY,
             Payload::Finance(_) => finance::KEY,
+            Payload::Jobs(_) => jobs::KEY,
+            Payload::Notes(_) => notes::KEY,
         }
     }
     fn label(&self) -> &'static str {
@@ -62,6 +66,8 @@ impl Payload {
             Payload::Packing(_) => packing::LABEL,
             Payload::Todo(_) => todo::LABEL,
             Payload::Finance(_) => finance::LABEL,
+            Payload::Jobs(_) => jobs::LABEL,
+            Payload::Notes(_) => notes::LABEL,
         }
     }
     fn len(&self) -> usize {
@@ -72,6 +78,8 @@ impl Payload {
             Payload::Packing(r) => r.len(),
             Payload::Todo(r) => r.len(),
             Payload::Finance(r) => r.len(),
+            Payload::Jobs(r) => r.len(),
+            Payload::Notes(r) => r.len(),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
@@ -82,6 +90,8 @@ impl Payload {
             Payload::Packing(_) => packing::count(conn),
             Payload::Todo(_) => todo::count(conn),
             Payload::Finance(_) => finance::count(conn),
+            Payload::Jobs(_) => jobs::count(conn),
+            Payload::Notes(_) => notes::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
@@ -92,6 +102,8 @@ impl Payload {
             Payload::Packing(r) => packing::replace_all(conn, r),
             Payload::Todo(r) => todo::replace_all(conn, r),
             Payload::Finance(r) => finance::replace_all(conn, r),
+            Payload::Jobs(r) => jobs::replace_all(conn, r),
+            Payload::Notes(r) => notes::replace_all(conn, r),
         }
     }
     /// kinds.rs modules this payload's kinds lists live under.
@@ -103,6 +115,8 @@ impl Payload {
             Payload::Packing(_) => &[packing::KEY],
             Payload::Todo(_) => &[],
             Payload::Finance(_) => &[finance::OUT_KINDS, finance::IN_KINDS],
+            Payload::Jobs(_) => &[jobs::CHANNELS],
+            Payload::Notes(_) => &[],
         }
     }
     fn to_json(&self) -> Result<Value, String> {
@@ -113,6 +127,8 @@ impl Payload {
             Payload::Packing(r) => serde_json::to_value(r),
             Payload::Todo(r) => serde_json::to_value(r),
             Payload::Finance(r) => serde_json::to_value(r),
+            Payload::Jobs(r) => serde_json::to_value(r),
+            Payload::Notes(r) => serde_json::to_value(r),
         }
         .map_err(err)
     }
@@ -173,6 +189,18 @@ fn parse(text: &str) -> Result<Parsed, String> {
                     .map_err(|e| format!("{}的数据格式不对：{e}", finance::LABEL))?;
                 finance::validate_records(&rec)?;
                 payloads.push(Payload::Finance(rec));
+            }
+            jobs::KEY => {
+                let rec: jobs::JobsRecord = serde_json::from_value(value)
+                    .map_err(|e| format!("{}的数据格式不对：{e}", jobs::LABEL))?;
+                jobs::validate_records(&rec)?;
+                payloads.push(Payload::Jobs(rec));
+            }
+            notes::KEY => {
+                let rec: notes::NotesRecord = serde_json::from_value(value)
+                    .map_err(|e| format!("{}的数据格式不对：{e}", notes::LABEL))?;
+                notes::validate_records(&rec)?;
+                payloads.push(Payload::Notes(rec));
             }
             _ => skipped.push(key),
         }
@@ -250,6 +278,10 @@ pub fn apply(conn: &mut Connection, text: &str, overwrite: bool, backups_dir: &P
     for p in &parsed.payloads {
         p.replace(&tx)?;
     }
+    // applications ↔ their 一步一步 tasks (either side may have been replaced)
+    if parsed.payloads.iter().any(|p| matches!(p, Payload::Jobs(_) | Payload::Todo(_))) {
+        jobs::relink(&tx)?;
+    }
     tx.commit().map_err(err)?;
     Ok(summary)
 }
@@ -268,6 +300,8 @@ fn export_payloads(conn: &Connection) -> Result<Vec<Payload>, String> {
         Payload::Packing(packing::export(conn)?),
         Payload::Todo(todo::export(conn)?),
         Payload::Finance(finance::export(conn)?),
+        Payload::Jobs(jobs::export(conn)?),
+        Payload::Notes(notes::export(conn)?),
     ])
 }
 
@@ -423,9 +457,16 @@ mod tests {
             "2026-09-15",
         )
         .unwrap();
+        // jobs: an interview with a date → its 一步一步 task (exported with todo, re-linked on import, not duplicated)
+        let interview = jobs::statuses(&a).unwrap().into_iter().find(|s| s.name == "面试").unwrap().id;
+        jobs::create_job(&a, serde_json::from_value(json!({"company": "X", "statusId": interview, "stepOn": "2026-10-09"})).unwrap(), "2026-10-05")
+            .unwrap();
+        // notes: a pinned one quoting another (refs travel by createdAt)
+        let first_note = notes::create(&a, serde_json::from_value(json!({"content": "#读书/摘抄 第一条"})).unwrap()).unwrap().id;
+        notes::create(&a, serde_json::from_value(json!({"content": "批注 **加粗**", "pinned": true, "refs": [first_note]})).unwrap()).unwrap();
 
         let (text, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 6), ("finance", 3)]);
+        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 8), ("finance", 3), ("jobs", 1), ("notes", 2)]);
 
         let dir = temp_dir("roundtrip");
         let mut b = memory_db();
@@ -436,7 +477,8 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 5);
+        assert_eq!(v["formatVersion"], 7);
+        assert_eq!(v["modules"]["notes"]["notes"][1]["refs"][0], v["modules"]["notes"]["notes"][0]["createdAt"]);
         assert_eq!(v["kinds"]["books"], json!(["虚构", "非虚构", "漫画书", "没用上的类型"]));
         assert_eq!(v["kinds"]["films"], json!(["动漫", "剧集", "电影"]));
         assert_eq!(v["modules"]["drawing"][0]["name"], "B 课");
@@ -546,9 +588,11 @@ mod tests {
         let mut c = crate::db::open(&target).unwrap();
         crate::db::migrate(&mut c, crate::db::MIGRATIONS, &temp_dir("seed")).unwrap();
         apply(&mut c, &text, true, &temp_dir("seed")).unwrap();
-        let todo_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/todo-import.json");
-        if let Ok(todo_text) = std::fs::read_to_string(&todo_path) {
-            apply(&mut c, &todo_text, true, &temp_dir("seed")).unwrap();
+        for extra in ["todo-import.json", "jobs-import.json", "notes-import.json"] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype").join(extra);
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                apply(&mut c, &text, true, &temp_dir("seed")).unwrap();
+            }
         }
     }
 
@@ -561,10 +605,24 @@ mod tests {
         let mut a = memory_db();
         apply(&mut a, &text, false, &temp_dir("real-rt")).unwrap();
         let (out, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| m.incoming).collect::<Vec<_>>(), [21, 50, 5, 3, 0, 0]);
+        assert_eq!(counts.iter().map(|m| m.incoming).collect::<Vec<_>>(), [21, 50, 5, 3, 0, 0, 0, 0]);
         let mut b = memory_db();
         apply(&mut b, &out, false, &temp_dir("real-rt")).unwrap();
         assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));
+    }
+
+    /// Seeker's applications (`pnpm import:seeker`, gitignored) import into the default statuses.
+    #[test]
+    #[ignore]
+    fn real_jobs_import() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/jobs-import.json");
+        let text = std::fs::read_to_string(&path).expect("run `pnpm import:seeker` first");
+        let mut c = memory_db();
+        apply(&mut c, &text, false, &temp_dir("real-jobs")).unwrap();
+        let js = jobs::jobs(&c, "2026-10-05").unwrap();
+        assert_eq!(js.len(), 3);
+        assert!(js.iter().all(|j| j.resume.as_deref().is_some_and(|r| r.starts_with("~/Documents/Seeker/cv/"))));
+        assert_eq!(jobs::statuses(&c).unwrap().len(), 7); // statuses kept
     }
 
     /// The converted Markdown todo list (`pnpm import:todo`, gitignored) imports cleanly.
@@ -585,6 +643,25 @@ mod tests {
         let (out, _) = export(&mut c).unwrap();
         let mut b = memory_db();
         apply(&mut b, &out, false, &temp_dir("real-todo")).unwrap();
+        assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));
+    }
+
+    /// The Flomo export (`pnpm import:flomo`, gitignored) imports cleanly and round-trips.
+    #[test]
+    #[ignore]
+    fn real_notes_import() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/notes-import.json");
+        let text = std::fs::read_to_string(&path).expect("run `pnpm import:flomo` first");
+        let mut c = memory_db();
+        apply(&mut c, &text, false, &temp_dir("real-notes")).unwrap();
+        let o = notes::overview(&c).unwrap();
+        assert_eq!((o.total, o.tags.len()), (179, 42));
+        assert_eq!(o.days.first().unwrap().day, "2024-12-12");
+        let all = notes::list(&c, &notes::Filter::default()).unwrap();
+        assert!(all.iter().all(|n| !n.tags.is_empty()));
+        let (out, _) = export(&mut c).unwrap();
+        let mut b = memory_db();
+        apply(&mut b, &out, false, &temp_dir("real-notes")).unwrap();
         assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));
     }
 
