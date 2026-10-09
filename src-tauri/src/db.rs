@@ -28,6 +28,13 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 13, name: "jobs", sql: include_str!("../migrations/0013_jobs.sql") },
     Migration { version: 14, name: "notes", sql: include_str!("../migrations/0014_notes.sql") },
     Migration { version: 15, name: "vault", sql: include_str!("../migrations/0015_vault.sql") },
+    Migration { version: 16, name: "goal_no_abandon", sql: include_str!("../migrations/0016_goal_no_abandon.sql") },
+    Migration { version: 17, name: "finished_year", sql: include_str!("../migrations/0017_finished_year.sql") },
+    Migration { version: 18, name: "finance_days", sql: include_str!("../migrations/0018_finance_days.sql") },
+    Migration { version: 19, name: "job_steps", sql: include_str!("../migrations/0019_job_steps.sql") },
+    Migration { version: 20, name: "note_tag_meta", sql: include_str!("../migrations/0020_note_tag_meta.sql") },
+    Migration { version: 21, name: "rereads", sql: include_str!("../migrations/0021_rereads.sql") },
+    Migration { version: 22, name: "root_pins", sql: include_str!("../migrations/0022_root_pins.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -329,6 +336,132 @@ pub mod tests {
         assert_eq!(n, 10);
         let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert!(files[0].to_str().unwrap().ends_with("-before-v15.db"));
+    }
+
+    /// v16: 「已放弃」 goals become 暂停; the rest stay.
+    #[test]
+    fn v15_abandoned_goals_become_paused() {
+        let dir = temp_dir("v15-goals");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..15], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            "INSERT INTO todo_groups (name, sort_order) VALUES ('A', 1);
+             INSERT INTO todo_goals (group_id, name, status, sort_order) VALUES (1, '放弃了', 'abandoned', 1), (1, '做完了', 'done', 2);",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..16], &dir.join("backups")).unwrap(), 16);
+        let s: Vec<String> = c.prepare("SELECT status FROM todo_goals ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(s, ["paused", "done"]);
+    }
+
+    #[test]
+    fn v16_years_and_dated_finance() {
+        let dir = temp_dir("v16-finance");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..16], &dir.join("backups")).unwrap();
+        // timestamps at noon UTC keep the local day the same in any timezone from UTC-11 to UTC+11
+        c.execute_batch(
+            "INSERT INTO books (title, status, finished_month) VALUES ('读完', 'done', '2025-11'), ('没读', 'todo', NULL);
+             INSERT INTO films (title, status, finished_month) VALUES ('看完', 'done', '2026-01');
+             INSERT INTO fin_accounts (name, kind, currency, sort_order) VALUES ('招行', 'bank', 'CNY', 1), ('嘉信', 'broker', 'USD', 2);
+             INSERT INTO fin_balances (account_id, month, amount, updated_at) VALUES
+               (1, '2026-09', 100000, '2026-10-07T12:00:00.000Z'),  -- saved after the month → its last day
+               (1, '2026-10', 120000, '2026-10-07T12:00:00.000Z'),  -- saved inside the month → that day
+               (2, '2026-10', 500000, '2026-09-20T12:00:00.000Z');  -- saved before the month → its first day
+             INSERT INTO fin_rates (month, currency, rate, updated_at) VALUES ('2026-10', 'USD', 7.1, '2026-10-07T12:00:00.000Z');
+             INSERT INTO fin_holdings (account_id, month, name, quantity, value, sort_order, updated_at) VALUES
+               (2, '2026-10', 'VOO', 4, 200000, 1, '2026-10-07T12:00:00.000Z'), (2, '2026-10', '现金', NULL, 12345, 2, '2026-10-07T12:00:00.000Z');
+             INSERT INTO fin_fixed (name, amount, currency, account_id, rule, next_day, sort_order) VALUES ('房租', 150000, 'CNY', 1, 'monthly:1', '2026-11-01', 1);
+             INSERT INTO fin_entries (flow, amount, currency, day, account_id, fixed_id, note) VALUES ('out', 150000, 'CNY', '2026-10-01', 1, 1, '房租');",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..18], &dir.join("backups")).unwrap(), 18);
+        let col = |sql: &str| -> Vec<String> { c.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect() };
+        assert_eq!(col("SELECT coalesce(finished_year, '-') FROM books ORDER BY id"), ["2025", "-"]);
+        assert_eq!(col("SELECT finished_year FROM films"), ["2026"]);
+        assert_eq!(col("SELECT day FROM fin_balances ORDER BY id"), ["2026-09-30", "2026-10-07", "2026-10-01"]);
+        assert_eq!(col("SELECT day FROM fin_rates"), ["2026-10-07"]);
+        let h: Vec<(String, f64, f64)> =
+            c.prepare("SELECT day, quantity, price FROM fin_holdings ORDER BY sort_order").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(h, [("2026-10-07".into(), 4.0, 500.0), ("2026-10-07".into(), 1.0, 123.45)]);
+        // the entry keeps its 固定支出 link (FK now points at the rebuilt fin_fixed); accounts are gone
+        assert_eq!(col("SELECT f.name FROM fin_entries e JOIN fin_fixed f ON f.id = e.fixed_id"), ["房租"]);
+        assert_eq!(col("SELECT \"table\" FROM pragma_foreign_key_list('fin_entries') ORDER BY 1"), ["fin_fixed", "kinds"]);
+        assert_eq!(col("SELECT name FROM pragma_table_info('fin_fixed') WHERE name = 'account_id'").len(), 0);
+        c.execute("DELETE FROM fin_fixed", []).unwrap();
+        assert_eq!(col("SELECT typeof(fixed_id) FROM fin_entries"), ["null"]);
+        let fk: i64 = c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(fk, 0);
+    }
+
+    #[test]
+    fn v18_jobs_become_steps() {
+        let dir = temp_dir("v18-jobs");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..18], &dir.join("backups")).unwrap();
+        // default statuses: 1 想投 · 2 已投递 · 3 网申测评 / 笔试 · 4 面试 · 5 Offer · 6 已接受 · 7 被拒
+        c.execute_batch(
+            "INSERT INTO todo_groups (name, sort_order) VALUES ('💼 求职', 1);
+             INSERT INTO todo_tasks (group_id, title, sort_order) VALUES (1, '面试 B', 1);
+             INSERT INTO jobs (company, status_id, reached_id, deadline, salary, note) VALUES ('A', 1, 1, '2026-10-20', '20k', NULL);
+             INSERT INTO jobs (company, status_id, reached_id, applied_on, step_on, task_id, note) VALUES ('B', 4, 4, '2026-10-01', '2026-10-09', 1, '内推');
+             INSERT INTO jobs (company, status_id, reached_id, applied_on, cover_letter) VALUES ('C', 7, 2, '2026-09-01', '~/cl.docx');",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..19], &dir.join("backups")).unwrap(), 19);
+        let steps = |company: &str| -> Vec<(i64, i64, Option<String>)> {
+            c.prepare("SELECT st.status_id, st.done, st.done_on FROM job_steps st JOIN jobs j ON j.id = st.job_id WHERE j.company = ?1 ORDER BY st.status_id")
+                .unwrap()
+                .query_map([company], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        let s = |d: &str| Some(d.to_string());
+        assert_eq!(steps("A"), [(2, 0, None), (3, 0, None), (4, 0, None), (5, 0, None), (6, 0, None)]); // 想投: nothing checked
+        assert_eq!(steps("B"), [(2, 1, s("2026-10-01")), (3, 1, None), (4, 1, s("2026-10-09")), (5, 0, None), (6, 0, None)]);
+        assert_eq!(steps("C"), [(2, 1, s("2026-09-01")), (3, 0, None), (4, 0, None), (5, 0, None), (6, 0, None), (7, 1, None)]);
+        let notes: Vec<Option<String>> = c.prepare("SELECT note FROM jobs ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(notes, [s("截止日期：2026-10-20\n薪资：20k"), s("内推"), s("求职信：~/cl.docx")]);
+        // the linked task stays as an ordinary task; steps go with their application
+        let n: i64 = c.query_row("SELECT count(*) FROM todo_tasks", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        c.execute("DELETE FROM jobs WHERE company = 'C'", []).unwrap();
+        assert!(steps("C").is_empty());
+        let fk: i64 = c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(fk, 0);
+    }
+
+    /// v20 (标签置顶 / 图标) and v21 (重读重看) only add tables.
+    #[test]
+    fn v19_upgrades_to_tag_meta_and_rereads() {
+        let dir = temp_dir("v19-rereads");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..19], &dir.join("backups")).unwrap();
+        c.execute_batch("INSERT INTO books (title) VALUES ('A'); INSERT INTO notes (content) VALUES ('#读书 一条');").unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..21], &dir.join("backups")).unwrap(), 21);
+        c.execute_batch(
+            "INSERT INTO book_rereads (book_id, year, rating, sort_order) VALUES (1, '2026', 5, 1);
+             INSERT INTO note_tag_meta (tag, pin_order, icon) VALUES ('读书', 1, '📖');",
+        )
+        .unwrap();
+        c.execute("DELETE FROM books", []).unwrap();
+        let n: i64 = c.query_row("SELECT count(*) FROM book_rereads", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0); // rereads go with their book
+        let files: Vec<_> = std::fs::read_dir(dir.join("backups")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(files.iter().any(|f| f.to_str().unwrap().ends_with("-before-v20.db")));
+    }
+
+    #[test]
+    fn v21_unpins_sub_tags() {
+        let dir = temp_dir("v21-pins");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..21], &dir.join("backups")).unwrap();
+        c.execute_batch("INSERT INTO note_tag_meta (tag, pin_order, icon) VALUES ('读书', 1, NULL), ('读书/摘抄', 2, '📖'), ('a/b', 3, NULL);").unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..22], &dir.join("backups")).unwrap(), 22);
+        let rows: Vec<(String, Option<i64>, Option<String>)> =
+            c.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY tag").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rows, [("读书".into(), Some(1), None), ("读书/摘抄".into(), None, Some("📖".into()))]);
     }
 
     #[test]

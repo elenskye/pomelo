@@ -131,17 +131,20 @@ function Inline(props: { line: string; onTag?: (tag: string) => void }) {
 const LIST = /^( *)(?:([-*])|(\d+)[.)]) (.*)$/;
 const BULLETS = ["•", "◦", "▪"];
 
+/** Each line is a block: paragraphs sit 0.75em apart (clearly more than the line gap), list items in a
+ * row 0.25rem; a blank line adds a little more room. */
 export function NoteBody(props: { content: string; onTag?: (tag: string) => void }) {
   const lines = props.content.split("\n");
+  const gap = (i: number, isItem: boolean) => (i === 0 || !lines[i - 1].trim() ? "" : isItem && LIST.test(lines[i - 1]) ? "mt-1" : "mt-[0.75em]");
   return (
-    <div className="selectable space-y-1 leading-relaxed break-words">
+    <div className="selectable leading-relaxed break-words">
       {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-2" />;
+        if (!line.trim()) return i === 0 ? null : <div key={i} className="h-[0.9em]" />;
         const li = LIST.exec(line);
         if (li) {
           const level = Math.floor(li[1].length / 2);
           return (
-            <div key={i} className="flex" style={{ paddingLeft: `${level * 1.25}em` }}>
+            <div key={i} className={`flex ${gap(i, true)}`} style={{ paddingLeft: `${level * 1.25}em` }}>
               <span className="w-[1.25em] shrink-0 text-muted-foreground tabular-nums">{li[3] ? `${li[3]}.` : BULLETS[Math.min(level, 2)]}</span>
               <div className="min-w-0 flex-1">
                 <Inline line={li[4]} onTag={props.onTag} />
@@ -151,7 +154,7 @@ export function NoteBody(props: { content: string; onTag?: (tag: string) => void
         }
         const indent = /^ */.exec(line)![0].length;
         return (
-          <p key={i} style={indent ? { paddingLeft: `${Math.floor(indent / 2) * 1.25}em` } : undefined}>
+          <p key={i} className={gap(i, false)} style={indent ? { paddingLeft: `${Math.floor(indent / 2) * 1.25}em` } : undefined}>
             <Inline line={line.trimStart()} onTag={props.onTag} />
           </p>
         );

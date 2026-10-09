@@ -36,6 +36,10 @@ export const moneyInput = (cents: number | null | undefined) => (cents == null ?
 export const thisMonth = () => localToday().slice(0, 7);
 export const shiftMonth = (ym: string, k: number) => toYmd(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1 + k, 1)).slice(0, 7);
 export const monthTitle = (ym: string) => `${Number(ym.slice(0, 4))} 年 ${Number(ym.slice(5, 7))} 月`;
+export const dayTitle = (d: string) => `${monthTitle(d)} ${Number(d.slice(8))} 日`;
+/** Chart label for a dated point: "10/7", with the year ("26/10/7") on the first point and when the year changes. */
+export const dayTick = (d: string, prev: string | undefined) =>
+  !prev || prev.slice(0, 4) !== d.slice(0, 4) ? `${d.slice(2, 4)}/${Number(d.slice(5, 7))}/${Number(d.slice(8))}` : `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
 /** Chart label: "10月", or "26/1" at a year start. */
 export const monthTick = (ym: string, first: boolean) => (first || ym.endsWith("-01") ? `${ym.slice(2, 4)}/${Number(ym.slice(5))}` : `${Number(ym.slice(5))}月`);
 

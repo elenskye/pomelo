@@ -195,13 +195,15 @@ function Siblings(props: TreeProps & { nodes: TreeNode[]; depth: number; onDelet
   );
 }
 
-/** A place's tasks as a tree. Undone top-level tasks first; done ones fold into 「已完成」 at the bottom. */
-export function TaskTree(props: TreeProps & { tasks: Task[]; empty?: ReactNode }) {
+/** A place's tasks as a tree. Undone top-level tasks first; done ones fold into 「已完成」 at the bottom
+ * (with `doneGoals` — a group's finished goals — on top of them). */
+export function TaskTree(props: TreeProps & { tasks: Task[]; empty?: ReactNode; doneGoals?: { count: number; node: ReactNode } }) {
   const [del, delDialog] = useDeleteTask();
   const [showDone, setShowDone] = useState(false);
   const roots = buildTree(props.tasks);
   const open = roots.filter((n) => !n.task.done);
   const done = roots.filter((n) => n.task.done);
+  const doneGoalCount = props.doneGoals?.count ?? 0;
   const onDelete = (n: TreeNode) => void del(n.task, countSub(n));
 
   return (
@@ -213,18 +215,24 @@ export function TaskTree(props: TreeProps & { tasks: Task[]; empty?: ReactNode }
       ) : (
         roots.length === 0 && props.empty
       )}
-      {done.length > 0 && (
+      {done.length + doneGoalCount > 0 && (
         <section>
           <button
             type="button"
+            aria-expanded={showDone}
             onClick={() => setShowDone((v) => !v)}
             className="mb-1.5 flex items-center gap-1 px-1 text-sm text-muted-foreground hover:text-foreground"
           >
-            {showDone ? <ChevronDown size={14} /> : <ChevronRight size={14} />} 已完成 {done.length}
+            {showDone ? <ChevronDown size={14} /> : <ChevronRight size={14} />} 已完成 {done.length + doneGoalCount}
           </button>
           {showDone && (
-            <div className="overflow-hidden rounded-card border bg-card">
-              <Siblings {...props} nodes={done} depth={0} onDelete={onDelete} />
+            <div className="space-y-2">
+              {doneGoalCount > 0 && props.doneGoals?.node}
+              {done.length > 0 && (
+                <div className="overflow-hidden rounded-card border bg-card">
+                  <Siblings {...props} nodes={done} depth={0} onDelete={onDelete} />
+                </div>
+              )}
             </div>
           )}
         </section>

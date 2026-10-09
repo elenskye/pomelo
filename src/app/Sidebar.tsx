@@ -1,9 +1,10 @@
-// App sidebar: modules (drag a row to reorder; order kept in settings) + 设置. Collapses to an
-// icon strip (names show on hover); the state is kept in settings too.
+// App sidebar: 首页 (fixed on top), the modules not hidden in 设置 (drag a row to reorder; order kept in settings) + 设置.
+// Collapses to an icon strip (names show on hover); the state is kept in settings too.
 import { NavLink } from "react-router";
-import { PanelLeftClose, PanelLeftOpen, Settings, type LucideIcon } from "lucide-react";
+import { House, PanelLeftClose, PanelLeftOpen, Search, Settings, type LucideIcon } from "lucide-react";
 import { isBoolean, isStringArray, useSetting } from "@/shared/settings";
 import { useSortable } from "@/shared/sortable";
+import { useHiddenModules } from "./hidden";
 import { MODULES, type ModuleDef } from "./modules";
 
 const COLLAPSED = "ui.sidebar_collapsed";
@@ -15,11 +16,12 @@ export function orderModules(order: string[]): ModuleDef[] {
   return [...known, ...MODULES.filter((m) => !known.includes(m))];
 }
 
-function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: string; collapsed: boolean }) {
+function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: string; collapsed: boolean; end?: boolean }) {
   const Icon = props.icon;
   return (
     <NavLink
       to={props.to}
+      end={props.end}
       aria-label={props.collapsed ? props.label : undefined}
       className={({ isActive }) =>
         `group/nav relative flex items-center gap-2.5 rounded-control py-1.5 transition-colors duration-150 ${props.collapsed ? "justify-center px-0" : "px-2.5"} ${
@@ -42,11 +44,14 @@ function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: s
   );
 }
 
-export function Sidebar(props: { isDev?: boolean }) {
+export function Sidebar(props: { isDev?: boolean; onSearch?: () => void }) {
   const [collapsed, setCollapsed] = useSetting(COLLAPSED, false, isBoolean);
   const [order, setOrder] = useSetting<string[]>(ORDER, [], isStringArray);
-  const modules = orderModules(order);
-  const sort = useSortable<HTMLElement>((ids) => setOrder(ids.map((i) => modules[i].id)));
+  const [hidden] = useHiddenModules();
+  const all = orderModules(order);
+  const modules = all.filter((m) => !hidden.includes(m.id));
+  // hidden ones keep their place at the end of the saved order
+  const sort = useSortable<HTMLElement>((ids) => setOrder([...ids.map((i) => modules[i].id), ...all.filter((m) => hidden.includes(m.id)).map((m) => m.id)]));
   const Toggle = collapsed ? PanelLeftOpen : PanelLeftClose;
   const toggle = (
     <button
@@ -59,19 +64,39 @@ export function Sidebar(props: { isDev?: boolean }) {
       <Toggle size={16} strokeWidth={1.5} />
     </button>
   );
+  const search = props.onSearch && (
+    <button
+      type="button"
+      aria-label="全局搜索"
+      title="全局搜索"
+      onClick={props.onSearch}
+      className="rounded-control p-1.5 text-muted-foreground transition-colors duration-150 outline-none hover:bg-black/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/5"
+    >
+      <Search size={16} strokeWidth={1.5} />
+    </button>
+  );
   return (
     <aside
-      className={`flex shrink-0 flex-col border-r bg-sidebar pb-3 transition-[width] duration-150 ${collapsed ? "w-[60px] px-2" : "w-[220px] px-3"}`}
+      className={`flex shrink-0 flex-col border-r bg-sidebar pb-3 transition-[width] duration-150 ${collapsed ? "w-[96px] px-3" : "w-[220px] px-3"}`}
     >
       <div data-tauri-drag-region className="h-12 shrink-0" />
       {collapsed ? (
-        <div className="mb-3 flex justify-center">{toggle}</div>
+        <div className="mb-3 flex flex-col items-center gap-1">
+          {toggle}
+          {search}
+        </div>
       ) : (
         <div data-tauri-drag-region className="mb-3 flex items-center justify-between pl-2.5">
           <span className="pointer-events-none text-base font-bold">柚儿园</span>
-          {toggle}
+          <span className="flex items-center">
+            {search}
+            {toggle}
+          </span>
         </div>
       )}
+      <nav className="mb-0.5 flex flex-col">
+        <NavItem to="/" end label="首页" icon={House} color="var(--muted-foreground)" collapsed={collapsed} />
+      </nav>
       <nav ref={sort.listRef} className="flex flex-col gap-0.5">
         {modules.map((m, i) => (
           <div key={m.id} {...sort.item(i)} {...sort.handle(i)} className="rounded-control bg-sidebar">

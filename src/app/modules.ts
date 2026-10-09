@@ -19,5 +19,3 @@ export const moduleById = (id: string) => MODULES.find((m) => m.id === id)!;
 
 /** Chinese label for a module key (import summaries etc.); unknown keys pass through. */
 export const moduleLabel = (id: string) => MODULES.find((m) => m.id === id)?.label ?? id;
-
-export const DEFAULT_ROUTE = "/todo";

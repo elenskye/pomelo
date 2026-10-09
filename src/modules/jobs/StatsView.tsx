@@ -1,5 +1,6 @@
-// 统计: a few numbers, the funnel (how far applications got — from `reached`, so rejected ones count
-// up to where they stopped), applications per day / week (by 投递日期), and where everything is now.
+// 统计: a few numbers, the funnel (per step: checked / applications that have the step — one that
+// skipped 笔试 counts for neither), applications per day / week (by 投递日期 = the first checked day),
+// and where everything is now.
 import { useState, type ReactNode } from "react";
 import { BarList, ColumnChart } from "@/shared/charts";
 import { addDays, localToday, mondayOf } from "@/shared/dates";
@@ -34,20 +35,21 @@ export function StatsView(props: { jobs: Job[] }) {
   const [span, setSpan] = useState<Span>("week");
   const today = localToday();
   const jobs = props.jobs;
-  const order = new Map(statuses.map((s) => [s.id, s]));
   const applied = jobs.filter((j) => j.appliedOn);
   const week0 = mondayOf(today);
   const fmt = (n: number) => `${n} 份`;
 
-  // funnel: 已投递 → … → 拿到, each counting applications that reached at least that far
-  const steps = statuses.filter((s) => s.stage === "applied" || s.stage === "active" || s.stage === "got");
-  const furthest = (j: Job) => {
-    const r = j.reachedId !== null ? order.get(j.reachedId) : undefined;
-    const cur = order.get(j.statusId);
-    return r ?? (cur && cur.stage !== "closed" ? cur : undefined);
-  };
-  const funnel = steps.map((s) => ({ s, n: jobs.filter((j) => (furthest(j)?.sortOrder ?? -1) >= s.sortOrder && furthest(j)?.stage !== "wish").length }));
-  const top = funnel[0]?.n ?? 0;
+  // funnel: 已投递 → … → the first 拿到 status (Offer; accepting isn't a step of it); each step only among
+  // the applications that have it (想投 ones — nothing checked yet — aren't in it)
+  const started = jobs.filter((j) => j.steps.some((x) => x.done));
+  const firstGot = statuses.find((s) => s.stage === "got");
+  const funnel = statuses
+    .filter((s) => s.stage === "applied" || s.stage === "active" || s === firstGot)
+    .map((s) => {
+      const mine = started.map((j) => j.steps.find((x) => x.statusId === s.id)).filter((x) => x !== undefined);
+      return { s, have: mine.length, done: mine.filter((x) => x.done).length };
+    });
+  const top = Math.max(0, ...funnel.map((f) => f.have));
 
   const buckets =
     span === "day"
@@ -62,7 +64,7 @@ export function StatsView(props: { jobs: Job[] }) {
   const counts = buckets.map((b) => applied.filter((j) => j.appliedOn! >= b.from && j.appliedOn! <= b.to).length);
 
   return (
-    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4">
+    <div className="-m-1 min-h-0 flex-1 space-y-4 overflow-y-auto p-1 pb-4">
       <div className="grid grid-cols-4 gap-3">
         <Kpi label="投出" value={fmt(applied.length)} />
         <Kpi label="本周投了" value={fmt(applied.filter((j) => j.appliedOn! >= week0).length)} />
@@ -101,7 +103,7 @@ export function StatsView(props: { jobs: Job[] }) {
           {top === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">还没有投出去的</p>
           ) : (
-            <BarList rows={funnel.map(({ s, n }) => ({ key: String(s.id), label: s.name, value: n, detail: `${Math.round((n / top) * 100)}%` }))} format={fmt} max={top} />
+            <BarList rows={funnel.map(({ s, have, done }) => ({ key: String(s.id), label: s.name, value: done, detail: `/ ${have} 份` }))} format={String} max={top} />
           )}
         </Card>
         <Card title="现在的状态">

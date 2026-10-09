@@ -1,28 +1,28 @@
-// 投递: 该跟进 reminders on top, then the table (filter by stage group, search company / 岗位 / 地点).
+// 投递: 该跟进 reminders on top, then the table (filter by current status, search company / 岗位 / 地点).
 import { useState } from "react";
 import { BellRing } from "lucide-react";
 import { useKinds } from "@/shared/kinds/api";
 import { Button, SearchInput, Segmented } from "@/shared/ui";
-import { localToday } from "@/shared/dates";
-import { CHANNELS, jobLabel, STAGE_STYLE, useJobMutations, useStatuses, type Job, type Stage } from "./api";
+import { CHANNELS, jobLabel, STAGE_STYLE, useJobMutations, useStatuses, type Job } from "./api";
 
-type Filter = "all" | "wish" | "open" | "got" | "closed";
-const FILTERS: { value: Filter; label: string; stages: Stage[] }[] = [
-  { value: "all", label: "全部", stages: ["wish", "applied", "active", "got", "closed"] },
-  { value: "wish", label: "想投", stages: ["wish"] },
-  { value: "open", label: "进行中", stages: ["applied", "active"] },
-  { value: "got", label: "拿到", stages: ["got"] },
-  { value: "closed", label: "已结束", stages: ["closed"] },
-];
+/** "all" or "s<status id>". */
+type Filter = string;
 const slash = (d: string) => d.split("-").join(" / ");
 
-/** What comes next, by stage: deadline · waiting / 该跟进 · step date. */
-function Next({ j, today }: { j: Job; today: string }) {
-  if (j.stage === "wish" && j.deadline) return <span className={j.deadline < today ? "text-destructive" : undefined}>截止 {slash(j.deadline)}</span>;
-  if (j.stage === "applied" && j.followUp) return <span className="text-[var(--status-doing-fg)]">该跟进</span>;
-  if (j.stage === "applied" && j.waitingDays !== null) return <span className="text-muted-foreground">等了 {j.waitingDays} 天</span>;
-  if (j.stage === "active" && j.stepOn) return <span className={j.stepOn < today ? "text-destructive" : undefined}>{slash(j.stepOn)}</span>;
-  return <span className="text-muted-foreground">—</span>;
+/** The current status's day; while 等回音, how long it has waited (or 该跟进). */
+function When({ j }: { j: Job }) {
+  const day = j.steps.find((s) => s.statusId === j.statusId && s.done)?.doneOn;
+  const sep = day ? " · " : "";
+  return (
+    <>
+      {day && slash(day)}
+      {j.stage === "applied" && j.followUp ? (
+        <span className="text-[var(--status-doing-fg)]">{sep}该跟进</span>
+      ) : (
+        j.stage === "applied" && j.waitingDays !== null && <span className="text-muted-foreground">{sep}等了 {j.waitingDays} 天</span>
+      )}
+    </>
+  );
 }
 
 export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpen: (j: Job) => void }) {
@@ -31,19 +31,16 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
   const m = useJobMutations();
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
-  const today = localToday();
   const statusName = new Map(statuses.map((s) => [s.id, s.name]));
   const channelName = new Map(channels.map((k) => [k.id, k.name]));
   const due = props.jobs.filter((j) => j.followUp);
-  const stages = FILTERS.find((f) => f.value === filter)!.stages;
+  const inFilter = (j: Job, f: Filter) => f === "all" || `s${j.statusId}` === f;
   const needle = q.trim().toLowerCase();
-  const shown = props.jobs.filter(
-    (j) => stages.includes(j.stage) && (!needle || [j.company, j.position, j.location].some((s) => s?.toLowerCase().includes(needle))),
-  );
-  const count = (f: (typeof FILTERS)[number]) => props.jobs.filter((j) => f.stages.includes(j.stage)).length;
+  const shown = props.jobs.filter((j) => inFilter(j, filter) && (!needle || [j.company, j.position, j.location].some((s) => s?.toLowerCase().includes(needle))));
+  const filters: { value: Filter; label: string }[] = [{ value: "all", label: "全部" }, ...statuses.map((s) => ({ value: `s${s.id}`, label: s.name }))];
 
   return (
-    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4">
+    <div className="-m-1 min-h-0 flex-1 space-y-4 overflow-y-auto p-1 pb-4">
       {due.length > 0 && (
         <section className="rounded-card border bg-card">
           <h3 className="flex items-center gap-1.5 border-b px-4 py-2 text-sm">
@@ -68,7 +65,7 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
         </section>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Segmented ariaLabel="筛选" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.value, label: `${f.label} ${count(f)}` }))} />
+        <Segmented ariaLabel="筛选" value={filter} onChange={setFilter} options={filters.map((f) => ({ value: f.value, label: `${f.label} ${props.jobs.filter((j) => inFilter(j, f.value)).length}` }))} />
         <div className="w-56">
           <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索公司、岗位、地点" aria-label="搜索" />
         </div>
@@ -82,9 +79,8 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
               <th className="px-3 py-2 text-left font-normal">公司</th>
               <th className="px-3 py-2 text-left font-normal">岗位</th>
               <th className="w-24 px-3 py-2 text-left font-normal">地点</th>
-              <th className="w-32 px-3 py-2 text-left font-normal">状态</th>
-              <th className="w-32 px-3 py-2 text-left font-normal">投递日期</th>
-              <th className="w-40 px-3 py-2 text-left font-normal">下一步</th>
+              <th className="w-36 px-3 py-2 text-left font-normal">状态</th>
+              <th className="w-48 px-3 py-2 text-left font-normal">日期</th>
               <th className="w-24 px-3 py-2 text-left font-normal">渠道</th>
             </tr>
           </thead>
@@ -101,13 +97,14 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
                 <td className="max-w-0 truncate px-3 py-2">{j.position}</td>
                 <td className="truncate px-3 py-2">{j.location}</td>
                 <td className="px-3 py-2">
-                  <span className="rounded px-1.5 py-0.5 text-xs whitespace-nowrap" style={{ background: STAGE_STYLE[j.stage].bg, color: STAGE_STYLE[j.stage].fg }}>
-                    {statusName.get(j.statusId)}
-                  </span>
+                  {j.statusId !== null && (
+                    <span className="rounded px-1.5 py-0.5 text-xs whitespace-nowrap" style={{ background: STAGE_STYLE[j.stage].bg, color: STAGE_STYLE[j.stage].fg }}>
+                      {statusName.get(j.statusId)}
+                    </span>
+                  )}
                 </td>
-                <td className="px-3 py-2 tabular-nums">{j.appliedOn ? slash(j.appliedOn) : ""}</td>
                 <td className="px-3 py-2 whitespace-nowrap tabular-nums">
-                  <Next j={j} today={today} />
+                  <When j={j} />
                 </td>
                 <td className="truncate px-3 py-2 text-muted-foreground">{j.kindId !== null ? channelName.get(j.kindId) : ""}</td>
               </tr>

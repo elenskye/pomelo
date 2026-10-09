@@ -5,7 +5,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
-export type DropdownOption<T> = { value: T; label: ReactNode };
+/** `group`: options sharing one get a small heading above them in the menu (consecutive options only). */
+export type DropdownOption<T> = { value: T; label: ReactNode; group?: string };
 export type DropdownAction = { label: ReactNode; onSelect: () => void };
 
 export function Dropdown<T>(props: {
@@ -186,7 +187,16 @@ export function Dropdown<T>(props: {
             }}
             className="z-50 animate-pop-in overflow-y-auto rounded-card border bg-popover p-1 text-foreground shadow-lg"
           >
-            {options.map((o, i) => item(i, o.label, i === selectedIndex))}
+            {options.map((o, i) =>
+              o.group && o.group !== options[i - 1]?.group ? (
+                <div key={i} role="presentation">
+                  <div className={`px-2 pb-1 text-xs text-muted-foreground ${i > 0 ? "pt-2" : "pt-1"}`}>{o.group}</div>
+                  {item(i, o.label, i === selectedIndex)}
+                </div>
+              ) : (
+                item(i, o.label, i === selectedIndex)
+              ),
+            )}
             {actions.length > 0 && <div className="mx-1 my-1 border-t" />}
             {actions.map((a, j) => item(options.length + j, a.label, false, true))}
           </div>,

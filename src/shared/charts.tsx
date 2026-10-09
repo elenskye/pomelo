@@ -258,6 +258,79 @@ export function LineChart(props: {
   );
 }
 
+/** Several series on shared x labels (e.g. update days): a series skips the labels where it has no
+ * value (null) and its line joins across them; each real point gets a dot. y-range fits the data. */
+export function MultiLineChart(props: {
+  labels: string[];
+  series: { key: string; name: string; color: string; values: (number | null)[] }[];
+  format: Fmt;
+  axisFormat?: Fmt;
+  height?: number;
+  title?: (i: number) => string;
+  labelEvery?: number;
+}) {
+  const [ref, width] = useWidth();
+  const [hover, setHover] = useState<number | null>(null);
+  const height = props.height ?? 200;
+  const n = props.labels.length;
+  const present = props.series.flatMap((s) => s.values.filter((v): v is number => v !== null));
+  const ticks = present.length > 0 ? niceTicks(Math.max(...present), 4, Math.min(...present)) : niceTicks(0);
+  const [lo, top] = [ticks[0], ticks[ticks.length - 1]];
+  const axisFmt = props.axisFormat ?? props.format;
+  const left = leftFor(ticks.map(axisFmt));
+  const plotH = height - PAD.top - PAD.bottom;
+  const y = (v: number) => PAD.top + plotH - ((v - lo) / (top - lo || 1)) * plotH;
+  const step = n > 1 ? (width - left - PAD.right - 16) / (n - 1) : 0;
+  const x = (i: number) => left + 8 + (n > 1 ? i * step : (width - left - PAD.right) / 2);
+  const every = props.labelEvery ?? 1;
+  return (
+    <div
+      ref={ref}
+      className="relative"
+      onPointerLeave={() => setHover(null)}
+      onPointerMove={(e) => {
+        if (n === 0) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        const i = n > 1 ? Math.round((e.clientX - r.left - left - 8) / step) : 0;
+        setHover(Math.max(0, Math.min(n - 1, i)));
+      }}
+    >
+      {width > 0 && (
+        <svg width={width} height={height} role="img" aria-label={props.series.map((s) => s.name).join("、")}>
+          <YGrid ticks={ticks} y={y} width={width} format={axisFmt} left={left} />
+          {props.labels.map((label, i) =>
+            i % every === 0 || i === n - 1 ? (
+              <text key={i} x={x(i)} y={height - 6} textAnchor="middle" className="fill-muted-foreground text-[11px] tabular-nums">
+                {label}
+              </text>
+            ) : null,
+          )}
+          {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={y(lo)} stroke="var(--chart-axis)" strokeWidth={1} />}
+          {props.series.map((s) => {
+            const pts = s.values.flatMap((v, i) => (v === null ? [] : [{ i, v }]));
+            return (
+              <g key={s.key}>
+                <path d={pts.map((p, j) => `${j ? "L" : "M"}${x(p.i)},${y(p.v)}`).join("")} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                {pts.map((p) => (
+                  <circle key={p.i} cx={x(p.i)} cy={y(p.v)} r={p.i === hover ? 4 : 2.5} fill={s.color} stroke="var(--card)" strokeWidth={p.i === hover ? 2 : 1} />
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      )}
+      {hover !== null && (
+        <Tip x={x(hover)} width={width}>
+          <div className="mb-1 text-muted-foreground">{props.title ? props.title(hover) : props.labels[hover]}</div>
+          {props.series.map((s) => (
+            <TipRow key={s.key} color={s.color} value={s.values[hover] === null ? "—" : props.format(s.values[hover]!)} name={s.name} />
+          ))}
+        </Tip>
+      )}
+    </div>
+  );
+}
+
 /** Part-to-whole at a glance (≤ 6 slices; fold the rest into 其他 before calling). */
 export function Donut(props: { slices: { key: string; label: string; value: number; color: string }[]; format: Fmt; center?: ReactNode; size?: number }) {
   const size = props.size ?? 168;

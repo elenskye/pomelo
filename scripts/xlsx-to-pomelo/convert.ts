@@ -39,7 +39,7 @@ function media(ws: Sheet, sheetName: string, headers: string[], status: Record<s
       country: cell(row, 3),
       status: st ? status[st] : ("unmarked" as Status),
       rating: stars(cell(row, 5)),
-      finishedMonth: null,
+      finishedYear: null,
       note: cell(row, 6),
     });
   }

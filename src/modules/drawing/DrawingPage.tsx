@@ -4,6 +4,7 @@ import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { KindManager } from "@/shared/kinds/KindManager";
+import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { DragHandle, useSortable } from "@/shared/sortable";
 import { STATUS_ORDER, StatusSelect, type StatusCode } from "@/shared/status";
@@ -22,7 +23,7 @@ function CourseList(props: { courses: Course[]; currentId: number | null; onSele
   const sort = useSortable((ids) => reorderCourses.mutate(ids));
   return (
     <nav aria-label="课程" className="flex w-56 shrink-0 flex-col">
-      <div ref={sort.listRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+      <div ref={sort.listRef} className="-m-1 min-h-0 flex-1 space-y-1 overflow-y-auto p-1 pr-2">
         {props.courses.map((c) => (
           <button
             key={c.id}
@@ -184,6 +185,14 @@ export default function DrawingPage() {
     if (await panel.request(null)) setCourseId(id);
   };
 
+  // 全局搜索: a course, or a lesson (its course first, then its panel)
+  useOpenRequest(async (h) => {
+    if (!(await panel.request(null))) return;
+    setFilter("all");
+    setKind("all");
+    setCourseId(h.kind === "course" ? h.id : h.parent);
+    if (h.kind === "lesson") void panel.request(h.id);
+  });
   usePageKeys({
     onNew: current ? () => void panel.request("new") : undefined,
     onEscape: sel !== null ? () => void panel.request(null) : undefined,
@@ -281,7 +290,7 @@ export default function DrawingPage() {
                 </div>
               )}
 
-              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              <div className="-m-1 flex min-h-0 flex-1 flex-col overflow-y-auto p-1">
                 {lessonsQuery.isPending ? null : lessons.length === 0 ? (
                   <EmptyState
                     title="这门课还没有课节"

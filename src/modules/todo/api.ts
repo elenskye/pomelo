@@ -6,8 +6,8 @@ import { errorText, useToast } from "@/shared/feedback";
 
 export type TodoGroup = { id: number; name: string; sortOrder: number; open: number; createdAt: string; updatedAt: string };
 
-export type GoalStatus = "active" | "paused" | "done" | "abandoned";
-export const GOAL_STATUS: Record<GoalStatus, string> = { active: "进行中", paused: "暂停", done: "已完成", abandoned: "已放弃" };
+export type GoalStatus = "active" | "paused" | "done";
+export const GOAL_STATUS: Record<GoalStatus, string> = { active: "进行中", paused: "暂停", done: "已完成" };
 
 export type Goal = {
   id: number;

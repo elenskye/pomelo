@@ -11,6 +11,8 @@ export const BOOKS: CollectionConfig = {
   newLabel: "新书",
   titleLabel: "书名",
   creatorLabel: "作者",
+  rereadLabel: "重读",
+  rereadAdd: "再读一次",
   statusLabels: { unmarked: "待标记", todo: "想读", doing: "在读", done: "已读" },
   emptyTitle: "书架空空，去摸会儿鱼吧",
 };

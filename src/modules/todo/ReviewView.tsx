@@ -123,7 +123,7 @@ export function ReviewView(props: { today: string; selectedId: number | null; on
           </>
         }
       />
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4">
+      <div className="-m-1 min-h-0 flex-1 space-y-5 overflow-y-auto p-1 pb-4">
         {items.length === 0 && !isPending ? (
           <p className="py-10 text-center text-muted-foreground">这段时间还没有完成的事</p>
         ) : (

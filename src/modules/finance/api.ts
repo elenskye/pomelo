@@ -1,5 +1,5 @@
 // Typed wrappers for Rust fin_* commands (src-tauri/src/modules/finance.rs) + React Query hooks.
-// Rules (currency per account, posting 固定支出, total assets) live in Rust; the UI only renders.
+// Rules (posting 固定支出, total assets, spreading periods over months) live in Rust; the UI only renders.
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
@@ -24,31 +24,35 @@ export type Account = {
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
-  lastMonth: string | null;
+  lastDay: string | null;
   lastAmount: number | null;
 };
 export type AccountPatch = Partial<Pick<Account, "name" | "kind" | "currency" | "closed" | "note">>;
-export type Balance = { accountId: number; month: string; amount: number };
-export type Rate = { month: string; currency: Currency; rate: number };
-export type MonthTotal = { month: string; totalCny: number | null; missing: Currency[] };
-export type Assets = { balances: Balance[]; rates: Rate[]; totals: MonthTotal[] };
-export type Holding = { id: number; accountId: number; month: string; name: string; quantity: number | null; value: number };
-export type HoldingInput = { name: string; quantity: number | null; value: number };
+export type Balance = { accountId: number; day: string; amount: number };
+export type Rate = { day: string; currency: Currency; rate: number };
+/** Total assets on a day with any balance (latest balance per account × latest rate up to it). */
+export type DayTotal = { day: string; totalCny: number | null; missing: Currency[] };
+export type Assets = { balances: Balance[]; rates: Rate[]; totals: DayTotal[] };
+/** price: unit price in currency units (not cents); value = quantity × price, in cents. */
+export type Holding = { id: number; accountId: number; day: string; name: string; quantity: number; price: number; value: number };
+export type HoldingInput = { name: string; quantity: number; price: number };
 
 export type Entry = {
   id: number;
   flow: Flow;
   amount: number;
   currency: Currency;
+  /** The day, or a period's first day. */
   day: string;
+  /** A period's last day (记小额); null = one day. */
+  endDay: string | null;
   kindId: number | null;
-  accountId: number | null;
   fixedId: number | null;
   note: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type EntryPatch = Partial<Pick<Entry, "flow" | "amount" | "currency" | "day" | "kindId" | "accountId" | "note">>;
+export type EntryPatch = Partial<Pick<Entry, "flow" | "amount" | "currency" | "day" | "endDay" | "kindId" | "note">>;
 
 export type Fixed = {
   id: number;
@@ -57,7 +61,6 @@ export type Fixed = {
   amount: number;
   currency: Currency;
   kindId: number | null;
-  accountId: number | null;
   /** monthly:<1-31> | yearly:<MM-DD> */
   rule: string;
   nextDay: string;
@@ -67,10 +70,10 @@ export type Fixed = {
   createdAt: string;
   updatedAt: string;
 };
-export type FixedPatch = Partial<Pick<Fixed, "name" | "flow" | "amount" | "currency" | "kindId" | "accountId" | "rule" | "nextDay" | "stopped" | "note">>;
+export type FixedPatch = Partial<Pick<Fixed, "name" | "flow" | "amount" | "currency" | "kindId" | "rule" | "nextDay" | "stopped" | "note">>;
 
 export type Budget = { kindId: number; currency: Currency; amount: number };
-/** Entry sums by month × currency × flow × 分类. */
+/** Entry sums by month × currency × flow × 分类 (a period counts with its share in each month). */
 export type Total = { month: string; currency: Currency; flow: Flow; kindId: number | null; amount: number; count: number };
 
 const api = {
@@ -80,15 +83,18 @@ const api = {
   deleteAccount: (id: number) => invoke<void>("fin_account_delete", { id }),
   reorderAccounts: (ids: number[]) => invoke<void>("fin_accounts_reorder", { ids }),
   assets: () => invoke<Assets>("fin_assets"),
-  saveMonth: (v: { month: string; balances: { accountId: number; amount: number | null }[]; rates: { currency: Currency; rate: number | null }[] }) =>
-    invoke<void>("fin_month_save", v),
+  saveBalances: (v: { day: string; balances: { accountId: number; amount: number | null }[]; rates: { currency: Currency; rate: number | null }[] }) =>
+    invoke<void>("fin_balances_save", v),
   holdings: () => invoke<Holding[]>("fin_holdings"),
-  saveHoldings: (v: { accountId: number; month: string; rows: HoldingInput[] }) => invoke<void>("fin_holdings_save", v),
+  saveHoldings: (v: { accountId: number; day: string; rows: HoldingInput[] }) => invoke<void>("fin_holdings_save", v),
   entries: (month: string) => invoke<Entry[]>("fin_entries", { month }),
   createEntry: (patch: EntryPatch) => invoke<Entry>("fin_entry_create", { patch }),
   createEntries: (patches: EntryPatch[]) => invoke<number>("fin_entries_create", { patches }),
   updateEntry: (v: { id: number; patch: EntryPatch }) => invoke<Entry>("fin_entry_update", v),
   deleteEntry: (id: number) => invoke<void>("fin_entry_delete", { id }),
+  updateEntries: (v: { ids: number[]; patch: EntryPatch }) => invoke<number>("fin_entries_update", v),
+  deleteEntries: (ids: number[]) => invoke<number>("fin_entries_delete", { ids }),
+  lastPeriodEnd: () => invoke<string | null>("fin_period_last"),
   fixed: () => invoke<Fixed[]>("fin_fixed"),
   createFixed: (patch: FixedPatch) => invoke<Fixed>("fin_fixed_create", { patch }),
   updateFixed: (v: { id: number; patch: FixedPatch }) => invoke<Fixed>("fin_fixed_update", v),
@@ -107,6 +113,7 @@ export const useEntries = (month: string) => useQuery({ queryKey: [...FIN_KEY, "
 export const useFixed = () => useQuery({ queryKey: [...FIN_KEY, "fixed"], queryFn: api.fixed });
 export const useBudgets = () => useQuery({ queryKey: [...FIN_KEY, "budgets"], queryFn: api.budgets });
 export const useTotals = () => useQuery({ queryKey: [...FIN_KEY, "totals"], queryFn: api.totals });
+export const useLastPeriodEnd = () => useQuery({ queryKey: [...FIN_KEY, "period-last"], queryFn: api.lastPeriodEnd });
 
 export function useFinMutations() {
   const qc = useQueryClient();
@@ -122,12 +129,14 @@ export function useFinMutations() {
     updateAccount: useMutation({ mutationFn: api.updateAccount, onSuccess }),
     deleteAccount: useMutation({ mutationFn: api.deleteAccount, onSuccess, onError }),
     reorderAccounts: useMutation({ mutationFn: api.reorderAccounts, onSuccess, onError }),
-    saveMonth: useMutation({ mutationFn: api.saveMonth, onSuccess }),
+    saveBalances: useMutation({ mutationFn: api.saveBalances, onSuccess }),
     saveHoldings: useMutation({ mutationFn: api.saveHoldings, onSuccess }),
     createEntry: useMutation({ mutationFn: api.createEntry, onSuccess }),
     createEntries: useMutation({ mutationFn: api.createEntries, onSuccess }),
     updateEntry: useMutation({ mutationFn: api.updateEntry, onSuccess }),
     deleteEntry: useMutation({ mutationFn: api.deleteEntry, onSuccess, onError }),
+    updateEntries: useMutation({ mutationFn: api.updateEntries, onSuccess, onError }),
+    deleteEntries: useMutation({ mutationFn: api.deleteEntries, onSuccess, onError }),
     createFixed: useMutation({ mutationFn: api.createFixed, onSuccess }),
     updateFixed: useMutation({ mutationFn: api.updateFixed, onSuccess }),
     deleteFixed: useMutation({ mutationFn: api.deleteFixed, onSuccess, onError }),

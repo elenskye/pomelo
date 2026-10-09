@@ -1,15 +1,14 @@
-//! 投石问路 (job applications). One row per application, from 想投 to its end; no status history,
-//! only the furthest status reached (`reached_id`, for the funnel). Statuses are user-editable and
-//! each belongs to a fixed stage:
+//! 投石问路 (job applications). Statuses are user-editable (name, order); each also has a stage that
+//! drives the rules — not shown in the UI since round 7: the seeded ones keep theirs, new ones are active:
 //!   wish 准备 · applied 等回音 · active 进行中 · got 拿到 · closed 结束
-//! Rules (all here):
-//! - Moving to applied / active / got stamps `applied_on` (if empty); a status change clears
-//!   `step_on` unless a new one is given; `reached_id` only moves forward (closed never counts).
-//! - Follow-up: stage applied and ≥ 14 days since max(applied_on, followed_on).
-//! - 一步一步 link: an application wants at most one task — 「投递 公司 · 岗位」 due on the deadline
-//!   while in a wish status, 「<状态> 公司 · 岗位」 due on `step_on` while active. `sync_task`
-//!   creates / updates it (in the group of the other linked tasks, else 「💼 求职」) and checks it off
-//!   when nothing is wanted any more.
+//! Each application picks its own steps (`job_steps`: the statuses it really goes through — BOCSG had
+//! no 笔试 — shown in the status list's order) and checks each one off with the day it happened.
+//! Derived, never stored (all here):
+//! - Current status = the last checked step; nothing checked = 想投 (the first 准备 status). 准备
+//!   statuses are never steps.
+//! - 投递日期 (`applied_on`) = the earliest checked day.
+//! - Follow-up: current stage applied and ≥ 14 days since max(its day, followed_on).
+//! - Funnel (UI): per status, checked / applications that have the step.
 //! 渠道 = kinds.rs module "job_channel".
 
 use super::common::{self, err, some, str_enum};
@@ -17,13 +16,12 @@ use super::{kinds, todo};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 pub const KEY: &str = "jobs";
 pub const LABEL: &str = "投石问路";
 pub const CHANNELS: &str = "job_channel";
-pub const TODO_GROUP: &str = "💼 求职";
 pub const FOLLOW_UP_DAYS: i64 = 14;
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -48,27 +46,56 @@ pub struct Status {
     pub name: String,
     pub stage: Stage,
     pub sort_order: i64,
-    /// Applications currently in this status.
+    /// Applications whose current status this is.
     pub count: i64,
+    /// Applications with it on their timeline.
+    pub used: i64,
 }
 
-fn status_row(r: &Row) -> rusqlite::Result<Status> {
-    Ok(Status { id: r.get(0)?, name: r.get(1)?, stage: r.get(2)?, sort_order: r.get(3)?, count: r.get(4)? })
-}
-
-const STATUS_SQL: &str = "SELECT s.id, s.name, s.stage, s.sort_order, (SELECT count(*) FROM jobs j WHERE j.status_id = s.id) FROM job_statuses s";
-
-pub fn statuses(conn: &Connection) -> Result<Vec<Status>, String> {
-    let mut st = conn.prepare(&format!("{STATUS_SQL} ORDER BY s.sort_order, s.id")).map_err(err)?;
-    let rows = st.query_map([], status_row).map_err(err)?;
+fn base_statuses(conn: &Connection) -> Result<Vec<Status>, String> {
+    let mut st = conn.prepare("SELECT id, name, stage, sort_order FROM job_statuses ORDER BY sort_order, id").map_err(err)?;
+    let rows = st
+        .query_map([], |r| Ok(Status { id: r.get(0)?, name: r.get(1)?, stage: r.get(2)?, sort_order: r.get(3)?, count: 0, used: 0 }))
+        .map_err(err)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(err)
 }
 
-pub fn status(conn: &Connection, id: i64) -> Result<Status, String> {
-    conn.query_row(&format!("{STATUS_SQL} WHERE s.id = ?1"), [id], status_row)
+/// Current status of every application (None: nothing checked and no 准备 status exists).
+fn current_statuses(conn: &Connection) -> Result<Vec<Option<i64>>, String> {
+    let wish: Option<i64> = conn
+        .query_row("SELECT id FROM job_statuses WHERE stage = 'wish' ORDER BY sort_order, id LIMIT 1", [], |r| r.get(0))
         .optional()
-        .map_err(err)?
-        .ok_or_else(|| gone("状态"))
+        .map_err(err)?;
+    let mut st = conn
+        .prepare(
+            "SELECT (SELECT st.status_id FROM job_steps st JOIN job_statuses s ON s.id = st.status_id
+                     WHERE st.job_id = j.id AND st.done = 1 ORDER BY s.sort_order DESC, s.id DESC LIMIT 1)
+             FROM jobs j",
+        )
+        .map_err(err)?;
+    let rows = st.query_map([], |r| r.get::<_, Option<i64>>(0)).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+    Ok(rows.into_iter().map(|s| s.or(wish)).collect())
+}
+
+pub fn statuses(conn: &Connection) -> Result<Vec<Status>, String> {
+    let mut all = base_statuses(conn)?;
+    for cur in current_statuses(conn)?.into_iter().flatten() {
+        if let Some(s) = all.iter_mut().find(|s| s.id == cur) {
+            s.count += 1;
+        }
+    }
+    for s in &mut all {
+        s.used = steps_using(conn, s.id)?;
+    }
+    Ok(all)
+}
+
+pub fn status(conn: &Connection, id: i64) -> Result<Status, String> {
+    statuses(conn)?.into_iter().find(|s| s.id == id).ok_or_else(|| gone("状态"))
+}
+
+fn steps_using(conn: &Connection, status_id: i64) -> Result<i64, String> {
+    conn.query_row("SELECT count(DISTINCT job_id) FROM job_steps WHERE status_id = ?1", [status_id], |r| r.get(0)).map_err(err)
 }
 
 fn clean_status_name(conn: &Connection, name: &str, except: Option<i64>) -> Result<String, String> {
@@ -92,33 +119,36 @@ pub fn create_status(conn: &Connection, name: &str, stage: Stage) -> Result<Stat
     status(conn, conn.last_insert_rowid())
 }
 
-/// Renaming / changing the stage re-checks every linked task (titles and what is wanted change).
+/// A status on some application's steps can't become 准备 (准备 means "nothing checked yet").
 pub fn update_status(conn: &Connection, id: i64, name: Option<&str>, stage: Option<Stage>) -> Result<Status, String> {
     let old = status(conn, id)?;
     let name = match name {
         Some(n) => clean_status_name(conn, n, Some(id))?,
         None => old.name.clone(),
     };
-    let tx = common::Tx::begin(conn)?;
-    tx.execute(
-        &format!("UPDATE job_statuses SET name = ?1, stage = ?2, updated_at = {NOW} WHERE id = ?3"),
-        params![name, stage.unwrap_or(old.stage), id],
-    )
-    .map_err(err)?;
-    for job_id in ids_where(&tx, "status_id = ?1", id)? {
-        sync_task(&tx, job_id)?;
+    let stage = stage.unwrap_or(old.stage);
+    if stage == Stage::Wish && old.stage != Stage::Wish {
+        let n = steps_using(conn, id)?;
+        if n > 0 {
+            return Err(format!("有 {n} 条投递的时间线上有「{}」，不能改成准备阶段", old.name));
+        }
     }
-    tx.commit().map_err(err)?;
+    conn.execute(&format!("UPDATE job_statuses SET name = ?1, stage = ?2, updated_at = {NOW} WHERE id = ?3"), params![name, stage, id])
+        .map_err(err)?;
     status(conn, id)
 }
 
-/// Only an unused status can go, and one must remain.
+/// Only a status no application uses (as its current status or on its steps) can go; one must remain.
 pub fn delete_status(conn: &Connection, id: i64) -> Result<(), String> {
     let s = status(conn, id)?;
     if s.count > 0 {
         return Err(format!("还有 {} 条投递是「{}」，先把它们改成别的状态", s.count, s.name));
     }
-    if statuses(conn)?.len() <= 1 {
+    let n = steps_using(conn, id)?;
+    if n > 0 {
+        return Err(format!("还有 {n} 条投递的时间线上有「{}」，先从这些投递里去掉它", s.name));
+    }
+    if base_statuses(conn)?.len() <= 1 {
         return Err("至少要留一个状态".into());
     }
     conn.execute("DELETE FROM job_statuses WHERE id = ?1", [id]).map_err(err)?;
@@ -131,6 +161,17 @@ pub fn reorder_statuses(conn: &Connection, ids: &[i64]) -> Result<(), String> {
 
 // ---------- applications ----------
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Step {
+    pub status_id: i64,
+    #[serde(default)]
+    pub done: bool,
+    /// The day it was done (only when done; may be unknown).
+    #[serde(default)]
+    pub done_on: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
@@ -141,21 +182,19 @@ pub struct Job {
     pub link: Option<String>,
     pub kind_id: Option<i64>,
     pub resume: Option<String>,
-    pub cover_letter: Option<String>,
-    pub deadline: Option<String>,
-    pub salary: Option<String>,
     pub note: Option<String>,
-    pub status_id: i64,
-    pub applied_on: Option<String>,
-    pub step_on: Option<String>,
     pub followed_on: Option<String>,
-    pub reached_id: Option<i64>,
-    pub task_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
-    /// Derived: the status's stage.
+    /// In the status list's order.
+    pub steps: Vec<Step>,
+    /// Derived: the last checked step, else the first 准备 status.
+    pub status_id: Option<i64>,
+    /// Derived: that status's stage (准备 when nothing is checked).
     pub stage: Stage,
-    /// Derived (stage applied): days since applied / last followed up.
+    /// Derived: the earliest checked day.
+    pub applied_on: Option<String>,
+    /// Derived (stage applied): days since its day / the last follow-up.
     pub waiting_days: Option<i64>,
     /// Derived: waiting ≥ 14 days.
     pub follow_up: bool,
@@ -177,23 +216,13 @@ pub struct JobPatch {
     #[serde(default, deserialize_with = "some")]
     pub resume: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
-    pub cover_letter: Option<Option<String>>,
-    #[serde(default, deserialize_with = "some")]
-    pub deadline: Option<Option<String>>,
-    #[serde(default, deserialize_with = "some")]
-    pub salary: Option<Option<String>>,
-    #[serde(default, deserialize_with = "some")]
     pub note: Option<Option<String>>,
+    /// The whole list (replaces); omitted on create = every status that isn't 准备 / 结束, none checked.
     #[serde(default)]
-    pub status_id: Option<i64>,
-    #[serde(default, deserialize_with = "some")]
-    pub applied_on: Option<Option<String>>,
-    #[serde(default, deserialize_with = "some")]
-    pub step_on: Option<Option<String>>,
+    pub steps: Option<Vec<Step>>,
 }
 
-const JOB_COLS: &str = "j.id, j.company, j.position, j.location, j.link, j.kind_id, j.resume, j.cover_letter, j.deadline, j.salary,
-  j.note, j.status_id, j.applied_on, j.step_on, j.followed_on, j.reached_id, j.task_id, j.created_at, j.updated_at, s.stage";
+const JOB_COLS: &str = "id, company, position, location, link, kind_id, resume, note, followed_on, created_at, updated_at";
 
 fn job_row(r: &Row) -> rusqlite::Result<Job> {
     Ok(Job {
@@ -204,60 +233,118 @@ fn job_row(r: &Row) -> rusqlite::Result<Job> {
         link: r.get(4)?,
         kind_id: r.get(5)?,
         resume: r.get(6)?,
-        cover_letter: r.get(7)?,
-        deadline: r.get(8)?,
-        salary: r.get(9)?,
-        note: r.get(10)?,
-        status_id: r.get(11)?,
-        applied_on: r.get(12)?,
-        step_on: r.get(13)?,
-        followed_on: r.get(14)?,
-        reached_id: r.get(15)?,
-        task_id: r.get(16)?,
-        created_at: r.get(17)?,
-        updated_at: r.get(18)?,
-        stage: r.get(19)?,
+        note: r.get(7)?,
+        followed_on: r.get(8)?,
+        created_at: r.get(9)?,
+        updated_at: r.get(10)?,
+        steps: Vec::new(),
+        status_id: None,
+        stage: Stage::Wish,
+        applied_on: None,
         waiting_days: None,
         follow_up: false,
     })
 }
 
-fn derive(mut j: Job, today: &str) -> Job {
+/// Fills steps and the derived fields.
+fn derive(mut j: Job, steps: Vec<Step>, sts: &[Status], today: &str) -> Job {
+    let order = |id: i64| sts.iter().position(|s| s.id == id).unwrap_or(usize::MAX);
+    let mut steps = steps;
+    steps.sort_by_key(|s| order(s.status_id));
+    let last = steps.iter().rev().find(|s| s.done);
+    let current = last.map(|s| s.status_id).or_else(|| sts.iter().find(|s| s.stage == Stage::Wish).map(|s| s.id));
+    j.stage = current.and_then(|id| sts.iter().find(|s| s.id == id)).map_or(Stage::Wish, |s| s.stage);
+    j.status_id = current;
+    j.applied_on = steps.iter().filter(|s| s.done).filter_map(|s| s.done_on.clone()).min();
     if j.stage == Stage::Applied {
-        let since = match (&j.applied_on, &j.followed_on) {
-            (Some(a), Some(f)) => Some(a.max(f).clone()),
-            (a, f) => a.clone().or(f.clone()),
-        };
+        let since = [last.and_then(|s| s.done_on.clone()), j.followed_on.clone()].into_iter().flatten().max();
         j.waiting_days = since.map(|d| common::day_number(today) - common::day_number(&d));
         j.follow_up = j.waiting_days.is_some_and(|n| n >= FOLLOW_UP_DAYS);
     }
+    j.steps = steps;
     j
 }
 
-fn query(conn: &Connection, filter: &str, args: &[&dyn rusqlite::ToSql], today: &str) -> Result<Vec<Job>, String> {
+fn steps_by_job(conn: &Connection, job: Option<i64>) -> Result<HashMap<i64, Vec<Step>>, String> {
     let mut st = conn
-        .prepare(&format!(
-            "SELECT {JOB_COLS} FROM jobs j JOIN job_statuses s ON s.id = j.status_id WHERE {filter}
-             ORDER BY s.sort_order, coalesce(j.applied_on, substr(j.created_at, 1, 10)) DESC, j.id DESC"
-        ))
+        .prepare("SELECT job_id, status_id, done, done_on FROM job_steps WHERE ?1 IS NULL OR job_id = ?1 ORDER BY job_id, id")
         .map_err(err)?;
-    let rows = st.query_map(args, job_row).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
-    Ok(rows.into_iter().map(|j| derive(j, today)).collect())
+    let rows = st
+        .query_map([job], |r| Ok((r.get::<_, i64>(0)?, Step { status_id: r.get(1)?, done: r.get(2)?, done_on: r.get(3)? })))
+        .map_err(err)?;
+    let mut out: HashMap<i64, Vec<Step>> = HashMap::new();
+    for row in rows {
+        let (job_id, step) = row.map_err(err)?;
+        out.entry(job_id).or_default().push(step);
+    }
+    Ok(out)
 }
 
-/// All applications: by status order, newest application first.
+/// The latest day an application moved (its last checked day, else the day it was added).
+fn last_moved(j: &Job) -> String {
+    j.steps.iter().filter_map(|s| s.done_on.clone()).max().unwrap_or_else(|| j.created_at[..10].to_string())
+}
+
+/// All applications: by current status (list order), then the most recently moved first.
 pub fn jobs(conn: &Connection, today: &str) -> Result<Vec<Job>, String> {
-    query(conn, "1 = 1", &[], today)
+    let sts = base_statuses(conn)?;
+    let mut steps = steps_by_job(conn, None)?;
+    let mut st = conn.prepare(&format!("SELECT {JOB_COLS} FROM jobs ORDER BY id")).map_err(err)?;
+    let rows = st.query_map([], job_row).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+    let mut out: Vec<Job> = rows.into_iter().map(|j| { let s = steps.remove(&j.id).unwrap_or_default(); derive(j, s, &sts, today) }).collect();
+    let order = |j: &Job| j.status_id.and_then(|id| sts.iter().position(|s| s.id == id)).unwrap_or(usize::MAX);
+    out.sort_by(|a, b| order(a).cmp(&order(b)).then_with(|| last_moved(b).cmp(&last_moved(a))).then(b.id.cmp(&a.id)));
+    Ok(out)
 }
 
 pub fn job(conn: &Connection, id: i64, today: &str) -> Result<Job, String> {
-    query(conn, "j.id = ?1", &[&id], today)?.pop().ok_or_else(|| gone("投递"))
+    let j = conn
+        .query_row(&format!("SELECT {JOB_COLS} FROM jobs WHERE id = ?1"), [id], job_row)
+        .optional()
+        .map_err(err)?
+        .ok_or_else(|| gone("投递"))?;
+    let steps = steps_by_job(conn, Some(id))?.remove(&id).unwrap_or_default();
+    Ok(derive(j, steps, &base_statuses(conn)?, today))
 }
 
-fn ids_where(conn: &Connection, filter: &str, arg: i64) -> Result<Vec<i64>, String> {
-    let mut st = conn.prepare(&format!("SELECT id FROM jobs WHERE {filter}")).map_err(err)?;
-    let ids = st.query_map([arg], |r| r.get(0)).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
-    Ok(ids)
+/// A new application's steps: every status that isn't 准备 / 结束, none checked.
+fn default_steps(conn: &Connection) -> Result<Vec<Step>, String> {
+    Ok(base_statuses(conn)?
+        .into_iter()
+        .filter(|s| !matches!(s.stage, Stage::Wish | Stage::Closed))
+        .map(|s| Step { status_id: s.id, done: false, done_on: None })
+        .collect())
+}
+
+fn clean_steps(conn: &Connection, steps: Vec<Step>) -> Result<Vec<Step>, String> {
+    let sts = base_statuses(conn)?;
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(steps.len());
+    for s in steps {
+        let st = sts.iter().find(|x| x.id == s.status_id).ok_or_else(|| gone("状态"))?;
+        if st.stage == Stage::Wish {
+            return Err(format!("「{}」是准备阶段，不能放进时间线", st.name));
+        }
+        if !seen.insert(s.status_id) {
+            return Err(format!("「{}」重复了", st.name));
+        }
+        let done_on = if s.done { common::clean(s.done_on) } else { None };
+        common::check_date(&done_on, &format!("「{}」的日期", st.name))?;
+        out.push(Step { status_id: s.status_id, done: s.done, done_on });
+    }
+    Ok(out)
+}
+
+fn write_steps(conn: &Connection, job_id: i64, steps: &[Step]) -> Result<(), String> {
+    conn.execute("DELETE FROM job_steps WHERE job_id = ?1", [job_id]).map_err(err)?;
+    for s in steps {
+        conn.execute(
+            "INSERT INTO job_steps (job_id, status_id, done, done_on) VALUES (?1, ?2, ?3, ?4)",
+            params![job_id, s.status_id, s.done, s.done_on],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
 }
 
 struct JobFields {
@@ -267,13 +354,7 @@ struct JobFields {
     link: Option<String>,
     kind_id: Option<i64>,
     resume: Option<String>,
-    cover_letter: Option<String>,
-    deadline: Option<String>,
-    salary: Option<String>,
     note: Option<String>,
-    status_id: i64,
-    applied_on: Option<String>,
-    step_on: Option<String>,
 }
 
 impl JobFields {
@@ -284,136 +365,71 @@ impl JobFields {
             location: common::clean(self.location),
             link: common::clean(self.link),
             resume: common::clean(self.resume),
-            cover_letter: common::clean(self.cover_letter),
-            deadline: common::clean(self.deadline),
-            salary: common::clean(self.salary),
             note: common::clean(self.note),
-            applied_on: common::clean(self.applied_on),
-            step_on: common::clean(self.step_on),
             ..self
         };
         common::check_len(&f.position, "岗位", 100)?;
         common::check_len(&f.location, "地点", 50)?;
         common::check_len(&f.link, "JD 链接", 1000)?;
         common::check_len(&f.resume, "简历", 1000)?;
-        common::check_len(&f.cover_letter, "求职信", 1000)?;
-        common::check_len(&f.salary, "薪资", 50)?;
         common::check_len(&f.note, "备注", 5000)?;
-        common::check_date(&f.deadline, "截止日期")?;
-        common::check_date(&f.applied_on, "投递日期")?;
-        common::check_date(&f.step_on, "这一步的日期")?;
         kinds::check(conn, CHANNELS, f.kind_id).map_err(|_| "选择的渠道不存在，可能已经被删除了".to_string())?;
-        status(conn, f.status_id)?;
         Ok(f)
     }
 }
 
-/// `reached` after moving to `to`: only forward, never a closed status.
-fn reached_after(conn: &Connection, reached: Option<i64>, to: &Status) -> Result<Option<i64>, String> {
-    if to.stage == Stage::Closed {
-        return Ok(reached);
-    }
-    Ok(match reached.map(|r| status(conn, r)).transpose().ok().flatten() {
-        Some(r) if r.sort_order >= to.sort_order => Some(r.id),
-        _ => Some(to.id),
-    })
-}
-
-fn default_status(conn: &Connection) -> Result<i64, String> {
-    let all = statuses(conn)?;
-    all.iter().find(|s| s.stage == Stage::Wish).or(all.first()).map(|s| s.id).ok_or_else(|| "还没有任何状态".into())
-}
-
-fn stamps_applied(stage: Stage) -> bool {
-    matches!(stage, Stage::Applied | Stage::Active | Stage::Got)
-}
-
 pub fn create_job(conn: &Connection, p: JobPatch, today: &str) -> Result<Job, String> {
-    let status_id = match p.status_id {
-        Some(id) => id,
-        None => default_status(conn)?,
-    };
-    let mut f = JobFields {
+    let f = JobFields {
         company: p.company.unwrap_or_default(),
         position: p.position.flatten(),
         location: p.location.flatten(),
         link: p.link.flatten(),
         kind_id: p.kind_id.flatten(),
         resume: p.resume.flatten(),
-        cover_letter: p.cover_letter.flatten(),
-        deadline: p.deadline.flatten(),
-        salary: p.salary.flatten(),
         note: p.note.flatten(),
-        status_id,
-        applied_on: p.applied_on.flatten(),
-        step_on: p.step_on.flatten(),
     }
     .validated(conn)?;
-    let s = status(conn, f.status_id)?;
-    if stamps_applied(s.stage) && f.applied_on.is_none() {
-        f.applied_on = Some(today.into());
-    }
-    let reached = reached_after(conn, None, &s)?;
+    let steps = clean_steps(conn, match p.steps {
+        Some(s) => s,
+        None => default_steps(conn)?,
+    })?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
-        "INSERT INTO jobs (company, position, location, link, kind_id, resume, cover_letter, deadline, salary, note, status_id,
-           applied_on, step_on, reached_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        params![
-            f.company, f.position, f.location, f.link, f.kind_id, f.resume, f.cover_letter, f.deadline, f.salary, f.note,
-            f.status_id, f.applied_on, f.step_on, reached
-        ],
+        "INSERT INTO jobs (company, position, location, link, kind_id, resume, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![f.company, f.position, f.location, f.link, f.kind_id, f.resume, f.note],
     )
     .map_err(err)?;
     let id = tx.last_insert_rowid();
-    sync_task(&tx, id)?;
+    write_steps(&tx, id, &steps)?;
     tx.commit().map_err(err)?;
     job(conn, id, today)
 }
 
 pub fn update_job(conn: &Connection, id: i64, p: JobPatch, today: &str) -> Result<Job, String> {
     let old = job(conn, id, today)?;
-    let status_changed = p.status_id.is_some_and(|s| s != old.status_id);
-    let mut f = JobFields {
+    let f = JobFields {
         company: p.company.unwrap_or(old.company.clone()),
         position: p.position.unwrap_or(old.position.clone()),
         location: p.location.unwrap_or(old.location.clone()),
         link: p.link.unwrap_or(old.link.clone()),
         kind_id: p.kind_id.unwrap_or(old.kind_id),
         resume: p.resume.unwrap_or(old.resume.clone()),
-        cover_letter: p.cover_letter.unwrap_or(old.cover_letter.clone()),
-        deadline: p.deadline.unwrap_or(old.deadline.clone()),
-        salary: p.salary.unwrap_or(old.salary.clone()),
         note: p.note.unwrap_or(old.note.clone()),
-        status_id: p.status_id.unwrap_or(old.status_id),
-        applied_on: p.applied_on.unwrap_or(old.applied_on.clone()),
-        // a new step starts without a date unless one is given
-        step_on: match p.step_on {
-            Some(v) => v,
-            None if status_changed => None,
-            None => old.step_on.clone(),
-        },
     }
     .validated(conn)?;
-    let s = status(conn, f.status_id)?;
-    if stamps_applied(s.stage) && f.applied_on.is_none() {
-        f.applied_on = Some(today.into());
-    }
-    let reached = if status_changed { reached_after(conn, old.reached_id, &s)? } else { old.reached_id };
+    let steps = p.steps.map(|s| clean_steps(conn, s)).transpose()?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
         &format!(
-            "UPDATE jobs SET company = ?1, position = ?2, location = ?3, link = ?4, kind_id = ?5, resume = ?6, cover_letter = ?7,
-               deadline = ?8, salary = ?9, note = ?10, status_id = ?11, applied_on = ?12, step_on = ?13, reached_id = ?14,
-               updated_at = {NOW} WHERE id = ?15"
+            "UPDATE jobs SET company = ?1, position = ?2, location = ?3, link = ?4, kind_id = ?5, resume = ?6, note = ?7,
+               updated_at = {NOW} WHERE id = ?8"
         ),
-        params![
-            f.company, f.position, f.location, f.link, f.kind_id, f.resume, f.cover_letter, f.deadline, f.salary, f.note,
-            f.status_id, f.applied_on, f.step_on, reached, id
-        ],
+        params![f.company, f.position, f.location, f.link, f.kind_id, f.resume, f.note, id],
     )
     .map_err(err)?;
-    sync_task(&tx, id)?;
+    if let Some(s) = steps.filter(|s| *s != old.steps) {
+        write_steps(&tx, id, &s)?;
+    }
     tx.commit().map_err(err)?;
     job(conn, id, today)
 }
@@ -426,115 +442,12 @@ pub fn follow_up(conn: &Connection, id: i64, today: &str) -> Result<Job, String>
     job(conn, id, today)
 }
 
-/// Deletes the application; its linked task goes too unless already done (kept as history).
+/// Deletes the application with its steps.
 pub fn delete_job(conn: &Connection, id: i64) -> Result<(), String> {
-    let task_id: Option<i64> = conn
-        .query_row("SELECT task_id FROM jobs WHERE id = ?1", [id], |r| r.get(0))
-        .optional()
-        .map_err(err)?
-        .ok_or_else(|| gone("投递"))?;
-    let tx = common::Tx::begin(conn)?;
-    tx.execute("DELETE FROM jobs WHERE id = ?1", [id]).map_err(err)?;
-    if let Some(t) = task_id.and_then(|t| todo::task(&tx, t).ok()).filter(|t| !t.done) {
-        todo::delete_task(&tx, t.id)?;
+    match conn.execute("DELETE FROM jobs WHERE id = ?1", [id]).map_err(err)? {
+        0 => Err(gone("投递")),
+        _ => Ok(()),
     }
-    tx.commit().map_err(err)
-}
-
-// ---------- 一步一步 link ----------
-
-fn label(company: &str, position: &Option<String>) -> String {
-    match position {
-        Some(p) => format!("{company} · {p}"),
-        None => company.to_string(),
-    }
-}
-
-/// The task an application wants right now: (title, due date).
-fn wanted(conn: &Connection, id: i64) -> Result<Option<(String, String)>, String> {
-    let (company, position, status_id, deadline, step_on): (String, Option<String>, i64, Option<String>, Option<String>) = conn
-        .query_row("SELECT company, position, status_id, deadline, step_on FROM jobs WHERE id = ?1", [id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-        })
-        .map_err(err)?;
-    let s = status(conn, status_id)?;
-    Ok(match s.stage {
-        Stage::Wish => deadline.map(|d| (format!("投递 {}", label(&company, &position)), d)),
-        Stage::Active => step_on.map(|d| (format!("{} {}", s.name, label(&company, &position)), d)),
-        _ => None,
-    })
-}
-
-/// Group for new linked tasks: where the other linked tasks live, else 「💼 求职」 (created).
-fn task_group(conn: &Connection) -> Result<i64, String> {
-    let linked: Option<i64> = conn
-        .query_row("SELECT t.group_id FROM jobs j JOIN todo_tasks t ON t.id = j.task_id ORDER BY j.updated_at DESC LIMIT 1", [], |r| r.get(0))
-        .optional()
-        .map_err(err)?;
-    if let Some(g) = linked {
-        return Ok(g);
-    }
-    let named: Option<i64> = conn
-        .query_row("SELECT id FROM todo_groups WHERE name = ?1", [TODO_GROUP], |r| r.get(0))
-        .optional()
-        .map_err(err)?;
-    match named {
-        Some(g) => Ok(g),
-        None => Ok(todo::create_group(conn, TODO_GROUP)?.id),
-    }
-}
-
-fn patch(v: serde_json::Value) -> Result<todo::TaskPatch, String> {
-    serde_json::from_value(v).map_err(err)
-}
-
-/// Brings the linked task in line with what the application wants (see module doc).
-pub fn sync_task(conn: &Connection, id: i64) -> Result<(), String> {
-    let task_id: Option<i64> = conn.query_row("SELECT task_id FROM jobs WHERE id = ?1", [id], |r| r.get(0)).map_err(err)?;
-    let task = task_id.and_then(|t| todo::task(conn, t).ok());
-    match (wanted(conn, id)?, task) {
-        (Some((title, due)), Some(t)) => {
-            let changed = t.title != title || t.due_date.as_deref() != Some(due.as_str());
-            if changed {
-                todo::update_task(conn, t.id, patch(serde_json::json!({"title": title, "startDate": null, "dueDate": due}))?)?;
-                if t.done {
-                    todo::set_done(conn, t.id, false)?;
-                }
-            }
-        }
-        (Some((title, due)), None) => {
-            let group_id = task_group(conn)?;
-            let t = todo::create_task(conn, patch(serde_json::json!({"groupId": group_id, "title": title, "dueDate": due}))?)?;
-            conn.execute("UPDATE jobs SET task_id = ?1 WHERE id = ?2", params![t.id, id]).map_err(err)?;
-        }
-        (None, Some(t)) if !t.done => todo::set_done(conn, t.id, true)?,
-        _ => {}
-    }
-    Ok(())
-}
-
-/// After an import: link applications to existing undone tasks with the wanted title (so a
-/// restored 一步一步 isn't duplicated), creating the rest.
-pub fn relink(conn: &Connection) -> Result<(), String> {
-    let mut st = conn.prepare("SELECT id FROM jobs WHERE task_id IS NULL").map_err(err)?;
-    let ids: Vec<i64> = st.query_map([], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
-    for id in ids {
-        if let Some((title, _)) = wanted(conn, id)? {
-            let found: Option<i64> = conn
-                .query_row(
-                    "SELECT id FROM todo_tasks WHERE title = ?1 AND done = 0 AND id NOT IN (SELECT task_id FROM jobs WHERE task_id IS NOT NULL) LIMIT 1",
-                    [&title],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(err)?;
-            if let Some(t) = found {
-                conn.execute("UPDATE jobs SET task_id = ?1 WHERE id = ?2", params![t, id]).map_err(err)?;
-            }
-            sync_task(conn, id)?;
-        }
-    }
-    Ok(())
 }
 
 // ---------- import / export: { statuses: [{name, stage}], jobs: [...] } (names, not ids) ----------
@@ -544,6 +457,16 @@ pub fn relink(conn: &Connection) -> Result<(), String> {
 pub struct StatusRecord {
     pub name: String,
     pub stage: Stage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StepRecord {
+    pub status: String,
+    #[serde(default)]
+    pub done: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -561,27 +484,66 @@ pub struct JobRecord {
     #[serde(default)]
     pub resume: Option<String>,
     #[serde(default)]
-    pub cover_letter: Option<String>,
-    #[serde(default)]
-    pub deadline: Option<String>,
-    #[serde(default)]
-    pub salary: Option<String>,
-    #[serde(default)]
     pub note: Option<String>,
-    pub status: String,
     #[serde(default)]
-    pub applied_on: Option<String>,
-    #[serde(default)]
-    pub step_on: Option<String>,
+    pub steps: Vec<StepRecord>,
     #[serde(default)]
     pub followed_on: Option<String>,
-    /// Furthest status reached (name).
-    #[serde(default)]
-    pub reached: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    // v8 and older (one current status): turned into steps and 备注 like migration 19
+    #[serde(default, skip_serializing)]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub reached: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub applied_on: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub step_on: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub deadline: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub salary: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub cover_letter: Option<String>,
+}
+
+impl JobRecord {
+    /// (备注, steps by status name). `sts` = the status list the record's names refer to.
+    fn converted(&self, sts: &[StatusRecord]) -> Result<(Option<String>, Vec<StepRecord>), String> {
+        let Some(cur) = self.status.as_deref().map(str::trim) else {
+            return Ok((common::clean(self.note.clone()), self.steps.clone()));
+        };
+        let at = |n: &str| sts.iter().position(|s| s.name == n.trim()).ok_or_else(|| format!("找不到状态「{n}」"));
+        let cur_i = at(cur)?;
+        let reached_i = match self.reached.as_deref() {
+            Some(r) => Some(at(r)?),
+            None => Some(cur_i),
+        }
+        .filter(|&i| sts[i].stage != Stage::Closed);
+        let mut steps = Vec::new();
+        for (i, s) in sts.iter().enumerate() {
+            let closed_now = s.stage == Stage::Closed && i == cur_i;
+            if !(closed_now || !matches!(s.stage, Stage::Wish | Stage::Closed)) {
+                continue;
+            }
+            let done = closed_now || reached_i.is_some_and(|r| i <= r);
+            let on = match () {
+                _ if !done || closed_now => None,
+                _ if i == cur_i && s.stage == Stage::Active => common::clean(self.step_on.clone()),
+                _ if s.stage == Stage::Applied => common::clean(self.applied_on.clone()),
+                _ => None,
+            };
+            steps.push(StepRecord { status: s.name.clone(), done, on });
+        }
+        let extra = [("截止日期", &self.deadline), ("薪资", &self.salary), ("求职信", &self.cover_letter)]
+            .into_iter()
+            .filter_map(|(label, v)| common::clean(v.clone()).map(|v| format!("{label}：{v}")));
+        let note = [common::clean(self.note.clone())].into_iter().flatten().chain(extra).collect::<Vec<_>>().join("\n");
+        Ok((common::clean(Some(note)), steps))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -600,28 +562,41 @@ impl JobsRecord {
     }
 }
 
+/// Checks a record against a status list (the file's, or the app's when the file has none).
+fn check_record(j: &JobRecord, sts: &[StatusRecord]) -> Result<(), String> {
+    common::require(&j.company, "公司", 100)?;
+    for (d, what) in [(&j.applied_on, "投递日期"), (&j.step_on, "这一步的日期"), (&j.deadline, "截止日期"), (&j.followed_on, "跟进日期")] {
+        common::check_date(d, what)?;
+    }
+    kinds::check_name(&j.channel)?;
+    let (_, steps) = j.converted(sts)?;
+    let mut seen = HashSet::new();
+    for s in &steps {
+        let st = sts.iter().find(|x| x.name == s.status.trim()).ok_or_else(|| format!("找不到状态「{}」", s.status))?;
+        if st.stage == Stage::Wish {
+            return Err(format!("「{}」是准备阶段，不能放进时间线", st.name));
+        }
+        if !seen.insert(st.name.as_str()) {
+            return Err(format!("「{}」重复了", st.name));
+        }
+        common::check_date(&s.on, &format!("「{}」的日期", st.name))?;
+    }
+    Ok(())
+}
+
 pub fn validate_records(rec: &JobsRecord) -> Result<(), String> {
-    let mut names = std::collections::HashSet::new();
+    let mut names = HashSet::new();
     for s in &rec.statuses {
         let n = common::require(&s.name, "状态名", 20).map_err(|e| format!("{LABEL}的状态：{e}"))?;
         if !names.insert(n.clone()) {
             return Err(format!("{LABEL}：状态「{n}」重复了"));
         }
     }
+    if rec.statuses.is_empty() {
+        return Ok(()); // checked against the app's statuses in replace_all
+    }
     for (i, j) in rec.jobs.iter().enumerate() {
-        let ctx = |e: String| format!("{LABEL}第 {} 条（{}）：{e}", i + 1, j.company.trim());
-        common::require(&j.company, "公司", 100).map_err(ctx)?;
-        for (d, what) in [(&j.deadline, "截止日期"), (&j.applied_on, "投递日期"), (&j.step_on, "这一步的日期"), (&j.followed_on, "跟进日期")] {
-            common::check_date(d, what).map_err(ctx)?;
-        }
-        kinds::check_name(&j.channel).map_err(ctx)?;
-        if !rec.statuses.is_empty() {
-            for s in std::iter::once(&j.status).chain(j.reached.iter()) {
-                if !names.contains(s.trim()) {
-                    return Err(ctx(format!("找不到状态「{s}」")));
-                }
-            }
-        }
+        check_record(j, &rec.statuses).map_err(|e| format!("{LABEL}第 {} 条（{}）：{e}", i + 1, j.company.trim()))?;
     }
     Ok(())
 }
@@ -630,8 +605,7 @@ pub fn count(conn: &Connection) -> Result<i64, String> {
     conn.query_row("SELECT count(*) FROM jobs", [], |r| r.get(0)).map_err(err)
 }
 
-/// Replaces all applications (and the statuses, if the file has them). Linked tasks are re-made
-/// by `relink` once the whole import is in. Caller owns the transaction.
+/// Replaces all applications (and the statuses, if the file has them). Caller owns the transaction.
 pub fn replace_all(conn: &Connection, rec: &JobsRecord) -> Result<usize, String> {
     validate_records(rec)?;
     conn.execute("DELETE FROM jobs", []).map_err(err)?;
@@ -642,39 +616,41 @@ pub fn replace_all(conn: &Connection, rec: &JobsRecord) -> Result<usize, String>
                 .map_err(err)?;
         }
     }
-    let ids: HashMap<String, i64> = statuses(conn)?.into_iter().map(|s| (s.name, s.id)).collect();
-    let id_of = |n: &str| ids.get(n.trim()).copied().ok_or_else(|| format!("{LABEL}：找不到状态「{n}」"));
-    for j in &rec.jobs {
+    let sts = base_statuses(conn)?;
+    let names: Vec<StatusRecord> = sts.iter().map(|s| StatusRecord { name: s.name.clone(), stage: s.stage }).collect();
+    let ids: HashMap<&str, i64> = sts.iter().map(|s| (s.name.as_str(), s.id)).collect();
+    for (i, j) in rec.jobs.iter().enumerate() {
+        check_record(j, &names).map_err(|e| format!("{LABEL}第 {} 条（{}）：{e}", i + 1, j.company.trim()))?;
+        let (note, steps) = j.converted(&names)?;
         let channel = kinds::resolve(conn, CHANNELS, j.channel.as_deref())?;
-        let reached = j.reached.as_deref().map(id_of).transpose()?;
         conn.execute(
             &format!(
-                "INSERT INTO jobs (company, position, location, link, kind_id, resume, cover_letter, deadline, salary, note, status_id,
-                   applied_on, step_on, followed_on, reached_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, coalesce(?16, {NOW}), coalesce(?17, ?16, {NOW}))"
+                "INSERT INTO jobs (company, position, location, link, kind_id, resume, note, followed_on, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, {NOW}), coalesce(?10, ?9, {NOW}))"
             ),
             params![
                 j.company.trim(), common::clean(j.position.clone()), common::clean(j.location.clone()), common::clean(j.link.clone()), channel,
-                common::clean(j.resume.clone()), common::clean(j.cover_letter.clone()), common::clean(j.deadline.clone()),
-                common::clean(j.salary.clone()), common::clean(j.note.clone()), id_of(&j.status)?, common::clean(j.applied_on.clone()),
-                common::clean(j.step_on.clone()), common::clean(j.followed_on.clone()), reached, j.created_at, j.updated_at
+                common::clean(j.resume.clone()), note, common::clean(j.followed_on.clone()), j.created_at, j.updated_at
             ],
         )
         .map_err(err)?;
+        let job_id = conn.last_insert_rowid();
+        let steps: Vec<Step> = steps
+            .iter()
+            .map(|s| Step { status_id: ids[s.status.trim()], done: s.done, done_on: if s.done { common::clean(s.on.clone()) } else { None } })
+            .collect();
+        write_steps(conn, job_id, &steps)?;
     }
     Ok(rec.len())
 }
 
 pub fn export(conn: &Connection) -> Result<JobsRecord, String> {
-    let sts = statuses(conn)?;
+    let sts = base_statuses(conn)?;
     let name: HashMap<i64, String> = sts.iter().map(|s| (s.id, s.name.clone())).collect();
     let channels = kinds::name_map(conn, CHANNELS)?;
-    let mut st = conn.prepare(&format!("SELECT {JOB_COLS} FROM jobs j JOIN job_statuses s ON s.id = j.status_id ORDER BY j.id")).map_err(err)?;
-    let jobs = st
-        .query_map([], job_row)
-        .map_err(err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(err)?
+    let mut all = jobs(conn, &todo::today(conn)?)?;
+    all.sort_by_key(|j| j.id);
+    let jobs = all
         .into_iter()
         .map(|j| JobRecord {
             company: j.company,
@@ -683,17 +659,18 @@ pub fn export(conn: &Connection) -> Result<JobsRecord, String> {
             link: j.link,
             channel: j.kind_id.and_then(|k| channels.get(&k).cloned()),
             resume: j.resume,
-            cover_letter: j.cover_letter,
-            deadline: j.deadline,
-            salary: j.salary,
             note: j.note,
-            status: name[&j.status_id].clone(),
-            applied_on: j.applied_on,
-            step_on: j.step_on,
+            steps: j.steps.into_iter().map(|s| StepRecord { status: name[&s.status_id].clone(), done: s.done, on: s.done_on }).collect(),
             followed_on: j.followed_on,
-            reached: j.reached_id.and_then(|r| name.get(&r).cloned()),
             created_at: Some(j.created_at),
             updated_at: Some(j.updated_at),
+            status: None,
+            reached: None,
+            applied_on: None,
+            step_on: None,
+            deadline: None,
+            salary: None,
+            cover_letter: None,
         })
         .collect();
     Ok(JobsRecord { statuses: sts.into_iter().map(|s| StatusRecord { name: s.name, stage: s.stage }).collect(), jobs })
@@ -710,8 +687,8 @@ pub fn job_statuses(state: State<AppState>) -> Result<Vec<Status>, String> {
     state.with_db(|c| statuses(c))
 }
 #[tauri::command]
-pub fn job_status_create(state: State<AppState>, name: String, stage: Stage) -> Result<Status, String> {
-    state.with_undo("添加状态", |c| create_status(c, &name, stage))
+pub fn job_status_create(state: State<AppState>, name: String, stage: Option<Stage>) -> Result<Status, String> {
+    state.with_undo("添加状态", |c| create_status(c, &name, stage.unwrap_or(Stage::Active)))
 }
 #[tauri::command]
 pub fn job_status_update(state: State<AppState>, id: i64, name: Option<String>, stage: Option<Stage>) -> Result<Status, String> {
@@ -756,7 +733,15 @@ mod tests {
         serde_json::from_value(v).unwrap()
     }
     fn sid(c: &Connection, name: &str) -> i64 {
-        statuses(c).unwrap().into_iter().find(|s| s.name == name).unwrap().id
+        base_statuses(c).unwrap().into_iter().find(|s| s.name == name).unwrap().id
+    }
+    /// Steps as (status name, done, day).
+    fn shape(c: &Connection, j: &Job) -> Vec<(String, bool, Option<String>)> {
+        let sts = base_statuses(c).unwrap();
+        j.steps.iter().map(|s| (sts.iter().find(|x| x.id == s.status_id).unwrap().name.clone(), s.done, s.done_on.clone())).collect()
+    }
+    fn step(id: i64, done: bool, on: Option<&str>) -> serde_json::Value {
+        json!({"statusId": id, "done": done, "doneOn": on})
     }
 
     #[test]
@@ -769,114 +754,134 @@ mod tests {
     }
 
     #[test]
-    fn status_moves_stamp_dates_and_reach_forward_only() {
+    fn steps_make_the_status() {
         let c = memory_db();
-        let t = "2026-10-05";
-        let j = create_job(&c, jp(json!({"company": " 字节 ", "position": "后端"})), t).unwrap();
-        assert_eq!((j.company.as_str(), j.stage, j.applied_on, j.reached_id), ("字节", Stage::Wish, None, Some(sid(&c, "想投"))));
+        let t = "2026-10-08";
+        let j = create_job(&c, jp(json!({"company": " 中国银行 ", "position": "实习"})), t).unwrap();
+        // default steps: not 想投 / 被拒, none checked → 想投
+        assert_eq!(shape(&c, &j).iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), ["已投递", "网申测评 / 笔试", "面试", "Offer", "已接受"]);
+        assert_eq!((j.company.as_str(), j.status_id, j.stage, j.applied_on.clone()), ("中国银行", Some(sid(&c, "想投")), Stage::Wish, None));
         assert!(create_job(&c, jp(json!({"company": " "})), t).is_err());
-        let j = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "已投递")})), t).unwrap();
-        assert_eq!(j.applied_on.as_deref(), Some(t)); // stamped once
-        let j = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "面试"), "stepOn": "2026-10-09"})), "2026-10-07").unwrap();
-        assert_eq!((j.applied_on.as_deref(), j.step_on.as_deref(), j.reached_id), (Some(t), Some("2026-10-09"), Some(sid(&c, "面试"))));
-        let j = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "被拒")})), t).unwrap();
-        assert_eq!((j.step_on, j.reached_id), (None, Some(sid(&c, "面试")))); // step date cleared; closed doesn't count
-        let j = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "已投递")})), t).unwrap();
-        assert_eq!(j.reached_id, Some(sid(&c, "面试"))); // never backwards
+        // BOCSG: no 网申 / 笔试; checked steps (any order in) come back in list order
+        let steps = json!([step(sid(&c, "面试"), true, Some("2026-08-13")), step(sid(&c, "已投递"), true, Some("2026-07-20")), step(sid(&c, "Offer"), false, Some("2026-09-01"))]);
+        let j = update_job(&c, j.id, jp(json!({"steps": steps})), t).unwrap();
+        assert_eq!(
+            shape(&c, &j),
+            [("已投递".into(), true, Some("2026-07-20".into())), ("面试".into(), true, Some("2026-08-13".into())), ("Offer".into(), false, None)]
+        );
+        assert_eq!((j.status_id, j.stage, j.applied_on.as_deref()), (Some(sid(&c, "面试")), Stage::Active, Some("2026-07-20")));
+        // other fields alone leave the steps
+        let j = update_job(&c, j.id, jp(json!({"note": "金融科技部"})), t).unwrap();
+        assert_eq!(j.steps.len(), 3);
+        // bad steps
+        for bad in [json!([step(sid(&c, "想投"), true, None)]), json!([step(999, false, None)]), json!([step(sid(&c, "面试"), true, Some("2026-13-01"))]),
+            json!([step(sid(&c, "面试"), false, None), step(sid(&c, "面试"), true, None)])] {
+            assert!(update_job(&c, j.id, jp(json!({"steps": bad})), t).is_err());
+        }
+        assert!(serde_json::from_value::<JobPatch>(json!({"salary": "20k"})).is_err());
+        // rejected: 被拒 picked and checked → current, and still counts as having been applied
+        let k = create_job(&c, jp(json!({"company": "KeyReply", "steps": [step(sid(&c, "已投递"), true, Some("2026-09-01")), step(sid(&c, "被拒"), true, Some("2026-09-20"))]})), t).unwrap();
+        assert_eq!((k.stage, k.applied_on.as_deref()), (Stage::Closed, Some("2026-09-01")));
+        let counts: HashMap<String, i64> = statuses(&c).unwrap().into_iter().map(|s| (s.name, s.count)).collect();
+        assert_eq!((counts["面试"], counts["被拒"], counts["想投"]), (1, 1, 0));
+        delete_job(&c, k.id).unwrap();
+        assert!(delete_job(&c, k.id).is_err());
     }
 
     #[test]
     fn follow_up_after_two_weeks() {
         let c = memory_db();
-        let j = create_job(&c, jp(json!({"company": "A", "statusId": sid(&c, "已投递"), "appliedOn": "2026-09-20"})), "2026-10-03").unwrap();
+        let j = create_job(&c, jp(json!({"company": "A", "steps": [step(sid(&c, "已投递"), true, Some("2026-09-20")), step(sid(&c, "面试"), false, None)]})), "2026-10-03").unwrap();
         assert_eq!((j.waiting_days, j.follow_up), (Some(13), false));
         assert!(job(&c, j.id, "2026-10-04").unwrap().follow_up);
         follow_up(&c, j.id, "2026-10-05").unwrap();
         let later = job(&c, j.id, "2026-10-18").unwrap();
         assert_eq!((later.waiting_days, later.follow_up), (Some(13), false));
         assert!(job(&c, j.id, "2026-10-19").unwrap().follow_up);
-        let moved = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "面试")})), "2026-10-19").unwrap();
+        let moved = update_job(&c, j.id, jp(json!({"steps": [step(sid(&c, "已投递"), true, Some("2026-09-20")), step(sid(&c, "面试"), true, Some("2026-10-19"))]})), "2026-10-19").unwrap();
         assert_eq!((moved.waiting_days, moved.follow_up), (None, false)); // only while waiting
     }
 
     #[test]
-    fn linked_task_follows_the_application() {
+    fn list_order_and_status_rules() {
         let c = memory_db();
-        let t = "2026-10-05";
-        let j = create_job(&c, jp(json!({"company": "腾讯", "position": "后台开发", "deadline": "2026-10-20"})), t).unwrap();
-        let task = todo::task(&c, j.task_id.unwrap()).unwrap();
-        assert_eq!((task.title.as_str(), task.due_date.as_deref()), ("投递 腾讯 · 后台开发", Some("2026-10-20")));
-        assert_eq!(todo::group(&c, task.group_id).unwrap().name, TODO_GROUP);
-        // applied → nothing wanted → checked off
-        let j = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "已投递")})), t).unwrap();
-        assert!(todo::task(&c, j.task_id.unwrap()).unwrap().done);
-        // interview with a date → same task reopened with the new title and date
-        let j = update_job(&c, j.id, jp(json!({"statusId": sid(&c, "面试"), "stepOn": "2026-10-12"})), t).unwrap();
-        let task = todo::task(&c, j.task_id.unwrap()).unwrap();
-        assert_eq!((task.title.as_str(), task.due_date.as_deref(), task.done), ("面试 腾讯 · 后台开发", Some("2026-10-12"), false));
-        // renaming the status renames the task; a renamed group keeps being used
-        let g = task.group_id;
-        todo::rename_group(&c, g, "找工作").unwrap();
-        update_status(&c, sid(&c, "面试"), Some("一面"), None).unwrap();
-        assert_eq!(todo::task(&c, j.task_id.unwrap()).unwrap().title, "一面 腾讯 · 后台开发");
-        let k = create_job(&c, jp(json!({"company": "阿里", "deadline": "2026-10-30"})), t).unwrap();
-        assert_eq!(todo::task(&c, k.task_id.unwrap()).unwrap().group_id, g);
-        // deleting the application removes its undone task
-        let kt = k.task_id.unwrap();
-        delete_job(&c, k.id).unwrap();
-        assert!(todo::task(&c, kt).is_err());
-        // a deleted task is simply made again on the next change
-        todo::delete_task(&c, j.task_id.unwrap()).unwrap();
-        let j = update_job(&c, j.id, jp(json!({"stepOn": "2026-10-13"})), t).unwrap();
-        assert_eq!(todo::task(&c, j.task_id.unwrap()).unwrap().due_date.as_deref(), Some("2026-10-13"));
-    }
-
-    #[test]
-    fn statuses_edit_rules() {
-        let c = memory_db();
-        let extra = create_status(&c, "HR 面", Stage::Active).unwrap();
-        assert!(create_status(&c, "HR 面", Stage::Active).is_err());
-        create_job(&c, jp(json!({"company": "A", "statusId": extra.id})), "2026-10-05").unwrap();
-        assert!(delete_status(&c, extra.id).unwrap_err().contains("1 条"));
-        delete_status(&c, sid(&c, "Offer")).unwrap();
-        let ids: Vec<i64> = statuses(&c).unwrap().iter().rev().map(|s| s.id).collect();
+        let t = "2026-10-08";
+        let a = create_job(&c, jp(json!({"company": "A"})), t).unwrap();
+        let b = create_job(&c, jp(json!({"company": "B", "steps": [step(sid(&c, "已投递"), true, Some("2026-10-01"))]})), t).unwrap();
+        let d = create_job(&c, jp(json!({"company": "D", "steps": [step(sid(&c, "已投递"), true, Some("2026-10-05"))]})), t).unwrap();
+        assert_eq!(jobs(&c, t).unwrap().iter().map(|j| j.id).collect::<Vec<_>>(), [a.id, d.id, b.id]); // 想投 first, then newest move
+        // a status on someone's steps can't be deleted or become 准备; an unused one can
+        let hr = create_status(&c, "HR 面", Stage::Active).unwrap();
+        update_job(&c, b.id, jp(json!({"steps": [step(sid(&c, "已投递"), true, Some("2026-10-01")), step(hr.id, false, None)]})), t).unwrap();
+        assert!(delete_status(&c, hr.id).unwrap_err().contains("时间线"));
+        assert!(update_status(&c, hr.id, None, Some(Stage::Wish)).is_err());
+        assert!(delete_status(&c, sid(&c, "想投")).unwrap_err().contains("1 条")); // A is 想投
+        delete_job(&c, a.id).unwrap();
+        delete_status(&c, sid(&c, "想投")).unwrap();
+        assert_eq!(job(&c, d.id, t).unwrap().status_id, Some(sid(&c, "已投递")));
+        let fresh = create_job(&c, jp(json!({"company": "E"})), t).unwrap();
+        assert_eq!((fresh.status_id, fresh.stage), (None, Stage::Wish)); // no 准备 status left
+        let ids: Vec<i64> = base_statuses(&c).unwrap().iter().rev().map(|s| s.id).collect();
         reorder_statuses(&c, &ids).unwrap();
-        assert_eq!(statuses(&c).unwrap()[0].id, extra.id);
+        assert_eq!(statuses(&c).unwrap()[0].id, *ids.first().unwrap());
     }
 
     #[test]
     fn records_roundtrip() {
         let c = memory_db();
         let rec: JobsRecord = serde_json::from_value(json!({
-            "statuses": [{"name": "想投", "stage": "wish"}, {"name": "已投递", "stage": "applied"}, {"name": "面试", "stage": "active"},
-                         {"name": "已接受", "stage": "got"}, {"name": "被拒", "stage": "closed"}],
+            "statuses": [{"name": "想投", "stage": "wish"}, {"name": "已投递", "stage": "applied"}, {"name": "笔试", "stage": "active"},
+                         {"name": "面试", "stage": "active"}, {"name": "已接受", "stage": "got"}, {"name": "被拒", "stage": "closed"}],
             "jobs": [
                 {"company": "BOC", "position": "实习", "location": "新加坡", "channel": "学校", "resume": "~/Documents/Seeker/cv/a.docx",
-                 "status": "已接受", "reached": "已接受", "stepOn": "2026-08-13"},
-                {"company": "KeyReply", "status": "被拒", "reached": "已投递", "channel": "新渠道"},
-                {"company": "X", "status": "面试", "reached": "面试", "stepOn": "2026-10-09"}
+                 "steps": [{"status": "已投递", "done": true, "on": "2026-07-20"}, {"status": "面试", "done": true}, {"status": "已接受", "done": true, "on": "2026-08-20"}]},
+                {"company": "KeyReply", "channel": "新渠道", "followedOn": "2026-09-10",
+                 "steps": [{"status": "已投递", "done": true, "on": "2026-09-01"}, {"status": "被拒", "done": true}]},
+                {"company": "X", "steps": [{"status": "已投递"}, {"status": "笔试"}]}
             ]
         }))
         .unwrap();
         assert_eq!(replace_all(&c, &rec).unwrap(), 3);
-        relink(&c).unwrap(); // the interview gets its task
         let out = export(&c).unwrap();
-        assert!(jobs(&c, "2026-10-05").unwrap().iter().any(|j| j.company == "X" && j.task_id.is_some()));
         let c2 = memory_db();
         replace_all(&c2, &out).unwrap();
         assert_eq!(serde_json::to_value(&out).unwrap(), serde_json::to_value(export(&c2).unwrap()).unwrap());
+        let v = serde_json::to_value(&out).unwrap();
+        assert_eq!(v["jobs"][0]["steps"][1], json!({"status": "面试", "done": true}));
+        assert!(v["jobs"][2].get("status").is_none());
         assert!(kinds::list(&c, CHANNELS).unwrap().iter().any(|k| k.name == "新渠道"));
-        // a restored 一步一步 task is linked, not duplicated
-        let c3 = memory_db();
-        let g = todo::create_group(&c3, TODO_GROUP).unwrap().id;
-        todo::create_task(&c3, patch(json!({"groupId": g, "title": "面试 X", "dueDate": "2026-10-09"})).unwrap()).unwrap();
-        replace_all(&c3, &out).unwrap();
-        relink(&c3).unwrap();
-        assert_eq!(todo::tasks(&c3, Some(g), None).unwrap().len(), 1);
 
         let bad = |v: serde_json::Value| validate_records(&serde_json::from_value(v).unwrap()).is_err();
-        assert!(bad(json!({"statuses": [{"name": "a", "stage": "wish"}], "jobs": [{"company": "X", "status": "b"}]})));
-        assert!(bad(json!({"jobs": [{"company": " ", "status": "想投"}]})));
-        assert!(bad(json!({"jobs": [{"company": "X", "status": "想投", "deadline": "2026-13-01"}]})));
+        assert!(bad(json!({"statuses": [{"name": "a", "stage": "applied"}], "jobs": [{"company": "X", "steps": [{"status": "b"}]}]})));
+        assert!(bad(json!({"statuses": [{"name": "a", "stage": "wish"}], "jobs": [{"company": "X", "steps": [{"status": "a"}]}]})));
+        assert!(bad(json!({"statuses": [{"name": "a", "stage": "applied"}], "jobs": [{"company": " "}]})));
+        // without a status list, names are checked against the app's
+        let c3 = memory_db();
+        let e = replace_all(&c3, &serde_json::from_value(json!({"jobs": [{"company": "X", "steps": [{"status": "没有"}]}]})).unwrap()).unwrap_err();
+        assert!(e.contains("没有"), "{e}");
+    }
+
+    #[test]
+    fn reads_v8_records() {
+        // one current status + 最远到过, dates, and the fields that are gone (like migration 19)
+        let rec: JobsRecord = serde_json::from_value(json!({"jobs": [
+            {"company": "A", "status": "想投", "deadline": "2026-10-20", "salary": "20k"},
+            {"company": "B", "status": "面试", "reached": "面试", "appliedOn": "2026-10-01", "stepOn": "2026-10-09", "note": "内推"},
+            {"company": "C", "status": "被拒", "reached": "已投递", "appliedOn": "2026-09-01", "coverLetter": "~/cl.docx"}
+        ]}))
+        .unwrap();
+        let c = memory_db();
+        replace_all(&c, &rec).unwrap();
+        let all = jobs(&c, "2026-10-08").unwrap();
+        let by = |n: &str| all.iter().find(|j| j.company == n).unwrap().clone();
+        let s = |d: &str| Some(d.to_string());
+        assert_eq!((by("A").stage, by("A").note), (Stage::Wish, s("截止日期：2026-10-20\n薪资：20k")));
+        assert_eq!(
+            shape(&c, &by("B")),
+            [("已投递".into(), true, s("2026-10-01")), ("网申测评 / 笔试".into(), true, None), ("面试".into(), true, s("2026-10-09")), ("Offer".into(), false, None), ("已接受".into(), false, None)]
+        );
+        let cc = by("C");
+        assert_eq!((cc.stage, cc.steps.len(), cc.note), (Stage::Closed, 6, s("求职信：~/cl.docx")));
+        assert_eq!(cc.applied_on.as_deref(), Some("2026-09-01"));
     }
 }

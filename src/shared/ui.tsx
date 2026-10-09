@@ -140,3 +140,21 @@ export function ProgressBar(props: { done: number; doing?: number; total: number
     </div>
   );
 }
+
+/** On / off switch (settings rows). */
+export function Switch(props: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={props.checked}
+      aria-label={props.label}
+      onClick={() => props.onChange(!props.checked)}
+      className={`relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        props.checked ? "bg-primary" : "bg-muted-foreground/30"
+      }`}
+    >
+      <span className={`size-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${props.checked ? "translate-x-4" : "translate-x-0.5"}`} />
+    </button>
+  );
+}

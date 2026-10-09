@@ -7,7 +7,7 @@ import { excerpt, tagSpans } from "@/modules/notes/NoteBody";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
 
 type Args = Record<string, unknown>;
-type Row = Record<string, unknown> & { id: number; title: string; status: string; finishedMonth: string | null };
+type Row = Record<string, unknown> & { id: number; title: string; status: string };
 
 const now = () => new Date().toISOString();
 const month = () => now().slice(0, 7);
@@ -33,31 +33,33 @@ const addKind = (module: string, name: string) => {
 const kindId = (module: string, name: string) => kinds.find((k) => k.module === module && k.name === name)!.id;
 const itemsUsing: Record<string, () => { kindId: unknown }[]> = {};
 
-function applyPatch<T extends Row>(old: T, patch: Args, titleLabel = "名称"): T {
+/** 完成时间: finishedMonth (随意画画) or finishedYear (书 / 影), auto-filled on → done unless given. */
+function applyPatch<T extends Row>(old: T, patch: Args, titleLabel = "名称", finished: "finishedMonth" | "finishedYear" = "finishedMonth"): T {
   const r = { ...old, ...patch, updatedAt: now() } as T;
   if (!r.title?.trim()) throw `${titleLabel}不能为空`;
   r.title = r.title.trim();
-  if (r.status === "done" && old.status !== "done" && !r.finishedMonth && !("finishedMonth" in patch)) r.finishedMonth = month();
+  if (r.status === "done" && old.status !== "done" && !r[finished] && !(finished in patch))
+    (r as Row)[finished] = finished === "finishedYear" ? month().slice(0, 4) : month();
   return r;
 }
 
 /** In-memory `<prefix>_list/_create/_update/_delete` with the Rust patch semantics (incl. auto month). */
 function collection(prefix: string, defaults: Record<string, unknown>, seed: Record<string, unknown>[]) {
   const make = (p: Record<string, unknown>): Row =>
-    ({ id: nextId++, title: "", status: "unmarked", rating: null, finishedMonth: null, note: null, country: null, kindId: null, ...defaults, createdAt: now(), updatedAt: now(), ...p }) as Row;
+    ({ id: nextId++, title: "", status: "unmarked", rating: null, finishedYear: null, note: null, rereads: [], country: null, kindId: null, ...defaults, createdAt: now(), updatedAt: now(), ...p }) as Row;
   let rows = seed.map(make);
   itemsUsing[prefix] = () => rows as never;
   return {
     [`${prefix}_list`]: () => [...rows].sort((a, b) => a.id - b.id),
     [`${prefix}_create`]: (a: Args) => {
-      const r = applyPatch({ ...make({}), status: "unmarked" }, a.patch as Args);
+      const r = applyPatch({ ...make({}), status: "unmarked" }, a.patch as Args, "名称", "finishedYear");
       rows.push(r);
       return r;
     },
     [`${prefix}_update`]: (a: Args) => {
       const i = rows.findIndex((r) => r.id === a.id);
       if (i < 0) throw "找不到这条记录，可能已经被删除了";
-      rows[i] = applyPatch(rows[i], a.patch as Args);
+      rows[i] = applyPatch(rows[i], a.patch as Args, "名称", "finishedYear");
       return rows[i];
     },
     [`${prefix}_delete`]: (a: Args) => {
@@ -677,16 +679,17 @@ const todoHandlers: Record<string, (a: Args) => unknown> = {
   },
 };
 
-// ---- 钱来钱往 (finance): mirrors finance.rs loosely (currency per account, posting 固定支出, totals) ----
+// ---- 钱来钱往 (finance): mirrors finance.rs loosely (dated snapshots, periods, posting 固定支出, totals) ----
 type Cur = "CNY" | "SGD" | "HKD" | "USD";
 type FAccount = { id: number; name: string; kind: string; currency: Cur; closed: boolean; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
-type FEntry = { id: number; flow: "out" | "in"; amount: number; currency: Cur; day: string; kindId: number | null; accountId: number | null; fixedId: number | null; note: string | null; createdAt: string; updatedAt: string };
-type FFixed = { id: number; name: string; flow: "out" | "in"; amount: number; currency: Cur; kindId: number | null; accountId: number | null; rule: string; nextDay: string; stopped: boolean; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type FEntry = { id: number; flow: "out" | "in"; amount: number; currency: Cur; day: string; endDay: string | null; kindId: number | null; fixedId: number | null; note: string | null; createdAt: string; updatedAt: string };
+type FFixed = { id: number; name: string; flow: "out" | "in"; amount: number; currency: Cur; kindId: number | null; rule: string; nextDay: string; stopped: boolean; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type FHolding = { id: number; accountId: number; day: string; name: string; quantity: number; price: number };
 let fin = {
   accounts: [] as FAccount[],
-  balances: [] as { accountId: number; month: string; amount: number }[],
-  rates: [] as { month: string; currency: Cur; rate: number }[],
-  holdings: [] as { id: number; accountId: number; month: string; name: string; quantity: number | null; value: number }[],
+  balances: [] as { accountId: number; day: string; amount: number }[],
+  rates: [] as { day: string; currency: Cur; rate: number }[],
+  holdings: [] as FHolding[],
   fixed: [] as FFixed[],
   entries: [] as FEntry[],
   budgets: [] as { kindId: number; currency: Cur; amount: number }[],
@@ -704,51 +707,74 @@ const finAccount = (id: number) => {
   if (!a) throw "找不到这个账户，可能已经被删除了";
   return a;
 };
+const byDay = <T extends { day: string }>(rows: T[]) => [...rows].sort((a, b) => a.day.localeCompare(b.day));
 const accountOut = (a: FAccount) => {
-  const last = fin.balances.filter((b) => b.accountId === a.id).sort((x, y) => y.month.localeCompare(x.month))[0];
-  return { ...a, lastMonth: last?.month ?? null, lastAmount: last?.amount ?? null };
+  const last = byDay(fin.balances.filter((b) => b.accountId === a.id)).pop();
+  return { ...a, lastDay: last?.day ?? null, lastAmount: last?.amount ?? null };
 };
-const checkMoney = (flow: string, currency: Cur, kindId: number | null, accountId: number | null) => {
+const checkKind = (flow: string, kindId: number | null) => {
   if (kindId !== null && kinds.find((k) => k.id === kindId)?.module !== (flow === "in" ? "fin_in" : "fin_out")) throw "选择的分类不存在，或者不是这一类（支出 / 收入）的";
-  if (accountId !== null) {
-    const a = finAccount(accountId);
-    if (a.currency !== currency) throw `「${a.name}」是 ${a.currency} 账户，币种要一致`;
-  }
 };
 const checkEntry = (e: FEntry) => {
   if (!(e.amount > 0)) throw "金额要大于 0";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(e.day)) throw "日期不对";
-  checkMoney(e.flow, e.currency, e.kindId, e.accountId);
+  if (e.endDay === e.day) e.endDay = null;
+  if (e.endDay !== null && e.endDay < e.day) throw "结束日期不能早于开始日期";
+  checkKind(e.flow, e.kindId);
 };
 const newEntry = (p: Partial<FEntry>): FEntry => ({
-  id: nextId++, flow: "out", amount: 0, currency: "CNY", day: mockToday(), kindId: null, accountId: null, fixedId: null, note: null, createdAt: now(), updatedAt: now(), ...p,
+  id: nextId++, flow: "out", amount: 0, currency: "CNY", day: mockToday(), endDay: null, kindId: null, fixedId: null, note: null, createdAt: now(), updatedAt: now(), ...p,
 });
 const postDue = (today: string) => {
   let n = 0;
   for (const f of fin.fixed.filter((x) => !x.stopped && x.nextDay <= today)) {
     for (let k = 0; k < 240 && f.nextDay <= today; k++) {
-      fin.entries.push(newEntry({ flow: f.flow, amount: f.amount, currency: f.currency, day: f.nextDay, kindId: f.kindId, accountId: f.accountId, fixedId: f.id, note: f.name }));
+      fin.entries.push(newEntry({ flow: f.flow, amount: f.amount, currency: f.currency, day: f.nextDay, kindId: f.kindId, fixedId: f.id, note: f.name }));
       f.nextDay = nextOnOrAfter(f.rule, addDays(f.nextDay, 1));
       n++;
     }
   }
   return n;
 };
+/** Total on each day with a balance: latest balance per account × latest rate, up to that day. */
 const assetsOut = () => {
-  const balances = [...fin.balances].sort((a, b) => a.month.localeCompare(b.month) || a.accountId - b.accountId);
-  const rates = [...fin.rates].sort((a, b) => a.month.localeCompare(b.month) || a.currency.localeCompare(b.currency));
-  const totals: { month: string; totalCny: number | null; missing: Cur[] }[] = [];
-  for (const b of balances) {
-    if (totals[totals.length - 1]?.month !== b.month) totals.push({ month: b.month, totalCny: 0, missing: [] });
-    const t = totals[totals.length - 1];
-    const c = finAccount(b.accountId).currency;
-    const r = c === "CNY" ? 1 : rates.find((x) => x.month === b.month && x.currency === c)?.rate;
-    if (r === undefined) {
-      if (!t.missing.includes(c)) t.missing.push(c);
-    } else if (t.totalCny !== null) t.totalCny += Math.round(b.amount * r);
-  }
-  for (const t of totals) if (t.missing.length) t.totalCny = null;
+  const balances = byDay(fin.balances).sort((a, b) => a.day.localeCompare(b.day) || a.accountId - b.accountId);
+  const rates = byDay(fin.rates);
+  const days = [...new Set(balances.map((b) => b.day))];
+  const accounts = [...fin.accounts].sort((a, b) => a.sortOrder - b.sortOrder);
+  const totals = days.map((day) => {
+    let sum = 0;
+    const missing: Cur[] = [];
+    for (const a of accounts) {
+      const mine = balances.filter((b) => b.accountId === a.id);
+      const upto = mine.filter((b) => b.day <= day).pop();
+      if (!upto || (a.closed && mine[mine.length - 1].day < day)) continue;
+      const r = a.currency === "CNY" ? 1 : rates.filter((x) => x.currency === a.currency && x.day <= day).pop()?.rate;
+      if (r === undefined) {
+        if (!missing.includes(a.currency)) missing.push(a.currency);
+      } else sum += Math.round(upto.amount * r);
+    }
+    return { day, totalCny: missing.length ? null : sum, missing };
+  });
   return { balances, rates, totals };
+};
+const holdingOut = (h: FHolding) => ({ ...h, value: Math.round(h.quantity * h.price * 100) });
+const dayNo = (d: string) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10))) / 864e5;
+/** finance.rs spread: a period's amount by month, in proportion to its days there. */
+const spread = (amount: number, day: string, end: string) => {
+  const days = dayNo(end) - dayNo(day) + 1;
+  const out: [string, number][] = [];
+  let [cur, covered, given] = [day, 0, 0];
+  while (cur <= end) {
+    const monthEnd = `${cur.slice(0, 7)}-${String(new Date(Number(cur.slice(0, 4)), Number(cur.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
+    const to = monthEnd < end ? monthEnd : end;
+    covered += dayNo(to) - dayNo(cur) + 1;
+    const upto = Math.floor((2 * amount * covered + days) / (2 * days));
+    out.push([cur.slice(0, 7), upto - given]);
+    given = upto;
+    cur = addDays(to, 1);
+  }
+  return out;
 };
 {
   const fk = (n: string) => kindId("fin_out", n);
@@ -762,42 +788,62 @@ const assetsOut = () => {
   const dbs = mk("DBS", "bank", "SGD");
   const ali = mk("支付宝", "wallet", "CNY");
   const ib = mk("嘉信", "broker", "USD");
-  const thisM = mockToday().slice(0, 7);
-  const ym = (k: number) => toYmd(new Date(Number(thisM.slice(0, 4)), Number(thisM.slice(5)) - 1 + k, 1)).slice(0, 7);
-  for (let k = -5; k <= -1; k++) {
-    const i = k + 5;
+  const today = mockToday();
+  // irregular update days: a week apart, a few days in a row, a couple of months apart
+  [-170, -120, -113, -70, -69, -68, -40, -12, -5].forEach((back, i) => {
+    const day = addDays(today, back);
     fin.balances.push(
-      { accountId: cmb.id, month: ym(k), amount: 2_850_000 + i * 120_000 },
-      { accountId: dbs.id, month: ym(k), amount: 1_240_000 - i * 45_000 + (i % 2) * 90_000 },
-      { accountId: ali.id, month: ym(k), amount: 180_000 + i * 15_000 },
-      { accountId: ib.id, month: ym(k), amount: 420_000 + i * 18_000 },
+      { accountId: cmb.id, day, amount: 2_850_000 + i * 120_000 },
+      { accountId: dbs.id, day, amount: 1_240_000 - i * 45_000 + (i % 2) * 90_000 },
+      { accountId: ali.id, day, amount: 180_000 + i * 15_000 },
+      { accountId: ib.id, day, amount: 420_000 + i * 18_000 },
     );
-    fin.rates.push({ month: ym(k), currency: "SGD", rate: 5.31 + i * 0.02 }, { month: ym(k), currency: "USD", rate: 7.18 - i * 0.01 });
+    fin.rates.push({ day, currency: "SGD", rate: 5.31 + i * 0.02 }, { day, currency: "USD", rate: 7.18 - i * 0.01 });
+  });
+  fin.balances.push({ accountId: dbs.id, day: addDays(today, -90), amount: 1_100_000 }); // only DBS that day
+  [-170, -113, -68, -40, -5].forEach((back, i) => {
+    const day = addDays(today, back);
+    const h = (name: string, quantity: number, price: number) => fin.holdings.push({ id: nextId++, accountId: ib.id, day, name, quantity, price });
+    h("VOO", i < 3 ? 4 : 5, 480 + i * 12.5);
+    h("AAPL", 6, 210 + (i % 2 ? -8 : 6) + i * 3);
+    if (i >= 2) h("QQQ", 2, 440 + i * 9);
+    h("现金", 1, 1000 - i * 120);
+  });
+  const fx = (name: string, amount: number, currency: Cur, kind: number, rule: string) =>
+    fin.fixed.push({ id: nextId++, name, flow: "out", amount, currency, kindId: kind, rule, nextDay: nextOnOrAfter(rule, addDays(today, -95)), stopped: false, note: null, sortOrder: fin.fixed.length + 1, createdAt: now(), updatedAt: now() });
+  fx("房租", 150_000, "SGD", fk("住房"), "monthly:1");
+  fx("话费", 3_000, "CNY", fk("通讯"), "monthly:20");
+  fx("iCloud", 299, "USD", fk("订阅"), "monthly:5");
+  postDue(today);
+  // 小额 as weekly periods (Monday … Sunday) for the last ~3 months
+  const mon = addDays(today, -((parseYmd(today).getDay() + 6) % 7) - 91);
+  for (let w = 0; w < 13; w++) {
+    const day = addDays(mon, w * 7);
+    const endDay = addDays(day, 6);
+    if (endDay > today) break;
+    fin.entries.push(
+      newEntry({ day, endDay, amount: 9_000 + (w % 4) * 2_300, currency: "SGD", kindId: fk("餐饮") }),
+      newEntry({ day, endDay, amount: 3_200 + (w % 3) * 700, currency: "SGD", kindId: fk("交通") }),
+    );
   }
-  fin.holdings.push(
-    { id: nextId++, accountId: ib.id, month: ym(-1), name: "VOO", quantity: 4, value: 252_000 },
-    { id: nextId++, accountId: ib.id, month: ym(-1), name: "AAPL", quantity: 6, value: 140_000 },
-    { id: nextId++, accountId: ib.id, month: ym(-1), name: "现金", quantity: null, value: 100_000 },
-  );
-  const fx = (name: string, amount: number, currency: Cur, kind: number, account: number | null, rule: string) =>
-    fin.fixed.push({ id: nextId++, name, flow: "out", amount, currency, kindId: kind, accountId: account, rule, nextDay: nextOnOrAfter(rule, `${ym(-3)}-01`), stopped: false, note: null, sortOrder: fin.fixed.length + 1, createdAt: now(), updatedAt: now() });
-  fx("房租", 150_000, "SGD", fk("住房"), dbs.id, "monthly:1");
-  fx("话费", 3_000, "CNY", fk("通讯"), cmb.id, "monthly:20");
-  fx("iCloud", 299, "USD", fk("订阅"), null, "monthly:5");
-  postDue(mockToday());
+  const thisM = today.slice(0, 7);
+  const ym = (k: number) => toYmd(new Date(Number(thisM.slice(0, 4)), Number(thisM.slice(5)) - 1 + k, 1)).slice(0, 7);
   for (let k = -3; k <= 0; k++) {
     const day = (d: number) => `${ym(k)}-${String(d).padStart(2, "0")}`;
-    const add = (d: number, p: Partial<FEntry>) => day(d) <= mockToday() && fin.entries.push(newEntry({ day: day(d), ...p }));
-    add(1, { flow: "in", amount: 200_000, currency: "SGD", kindId: ik("津贴"), accountId: dbs.id, note: "实习津贴" });
-    [7, 14, 21, 28].forEach((d, i) => add(d, { amount: 9_000 + i * 2_300 + (k + 3) * 700, currency: "SGD", kindId: fk("餐饮"), accountId: dbs.id, note: "本周小额" }));
-    [7, 21].forEach((d) => add(d, { amount: 4_200 + (k + 3) * 300, currency: "SGD", kindId: fk("交通"), accountId: dbs.id, note: "本周小额" }));
-    add(12, { amount: 38_900 - (k + 3) * 5_000, currency: "SGD", kindId: fk("购物"), accountId: dbs.id, note: "显示器支架" });
-    add(16, { amount: 45_000, currency: "CNY", kindId: fk("餐饮"), accountId: ali.id, note: "请客" });
-    if (k === -2) add(3, { flow: "in", amount: 300_000, currency: "CNY", kindId: ik("家里"), accountId: cmb.id });
-    if (k === -1) add(9, { amount: 128_000, currency: "SGD", kindId: fk("旅行"), accountId: dbs.id, note: "机票" });
+    const add = (d: number, p: Partial<FEntry>) => day(d) <= today && fin.entries.push(newEntry({ day: day(d), ...p }));
+    add(1, { flow: "in", amount: 200_000, currency: "SGD", kindId: ik("津贴"), note: "实习津贴" });
+    add(12, { amount: 38_900 - (k + 3) * 5_000, currency: "SGD", kindId: fk("购物"), note: "显示器支架" });
+    add(16, { amount: 45_000, currency: "CNY", kindId: fk("餐饮"), note: "请客" });
+    if (k === -2) add(3, { flow: "in", amount: 300_000, currency: "CNY", kindId: ik("家里") });
+    if (k === -1) add(9, { amount: 128_000, currency: "SGD", kindId: fk("旅行"), note: "机票" });
   }
   fin.budgets.push({ kindId: fk("餐饮"), currency: "SGD", amount: 60_000 }, { kindId: fk("交通"), currency: "SGD", amount: 15_000 }, { kindId: fk("购物"), currency: "SGD", amount: 30_000 });
 }
+const finEntry = (id: unknown) => {
+  const e = fin.entries.find((x) => x.id === id);
+  if (!e) throw "找不到这个记录，可能已经被删除了";
+  return e;
+};
 const finHandlers: Record<string, (a: Args) => unknown> = {
   fin_accounts: () => [...fin.accounts].sort((a, b) => a.sortOrder - b.sortOrder).map(accountOut),
   fin_account_create: undoable("添加账户", (a) => {
@@ -813,7 +859,7 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
   fin_account_update: undoable("修改账户", (a) => {
     const acc = finAccount(a.id as number);
     const p = a.patch as Partial<FAccount>;
-    const used = fin.balances.some((b) => b.accountId === acc.id) || fin.entries.some((e) => e.accountId === acc.id);
+    const used = fin.balances.some((b) => b.accountId === acc.id) || fin.holdings.some((h) => h.accountId === acc.id);
     if (p.currency && p.currency !== acc.currency && used) throw "这个账户已经有记录了，不能改币种；可以新建一个账户";
     Object.assign(acc, p, { name: (p.name ?? acc.name).trim(), updatedAt: now() });
     return accountOut(acc);
@@ -822,63 +868,86 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
     fin.accounts = fin.accounts.filter((x) => x.id !== a.id);
     fin.balances = fin.balances.filter((b) => b.accountId !== a.id);
     fin.holdings = fin.holdings.filter((h) => h.accountId !== a.id);
-    for (const e of [...fin.entries, ...fin.fixed]) if (e.accountId === a.id) e.accountId = null;
     return null;
   }),
   fin_accounts_reorder: undoable("调整顺序", (a) => reorderPart(fin.accounts, a.ids as number[])),
   fin_assets: () => assetsOut(),
-  fin_month_save: undoable("更新余额", (a) => {
-    const month = String(a.month);
+  fin_balances_save: undoable("更新余额", (a) => {
+    const day = String(a.day);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw "日期不对";
     for (const b of a.balances as { accountId: number; amount: number | null }[]) {
-      fin.balances = fin.balances.filter((x) => !(x.accountId === b.accountId && x.month === month));
-      if (b.amount !== null) fin.balances.push({ accountId: b.accountId, month, amount: b.amount });
+      fin.balances = fin.balances.filter((x) => !(x.accountId === b.accountId && x.day === day));
+      if (b.amount !== null) fin.balances.push({ accountId: b.accountId, day, amount: b.amount });
     }
     for (const r of a.rates as { currency: Cur; rate: number | null }[]) {
       if (r.rate !== null && !(r.rate > 0)) throw "汇率要大于 0";
-      fin.rates = fin.rates.filter((x) => !(x.month === month && x.currency === r.currency));
-      if (r.rate !== null) fin.rates.push({ month, currency: r.currency, rate: r.rate });
+      fin.rates = fin.rates.filter((x) => !(x.day === day && x.currency === r.currency));
+      if (r.rate !== null) fin.rates.push({ day, currency: r.currency, rate: r.rate });
     }
     return null;
   }),
-  fin_holdings: () => [...fin.holdings].sort((a, b) => a.accountId - b.accountId || a.month.localeCompare(b.month)),
+  fin_holdings: () => byDay(fin.holdings).sort((a, b) => a.accountId - b.accountId || a.day.localeCompare(b.day)).map(holdingOut),
   fin_holdings_save: undoable("更新持仓", (a) => {
     if (finAccount(a.accountId as number).kind !== "broker") throw "只有券商账户能记持仓";
-    fin.holdings = fin.holdings.filter((h) => !(h.accountId === a.accountId && h.month === a.month));
-    for (const r of a.rows as { name: string; quantity: number | null; value: number }[])
-      fin.holdings.push({ id: nextId++, accountId: a.accountId as number, month: String(a.month), name: r.name.trim(), quantity: r.quantity, value: r.value });
+    const rows = a.rows as { name: string; quantity: number; price: number }[];
+    for (const r of rows) {
+      if (!(r.quantity > 0)) throw `「${r.name}」的数量要大于 0`;
+      if (!(r.price >= 0)) throw `「${r.name}」的单价不对`;
+    }
+    fin.holdings = fin.holdings.filter((h) => !(h.accountId === a.accountId && h.day === a.day));
+    for (const r of rows) fin.holdings.push({ id: nextId++, accountId: a.accountId as number, day: String(a.day), name: r.name.trim(), quantity: r.quantity, price: r.price });
     return null;
   }),
-  fin_entries: (a) => fin.entries.filter((e) => e.day.startsWith(String(a.month))).sort((x, y) => y.day.localeCompare(x.day) || y.id - x.id),
+  fin_entries: (a) => {
+    const m = String(a.month);
+    return fin.entries
+      .filter((e) => e.day <= `${m}-31` && (e.endDay ?? e.day) >= `${m}-01`)
+      .sort((x, y) => (y.endDay ?? y.day).localeCompare(x.endDay ?? x.day) || y.day.localeCompare(x.day) || y.id - x.id);
+  },
   fin_entry_create: undoable("记一笔", (a) => {
     const e = newEntry(a.patch as Partial<FEntry>);
     checkEntry(e);
     fin.entries.push(e);
     return e;
   }),
-  fin_entries_create: undoable("记一周小额", (a) => {
+  fin_entries_create: undoable("记小额", (a) => {
     const es = (a.patches as Partial<FEntry>[]).map(newEntry);
     es.forEach(checkEntry);
     fin.entries.push(...es);
     return es.length;
   }),
   fin_entry_update: undoable("修改记录", (a) => {
-    const e = fin.entries.find((x) => x.id === a.id);
-    if (!e) throw "找不到这个记录，可能已经被删除了";
+    const e = finEntry(a.id);
     const next = { ...e, ...(a.patch as Partial<FEntry>), updatedAt: now() };
     checkEntry(next);
     Object.assign(e, next);
     return e;
   }),
   fin_entry_delete: undoable("删除记录", (a) => void (fin.entries = fin.entries.filter((e) => e.id !== a.id))),
+  fin_entries_update: undoable("修改几笔记录", (a) => {
+    const ids = a.ids as number[];
+    if (ids.length === 0) throw "没有选中的记录";
+    const next = ids.map((id) => ({ ...finEntry(id), ...(a.patch as Partial<FEntry>), updatedAt: now() }));
+    next.forEach(checkEntry); // all or nothing
+    next.forEach((n) => Object.assign(finEntry(n.id), n));
+    return ids.length;
+  }),
+  fin_entries_delete: undoable("删除几笔记录", (a) => {
+    const ids = a.ids as number[];
+    ids.forEach(finEntry);
+    fin.entries = fin.entries.filter((e) => !ids.includes(e.id));
+    return ids.length;
+  }),
+  fin_period_last: () => fin.entries.reduce<string | null>((m, e) => (e.endDay && (!m || e.endDay > m) ? e.endDay : m), null),
   fin_fixed: () => [...fin.fixed].sort((a, b) => a.sortOrder - b.sortOrder),
   fin_fixed_create: undoable("添加固定支出", (a) => {
     const p = a.patch as Partial<FFixed>;
     const name = (p.name ?? "").trim();
     if (!name) throw "名称不能为空";
     if (fin.fixed.some((f) => f.name === name)) throw `已经有叫「${name}」的固定支出了`;
-    const f: FFixed = { id: nextId++, flow: "out", amount: 0, currency: "CNY", kindId: null, accountId: null, rule: "monthly:1", stopped: false, note: null, sortOrder: fin.fixed.length + 1, createdAt: now(), updatedAt: now(), ...p, name, nextDay: p.nextDay ?? nextOnOrAfter(p.rule ?? "monthly:1", mockToday()) } as FFixed;
+    const f: FFixed = { id: nextId++, flow: "out", amount: 0, currency: "CNY", kindId: null, rule: "monthly:1", stopped: false, note: null, sortOrder: fin.fixed.length + 1, createdAt: now(), updatedAt: now(), ...p, name, nextDay: p.nextDay ?? nextOnOrAfter(p.rule ?? "monthly:1", mockToday()) } as FFixed;
     if (!(f.amount > 0)) throw "金额要大于 0";
-    checkMoney(f.flow, f.currency, f.kindId, f.accountId);
+    checkKind(f.flow, f.kindId);
     fin.fixed.push(f);
     postDue(mockToday());
     return f;
@@ -887,7 +956,7 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
     const f = fin.fixed.find((x) => x.id === a.id)!;
     const next = { ...f, ...(a.patch as Partial<FFixed>), updatedAt: now() };
     if (!(next.amount > 0)) throw "金额要大于 0";
-    checkMoney(next.flow, next.currency, next.kindId, next.accountId);
+    checkKind(next.flow, next.kindId);
     Object.assign(f, next);
     postDue(mockToday());
     return f;
@@ -909,11 +978,13 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
   fin_totals: () => {
     const m = new Map<string, { month: string; currency: Cur; flow: string; kindId: number | null; amount: number; count: number }>();
     for (const e of fin.entries) {
-      const k = `${e.day.slice(0, 7)}|${e.currency}|${e.flow}|${e.kindId}`;
-      const t = m.get(k) ?? { month: e.day.slice(0, 7), currency: e.currency, flow: e.flow, kindId: e.kindId, amount: 0, count: 0 };
-      t.amount += e.amount;
-      t.count += 1;
-      m.set(k, t);
+      for (const [month, part] of e.endDay ? spread(e.amount, e.day, e.endDay) : [[e.day.slice(0, 7), e.amount] as [string, number]]) {
+        const k = `${month}|${e.currency}|${e.flow}|${e.kindId}`;
+        const t = m.get(k) ?? { month, currency: e.currency, flow: e.flow, kindId: e.kindId, amount: 0, count: 0 };
+        t.amount += part;
+        t.count += 1;
+        m.set(k, t);
+      }
     }
     return [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
   },
@@ -925,14 +996,13 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
   },
 };
 
-// ---- 投石问路 (jobs): mirrors jobs.rs loosely (stages, stamps, reached, follow-up, linked task) ----
+// ---- 投石问路 (jobs): mirrors jobs.rs loosely (own steps per application, current = last checked, follow-up) ----
 type JStage = "wish" | "applied" | "active" | "got" | "closed";
 type JStatus = { id: number; name: string; stage: JStage; sortOrder: number };
+type JStep = { statusId: number; done: boolean; doneOn: string | null };
 type JRow = {
   id: number; company: string; position: string | null; location: string | null; link: string | null; kindId: number | null;
-  resume: string | null; coverLetter: string | null; deadline: string | null; salary: string | null; note: string | null;
-  statusId: number; appliedOn: string | null; stepOn: string | null; followedOn: string | null; reachedId: number | null; taskId: number | null;
-  createdAt: string; updatedAt: string;
+  resume: string | null; note: string | null; followedOn: string | null; steps: JStep[]; createdAt: string; updatedAt: string;
 };
 let jb = { statuses: [] as JStatus[], jobs: [] as JRow[] };
 (
@@ -940,99 +1010,98 @@ let jb = { statuses: [] as JStatus[], jobs: [] as JRow[] };
 ).forEach(([name, stage], i) => jb.statuses.push({ id: nextId++, name, stage, sortOrder: i + 1 }));
 ["官网", "内推", "Boss 直聘", "牛客", "LinkedIn", "学校", "其他"].forEach((n) => addKind("job_channel", n));
 itemsUsing.job_channel = () => jb.jobs as never;
+const jSorted = () => [...jb.statuses].sort((a, b) => a.sortOrder - b.sortOrder);
 const jStatus = (id: number) => jb.statuses.find((x) => x.id === id)!;
 const jStatusNamed = (n: string) => jb.statuses.find((x) => x.name === n)!;
+const jOrder = (id: number) => jSorted().findIndex((s) => s.id === id);
 const jobOut = (j: JRow) => {
-  const stage = jStatus(j.statusId).stage;
-  const since = [j.appliedOn, j.followedOn].filter(Boolean).sort().pop() ?? null;
+  const steps = [...j.steps].sort((a, b) => jOrder(a.statusId) - jOrder(b.statusId));
+  const last = steps.filter((s) => s.done).pop();
+  const statusId = last?.statusId ?? jSorted().find((s) => s.stage === "wish")?.id ?? null;
+  const stage = statusId !== null ? jStatus(statusId).stage : "wish";
+  const appliedOn = steps.filter((s) => s.done && s.doneOn).map((s) => s.doneOn!).sort()[0] ?? null;
+  const since = [last?.doneOn, j.followedOn].filter(Boolean).sort().pop() ?? null;
   const waitingDays = stage === "applied" && since ? Math.round((parseYmd(mockToday()).getTime() - parseYmd(since).getTime()) / 86400000) : null;
-  return { ...j, stage, waitingDays, followUp: waitingDays !== null && waitingDays >= 14 };
+  return { ...j, steps, statusId, stage, appliedOn, waitingDays, followUp: waitingDays !== null && waitingDays >= 14 };
 };
-const jobTask = (j: JRow) => {
-  const st = jStatus(j.statusId);
-  const label = j.position ? `${j.company} · ${j.position}` : j.company;
-  const want = st.stage === "wish" && j.deadline ? [`投递 ${label}`, j.deadline] : st.stage === "active" && j.stepOn ? [`${st.name} ${label}`, j.stepOn] : null;
-  const task = tTasks.find((t) => t.id === j.taskId);
-  if (want && task) {
-    if (task.title !== want[0] || task.dueDate !== want[1]) Object.assign(task, { title: want[0], dueDate: want[1], startDate: null, done: false, doneAt: null });
-  } else if (want) {
-    const linked = jb.jobs.map((x) => tTasks.find((t) => t.id === x.taskId)).find(Boolean);
-    const group = linked?.groupId ?? tGroups.find((g) => g.name === "💼 求职")?.id ?? addTGroup("💼 求职").id;
-    j.taskId = addTTask({ groupId: group, title: want[0], dueDate: want[1] }).id;
-  } else if (task && !task.done) markDone(task);
-};
-const jobSave = (j: JRow, p: Partial<JRow>, today: string) => {
-  const statusChanged = p.statusId !== undefined && p.statusId !== j.statusId;
-  if (statusChanged && !("stepOn" in p)) j.stepOn = null;
+const jDefaultSteps = (): JStep[] => jSorted().filter((s) => s.stage !== "wish" && s.stage !== "closed").map((s) => ({ statusId: s.id, done: false, doneOn: null }));
+const jobSave = (j: JRow, p: Partial<JRow>) => {
   Object.assign(j, p, { updatedAt: now() });
   if (!j.company?.trim()) throw "公司不能为空";
   j.company = j.company.trim();
-  const st = jStatus(j.statusId);
-  if (["applied", "active", "got"].includes(st.stage) && !j.appliedOn) j.appliedOn = today;
-  const reached = j.reachedId ? jStatus(j.reachedId) : undefined;
-  if (st.stage !== "closed" && (!reached || reached.sortOrder < st.sortOrder)) j.reachedId = st.id;
-  jobTask(j);
+  for (const s of j.steps) {
+    const st = jb.statuses.find((x) => x.id === s.statusId);
+    if (!st) throw "找不到这个状态，可能已经被删除了";
+    if (st.stage === "wish") throw `「${st.name}」是准备阶段，不能放进时间线`;
+    if (!s.done) s.doneOn = null;
+  }
 };
 {
   const ch = (n: string) => kindId("job_channel", n);
+  const step = (name: string, doneOn: string | null | false = false) => ({ statusId: jStatusNamed(name).id, done: doneOn !== false, doneOn: doneOn || null });
+  const rest = (...names: string[]) => names.map((n) => step(n));
   const add = (p: Partial<JRow>) => {
-    const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, coverLetter: null, deadline: null, salary: null, note: null, statusId: jStatusNamed("想投").id, appliedOn: null, stepOn: null, followedOn: null, reachedId: null, taskId: null, createdAt: now(), updatedAt: now() };
+    const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, note: null, followedOn: null, steps: jDefaultSteps(), createdAt: now(), updatedAt: now() };
+    jobSave(j, p);
     jb.jobs.push(j);
-    const { statusId, ...rest } = p;
-    jobSave(j, { ...rest, statusId: statusId ?? j.statusId }, mockToday());
-    if (p.reachedId) j.reachedId = p.reachedId;
-    return j;
   };
-  add({ company: "KeyReply", position: "软件开发实习", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/template-it-cv-v1.docx", statusId: jStatusNamed("被拒").id, reachedId: jStatusNamed("已投递").id, note: "CV 阶段被拒" });
-  add({ company: "中国银行新加坡分行", position: "Application Development Assistant（实习）", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/template-it-cv-v1.docx", statusId: jStatusNamed("已接受").id, stepOn: "2026-08-13", reachedId: jStatusNamed("已接受").id, note: "2026-09-07 入职，金融科技部" });
-  add({ company: "NUS-ISS 学院代投", position: "实习（学院转投）", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/seek-it-iss-cv-v3.docx", statusId: jStatusNamed("已投递").id, appliedOn: dayOffset(-30) });
-  add({ company: "腾讯", position: "后台开发", location: "深圳", kindId: ch("官网"), statusId: jStatusNamed("面试").id, appliedOn: dayOffset(-9), stepOn: dayOffset(2), link: "https://join.qq.com" });
-  add({ company: "字节跳动", position: "后端开发", location: "北京", kindId: ch("内推"), statusId: jStatusNamed("已投递").id, appliedOn: dayOffset(-16) });
-  add({ company: "美团", position: "Java 开发", location: "北京", kindId: ch("牛客"), statusId: jStatusNamed("网申测评 / 笔试").id, appliedOn: dayOffset(-5), stepOn: dayOffset(1) });
-  add({ company: "阿里巴巴", position: "Java 开发", location: "杭州", kindId: ch("官网"), deadline: dayOffset(10), salary: "25k × 16" });
-  add({ company: "招商银行", position: "信息技术岗", location: "深圳", kindId: ch("官网"), statusId: jStatusNamed("被拒").id, appliedOn: dayOffset(-20), reachedId: jStatusNamed("网申测评 / 笔试").id });
+  add({ company: "KeyReply", position: "软件开发实习", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/template-it-cv-v1.docx", note: "CV 阶段被拒",
+    steps: [step("已投递", dayOffset(-60)), ...rest("网申测评 / 笔试", "面试", "Offer", "已接受"), step("被拒", dayOffset(-45))] });
+  add({ company: "中国银行新加坡分行", position: "Application Development Assistant（实习）", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/template-it-cv-v1.docx", note: "2026-09-07 入职，金融科技部",
+    steps: [step("已投递", "2026-07-20"), step("面试", "2026-08-13"), step("Offer", "2026-08-20"), step("已接受", null)] });
+  add({ company: "NUS-ISS 学院代投", position: "实习（学院转投）", location: "新加坡", kindId: ch("学校"), resume: "~/Documents/Seeker/cv/en/seek-it-iss-cv-v3.docx",
+    steps: [step("已投递", dayOffset(-30)), ...rest("面试", "Offer", "已接受")] });
+  add({ company: "腾讯", position: "后台开发", location: "深圳", kindId: ch("官网"), link: "https://join.qq.com",
+    steps: [step("已投递", dayOffset(-9)), step("网申测评 / 笔试", dayOffset(-4)), step("面试", dayOffset(-1)), ...rest("Offer", "已接受")] });
+  add({ company: "字节跳动", position: "后端开发", location: "北京", kindId: ch("内推"), steps: [step("已投递", dayOffset(-16)), ...rest("面试", "Offer", "已接受")] });
+  add({ company: "美团", position: "Java 开发", location: "北京", kindId: ch("牛客"), steps: [step("已投递", dayOffset(-5)), step("网申测评 / 笔试", dayOffset(-2)), ...rest("面试", "Offer", "已接受")] });
+  add({ company: "阿里巴巴", position: "Java 开发", location: "杭州", kindId: ch("官网") });
+  add({ company: "招商银行", position: "信息技术岗", location: "深圳", kindId: ch("官网"),
+    steps: [step("已投递", dayOffset(-20)), step("网申测评 / 笔试", dayOffset(-12)), ...rest("面试", "Offer", "已接受"), step("被拒", dayOffset(-8))] });
 }
+const jCount = (id: number) => jb.jobs.filter((j) => jobOut(j).statusId === id).length;
+const jUsing = (id: number) => jb.jobs.filter((j) => j.steps.some((s) => s.statusId === id)).length;
 const jobHandlers: Record<string, (a: Args) => unknown> = {
-  job_statuses: () => [...jb.statuses].sort((a, b) => a.sortOrder - b.sortOrder).map((st) => ({ ...st, count: jb.jobs.filter((j) => j.statusId === st.id).length })),
+  job_statuses: () => jSorted().map((st) => ({ ...st, count: jCount(st.id), used: jUsing(st.id) })),
   job_status_create: undoable("添加状态", (a) => {
     const name = String(a.name).trim();
     if (!name) throw "状态名不能为空";
     if (jb.statuses.some((x) => x.name === name)) throw `已经有「${name}」这个状态了`;
-    const st = { id: nextId++, name, stage: a.stage as JStage, sortOrder: jb.statuses.length + 1 };
+    const st = { id: nextId++, name, stage: (a.stage as JStage | undefined) ?? "active", sortOrder: jb.statuses.length + 1 };
     jb.statuses.push(st);
-    return { ...st, count: 0 };
+    return { ...st, count: 0, used: 0 };
   }),
   job_status_update: undoable("修改状态", (a) => {
     const st = jStatus(a.id as number);
+    if (a.stage === "wish" && st.stage !== "wish" && jUsing(st.id)) throw `有 ${jUsing(st.id)} 条投递的时间线上有「${st.name}」，不能改成准备阶段`;
     if (a.name != null) st.name = String(a.name).trim();
     if (a.stage != null) st.stage = a.stage as JStage;
-    jb.jobs.filter((j) => j.statusId === st.id).forEach(jobTask);
-    return { ...st, count: jb.jobs.filter((j) => j.statusId === st.id).length };
+    return { ...st, count: jCount(st.id), used: jUsing(st.id) };
   }),
   job_status_delete: undoable("删除状态", (a) => {
-    const n = jb.jobs.filter((j) => j.statusId === a.id).length;
-    if (n) throw `还有 ${n} 条投递是「${jStatus(a.id as number).name}」，先把它们改成别的状态`;
+    const st = jStatus(a.id as number);
+    if (jCount(st.id)) throw `还有 ${jCount(st.id)} 条投递是「${st.name}」，先把它们改成别的状态`;
+    if (jUsing(st.id)) throw `还有 ${jUsing(st.id)} 条投递的时间线上有「${st.name}」，先从这些投递里去掉它`;
     jb.statuses = jb.statuses.filter((x) => x.id !== a.id);
-    for (const j of jb.jobs) if (j.reachedId === a.id) j.reachedId = null;
     return null;
   }),
   job_statuses_reorder: undoable("调整顺序", (a) => reorderPart(jb.statuses, a.ids as number[])),
-  jobs_list: () =>
-    [...jb.jobs]
-      .sort((x, y) => jStatus(x.statusId).sortOrder - jStatus(y.statusId).sortOrder || (y.appliedOn ?? y.createdAt).localeCompare(x.appliedOn ?? x.createdAt))
-      .map(jobOut),
+  jobs_list: () => {
+    const moved = (j: ReturnType<typeof jobOut>) => j.steps.map((s) => s.doneOn ?? "").sort().pop() || j.createdAt.slice(0, 10);
+    const ord = (j: ReturnType<typeof jobOut>) => (j.statusId === null ? 999 : jOrder(j.statusId));
+    return jb.jobs.map(jobOut).sort((x, y) => ord(x) - ord(y) || moved(y).localeCompare(moved(x)) || y.id - x.id);
+  },
   job_create: undoable("添加投递", (a) => {
-    const p = a.patch as Partial<JRow>;
-    const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, coverLetter: null, deadline: null, salary: null, note: null, statusId: (jb.statuses.find((x) => x.stage === "wish") ?? jb.statuses[0]).id, appliedOn: null, stepOn: null, followedOn: null, reachedId: null, taskId: null, createdAt: now(), updatedAt: now() };
-    jobSave(j, p, mockToday());
+    const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, note: null, followedOn: null, steps: jDefaultSteps(), createdAt: now(), updatedAt: now() };
+    jobSave(j, a.patch as Partial<JRow>);
     jb.jobs.push(j);
     return jobOut(j);
   }),
   job_update: undoable("修改投递", (a) => {
     const j = jb.jobs.find((x) => x.id === a.id);
     if (!j) throw "找不到这个投递，可能已经被删除了";
-    const copy = { ...j };
-    jobSave(copy, a.patch as Partial<JRow>, mockToday());
+    const copy = { ...j, steps: j.steps.map((s) => ({ ...s })) };
+    jobSave(copy, a.patch as Partial<JRow>);
     Object.assign(j, copy);
     return jobOut(j);
   }),
@@ -1042,9 +1111,6 @@ const jobHandlers: Record<string, (a: Args) => unknown> = {
     return jobOut(j);
   }),
   job_delete: undoable("删除投递", (a) => {
-    const j = jb.jobs.find((x) => x.id === a.id)!;
-    const t = tTasks.find((x) => x.id === j.taskId);
-    if (t && !t.done) tTasks = tTasks.filter((x) => x.id !== t.id);
     jb.jobs = jb.jobs.filter((x) => x.id !== a.id);
     return null;
   }),
@@ -1052,7 +1118,7 @@ const jobHandlers: Record<string, (a: Args) => unknown> = {
 
 // ---- 念念不忘 (notes): mirrors notes.rs loosely (inline tags incl. sub-tags, refs both ways, rename) ----
 type NRow = { id: number; content: string; pinned: boolean; refs: number[]; createdAt: string; updatedAt: string };
-let nt = { notes: [] as NRow[] };
+let nt = { notes: [] as NRow[], meta: new Map<string, { pin: number | null; icon: string | null }>() };
 const nTags = (c: string) => [...new Set(c.split("\n").flatMap((l) => tagSpans(l).map((t) => t.value)))];
 const nUnder = (t: string, root: string) => t === root || t.startsWith(`${root}/`);
 const nBrief = (n: NRow) => ({ id: n.id, createdAt: n.createdAt, excerpt: excerpt(n.content) });
@@ -1120,9 +1186,23 @@ const noteHandlers: Record<string, (a: Args) => unknown> = {
     return {
       total: nt.notes.length,
       days: [...days].sort().map(([day, count]) => ({ day, count })),
-      tags: [...under].sort().map(([tag, ids]) => ({ tag, count: ids.size })),
+      tags: [...under].sort().map(([tag, ids]) => ({ tag, count: ids.size, icon: nt.meta.get(tag)?.icon ?? null })),
+      pinned: [...nt.meta].filter(([t, m]) => m.pin !== null && !t.includes("/") && under.has(t)).sort((a, b) => a[1].pin! - b[1].pin!).map(([t]) => t),
     };
   },
+  notes_tag_set: undoable("标签设置", (a) => {
+    const tag = String(a.tag).replace(/^#/, "");
+    if (!nt.notes.some((n) => nTags(n.content).some((t) => nUnder(t, tag)))) throw `没有笔记用到「#${tag}」`;
+    const p = a.patch as { pinned?: boolean; icon?: string | null };
+    if (p.pinned === true && tag.includes("/")) throw "只能置顶第一级标签";
+    const m = { ...(nt.meta.get(tag) ?? { pin: null, icon: null }) };
+    if (p.pinned === true && m.pin === null) m.pin = Math.max(0, ...[...nt.meta.values()].map((x) => x.pin ?? 0)) + 1;
+    if (p.pinned === false) m.pin = null;
+    if ("icon" in p) m.icon = p.icon?.trim() || null;
+    if (m.pin === null && m.icon === null) nt.meta.delete(tag);
+    else nt.meta.set(tag, m);
+    return null;
+  }),
   note_create: undoable("添加笔记", (a) => {
     const p = a.patch as { content?: string; pinned?: boolean; refs?: number[] };
     const n: NRow = { id: nextId++, content: nClean(p.content), pinned: !!p.pinned, refs: [...new Set(p.refs ?? [])], createdAt: now(), updatedAt: now() };
@@ -1171,6 +1251,13 @@ const noteHandlers: Record<string, (a: Args) => unknown> = {
       k++;
     }
     if (!k) throw `没有笔记用到「#${from}」`;
+    for (const [t, m] of [...nt.meta]) {
+      if (!nUnder(t, from)) continue;
+      nt.meta.delete(t);
+      const target = to + t.slice(from.length);
+      const old = nt.meta.get(target);
+      nt.meta.set(target, { pin: target.includes("/") ? null : (old?.pin ?? m.pin), icon: old?.icon ?? m.icon });
+    }
     return k;
   }),
 };
@@ -1275,13 +1362,128 @@ const vaultHandlers: Record<string, (a: Args) => unknown> = {
   vault_generate: () => "kfwmqa-Pzhtdv-xr4ena",
 };
 
+// ---- 全局搜索: mirrors search.rs loosely (all words in the text, ≤ 6 per kind, 芝麻开门 never) ----
+function searchAllMock(q: string) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  type H = { module: string; kind: string; id: number; title: string; detail?: string | null; parent?: number | null; day?: string | null; amount?: number | null; currency?: string | null; flow?: string | null };
+  const out: H[] = [];
+  const add = (module: string, kind: string, rows: { hay: string; hit: Omit<H, "module" | "kind"> }[]) =>
+    out.push(
+      ...rows
+        .filter((r) => words.every((w) => r.hay.toLowerCase().includes(w)))
+        .sort((a, b) => Number(b.hit.title.toLowerCase().startsWith(words[0])) - Number(a.hit.title.toLowerCase().startsWith(words[0])) || b.hit.id - a.hit.id)
+        .slice(0, 6)
+        .map((r) => ({ detail: null, parent: null, day: null, amount: null, currency: null, flow: null, ...r.hit, module, kind })),
+    );
+  const t = (...xs: unknown[]) => xs.filter(Boolean).join(" ");
+  add("todo", "group", tGroups.map((g) => ({ hay: g.name, hit: { id: g.id, title: g.name } })));
+  add("todo", "goal", tGoals.map((g) => ({ hay: t(g.name, g.note, g.review), hit: { id: g.id, title: g.name, detail: tGroups.find((x) => x.id === g.groupId)?.name, parent: g.groupId } })));
+  add("todo", "task", tTasks.map((x) => ({ hay: t(x.title, x.note), hit: { id: x.id, title: x.title.replace(/\*\*/g, ""), detail: (tGoals.find((g) => g.id === x.goalId)?.name ?? tGroups.find((g) => g.id === x.groupId)?.name ?? "") + (x.done ? " · 已完成" : ""), parent: x.goalId ? -x.goalId : x.groupId, day: x.dueDate } })));
+  for (const [m, k, c] of [["books", "book", "author"], ["films", "film", "director"]] as const)
+    add(m, k, (itemsUsing[m]() as unknown as Row[]).map((r) => ({ hay: t(r.title, r[c], r.country, r.note), hit: { id: r.id, title: r.title, detail: r[c] as string | null } })));
+  add("drawing", "course", courses.map((c) => ({ hay: t(c.name, c.note), hit: { id: c.id, title: c.name } })));
+  add("drawing", "lesson", lessons.map((l) => ({ hay: t(l.code, l.title, l.note), hit: { id: l.id, title: t(l.code, l.title), detail: courses.find((c) => c.id === l.courseId)?.name, parent: l.courseId as number } })));
+  add("packing", "trip", tripRows.map((r) => ({ hay: t(r.name, r.note), hit: { id: r.id, title: r.name, day: r.departOn } })));
+  add("packing", "template", tpls.map((r) => ({ hay: t(r.name, r.note), hit: { id: r.id, title: r.name, detail: "模板" } })));
+  add("packing", "trip_item", tripItems.map((i) => ({ hay: t(i.name, i.note), hit: { id: i.id, title: i.name, detail: tripRows.find((r) => r.id === i.parentId)?.name, parent: i.parentId } })));
+  add("packing", "template_item", tplItems.map((i) => ({ hay: t(i.name, i.note), hit: { id: i.id, title: i.name, detail: `模板 · ${tpls.find((r) => r.id === i.parentId)?.name}`, parent: i.parentId } })));
+  const kname = (id: number | null) => kinds.find((k) => k.id === id)?.name ?? null;
+  add("finance", "entry", fin.entries.map((e) => ({ hay: t(e.note, kname(e.kindId)), hit: { id: e.id, title: e.note ?? kname(e.kindId) ?? "未分类", detail: kname(e.kindId), day: e.day, amount: e.amount, currency: e.currency, flow: e.flow } })));
+  add("finance", "fixed", fin.fixed.map((f) => ({ hay: t(f.name, f.note), hit: { id: f.id, title: f.name, detail: "固定支出" } })));
+  add("finance", "account", fin.accounts.map((a) => ({ hay: t(a.name, a.note), hit: { id: a.id, title: a.name, detail: "账户" } })));
+  add("jobs", "job", jb.jobs.map((j) => ({ hay: t(j.company, j.position, j.location, j.note), hit: { id: j.id, title: j.position ? `${j.company} · ${j.position}` : j.company, detail: j.location } })));
+  add("notes", "note", nt.notes.map((n) => ({ hay: n.content, hit: { id: n.id, title: excerpt(n.content), day: toYmd(new Date(n.createdAt)) } })));
+  return out;
+}
+
+// ---- 首页: mirrors home.rs loosely ----
+function homeMock(hidden: string[]) {
+  const shown = (m: string) => !hidden.includes(m);
+  const today = mockToday();
+  const year = today.slice(0, 4);
+  const hit = (module: string, kind: string, id: number, title: string, detail: string | null = null, parent: number | null = null) =>
+    ({ module, kind, id, title, detail, parent, day: null as string | null, amount: null as number | null, currency: null as string | null, flow: null as string | null });
+  const books = handlers.books_list({}) as Row[];
+  const films = handlers.films_list({}) as Row[];
+  const read = (rows: Row[]) => rows.filter((r) => (r.status === "done" && r.finishedYear === year) || (r.rereads as { year: string | null }[]).some((x) => x.year === year)).length;
+  const jobs = handlers.jobs_list({}) as ReturnType<typeof jobOut>[];
+  const week0 = addDays(today, 1 - isoWeekday(today));
+  const jobLine = (j: ReturnType<typeof jobOut>) => ({
+    ...hit("jobs", "job", j.id, j.position ? `${j.company} · ${j.position}` : j.company, j.location),
+    status: j.statusId !== null ? jStatus(j.statusId).name : "",
+    stage: j.stage,
+    waitingDays: j.waitingDays,
+  });
+  const recent = [
+    ...nt.notes.map((n) => ({ ...hit("notes", "note", n.id, excerpt(n.content)), at: n.createdAt, done: false })),
+    ...tTasks.filter((t) => t.done && t.doneAt).map((t) => ({ ...hit("todo", "task", t.id, t.title.replace(/\*\*/g, ""), (t.goalId ? tGoals.find((g) => g.id === t.goalId)?.name : tGroups.find((g) => g.id === t.groupId)?.name) ?? null, t.goalId ? -t.goalId : t.groupId), at: t.doneAt!, done: true })),
+    ...books.map((b) => ({ ...hit("books", "book", b.id, b.title, (b.author as string) ?? null), at: b.createdAt as string, done: false })),
+    ...films.map((f) => ({ ...hit("films", "film", f.id, f.title, (f.director as string) ?? null), at: f.createdAt as string, done: false })),
+    ...courses.map((c) => ({ ...hit("drawing", "course", c.id, c.name), at: c.createdAt, done: false })),
+    ...tripRows.map((t) => ({ ...hit("packing", "trip", t.id, t.name), at: t.createdAt, done: false })),
+    ...jb.jobs.map((j) => ({ ...hit("jobs", "job", j.id, j.position ? `${j.company} · ${j.position}` : j.company, j.location), at: j.createdAt, done: false })),
+    ...fin.entries.map((e) => ({
+      ...hit("finance", "entry", e.id, e.note ?? kinds.find((k) => k.id === e.kindId)?.name ?? "未分类", kinds.find((k) => k.id === e.kindId)?.name ?? null),
+      day: e.day, amount: e.amount, currency: e.currency, flow: e.flow, at: e.createdAt, done: false,
+    })),
+  ]
+    .filter((r) => shown(r.module))
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 8);
+  return {
+    today,
+    year: {
+      year,
+      books: shown("books") ? read(books) : null,
+      films: shown("films") ? read(films) : null,
+      lessons: shown("drawing") ? lessons.filter((l) => l.status === "done" && String(l.finishedMonth ?? "").startsWith(year)).length : null,
+      todos: shown("todo") ? tTasks.filter((t) => t.done && t.doneAt?.startsWith(year)).length + tLogs.filter((l) => l.day.startsWith(year)).length : null,
+      notes: shown("notes") ? nt.notes.filter((n) => n.createdAt.startsWith(year)).length : null,
+      jobs: shown("jobs") ? jobs.filter((j) => j.appliedOn?.startsWith(year)).length : null,
+    },
+    assets: shown("finance")
+      ? (handlers.fin_assets({}) as { totals: { day: string; totalCny: number | null }[] }).totals.filter((t) => t.totalCny !== null).map((t) => ({ day: t.day, total: t.totalCny }))
+      : null,
+    jobs: shown("jobs")
+      ? {
+          total: jobs.length,
+          thisWeek: jobs.filter((j) => j.appliedOn && j.appliedOn >= week0).length,
+          ongoing: jobs.filter((j) => j.stage === "applied" || j.stage === "active").length,
+          got: jobs.filter((j) => j.stage === "got").length,
+          follow: jobs.filter((j) => j.followUp).sort((a, b) => (b.waitingDays ?? 0) - (a.waitingDays ?? 0)).map(jobLine),
+          active: jobs.filter((j) => j.stage === "active").map(jobLine),
+        }
+      : null,
+    reading:
+      shown("books") || shown("films")
+        ? [
+            ...(shown("books") ? books.filter((b) => b.status === "doing").map((b) => hit("books", "book", b.id, b.title, (b.author as string) ?? null)) : []),
+            ...(shown("films") ? films.filter((f) => f.status === "doing").map((f) => hit("films", "film", f.id, f.title, (f.director as string) ?? null)) : []),
+          ]
+        : null,
+    drawing: shown("drawing")
+      ? (handlers.drawing_courses({}) as ReturnType<typeof withCounts>[])
+          .filter((c) => c.total > 0 && c.done < c.total)
+          .map((c) => {
+            const ls = lessons.filter((l) => l.courseId === c.id && l.status !== "done").sort((a, b) => Number(b.status === "doing") - Number(a.status === "doing") || (a.sortOrder as number) - (b.sortOrder as number));
+            const n = ls[0];
+            return { id: c.id, name: c.name, total: c.total, done: c.done, doing: c.doing, next: n ? hit("drawing", "lesson", n.id, `${n.code ? `${n.code} ` : ""}${n.title}`, c.name, c.id) : null };
+          })
+      : null,
+    recent,
+  };
+}
+
 const handlers: Record<string, (a: Args) => unknown> = {
+  home_overview: (a) => homeMock((a.hidden as string[]) ?? []),
+  search_all: (a) => searchAllMock(String(a.q)),
   app_info: () => ({
     appVersion: "0.1.0-mock",
     isDev: true,
     dataDir: "/mock/Pomelo OS Dev",
     dbPath: "/mock/Pomelo OS Dev/pomelo.db",
-    schemaVersion: 15,
+    schemaVersion: 21,
     startupError: null,
   }),
   reveal_data_dir: () => null,
@@ -1322,13 +1524,13 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
 
   ...collection("books", { author: null, kindId: kindId("books", "虚构") }, [
-    { title: "示例书 A", author: "作者甲", country: "中国", status: "done", rating: 5, finishedMonth: "2025-11" },
+    { title: "示例书 A", author: "作者甲", country: "中国", status: "done", rating: 5, finishedYear: "2025" },
     { title: "示例书 B", author: "作者乙", country: "日本", status: "doing", rating: 3, kindId: kindId("books", "非虚构") },
     { title: "示例书 C", author: "作者甲", country: "中国", status: "todo", kindId: kindId("books", "漫画") },
     { title: "示例书 D", author: "作者丙 / 作者丁", country: "法国", note: "一条备注", kindId: null },
   ]),
   ...collection("films", { director: null, kindId: kindId("films", "电影") }, [
-    { title: "示例电影", director: "导演甲", country: "美国", status: "done", rating: 5, finishedMonth: "2026-01" },
+    { title: "示例电影", director: "导演甲", country: "美国", status: "done", rating: 5, finishedYear: "2026" },
     { title: "示例剧集", director: "导演乙", country: "韩国", status: "doing", kindId: kindId("films", "剧集") },
     { title: "示例动漫", director: "导演丙", country: "日本", kindId: kindId("films", "动漫") },
   ]),
@@ -1356,7 +1558,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
   drawing_lessons: (a) => lessons.filter((l) => l.courseId === a.courseId).sort((x, y) => (x.sortOrder as number) - (y.sortOrder as number)),
   drawing_lesson_create: (a) => {
-    const l = applyPatch(addLesson(a.courseId as number, { title: "x" }), a.patch as Args, "课名");
+    const l = applyPatch(addLesson(a.courseId as number, { title: "x", status: "todo" }), a.patch as Args, "课名");
     lessons[lessons.length - 1] = l;
     return l;
   },
@@ -1389,7 +1591,12 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return null;
   },
   packing_trips: () => [...tripRows].sort((x, y) => y.id - x.id).map(tripOut),
-  packing_trip_create: (a) => tripOut(createTripRow(a.patch as Args, (a.templateId as number | null) ?? null)),
+  packing_trip_create: (a) => {
+    const from = (a.fromTripId as number | null) ?? null;
+    const t = createTripRow(a.patch as Args, from === null ? ((a.templateId as number | null) ?? null) : null);
+    if (from !== null) tripItems.filter((i) => i.parentId === from).forEach((i) => addPItem(tripItems, t.id, { kindId: i.kindId, name: i.name, note: i.note, packed: false }));
+    return tripOut(t);
+  },
   packing_trip_update: (a) => {
     const t = tripRows.find((x) => x.id === a.id)!;
     Object.assign(t, a.patch, { updatedAt: now() });

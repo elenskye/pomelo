@@ -4,6 +4,7 @@ import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";
 import { BackupsSection } from "./Backups";
 import { Path, Row, Section } from "./layout";
+import { SidebarSection } from "./Sidebar";
 import { ExportRow, ImportRow } from "./Transfer";
 import { VaultSection } from "./Vault";
 
@@ -33,6 +34,7 @@ export default function SettingsPage() {
             {info.schemaVersion ?? "—"}
           </Row>
         </Section>
+        <SidebarSection />
         <Section title="导出与导入">
           <ExportRow />
           <ImportRow />

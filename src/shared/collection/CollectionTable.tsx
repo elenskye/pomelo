@@ -2,7 +2,7 @@ import { StarRating } from "@/shared/StarRating";
 import { StatusSelect } from "@/shared/status";
 import { useKinds } from "@/shared/kinds/api";
 import { useItemMutations } from "./api";
-import type { CollectionApi, CollectionConfig, Item } from "./types";
+import { latestYear, type CollectionApi, type CollectionConfig, type Item } from "./types";
 
 // Widths on <th> (table-fixed). max-lg:hidden columns drop below 1024px so the minimum window still fits.
 export function CollectionTable(props: {
@@ -62,7 +62,7 @@ export function CollectionTable(props: {
               <td className="px-2">
                 <StarRating value={it.rating} onChange={(rating) => quickUpdate.mutate({ id: it.id, patch: { rating } })} />
               </td>
-              <td className={`px-3 whitespace-nowrap ${muted}`}>{it.finishedMonth ?? "—"}</td>
+              <td className={`px-3 whitespace-nowrap ${muted}`}>{latestYear(it) ?? "—"}</td>
               <td className={`truncate px-3 max-lg:hidden ${muted}`}>{it.note ?? ""}</td>
             </tr>
           ))}

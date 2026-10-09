@@ -256,13 +256,13 @@ pub fn lesson(conn: &Connection, id: i64) -> Result<Lesson, String> {
         .ok_or_else(|| LESSON_NOT_FOUND.to_string())
 }
 
-/// Appends to the end of the course.
+/// Appends to the end of the course. A new lesson starts as 未开始 (todo) unless a status is given.
 pub fn create_lesson(conn: &Connection, course_id: i64, patch: LessonPatch) -> Result<Lesson, String> {
     course(conn, course_id)?;
     let month_given = patch.finished_month.is_some();
-    let mut f = Fields::default().apply(patch).validated()?;
+    let mut f = Fields { status: Status::Todo, ..Fields::default() }.apply(patch).validated()?;
     kinds::check(conn, KEY, f.kind_id)?;
-    common::auto_month(conn, f.status, false, &mut f.finished_month, month_given)?;
+    common::auto_finished(conn, f.status, false, &mut f.finished_month, month_given, 7)?;
     conn.execute(
         "INSERT INTO drawing_lessons (course_id, code, kind_id, title, status, finished_month, note, sort_order)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
@@ -278,7 +278,7 @@ pub fn update_lesson(conn: &Connection, id: i64, patch: LessonPatch) -> Result<L
     let month_given = patch.finished_month.is_some();
     let mut f = Fields::from_lesson(&old).apply(patch).validated()?;
     kinds::check(conn, KEY, f.kind_id)?;
-    common::auto_month(conn, f.status, old.status == Status::Done, &mut f.finished_month, month_given)?;
+    common::auto_finished(conn, f.status, old.status == Status::Done, &mut f.finished_month, month_given, 7)?;
     conn.execute(
         &format!(
             "UPDATE drawing_lessons SET code = ?1, kind_id = ?2, title = ?3, status = ?4, finished_month = ?5,
@@ -515,6 +515,10 @@ mod tests {
         let l1 = create_lesson(&c, course_id, lp(json!({"title": "绘画大地图", "code": "0", "kindId": main, "status": "todo"}))).unwrap();
         let l2 = create_lesson(&c, course_id, lp(json!({"title": "跟画：线条", "code": " "}))).unwrap();
         assert_eq!((l1.sort_order, l2.sort_order, l2.code.clone()), (1, 2, None));
+        assert_eq!(l2.status, Status::Todo); // new lessons start as 未开始
+        let l3 = create_lesson(&c, course_id, lp(json!({"title": "待定", "status": "unmarked"}))).unwrap();
+        assert_eq!(l3.status, Status::Unmarked);
+        delete_lesson(&c, l3.id).unwrap();
         assert!(create_lesson(&c, course_id, lp(json!({"title": "x", "kindId": kind_id(&c, "books", "虚构")}))).is_err());
         assert!(create_lesson(&c, 999, lp(json!({"title": "x"}))).is_err());
 

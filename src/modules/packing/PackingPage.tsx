@@ -5,6 +5,7 @@ import { useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED, type Kind } from "@/shared/kinds/api";
 import { KindManager } from "@/shared/kinds/KindManager";
 import { NameDialog } from "@/shared/NameDialog";
+import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { DragHandle, useSortable } from "@/shared/sortable";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } from "@/shared/ui";
@@ -104,7 +105,7 @@ function SideList<T extends { id: number }>(props: {
   const sort = useSortable((ids) => props.onReorder?.(ids));
   return (
     <nav aria-label={props.label} className="flex w-56 shrink-0 flex-col">
-      <div ref={sort.listRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+      <div ref={sort.listRef} className="-m-1 min-h-0 flex-1 space-y-1 overflow-y-auto p-1 pr-2">
         {props.items.map((it) => (
           <button
             key={it.id}
@@ -160,6 +161,17 @@ export default function PackingPage() {
     mut.quickDeleteItem.mutate({ list, id: it.id }, { onSuccess: () => toast(`已删除「${it.name}」`) });
   };
 
+  // 全局搜索: a trip / template, or an item (its list first, then its panel)
+  useOpenRequest(async (h) => {
+    if (!(await panel.request(null))) return;
+    const onTrip = h.kind === "trip" || h.kind === "trip_item";
+    const listId = h.kind === "trip" || h.kind === "template" ? h.id : h.parent;
+    setTab(onTrip ? "trips" : "templates");
+    setOnlyUnpacked(false);
+    if (onTrip) setTripId(listId);
+    else setTemplateId(listId);
+    if (h.kind.endsWith("_item")) void panel.request(h.id);
+  });
   usePageKeys({
     onNew: parentId !== null ? () => void panel.request("new") : undefined,
     onEscape: sel !== null ? () => void panel.request(null) : undefined,
@@ -280,7 +292,7 @@ export default function PackingPage() {
           />
         </div>
       )}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2">{itemsArea("清单是空的")}</div>
+      <div className="-m-1 flex min-h-0 flex-1 flex-col overflow-y-auto p-1 pb-2">{itemsArea("清单是空的")}</div>
     </section>
   );
 
@@ -303,7 +315,7 @@ export default function PackingPage() {
           </Button>
         </div>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2">{itemsArea("这个模板还是空的")}</div>
+      <div className="-m-1 flex min-h-0 flex-1 flex-col overflow-y-auto p-1 pb-2">{itemsArea("这个模板还是空的")}</div>
     </section>
   );
 
@@ -410,6 +422,7 @@ export default function PackingPage() {
         <TripDialog
           trip={tripDialog.mode === "edit" ? trip : null}
           templates={templates}
+          trips={trips}
           presetTemplateId={tripDialog.mode === "new" ? tripDialog.templateId : undefined}
           onClose={() => setTripDialog(null)}
           onCreated={(t) => {

@@ -1,0 +1,128 @@
+// 全局搜索: ⌘K (or the sidebar's magnifier) opens a box over every module that isn't hidden (芝麻开门 is
+// never searched — Rust doesn't look there). Words all have to match (search.rs). Results are grouped by
+// module; ↑↓ move, ↩ opens (navigate with the hit; the page opens the record), Esc closes.
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { Search as SearchIcon } from "lucide-react";
+import { money, type Currency } from "@/modules/finance/money";
+import { slashDate } from "@/shared/dates";
+import { searchAll, type Hit } from "@/shared/open";
+import { useHiddenModules } from "./hidden";
+import { MODULES } from "./modules";
+
+const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+
+/** The muted text after a title. */
+function detail(h: Hit): string | null {
+  if (h.kind === "entry" && h.day && h.amount !== null && h.currency)
+    return [md(h.day), money(h.amount, h.currency as Currency, h.flow === "in"), h.detail].filter(Boolean).join(" · ");
+  if (h.kind === "note" && h.day) return slashDate(h.day);
+  if (h.kind === "task" && h.day) return `${h.detail} · ${slashDate(h.day)}`;
+  return h.detail;
+}
+
+export function SearchBox(props: { onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const [hidden] = useHiddenModules();
+  const [text, setText] = useState("");
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.showModal();
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => setQ(text.trim()), 120);
+    return () => clearTimeout(t);
+  }, [text]);
+  const { data = [], isFetched } = useQuery({ queryKey: ["search", q], queryFn: () => searchAll(q), enabled: q !== "", placeholderData: keepPreviousData });
+  const hits = useMemo(() => (q ? data.filter((h) => !hidden.includes(h.module)) : []), [data, hidden, q]);
+  useEffect(() => setActive(0), [hits]);
+  useEffect(() => {
+    list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  const open = (h: Hit) => {
+    props.onClose();
+    void navigate(`/${h.module}`, { state: { open: h } });
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (hits.length) setActive((i) => (i + (e.key === "ArrowDown" ? 1 : -1) + hits.length) % hits.length);
+    } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (hits[active]) open(hits[active]);
+    }
+  };
+
+  let i = -1;
+  return (
+    <dialog
+      ref={ref}
+      aria-label="全局搜索"
+      onCancel={(e) => {
+        e.preventDefault();
+        props.onClose();
+      }}
+      onClick={(e) => e.target === ref.current && props.onClose()}
+      className="mx-auto mt-[12vh] w-[600px] max-w-[calc(100vw-32px)] overflow-hidden rounded-card border bg-popover p-0 text-foreground shadow-xl backdrop:bg-black/30"
+    >
+      <div className="flex items-center gap-2.5 border-b px-4">
+        <SearchIcon size={16} className="shrink-0 text-muted-foreground" />
+        <input
+          autoFocus
+          aria-label="搜索全部"
+          placeholder="搜索"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+          className="h-12 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      {q !== "" && (
+        <div ref={list} role="listbox" aria-label="搜索结果" className="max-h-[56vh] overflow-y-auto p-1.5">
+          {hits.length === 0 ? (
+            isFetched && <p className="px-3 py-6 text-center text-sm text-muted-foreground">没有找到</p>
+          ) : (
+            MODULES.filter((m) => hits.some((h) => h.module === m.id)).map((m) => {
+              const Icon = m.icon;
+              return (
+                <div key={m.id} className="pb-1">
+                  <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-xs text-muted-foreground">
+                    <Icon size={13} strokeWidth={1.75} style={{ color: m.color }} />
+                    {m.label}
+                  </div>
+                  {hits
+                    .filter((h) => h.module === m.id)
+                    .map((h) => {
+                      i += 1;
+                      const index = i;
+                      const d = detail(h);
+                      return (
+                        <div
+                          key={`${h.kind}${h.id}`}
+                          role="option"
+                          aria-selected={index === active}
+                          data-index={index}
+                          onMouseMove={() => setActive(index)}
+                          onClick={() => open(h)}
+                          className={`flex cursor-default items-baseline gap-3 rounded-control px-2.5 py-1.5 text-sm ${index === active ? "bg-accent" : ""}`}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{h.title}</span>
+                          {d && <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground tabular-nums">{d}</span>}
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </dialog>
+  );
+}

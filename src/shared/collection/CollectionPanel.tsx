@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Plus, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
-import { currentMonth, MonthInput } from "@/shared/MonthInput";
+import { currentYear, YearInput } from "@/shared/MonthInput";
 import { SidePanel } from "@/shared/panel";
 import { StarRating } from "@/shared/StarRating";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
-import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { useItemMutations } from "./api";
-import type { CollectionApi, CollectionConfig, Item, ItemPatch } from "./types";
+import type { CollectionApi, CollectionConfig, Item, ItemPatch, Reread } from "./types";
 
 type Draft = {
   title: string;
@@ -17,8 +18,9 @@ type Draft = {
   kindId: number | null;
   status: StatusCode;
   rating: number | null;
-  finishedMonth: string | null;
+  finishedYear: string | null;
   note: string;
+  rereads: Reread[];
 };
 
 const toDraft = (it: Item | null, defaultKindId: number | null): Draft => ({
@@ -28,11 +30,12 @@ const toDraft = (it: Item | null, defaultKindId: number | null): Draft => ({
   kindId: it ? it.kindId : defaultKindId,
   status: it?.status ?? "unmarked",
   rating: it?.rating ?? null,
-  finishedMonth: it?.finishedMonth ?? null,
+  finishedYear: it?.finishedYear ?? null,
   note: it?.note ?? "",
+  rereads: it?.rereads ?? [],
 });
 
-// Full form → every key explicit, so Rust won't auto-fill the month behind the user's back.
+// Full form → every key explicit, so Rust won't auto-fill the year behind the user's back.
 const toPatch = (d: Draft): ItemPatch => ({
   title: d.title,
   creator: d.creator.trim() || null,
@@ -40,8 +43,9 @@ const toPatch = (d: Draft): ItemPatch => ({
   kindId: d.kindId,
   status: d.status,
   rating: d.rating,
-  finishedMonth: d.finishedMonth,
+  finishedYear: d.finishedYear,
   note: d.note.trim() || null,
+  rereads: d.rereads,
 });
 
 /** Right-side overlay editor. `item === null` = create mode. */
@@ -83,8 +87,8 @@ export function CollectionPanel(props: {
     setD((x) => ({
       ...x,
       status,
-      // mirror the Rust rule visibly: becoming done with no month → this month (user can change it)
-      finishedMonth: status === "done" && x.status !== "done" && !x.finishedMonth ? currentMonth() : x.finishedMonth,
+      // mirror the Rust rule visibly: becoming done with no year → this year (user can change it)
+      finishedYear: status === "done" && x.status !== "done" && !x.finishedYear ? currentYear() : x.finishedYear,
     }));
 
   const save = async (e: FormEvent) => {
@@ -177,8 +181,34 @@ export function CollectionPanel(props: {
         <StarRating size={20} value={d.rating} onChange={(v) => set("rating", v)} />
       </Field>
       <Field label="完成时间">
-        <MonthInput value={d.finishedMonth} onChange={(v) => set("finishedMonth", v)} />
+        <YearInput value={d.finishedYear} onChange={(v) => set("finishedYear", v)} />
       </Field>
+      {(d.status === "done" || d.rereads.length > 0) && (
+        <Field label={config.rereadLabel}>
+          <div className="space-y-2">
+            {d.rereads.map((r, i) => {
+              const put = (p: Partial<Reread>) => set("rereads", d.rereads.map((x, j) => (j === i ? { ...x, ...p } : x)));
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <YearInput clearable={false} value={r.year} onChange={(year) => put({ year })} />
+                  <StarRating size={16} value={r.rating} onChange={(rating) => put({ rating })} />
+                  <span className="flex-1" />
+                  <IconButton label={`删掉这次${config.rereadLabel}`} danger onClick={() => set("rereads", d.rereads.filter((_, j) => j !== i))}>
+                    <X size={14} />
+                  </IconButton>
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => set("rereads", [...d.rereads, { year: currentYear(), rating: null }])}
+              className="flex items-center gap-1 text-sm text-primary hover:underline"
+            >
+              <Plus size={14} /> {config.rereadAdd}
+            </button>
+          </div>
+        </Field>
+      )}
       <Field label="备注">
         <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
       </Field>

@@ -136,7 +136,7 @@ function OpenVault() {
             </Button>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
           <List rows={shown} selectedId={typeof panel.selection === "number" ? panel.selection : null} onOpen={(id) => void panel.request(id)} />
           {listQ.data && shown.length === 0 && <p className="py-10 text-center text-muted-foreground">{all.length === 0 ? "芝麻还没开过门" : "没有找到"}</p>}
         </div>

@@ -1,9 +1,11 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":7,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":10,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
 //! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in
-//! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes. All older versions are read.
+//! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
+//! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
+//! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings. All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
 //! in the file (finance has two: fin_out / fin_in). Overwriting existing data requires `overwrite = true` and takes a snapshot first.
@@ -21,7 +23,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 10;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -278,10 +280,6 @@ pub fn apply(conn: &mut Connection, text: &str, overwrite: bool, backups_dir: &P
     for p in &parsed.payloads {
         p.replace(&tx)?;
     }
-    // applications ↔ their 一步一步 tasks (either side may have been replaced)
-    if parsed.payloads.iter().any(|p| matches!(p, Payload::Jobs(_) | Payload::Todo(_))) {
-        jobs::relink(&tx)?;
-    }
     tx.commit().map_err(err)?;
     Ok(summary)
 }
@@ -417,8 +415,8 @@ mod tests {
         crate::modules::kinds::reorder(&a, "films", &ids).unwrap();
         crate::modules::kinds::create(&a, "packing", "证件").unwrap();
         sql(&a, "
-            INSERT INTO books (title, author, country, kind_id, status, rating, finished_month, note, created_at, updated_at) VALUES
-              ('小王子', '圣埃克苏佩里', '法国', (SELECT id FROM kinds WHERE module='books' AND name='漫画书'), 'done', 5, '2025-11', '第二遍', '2025-01-01T00:00:00.000Z', '2025-02-01T00:00:00.000Z'),
+            INSERT INTO books (title, author, country, kind_id, status, rating, finished_year, note, created_at, updated_at) VALUES
+              ('小王子', '圣埃克苏佩里', '法国', (SELECT id FROM kinds WHERE module='books' AND name='漫画书'), 'done', 5, '2025', '第二遍', '2025-01-01T00:00:00.000Z', '2025-02-01T00:00:00.000Z'),
               ('无类型', NULL, NULL, NULL, 'unmarked', NULL, NULL, NULL, '2025-01-02T00:00:00.000Z', '2025-01-02T00:00:00.000Z');
             INSERT INTO films (title, director, kind_id, status, rating) VALUES
               ('千与千寻', '宫崎骏', (SELECT id FROM kinds WHERE module='films' AND name='动漫'), 'doing', 4);
@@ -449,24 +447,31 @@ mod tests {
         let fin_food = crate::modules::kinds::tests::kind_id(&a, finance::OUT_KINDS, "餐饮");
         crate::modules::kinds::rename(&a, fin_food, "吃饭").unwrap();
         let acc = finance::create_account(&a, serde_json::from_value(json!({"name": "DBS", "currency": "SGD"})).unwrap()).unwrap().id;
-        finance::save_month(&a, "2026-09", &[finance::BalanceInput { account_id: acc, amount: Some(123456) }], &[]).unwrap();
+        finance::save_balances(&a, "2026-09-30", &[finance::BalanceInput { account_id: acc, amount: Some(123456) }], &[]).unwrap();
         finance::create_fixed(
             &a,
-            serde_json::from_value(json!({"name": "饭卡", "amount": 5000, "currency": "SGD", "kindId": fin_food, "accountId": acc, "rule": "monthly:1", "nextDay": "2026-09-01"}))
+            serde_json::from_value(json!({"name": "饭卡", "amount": 5000, "currency": "SGD", "kindId": fin_food, "rule": "monthly:1", "nextDay": "2026-09-01"}))
                 .unwrap(),
             "2026-09-15",
         )
         .unwrap();
-        // jobs: an interview with a date → its 一步一步 task (exported with todo, re-linked on import, not duplicated)
-        let interview = jobs::statuses(&a).unwrap().into_iter().find(|s| s.name == "面试").unwrap().id;
-        jobs::create_job(&a, serde_json::from_value(json!({"company": "X", "statusId": interview, "stepOn": "2026-10-09"})).unwrap(), "2026-10-05")
+        finance::create_entry(&a, serde_json::from_value(json!({"amount": 7000, "currency": "SGD", "day": "2026-09-28", "endDay": "2026-10-04"})).unwrap()).unwrap();
+        // jobs: an application that skipped 笔试 and is at 面试
+        let st = |n: &str| jobs::statuses(&a).unwrap().into_iter().find(|s| s.name == n).unwrap().id;
+        let steps = json!([{"statusId": st("已投递"), "done": true, "doneOn": "2026-10-01"}, {"statusId": st("面试"), "done": true}, {"statusId": st("Offer")}]);
+        jobs::create_job(&a, serde_json::from_value(json!({"company": "X", "steps": steps})).unwrap(), "2026-10-05")
             .unwrap();
         // notes: a pinned one quoting another (refs travel by createdAt)
         let first_note = notes::create(&a, serde_json::from_value(json!({"content": "#读书/摘抄 第一条"})).unwrap()).unwrap().id;
         notes::create(&a, serde_json::from_value(json!({"content": "批注 **加粗**", "pinned": true, "refs": [first_note]})).unwrap()).unwrap();
+        notes::set_tag(&a, "读书", serde_json::from_value(json!({"pinned": true, "icon": "i:book-open"})).unwrap()).unwrap();
+        notes::set_tag(&a, "读书/摘抄", serde_json::from_value(json!({"icon": "📖"})).unwrap()).unwrap();
+        // 书影: a reread
+        let little = books::list(&a).unwrap().into_iter().find(|b| b.title == "小王子").unwrap().id;
+        books::update(&a, little, serde_json::from_value(json!({"rereads": [{"year": "2026", "rating": 5}]})).unwrap()).unwrap();
 
         let (text, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 8), ("finance", 3), ("jobs", 1), ("notes", 2)]);
+        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 6), ("finance", 4), ("jobs", 1), ("notes", 2)]);
 
         let dir = temp_dir("roundtrip");
         let mut b = memory_db();
@@ -477,8 +482,10 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 7);
+        assert_eq!(v["formatVersion"], 10);
         assert_eq!(v["modules"]["notes"]["notes"][1]["refs"][0], v["modules"]["notes"]["notes"][0]["createdAt"]);
+        assert_eq!(v["modules"]["notes"]["tags"], json!([{"tag": "读书", "pinned": true, "icon": "i:book-open"}, {"tag": "读书/摘抄", "icon": "📖"}]));
+        assert_eq!(v["modules"]["books"][0]["rereads"], json!([{"year": "2026", "rating": 5}]));
         assert_eq!(v["kinds"]["books"], json!(["虚构", "非虚构", "漫画书", "没用上的类型"]));
         assert_eq!(v["kinds"]["films"], json!(["动漫", "剧集", "电影"]));
         assert_eq!(v["modules"]["drawing"][0]["name"], "B 课");

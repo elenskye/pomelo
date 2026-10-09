@@ -3,6 +3,9 @@
 // 类型 lists are user-editable (shared/kinds, keyed by moduleId).
 import type { StatusCode, StatusLabels } from "@/shared/status";
 
+/** 重读 / 重看: a later time (the first is the item's own finishedYear + rating). */
+export type Reread = { year: string | null; rating: number | null };
+
 /** Normalized item; module adapters map `creator` ↔ author/director. */
 export type Item = {
   id: number;
@@ -12,13 +15,14 @@ export type Item = {
   kindId: number | null; // kinds.id; null = 未分类
   status: StatusCode;
   rating: number | null;
-  finishedMonth: string | null;
+  finishedYear: string | null; // YYYY
   note: string | null;
+  rereads: Reread[];
   createdAt: string;
   updatedAt: string;
 };
 
-/** Omitted key = unchanged; null = clear. Rust auto-fills finishedMonth on → done only if the key is omitted. */
+/** Omitted key = unchanged; null = clear. Rust auto-fills finishedYear on → done only if the key is omitted. */
 export type ItemPatch = Partial<Omit<Item, "id" | "createdAt" | "updatedAt">>;
 
 export type CollectionApi = {
@@ -36,6 +40,12 @@ export type CollectionConfig = {
   newLabel: string; // toolbar button + panel title in create mode
   titleLabel: string; // "书名" | "名称"
   creatorLabel: string; // "作者" | "导演"
+  rereadLabel: string; // "重读" | "重看"
+  rereadAdd: string; // "再读一次" | "再看一次"
   statusLabels: StatusLabels;
   emptyTitle: string;
 };
+
+/** The most recent 完成时间: the item's own or a later 重读 / 重看. */
+export const latestYear = (it: Pick<Item, "finishedYear" | "rereads">) =>
+  [it.finishedYear, ...it.rereads.map((r) => r.year)].filter((y): y is string => !!y).sort().pop() ?? null;

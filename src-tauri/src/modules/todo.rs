@@ -114,8 +114,20 @@ str_enum!(GoalStatus, default = Active, {
     Active => "active",
     Paused => "paused",
     Done => "done",
+    // gone since v16 (an unwanted goal is deleted); still parsed so old data files import (as paused)
     Abandoned => "abandoned",
 });
+
+impl GoalStatus {
+    /// Old 「已放弃」 reads as 暂停.
+    fn current(self) -> Self {
+        if self == GoalStatus::Abandoned {
+            GoalStatus::Paused
+        } else {
+            self
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -215,6 +227,9 @@ fn check_range(start: &Option<String>, end: &Option<String>, what: &str) -> Resu
 }
 
 fn validate_goal(f: GoalFields) -> Result<GoalFields, String> {
+    if f.status == GoalStatus::Abandoned {
+        return Err("目标没有「已放弃」了，不要的目标直接删除".into());
+    }
     let f = GoalFields {
         name: common::require(&f.name, "目标名", 100)?,
         start_date: common::clean(f.start_date),
@@ -1632,7 +1647,7 @@ pub fn validate_records(rec: &TodoRecord) -> Result<(), String> {
             validate_goal(GoalFields {
                 group_id: 0,
                 name: goal.name.clone(),
-                status: goal.status,
+                status: goal.status.current(),
                 start_date: goal.start_date.clone(),
                 end_date: goal.end_date.clone(),
                 note: goal.note.clone(),
@@ -1714,7 +1729,7 @@ pub fn replace_all(conn: &Connection, rec: &TodoRecord) -> Result<usize, String>
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, {NOW}), coalesce(?10, ?9, {NOW}))"
                 ),
                 params![
-                    group_id, goal.name.trim(), goal.status, common::clean(goal.start_date.clone()), common::clean(goal.end_date.clone()),
+                    group_id, goal.name.trim(), goal.status.current(), common::clean(goal.start_date.clone()), common::clean(goal.end_date.clone()),
                     common::clean(goal.note.clone()), common::clean(goal.review.clone()), j as i64 + 1, goal.created_at, goal.updated_at
                 ],
             )
@@ -2281,6 +2296,19 @@ mod tests {
         assert!(!update_task_on(&c, t.id, tp(json!({"dueDate": "2026-10-31"})), "2026-10-03").unwrap().done);
     }
 
+    /// 「已放弃」 is gone: it can't be set any more, and old data files import it as 暂停.
+    #[test]
+    fn no_abandoned_goals() {
+        let c = memory_db();
+        let a = create_group(&c, "A").unwrap().id;
+        assert!(create_goal(&c, serde_json::from_value(json!({"groupId": a, "name": "x", "status": "abandoned"})).unwrap()).is_err());
+        let g = create_goal(&c, serde_json::from_value(json!({"groupId": a, "name": "G"})).unwrap()).unwrap().id;
+        assert!(update_goal(&c, g, serde_json::from_value(json!({"status": "abandoned"})).unwrap()).is_err());
+        let rec: TodoRecord = serde_json::from_value(json!({"groups": [{"name": "B", "goals": [{"name": "旧", "status": "abandoned"}]}]})).unwrap();
+        replace_all(&c, &rec).unwrap();
+        assert_eq!(goals(&c).unwrap()[0].status, GoalStatus::Paused);
+    }
+
     /// Every scheduled day of the 时间段 checked → done at once (not only when the range is over);
     /// un-checking one of them reopens it. Without a start the range begins on the day it was added.
     #[test]
@@ -2288,18 +2316,18 @@ mod tests {
         let c = memory_db();
         let a = create_group(&c, "A").unwrap().id;
         let g = create_goal(&c, serde_json::from_value(json!({"groupId": a, "name": "G"})).unwrap()).unwrap().id;
-        let t = create_task(&c, tp(json!({"goalId": g, "title": "早起", "taskType": "checkin", "repeatRule": "daily", "startDate": "2026-10-05", "dueDate": "2026-10-07"}))).unwrap();
-        log_on(&c, t.id, "2026-10-05", 1, "2026-10-07").unwrap();
-        log_on(&c, t.id, "2026-10-06", 1, "2026-10-07").unwrap();
+        let t = create_task(&c, tp(json!({"goalId": g, "title": "早起", "taskType": "checkin", "repeatRule": "daily", "startDate": "2099-10-05", "dueDate": "2099-10-07"}))).unwrap();
+        log_on(&c, t.id, "2099-10-05", 1, "2099-10-07").unwrap();
+        log_on(&c, t.id, "2099-10-06", 1, "2099-10-07").unwrap();
         assert!(!task(&c, t.id).unwrap().done);
-        set_done_on(&c, t.id, true, "2026-10-07").unwrap(); // the last day
+        set_done_on(&c, t.id, true, "2099-10-07").unwrap(); // the last day
         assert!(task(&c, t.id).unwrap().done);
         assert_eq!((goal(&c, g).unwrap().done, goal(&c, g).unwrap().total), (1, 1)); // the goal sees it
-        log_on(&c, t.id, "2026-10-06", 1, "2026-10-07").unwrap(); // un-check a day
+        log_on(&c, t.id, "2099-10-06", 1, "2099-10-07").unwrap(); // un-check a day
         assert!(!task(&c, t.id).unwrap().done);
         // weekly: only the scheduled days matter
-        let w = create_task(&c, tp(json!({"groupId": a, "title": "周会", "taskType": "checkin", "repeatRule": "weekly:1", "startDate": "2026-10-05", "dueDate": "2026-10-11"}))).unwrap();
-        log_on(&c, w.id, "2026-10-05", 1, "2026-10-06").unwrap();
+        let w = create_task(&c, tp(json!({"groupId": a, "title": "周会", "taskType": "checkin", "repeatRule": format!("weekly:{}", common::weekday("2099-10-05")), "startDate": "2099-10-05", "dueDate": "2099-10-11"}))).unwrap();
+        log_on(&c, w.id, "2099-10-05", 1, "2099-10-06").unwrap();
         assert!(task(&c, w.id).unwrap().done);
         // only an end date: from the day it was added (the screenshot's case)
         let today = today(&c).unwrap();
@@ -2307,10 +2335,10 @@ mod tests {
         set_done_on(&c, s.id, true, &today).unwrap();
         assert!(task(&c, s.id).unwrap().done);
         // checked in under the old rule (still open) → the daily sweep completes it
-        let old = create_task(&c, tp(json!({"groupId": a, "title": "旧", "taskType": "checkin", "repeatRule": "daily", "startDate": "2026-10-05", "dueDate": "2026-10-06"}))).unwrap();
-        c.execute("INSERT INTO todo_logs (task_id, day) VALUES (?1, '2026-10-05'), (?1, '2026-10-06')", [old.id]).unwrap();
+        let old = create_task(&c, tp(json!({"groupId": a, "title": "旧", "taskType": "checkin", "repeatRule": "daily", "startDate": "2099-10-05", "dueDate": "2099-10-06"}))).unwrap();
+        c.execute("INSERT INTO todo_logs (task_id, day) VALUES (?1, '2099-10-05'), (?1, '2099-10-06')", [old.id]).unwrap();
         assert!(!task(&c, old.id).unwrap().done);
-        assert_eq!(close_ended(&c, "2026-10-06").unwrap(), 1);
+        assert_eq!(close_ended(&c, "2099-10-06").unwrap(), 1);
         assert!(task(&c, old.id).unwrap().done);
         // no end date: never completes by itself
         let open = create_task(&c, tp(json!({"groupId": a, "title": "一直", "taskType": "checkin", "repeatRule": "daily"}))).unwrap();

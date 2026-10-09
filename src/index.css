@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* 手札体: both of its faces say weight 400 in the font file, so asking the family for bold gets the
+   regular face drawn thicker by WebKit (smeared). Name the faces explicitly so bold is the real W7. */
+@font-face {
+  font-family: "Pomelo Hand";
+  src: local("HannotateSC-W5");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Pomelo Hand";
+  src: local("HannotateSC-W7");
+  font-weight: 700;
+}
+
 /* Theme tokens — source of truth: docs/design.md. Names follow shadcn/ui conventions. */
 :root {
   --background: #faf8f4;
@@ -93,7 +106,7 @@
 }
 
 @theme inline {
-  --font-sans: "Hannotate SC", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "Pomelo Hand", "Hannotate SC", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);

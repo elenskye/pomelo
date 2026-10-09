@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { Dropdown } from "./Dropdown";
 
+export const currentYear = () => String(new Date().getFullYear());
+
 export const currentMonth = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -55,6 +57,29 @@ export function MonthInput(props: { value: string | null; onChange: (v: string |
           onClick={() => emit("", "")}
           className="rounded-control p-1.5 text-muted-foreground hover:bg-muted"
         >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 'YYYY' | null (摸鱼读读 / 好奇看看 only record the year). */
+export function YearInput(props: { value: string | null; onChange: (v: string | null) => void; clearable?: boolean }) {
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({ length: thisYear - 1950 + 2 }, (_, i) => String(thisYear + 1 - i));
+  return (
+    <div className="flex items-center gap-2">
+      <Dropdown
+        ariaLabel="年"
+        value={props.value ?? ""}
+        onChange={(y) => props.onChange(y || null)}
+        placeholder="年"
+        menuMaxHeight={260}
+        options={years.map((y) => ({ value: y, label: `${y} 年` }))}
+      />
+      {props.value && props.clearable !== false && (
+        <button type="button" aria-label="清除完成时间" onClick={() => props.onChange(null)} className="rounded-control p-1.5 text-muted-foreground hover:bg-muted">
           <X size={14} />
         </button>
       )}

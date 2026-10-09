@@ -1,13 +1,14 @@
 // 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder, fold a group's goals)
 // + right content. Modeled on GoalMap. Goals carry no icon (names can start with an emoji).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, CalendarDays, ChevronDown, ChevronRight, FolderPlus, ListPlus, Plus, Sun, Target } from "lucide-react";
+import { CalendarCheck, CalendarDays, ChevronDown, FolderPlus, ListPlus, Plus, Sun, Target } from "lucide-react";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { formatDay, localToday, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
 import { isNumberArray, useSetting } from "@/shared/settings";
+import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { useSortable } from "@/shared/sortable";
 import { Button, EmptyState, PageHeader, ProgressBar } from "@/shared/ui";
@@ -136,13 +137,13 @@ function GoalNav(props: { goals: Goal[]; groupId: number; view: View; go: (v: Vi
   );
 }
 
-const closedGoal = (s: GoalStatus) => s === "done" || s === "abandoned";
+const closedGoal = (s: GoalStatus) => s === "done";
 
 function GoalNavLabel({ goal }: { goal: Goal }) {
   const closed = closedGoal(goal.status);
   return (
     <>
-      <span className={`min-w-0 flex-1 truncate text-sm ${closed ? "text-muted-foreground" : ""} ${goal.status === "abandoned" ? "line-through" : ""}`}>
+      <span className={`min-w-0 flex-1 truncate text-sm ${closed ? "text-muted-foreground" : ""}`}>
         {goal.name}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">
@@ -196,7 +197,6 @@ export default function TodoPage() {
   const agenda = agendaQ.data;
   const [view, setView] = useState<View>({ kind: "today" });
   const [todayGroupId, setTodayGroupId] = useState<number | null>(null);
-  const [showClosedGoals, setShowClosedGoals] = useState(false);
   const [groupDialog, setGroupDialog] = useState<{ group: TodoGroup | null } | null>(null);
   const [goalDialog, setGoalDialog] = useState<{ goal: Goal | null; groupId: number; presetStatus?: GoalStatus } | null>(null);
   const panel = usePanelSelection<string>();
@@ -235,6 +235,25 @@ export default function TodoPage() {
       setCreating(n);
     }
   };
+  // 全局搜索: a group / goal opens its view; a task opens its group or goal view, then its panel once
+  // that view's tasks are loaded
+  const [pendingTask, setPendingTask] = useState<number | null>(null);
+  useOpenRequest(async (h) => {
+    if (!(await panel.request(null))) return;
+    if (h.kind === "group") setView({ kind: "group", id: h.id });
+    else if (h.kind === "goal") setView({ kind: "goal", id: h.id });
+    else if (h.parent !== null) {
+      setView(h.parent < 0 ? { kind: "goal", id: -h.parent } : { kind: "group", id: h.parent });
+      setPendingTask(h.id);
+    }
+  });
+  useEffect(() => {
+    const t = pendingTask !== null ? placeTasks.find((x) => x.id === pendingTask) : undefined;
+    if (t) {
+      setPendingTask(null);
+      void openEdit(t);
+    }
+  }, [pendingTask, placeTasks]); // eslint-disable-line react-hooks/exhaustive-deps
   const whereHere = view.kind === "group" ? `g:${view.id}` : view.kind === "goal" ? `o:${view.id}` : `g:${todayGroupId ?? groups[0]?.id ?? ""}`;
   const addSub = (t: Task) => void openNew({ where: whereHere, parentId: t.id, parentTitle: t.title });
 
@@ -288,7 +307,7 @@ export default function TodoPage() {
     return (
       <>
         <ViewHeader title={`今天 · ${formatDay(today)} ${weekday(today)}`} />
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4">
+        <div className="-m-1 min-h-0 flex-1 space-y-5 overflow-y-auto p-1 pb-4">
           {agenda && agenda.overdue.length > 0 && (
             <Section title={`已过期 ${agenda.overdue.length}`} danger>
               <PlacedList items={agenda.overdue} today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} />
@@ -359,8 +378,19 @@ export default function TodoPage() {
   const groupView = (grp: TodoGroup) => {
     const gs = goals.filter((g) => g.groupId === grp.id);
     const openGoals = gs.filter((g) => !closedGoal(g.status));
-    const closedGoals = gs.filter((g) => closedGoal(g.status));
-    const abandoned = closedGoals.filter((g) => g.status === "abandoned").length;
+    const doneGoals = gs.filter((g) => closedGoal(g.status));
+    const openRoots = placeTasks.some((t) => t.parentId === null && !t.done);
+    // finished goals sit in the same 「已完成」 fold as the finished tasks
+    const tree = (
+      <TaskTree
+        tasks={placeTasks}
+        today={today}
+        selectedId={selectedId}
+        onOpen={(t) => void openEdit(t)}
+        onAddSub={addSub}
+        doneGoals={{ count: doneGoals.length, node: <div className="rounded-card border bg-card">{doneGoals.map(goalCard)}</div> }}
+      />
+    );
     return (
       <>
         <ViewHeader
@@ -377,30 +407,16 @@ export default function TodoPage() {
             </>
           }
         />
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4">
+        <div className="-m-1 min-h-0 flex-1 space-y-5 overflow-y-auto p-1 pb-4">
           {openGoals.length > 0 && (
             <Section title="目标">
               <div className="rounded-card border bg-card">{openGoals.map(goalCard)}</div>
             </Section>
           )}
-          {closedGoals.length > 0 && (
-            <section>
-              <button
-                type="button"
-                aria-expanded={showClosedGoals}
-                onClick={() => setShowClosedGoals((v) => !v)}
-                className="mb-1.5 flex items-center gap-1 px-1 text-sm text-muted-foreground hover:text-foreground"
-              >
-                {showClosedGoals ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                {closedGoals.length > abandoned ? `已完成的目标 ${closedGoals.length - abandoned}${abandoned ? ` · 已放弃 ${abandoned}` : ""}` : `已放弃的目标 ${abandoned}`}
-              </button>
-              {showClosedGoals && <div className="rounded-card border bg-card">{closedGoals.map(goalCard)}</div>}
-            </section>
-          )}
-          {placeTasks.length > 0 ? (
-            <Section title={gs.length > 0 ? "其他任务" : "任务"}>
-              <TaskTree tasks={placeTasks} today={today} selectedId={selectedId} onOpen={(t) => void openEdit(t)} onAddSub={addSub} />
-            </Section>
+          {openRoots ? (
+            <Section title={openGoals.length > 0 ? "其他任务" : "任务"}>{tree}</Section>
+          ) : placeTasks.length > 0 || doneGoals.length > 0 ? (
+            tree
           ) : (
             gs.length === 0 && placeQ.data && <p className="py-10 text-center text-muted-foreground">这一组还空着</p>
           )}
@@ -428,7 +444,7 @@ export default function TodoPage() {
             .filter(Boolean)
             .join(" · ")}
         />
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4">
+        <div className="-m-1 min-h-0 flex-1 space-y-4 overflow-y-auto p-1 pb-4">
           <ProgressBar done={g.done} total={g.total} />
           {allDone && (
             <div className="flex items-center justify-between gap-3 rounded-card border bg-card px-4 py-2.5 text-sm">
@@ -461,7 +477,7 @@ export default function TodoPage() {
 
   const nav = (
     <nav aria-label="一步一步" className="flex w-60 shrink-0 flex-col">
-      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
+      <div className="-m-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1 pr-2">
         <NavButton active={view.kind === "today"} onClick={() => void go({ kind: "today" })}>
           <Sun size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">今天</span>

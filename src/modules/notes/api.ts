@@ -17,7 +17,10 @@ export type Note = {
 };
 export type NoteFilter = { tag?: string; day?: string; q?: string; id?: number };
 export type NotePatch = { content?: string; pinned?: boolean; refs?: number[] };
-export type Overview = { total: number; days: { day: string; count: number }[]; tags: { tag: string; count: number }[] };
+/** icon: emoji shown instead of 「#」. */
+export type TagCount = { tag: string; count: number; icon: string | null };
+/** pinned: tags in use that are pinned, in pin order. */
+export type Overview = { total: number; days: { day: string; count: number }[]; tags: TagCount[]; pinned: string[] };
 
 const api = {
   list: (filter: NoteFilter) => invoke<Note[]>("notes_list", { filter }),
@@ -26,6 +29,7 @@ const api = {
   update: (v: { id: number; patch: NotePatch }) => invoke<Note>("note_update", v),
   remove: (id: number) => invoke<void>("note_delete", { id }),
   renameTag: (v: { from: string; to: string }) => invoke<number>("notes_tag_rename", v),
+  setTag: (v: { tag: string; patch: { pinned?: boolean; icon?: string | null } }) => invoke<void>("notes_tag_set", v),
 };
 
 export const NOTES_KEY = ["notes"];
@@ -43,6 +47,7 @@ export function useNoteMutations() {
     update: useMutation({ mutationFn: api.update, onSuccess }),
     remove: useMutation({ mutationFn: api.remove, onSuccess, onError }),
     renameTag: useMutation({ mutationFn: api.renameTag, onSuccess }),
+    setTag: useMutation({ mutationFn: api.setTag, onSuccess, onError }),
   };
 }
 

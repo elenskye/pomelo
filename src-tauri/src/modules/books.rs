@@ -11,6 +11,7 @@ use tauri::State;
 
 pub const KEY: &str = "books";
 pub const LABEL: &str = "摸鱼读读";
+const REREADS: (&str, &str) = ("book_rereads", "book_id");
 const NOT_FOUND: &str = "找不到这本书，可能已经被删除了";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -24,10 +25,12 @@ pub struct Book {
     pub kind_id: Option<i64>,
     pub status: Status,
     pub rating: Option<i64>,
-    pub finished_month: Option<String>,
+    pub finished_year: Option<String>,
     pub note: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 重读: later times, in order.
+    pub rereads: Vec<common::Reread>,
 }
 
 /// Caller-settable fields. Absent = keep (update) / default (create); explicit null clears.
@@ -47,9 +50,12 @@ pub struct BookPatch {
     #[serde(default, deserialize_with = "some")]
     pub rating: Option<Option<i64>>,
     #[serde(default, deserialize_with = "some")]
-    pub finished_month: Option<Option<String>>,
+    pub finished_year: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
     pub note: Option<Option<String>>,
+    /// The whole list (replaces).
+    #[serde(default)]
+    pub rereads: Option<Vec<common::Reread>>,
 }
 
 /// Editable fields; `validated()` normalizes + checks.
@@ -61,8 +67,9 @@ struct Fields {
     kind_id: Option<i64>,
     status: Status,
     rating: Option<i64>,
-    finished_month: Option<String>,
+    finished_year: Option<String>,
     note: Option<String>,
+    rereads: Vec<common::Reread>,
 }
 
 impl Fields {
@@ -74,8 +81,9 @@ impl Fields {
             kind_id: b.kind_id,
             status: b.status,
             rating: b.rating,
-            finished_month: b.finished_month.clone(),
+            finished_year: b.finished_year.clone(),
             note: b.note.clone(),
+            rereads: b.rereads.clone(),
         }
     }
 
@@ -98,11 +106,14 @@ impl Fields {
         if let Some(v) = p.rating {
             self.rating = v;
         }
-        if let Some(v) = p.finished_month {
-            self.finished_month = v;
+        if let Some(v) = p.finished_year {
+            self.finished_year = v;
         }
         if let Some(v) = p.note {
             self.note = v;
+        }
+        if let Some(v) = p.rereads {
+            self.rereads = v;
         }
         self
     }
@@ -115,19 +126,20 @@ impl Fields {
             kind_id: self.kind_id,
             status: self.status,
             rating: self.rating,
-            finished_month: common::clean(self.finished_month),
+            finished_year: common::clean(self.finished_year),
             note: common::clean(self.note),
+            rereads: common::clean_rereads(self.rereads)?,
         };
         common::check_len(&f.author, "作者", 200)?;
         common::check_len(&f.country, "国家", 50)?;
         common::check_len(&f.note, "备注", 5000)?;
         common::check_rating(f.rating)?;
-        common::check_month(&f.finished_month)?;
+        common::check_year(&f.finished_year)?;
         Ok(f)
     }
 }
 
-const COLS: &str = "id, title, author, country, kind_id, status, rating, finished_month, note, created_at, updated_at";
+const COLS: &str = "id, title, author, country, kind_id, status, rating, finished_year, note, created_at, updated_at";
 
 fn from_row(r: &Row) -> rusqlite::Result<Book> {
     Ok(Book {
@@ -138,17 +150,19 @@ fn from_row(r: &Row) -> rusqlite::Result<Book> {
         kind_id: r.get(4)?,
         status: r.get(5)?,
         rating: r.get(6)?,
-        finished_month: r.get(7)?,
+        finished_year: r.get(7)?,
         note: r.get(8)?,
         created_at: r.get(9)?,
         updated_at: r.get(10)?,
+        rereads: Vec::new(),
     })
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Book>, String> {
     let mut st = conn.prepare(&format!("SELECT {COLS} FROM books ORDER BY id")).map_err(err)?;
-    let rows = st.query_map([], from_row).map_err(err)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    let mut rr = common::load_rereads(conn, REREADS.0, REREADS.1, None)?;
+    let rows = st.query_map([], from_row).map_err(err)?.collect::<Result<Vec<Book>, _>>().map_err(err)?;
+    Ok(rows.into_iter().map(|x| Book { rereads: rr.remove(&x.id).unwrap_or_default(), ..x }).collect())
 }
 
 pub fn get(conn: &Connection, id: i64) -> Result<Book, String> {
@@ -156,6 +170,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Book, String> {
         .optional()
         .map_err(err)?
         .ok_or_else(|| NOT_FOUND.to_string())
+        .and_then(|x| Ok(Book { rereads: common::load_rereads(conn, REREADS.0, REREADS.1, Some(id))?.remove(&id).unwrap_or_default(), ..x }))
 }
 
 pub fn count(conn: &Connection) -> Result<i64, String> {
@@ -163,32 +178,41 @@ pub fn count(conn: &Connection) -> Result<i64, String> {
 }
 
 pub fn create(conn: &Connection, patch: BookPatch) -> Result<Book, String> {
-    let month_given = patch.finished_month.is_some();
+    let year_given = patch.finished_year.is_some();
     let mut f = Fields::default().apply(patch).validated()?;
     kinds::check(conn, KEY, f.kind_id)?;
-    common::auto_month(conn, f.status, false, &mut f.finished_month, month_given)?;
-    conn.execute(
-        "INSERT INTO books (title, author, country, kind_id, status, rating, finished_month, note)
+    common::auto_finished(conn, f.status, false, &mut f.finished_year, year_given, 4)?;
+    let tx = common::Tx::begin(conn)?;
+    tx.execute(
+        "INSERT INTO books (title, author, country, kind_id, status, rating, finished_year, note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![f.title, f.author, f.country, f.kind_id, f.status, f.rating, f.finished_month, f.note],
+        params![f.title, f.author, f.country, f.kind_id, f.status, f.rating, f.finished_year, f.note],
     )
     .map_err(err)?;
-    get(conn, conn.last_insert_rowid())
+    let id = tx.last_insert_rowid();
+    common::save_rereads(&tx, REREADS.0, REREADS.1, id, &f.rereads)?;
+    tx.commit().map_err(err)?;
+    get(conn, id)
 }
 
 pub fn update(conn: &Connection, id: i64, patch: BookPatch) -> Result<Book, String> {
     let old = get(conn, id)?;
-    let month_given = patch.finished_month.is_some();
+    let year_given = patch.finished_year.is_some();
     let mut f = Fields::from_book(&old).apply(patch).validated()?;
     kinds::check(conn, KEY, f.kind_id)?;
-    common::auto_month(conn, f.status, old.status == Status::Done, &mut f.finished_month, month_given)?;
-    conn.execute(
+    common::auto_finished(conn, f.status, old.status == Status::Done, &mut f.finished_year, year_given, 4)?;
+    let tx = common::Tx::begin(conn)?;
+    tx.execute(
         "UPDATE books SET title = ?1, author = ?2, country = ?3, kind_id = ?4, status = ?5, rating = ?6,
-           finished_month = ?7, note = ?8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           finished_year = ?7, note = ?8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?9",
-        params![f.title, f.author, f.country, f.kind_id, f.status, f.rating, f.finished_month, f.note, id],
+        params![f.title, f.author, f.country, f.kind_id, f.status, f.rating, f.finished_year, f.note, id],
     )
     .map_err(err)?;
+    if f.rereads != old.rereads {
+        common::save_rereads(&tx, REREADS.0, REREADS.1, id, &f.rereads)?;
+    }
+    tx.commit().map_err(err)?;
     get(conn, id)
 }
 
@@ -216,10 +240,13 @@ pub struct BookRecord {
     pub status: Status,
     #[serde(default)]
     pub rating: Option<i64>,
-    #[serde(default)]
-    pub finished_month: Option<String>,
+    /// `YYYY`; v7 and older files wrote `finishedMonth` (`YYYY-MM`), read as its year.
+    #[serde(default, alias = "finishedMonth")]
+    pub finished_year: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rereads: Vec<common::Reread>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,8 +263,9 @@ impl BookRecord {
             kind_id: None, // resolved from name in replace_all
             status: self.status,
             rating: self.rating,
-            finished_month: self.finished_month.clone(),
+            finished_year: common::year_of(self.finished_year.clone()),
             note: self.note.clone(),
+            rereads: self.rereads.clone(),
         }
         .validated()
     }
@@ -266,8 +294,9 @@ pub fn export(conn: &Connection) -> Result<Vec<BookRecord>, String> {
             kind: x.kind_id.and_then(|id| names.get(&id).cloned()),
             status: x.status,
             rating: x.rating,
-            finished_month: x.finished_month,
+            finished_year: x.finished_year,
             note: x.note,
+            rereads: x.rereads,
             created_at: Some(x.created_at),
             updated_at: Some(x.updated_at),
         })
@@ -279,7 +308,7 @@ pub fn replace_all(conn: &Connection, records: &[BookRecord]) -> Result<usize, S
     conn.execute("DELETE FROM books", []).map_err(err)?;
     let mut st = conn
         .prepare(
-            "INSERT INTO books (title, author, country, kind_id, status, rating, finished_month, note, created_at, updated_at)
+            "INSERT INTO books (title, author, country, kind_id, status, rating, finished_year, note, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                coalesce(?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                coalesce(?10, ?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
@@ -289,9 +318,10 @@ pub fn replace_all(conn: &Connection, records: &[BookRecord]) -> Result<usize, S
         let f = r.fields().map_err(|e| record_err(i, r, e))?;
         let kind_id = kinds::resolve(conn, KEY, r.kind.as_deref())?;
         st.execute(params![
-            f.title, f.author, f.country, kind_id, f.status, f.rating, f.finished_month, f.note, r.created_at, r.updated_at
+            f.title, f.author, f.country, kind_id, f.status, f.rating, f.finished_year, f.note, r.created_at, r.updated_at
         ])
         .map_err(err)?;
+        common::save_rereads(conn, REREADS.0, REREADS.1, conn.last_insert_rowid(), &f.rereads)?;
     }
     Ok(records.len())
 }
@@ -347,7 +377,7 @@ mod tests {
         assert_eq!(b.author, None);
         assert_eq!(b.country.as_deref(), Some("法国"));
         assert_eq!((b.kind_id, b.status), (None, Status::Unmarked));
-        assert_eq!(b.finished_month, None);
+        assert_eq!(b.finished_year, None);
         assert!(!b.created_at.is_empty());
         let nf = kind_id(&c, "books", "非虚构");
         assert_eq!(create(&c, patch(json!({"title": "全球通史", "kindId": nf}))).unwrap().kind_id, Some(nf));
@@ -363,7 +393,8 @@ mod tests {
             json!({}),
             json!({"title": "   "}),
             json!({"title": "a", "rating": 6}),
-            json!({"title": "a", "finishedMonth": "2026-13"}),
+            json!({"title": "a", "finishedYear": "2026-10"}),
+            json!({"title": "a", "finishedYear": "1800"}),
         ] {
             assert!(create(&c, patch(bad.clone())).is_err(), "{bad}");
         }
@@ -371,40 +402,63 @@ mod tests {
     }
 
     #[test]
-    fn done_auto_fills_month_unless_given() {
+    fn done_auto_fills_year_unless_given() {
         let c = memory_db();
-        let now = common::current_month(&c).unwrap();
+        let now = common::current_month(&c).unwrap()[..4].to_string();
         let a = create(&c, patch(json!({"title": "a", "status": "done"}))).unwrap();
-        assert_eq!(a.finished_month.as_deref(), Some(now.as_str()));
-        let b = create(&c, patch(json!({"title": "b", "status": "done", "finishedMonth": null}))).unwrap();
-        assert_eq!(b.finished_month, None);
-        let d = create(&c, patch(json!({"title": "d", "status": "done", "finishedMonth": "2019-03"}))).unwrap();
-        assert_eq!(d.finished_month.as_deref(), Some("2019-03"));
+        assert_eq!(a.finished_year.as_deref(), Some(now.as_str()));
+        let b = create(&c, patch(json!({"title": "b", "status": "done", "finishedYear": null}))).unwrap();
+        assert_eq!(b.finished_year, None);
+        let d = create(&c, patch(json!({"title": "d", "status": "done", "finishedYear": "2019"}))).unwrap();
+        assert_eq!(d.finished_year.as_deref(), Some("2019"));
     }
 
     #[test]
     fn update_patches_and_transitions() {
         let c = memory_db();
-        let now = common::current_month(&c).unwrap();
+        let now = common::current_month(&c).unwrap()[..4].to_string();
         let comic = kind_id(&c, "books", "漫画");
         let b = create(&c, patch(json!({"title": "百年孤独", "author": "马尔克斯", "rating": 4}))).unwrap();
 
         let u = update(&c, b.id, patch(json!({"status": "doing"}))).unwrap();
         assert_eq!((u.status, u.rating, u.author.as_deref()), (Status::Doing, Some(4), Some("马尔克斯")));
-        assert_eq!(u.finished_month, None);
+        assert_eq!(u.finished_year, None);
 
         let u = update(&c, b.id, patch(json!({"status": "done", "kindId": comic}))).unwrap();
-        assert_eq!(u.finished_month.as_deref(), Some(now.as_str()));
+        assert_eq!(u.finished_year.as_deref(), Some(now.as_str()));
         assert_eq!(u.kind_id, Some(comic));
 
-        // already done: clearing the month sticks; re-saving done does not refill
-        let u = update(&c, b.id, patch(json!({"finishedMonth": null}))).unwrap();
-        assert_eq!(u.finished_month, None);
+        // already done: clearing the year sticks; re-saving done does not refill
+        let u = update(&c, b.id, patch(json!({"finishedYear": null}))).unwrap();
+        assert_eq!(u.finished_year, None);
         let u = update(&c, b.id, patch(json!({"status": "done", "rating": null, "author": null, "kindId": null}))).unwrap();
-        assert_eq!((u.finished_month, u.rating, u.author, u.kind_id), (None, None, None, None));
+        assert_eq!((u.finished_year, u.rating, u.author, u.kind_id), (None, None, None, None));
 
         assert!(update(&c, 999, patch(json!({"title": "x"}))).is_err());
         assert!(update(&c, b.id, patch(json!({"title": ""}))).is_err());
+    }
+
+    #[test]
+    fn rereads_kept_replaced_and_exported() {
+        let c = memory_db();
+        let rr = |y: Option<&str>, r: Option<i64>| common::Reread { year: y.map(String::from), rating: r };
+        let b = create(&c, patch(json!({"title": "小王子", "status": "done", "finishedYear": "2019", "rating": 4,
+            "rereads": [{"year": "2023", "rating": 5}, {"year": "2025-11"}]}))).unwrap();
+        assert_eq!(b.rereads, [rr(Some("2023"), Some(5)), rr(Some("2025"), None)]);
+        for bad in [json!([{"year": "20"}]), json!([{"rating": 6}]), json!([{"when": "2020"}])] {
+            assert!(serde_json::from_value::<BookPatch>(json!({"title": "x", "rereads": bad.clone()})).map_or(true, |p| create(&c, p).is_err()), "{bad}");
+        }
+        assert_eq!(update(&c, b.id, patch(json!({"note": "第三遍"}))).unwrap().rereads.len(), 2); // untouched
+        assert_eq!(list(&c).unwrap()[0].rereads.len(), 2);
+        let out = export(&c).unwrap();
+        assert_eq!(serde_json::to_value(&out[0].rereads).unwrap(), json!([{"year": "2023", "rating": 5}, {"year": "2025", "rating": null}]));
+        let c2 = memory_db();
+        replace_all(&c2, &out).unwrap();
+        assert_eq!(serde_json::to_value(&out).unwrap(), serde_json::to_value(export(&c2).unwrap()).unwrap());
+        assert!(update(&c, b.id, patch(json!({"rereads": []}))).unwrap().rereads.is_empty());
+        update(&c, b.id, patch(json!({"rereads": [{"year": "2024"}]}))).unwrap();
+        delete(&c, b.id).unwrap();
+        assert_eq!(c.query_row("SELECT count(*) FROM book_rereads", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
     }
 
     #[test]
@@ -422,7 +476,7 @@ mod tests {
         create(&c, patch(json!({"title": "old"}))).unwrap();
         let recs: Vec<BookRecord> = serde_json::from_value(json!([
             {"title": "A", "status": "done", "rating": 5, "kind": "非虚构", "createdAt": "2020-01-01T00:00:00.000Z"},
-            {"title": "B", "kind": "fiction"},
+            {"title": "B", "kind": "fiction", "finishedMonth": "2025-11"},
             {"title": "C", "kind": "绘本"},
             {"title": "D"}
         ]))
@@ -430,11 +484,12 @@ mod tests {
         assert_eq!(replace_all(&c, &recs).unwrap(), 4);
         let all = list(&c).unwrap();
         assert_eq!(all.iter().map(|b| b.title.as_str()).collect::<Vec<_>>(), ["A", "B", "C", "D"]);
-        assert_eq!(all[0].finished_month, None); // imported as-is, no auto-fill
+        assert_eq!(all[0].finished_year, None); // imported as-is, no auto-fill
         assert_eq!(all[0].created_at, "2020-01-01T00:00:00.000Z");
         assert_eq!(all[0].updated_at, "2020-01-01T00:00:00.000Z");
         assert_eq!(all[0].kind_id, Some(kind_id(&c, "books", "非虚构")));
         assert_eq!(all[1].kind_id, Some(kind_id(&c, "books", "虚构"))); // legacy code
+        assert_eq!(all[1].finished_year.as_deref(), Some("2025")); // v7 files: finishedMonth → its year
         assert_eq!(all[2].kind_id, Some(kind_id(&c, "books", "绘本"))); // created
         assert_eq!((all[3].status, all[3].kind_id), (Status::Unmarked, None));
 

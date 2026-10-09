@@ -11,6 +11,8 @@ export const FILMS: CollectionConfig = {
   newLabel: "添加",
   titleLabel: "名称",
   creatorLabel: "导演",
+  rereadLabel: "重看",
+  rereadAdd: "再看一次",
   statusLabels: { unmarked: "待标记", todo: "想看", doing: "在看", done: "已看" },
   emptyTitle: "片单空空，先去泡杯茶",
 };

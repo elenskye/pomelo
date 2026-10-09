@@ -92,7 +92,7 @@ export function GoalDialog(props: {
   const m = useTodoMutations();
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
-  const closed = status === "done" || status === "abandoned";
+  const closed = status === "done";
 
   const save = async (e: FormEvent) => {
     e.preventDefault();

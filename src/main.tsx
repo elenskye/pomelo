@@ -3,11 +3,11 @@ import ReactDOM from "react-dom/client";
 import { HashRouter, Navigate, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "@/app/App";
-import { DEFAULT_ROUTE } from "@/app/modules";
 import BooksPage from "@/modules/books/BooksPage";
 import FilmsPage from "@/modules/films/FilmsPage";
 import DrawingPage from "@/modules/drawing/DrawingPage";
 import PackingPage from "@/modules/packing/PackingPage";
+import HomePage from "@/home/HomePage";
 import FinancePage from "@/modules/finance/FinancePage";
 import JobsPage from "@/modules/jobs/JobsPage";
 import NotesPage from "@/modules/notes/NotesPage";
@@ -34,7 +34,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <HashRouter>
         <Routes>
           <Route element={<App />}>
-            <Route index element={null} />
+            <Route index element={<HomePage />} />
             <Route path="todo" element={<TodoPage />} />
             <Route path="books" element={<BooksPage />} />
             <Route path="films" element={<FilmsPage />} />
@@ -45,7 +45,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="notes" element={<NotesPage />} />
             <Route path="vault" element={<VaultPage />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </HashRouter>

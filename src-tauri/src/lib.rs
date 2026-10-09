@@ -4,8 +4,10 @@
 
 mod backup;
 mod db;
+mod home;
 mod modules;
 mod paths;
+mod search;
 mod secure;
 mod settings;
 mod transfer;
@@ -188,7 +190,7 @@ pub fn run() {
             modules::finance::fin_account_delete,
             modules::finance::fin_accounts_reorder,
             modules::finance::fin_assets,
-            modules::finance::fin_month_save,
+            modules::finance::fin_balances_save,
             modules::finance::fin_holdings,
             modules::finance::fin_holdings_save,
             modules::finance::fin_entries,
@@ -196,6 +198,9 @@ pub fn run() {
             modules::finance::fin_entries_create,
             modules::finance::fin_entry_update,
             modules::finance::fin_entry_delete,
+            modules::finance::fin_entries_update,
+            modules::finance::fin_entries_delete,
+            modules::finance::fin_period_last,
             modules::finance::fin_fixed,
             modules::finance::fin_fixed_create,
             modules::finance::fin_fixed_update,
@@ -220,6 +225,9 @@ pub fn run() {
             modules::notes::note_update,
             modules::notes::note_delete,
             modules::notes::notes_tag_rename,
+            modules::notes::notes_tag_set,
+            search::search_all,
+            home::home_overview,
             modules::vault::vault_status,
             modules::vault::vault_setup,
             modules::vault::vault_unlock,

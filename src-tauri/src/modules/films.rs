@@ -10,6 +10,7 @@ use tauri::State;
 
 pub const KEY: &str = "films";
 pub const LABEL: &str = "好奇看看";
+const REREADS: (&str, &str) = ("film_rereads", "film_id");
 const NOT_FOUND: &str = "找不到这部作品，可能已经被删除了";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -23,10 +24,12 @@ pub struct Film {
     pub kind_id: Option<i64>,
     pub status: Status,
     pub rating: Option<i64>,
-    pub finished_month: Option<String>,
+    pub finished_year: Option<String>,
     pub note: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 重看: later times, in order.
+    pub rereads: Vec<common::Reread>,
 }
 
 /// Caller-settable fields. Absent = keep (update) / default (create); explicit null clears.
@@ -46,9 +49,12 @@ pub struct FilmPatch {
     #[serde(default, deserialize_with = "some")]
     pub rating: Option<Option<i64>>,
     #[serde(default, deserialize_with = "some")]
-    pub finished_month: Option<Option<String>>,
+    pub finished_year: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
     pub note: Option<Option<String>>,
+    /// The whole list (replaces).
+    #[serde(default)]
+    pub rereads: Option<Vec<common::Reread>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -59,8 +65,9 @@ struct Fields {
     kind_id: Option<i64>,
     status: Status,
     rating: Option<i64>,
-    finished_month: Option<String>,
+    finished_year: Option<String>,
     note: Option<String>,
+    rereads: Vec<common::Reread>,
 }
 
 impl Fields {
@@ -72,8 +79,9 @@ impl Fields {
             kind_id: f.kind_id,
             status: f.status,
             rating: f.rating,
-            finished_month: f.finished_month.clone(),
+            finished_year: f.finished_year.clone(),
             note: f.note.clone(),
+            rereads: f.rereads.clone(),
         }
     }
 
@@ -96,11 +104,14 @@ impl Fields {
         if let Some(v) = p.rating {
             self.rating = v;
         }
-        if let Some(v) = p.finished_month {
-            self.finished_month = v;
+        if let Some(v) = p.finished_year {
+            self.finished_year = v;
         }
         if let Some(v) = p.note {
             self.note = v;
+        }
+        if let Some(v) = p.rereads {
+            self.rereads = v;
         }
         self
     }
@@ -113,19 +124,20 @@ impl Fields {
             kind_id: self.kind_id,
             status: self.status,
             rating: self.rating,
-            finished_month: common::clean(self.finished_month),
+            finished_year: common::clean(self.finished_year),
             note: common::clean(self.note),
+            rereads: common::clean_rereads(self.rereads)?,
         };
         common::check_len(&f.director, "导演", 200)?;
         common::check_len(&f.country, "国家", 50)?;
         common::check_len(&f.note, "备注", 5000)?;
         common::check_rating(f.rating)?;
-        common::check_month(&f.finished_month)?;
+        common::check_year(&f.finished_year)?;
         Ok(f)
     }
 }
 
-const COLS: &str = "id, title, director, country, kind_id, status, rating, finished_month, note, created_at, updated_at";
+const COLS: &str = "id, title, director, country, kind_id, status, rating, finished_year, note, created_at, updated_at";
 
 fn from_row(r: &Row) -> rusqlite::Result<Film> {
     Ok(Film {
@@ -136,17 +148,19 @@ fn from_row(r: &Row) -> rusqlite::Result<Film> {
         kind_id: r.get(4)?,
         status: r.get(5)?,
         rating: r.get(6)?,
-        finished_month: r.get(7)?,
+        finished_year: r.get(7)?,
         note: r.get(8)?,
         created_at: r.get(9)?,
         updated_at: r.get(10)?,
+        rereads: Vec::new(),
     })
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Film>, String> {
     let mut st = conn.prepare(&format!("SELECT {COLS} FROM films ORDER BY id")).map_err(err)?;
-    let rows = st.query_map([], from_row).map_err(err)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    let mut rr = common::load_rereads(conn, REREADS.0, REREADS.1, None)?;
+    let rows = st.query_map([], from_row).map_err(err)?.collect::<Result<Vec<Film>, _>>().map_err(err)?;
+    Ok(rows.into_iter().map(|x| Film { rereads: rr.remove(&x.id).unwrap_or_default(), ..x }).collect())
 }
 
 pub fn get(conn: &Connection, id: i64) -> Result<Film, String> {
@@ -154,6 +168,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Film, String> {
         .optional()
         .map_err(err)?
         .ok_or_else(|| NOT_FOUND.to_string())
+        .and_then(|x| Ok(Film { rereads: common::load_rereads(conn, REREADS.0, REREADS.1, Some(id))?.remove(&id).unwrap_or_default(), ..x }))
 }
 
 pub fn count(conn: &Connection) -> Result<i64, String> {
@@ -161,32 +176,41 @@ pub fn count(conn: &Connection) -> Result<i64, String> {
 }
 
 pub fn create(conn: &Connection, patch: FilmPatch) -> Result<Film, String> {
-    let month_given = patch.finished_month.is_some();
+    let year_given = patch.finished_year.is_some();
     let mut f = Fields::default().apply(patch).validated()?;
     kinds::check(conn, KEY, f.kind_id)?;
-    common::auto_month(conn, f.status, false, &mut f.finished_month, month_given)?;
-    conn.execute(
-        "INSERT INTO films (title, director, country, kind_id, status, rating, finished_month, note)
+    common::auto_finished(conn, f.status, false, &mut f.finished_year, year_given, 4)?;
+    let tx = common::Tx::begin(conn)?;
+    tx.execute(
+        "INSERT INTO films (title, director, country, kind_id, status, rating, finished_year, note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![f.title, f.director, f.country, f.kind_id, f.status, f.rating, f.finished_month, f.note],
+        params![f.title, f.director, f.country, f.kind_id, f.status, f.rating, f.finished_year, f.note],
     )
     .map_err(err)?;
-    get(conn, conn.last_insert_rowid())
+    let id = tx.last_insert_rowid();
+    common::save_rereads(&tx, REREADS.0, REREADS.1, id, &f.rereads)?;
+    tx.commit().map_err(err)?;
+    get(conn, id)
 }
 
 pub fn update(conn: &Connection, id: i64, patch: FilmPatch) -> Result<Film, String> {
     let old = get(conn, id)?;
-    let month_given = patch.finished_month.is_some();
+    let year_given = patch.finished_year.is_some();
     let mut f = Fields::from_film(&old).apply(patch).validated()?;
     kinds::check(conn, KEY, f.kind_id)?;
-    common::auto_month(conn, f.status, old.status == Status::Done, &mut f.finished_month, month_given)?;
-    conn.execute(
+    common::auto_finished(conn, f.status, old.status == Status::Done, &mut f.finished_year, year_given, 4)?;
+    let tx = common::Tx::begin(conn)?;
+    tx.execute(
         "UPDATE films SET title = ?1, director = ?2, country = ?3, kind_id = ?4, status = ?5, rating = ?6,
-           finished_month = ?7, note = ?8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           finished_year = ?7, note = ?8, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?9",
-        params![f.title, f.director, f.country, f.kind_id, f.status, f.rating, f.finished_month, f.note, id],
+        params![f.title, f.director, f.country, f.kind_id, f.status, f.rating, f.finished_year, f.note, id],
     )
     .map_err(err)?;
+    if f.rereads != old.rereads {
+        common::save_rereads(&tx, REREADS.0, REREADS.1, id, &f.rereads)?;
+    }
+    tx.commit().map_err(err)?;
     get(conn, id)
 }
 
@@ -214,10 +238,13 @@ pub struct FilmRecord {
     pub status: Status,
     #[serde(default)]
     pub rating: Option<i64>,
-    #[serde(default)]
-    pub finished_month: Option<String>,
+    /// `YYYY`; v7 and older files wrote `finishedMonth` (`YYYY-MM`), read as its year.
+    #[serde(default, alias = "finishedMonth")]
+    pub finished_year: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rereads: Vec<common::Reread>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -234,8 +261,9 @@ impl FilmRecord {
             kind_id: None, // resolved from name in replace_all
             status: self.status,
             rating: self.rating,
-            finished_month: self.finished_month.clone(),
+            finished_year: common::year_of(self.finished_year.clone()),
             note: self.note.clone(),
+            rereads: self.rereads.clone(),
         }
         .validated()
     }
@@ -264,8 +292,9 @@ pub fn export(conn: &Connection) -> Result<Vec<FilmRecord>, String> {
             kind: x.kind_id.and_then(|id| names.get(&id).cloned()),
             status: x.status,
             rating: x.rating,
-            finished_month: x.finished_month,
+            finished_year: x.finished_year,
             note: x.note,
+            rereads: x.rereads,
             created_at: Some(x.created_at),
             updated_at: Some(x.updated_at),
         })
@@ -277,7 +306,7 @@ pub fn replace_all(conn: &Connection, records: &[FilmRecord]) -> Result<usize, S
     conn.execute("DELETE FROM films", []).map_err(err)?;
     let mut st = conn
         .prepare(
-            "INSERT INTO films (title, director, country, kind_id, status, rating, finished_month, note, created_at, updated_at)
+            "INSERT INTO films (title, director, country, kind_id, status, rating, finished_year, note, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                coalesce(?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                coalesce(?10, ?9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
@@ -287,9 +316,10 @@ pub fn replace_all(conn: &Connection, records: &[FilmRecord]) -> Result<usize, S
         let f = r.fields().map_err(|e| record_err(i, r, e))?;
         let kind_id = kinds::resolve(conn, KEY, r.kind.as_deref())?;
         st.execute(params![
-            f.title, f.director, f.country, kind_id, f.status, f.rating, f.finished_month, f.note, r.created_at, r.updated_at
+            f.title, f.director, f.country, kind_id, f.status, f.rating, f.finished_year, f.note, r.created_at, r.updated_at
         ])
         .map_err(err)?;
+        common::save_rereads(conn, REREADS.0, REREADS.1, conn.last_insert_rowid(), &f.rereads)?;
     }
     Ok(records.len())
 }
@@ -340,15 +370,17 @@ mod tests {
     }
 
     #[test]
-    fn update_and_auto_month() {
+    fn update_and_auto_year() {
         let c = memory_db();
-        let now = common::current_month(&c).unwrap();
+        let now = common::current_month(&c).unwrap()[..4].to_string();
         let anime = kind_id(&c, "films", "动漫");
         let f = create(&c, patch(json!({"title": "星际穿越", "director": "诺兰"}))).unwrap();
         let u = update(&c, f.id, patch(json!({"status": "done", "rating": 5}))).unwrap();
-        assert_eq!((u.finished_month.as_deref(), u.rating), (Some(now.as_str()), Some(5)));
+        assert_eq!((u.finished_year.as_deref(), u.rating), (Some(now.as_str()), Some(5)));
         let u = update(&c, f.id, patch(json!({"director": null, "kindId": anime}))).unwrap();
         assert_eq!((u.director, u.kind_id, u.status), (None, Some(anime), Status::Done));
+        let u = update(&c, f.id, patch(json!({"rereads": [{"year": "2025", "rating": 4}]}))).unwrap();
+        assert_eq!((u.rereads.len(), list(&c).unwrap()[0].rereads[0].rating), (1, Some(4)));
         delete(&c, f.id).unwrap();
         assert!(get(&c, f.id).is_err());
     }
@@ -363,7 +395,7 @@ mod tests {
         .unwrap();
         assert_eq!(replace_all(&c, &recs).unwrap(), 2);
         let all = list(&c).unwrap();
-        assert_eq!((all[0].finished_month.as_ref(), all[0].kind_id), (None, Some(kind_id(&c, "films", "电影"))));
+        assert_eq!((all[0].finished_year.as_ref(), all[0].kind_id), (None, Some(kind_id(&c, "films", "电影"))));
         assert_eq!((all[1].kind_id, all[1].status), (Some(kind_id(&c, "films", "剧集")), Status::Unmarked));
     }
 }

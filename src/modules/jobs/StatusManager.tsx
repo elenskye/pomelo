@@ -1,12 +1,9 @@
-// Modal for the status list: rename inline, pick each one's 阶段, reorder ↑↓, delete (only unused), add.
+// Modal for the status list: rename inline, reorder ↑↓, delete (only unused), add. Stages stay internal.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
-import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
-import { STAGES, useJobMutations, useStatuses, type Stage, type Status } from "./api";
-
-const stageOptions = (Object.keys(STAGES) as Stage[]).map((s) => ({ value: s, label: STAGES[s] }));
+import { useJobMutations, useStatuses, type Status } from "./api";
 
 function Name(props: { status: Status; onSave: (name: string) => void }) {
   const [v, setV] = useState(props.status.name);
@@ -43,7 +40,6 @@ export function StatusManager(props: { onClose: () => void }) {
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
   const [name, setName] = useState("");
-  const [stage, setStage] = useState<Stage>("active");
 
   const move = (i: number, d: number) => {
     const ids = statuses.map((s) => s.id);
@@ -54,7 +50,7 @@ export function StatusManager(props: { onClose: () => void }) {
     e.preventDefault();
     if (!name.trim()) return;
     try {
-      await m.createStatus.mutateAsync({ name, stage });
+      await m.createStatus.mutateAsync({ name });
       setName("");
     } catch (err) {
       toast(errorText(err), "error");
@@ -74,19 +70,18 @@ export function StatusManager(props: { onClose: () => void }) {
       className="m-auto h-fit w-[480px] rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30"
     >
       <p className="text-base font-bold">管理状态</p>
-      <ul className="mt-3 max-h-96 space-y-0.5 overflow-y-auto">
+      <ul className="-mx-1 mt-3 max-h-96 space-y-0.5 overflow-y-auto p-1">
         {statuses.map((s, i) => (
           <li key={s.id} className="flex items-center gap-1 rounded-md bg-muted/60 pr-1">
             <Name status={s} onSave={(n) => m.updateStatus.mutate({ id: s.id, name: n })} />
             <span className="w-10 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{s.count || ""}</span>
-            <Dropdown ariaLabel={`「${s.name}」的阶段`} value={s.stage} onChange={(v) => m.updateStatus.mutate({ id: s.id, stage: v })} options={stageOptions} />
             <IconButton label="上移" disabled={i === 0} onClick={() => move(i, -1)}>
               <ArrowUp size={14} />
             </IconButton>
             <IconButton label="下移" disabled={i === statuses.length - 1} onClick={() => move(i, 1)}>
               <ArrowDown size={14} />
             </IconButton>
-            <IconButton label={`删除「${s.name}」`} danger disabled={s.count > 0 || statuses.length <= 1} onClick={() => void del(s)}>
+            <IconButton label={`删除「${s.name}」`} danger disabled={s.count > 0 || s.used > 0 || statuses.length <= 1} onClick={() => void del(s)}>
               <Trash2 size={14} />
             </IconButton>
           </li>
@@ -94,7 +89,6 @@ export function StatusManager(props: { onClose: () => void }) {
       </ul>
       <form onSubmit={add} className="mt-3 flex items-center gap-2">
         <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="新状态的名字" maxLength={20} />
-        <Dropdown ariaLabel="新状态的阶段" value={stage} onChange={setStage} options={stageOptions} />
         <Button type="submit" disabled={!name.trim()}>
           <Plus size={14} /> 添加
         </Button>

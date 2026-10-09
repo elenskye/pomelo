@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { moduleById } from "@/app/modules";
 import { KindManager } from "@/shared/kinds/KindManager";
+import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { Button, PageHeader, Segmented } from "@/shared/ui";
 import { CHANNELS, JOBS_KEY, useJobs } from "./api";
@@ -19,6 +20,10 @@ export default function JobsPage() {
   const { data: jobs = [] } = useJobs();
   const panel = usePanelSelection<number | "new">();
   const [managing, setManaging] = useState<"statuses" | "channels" | null>(null);
+  useOpenRequest((h) => {
+    setView("table");
+    void panel.request(h.id);
+  });
   usePageKeys({ onNew: () => void panel.request("new"), onEscape: panel.selection !== null ? () => void panel.request(null) : undefined });
   const editing = typeof panel.selection === "number" ? jobs.find((j) => j.id === panel.selection) : undefined;
   const following = jobs.filter((j) => j.followUp).length;

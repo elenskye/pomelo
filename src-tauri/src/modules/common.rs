@@ -1,7 +1,8 @@
 //! Shared domain helpers: string enums, unified status, field validation, patch deserialization.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Deserializer};
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashMap;
 
 /// Closed set of codes stored as TEXT (validated here, not by SQL CHECK, so adding a value
 /// needs no table rebuild). Generates serde (code strings), Default, and rusqlite To/FromSql.
@@ -57,17 +58,19 @@ str_enum!(Status, default = Unmarked, {
     Done => "done",
 });
 
-/// Shared rule: becoming `done` with an empty month fills the current month, unless the
-/// caller set the month explicitly (their value, even null, wins).
-pub fn auto_month(
+/// Shared rule: becoming `done` with an empty 完成时间 fills the current one — month `YYYY-MM`
+/// (`len` 7, 随意画画) or year `YYYY` (`len` 4, 书 / 影) — unless the caller set it explicitly
+/// (their value, even null, wins).
+pub fn auto_finished(
     conn: &Connection,
     status: Status,
     was_done: bool,
-    month: &mut Option<String>,
-    month_given: bool,
+    when: &mut Option<String>,
+    given: bool,
+    len: usize,
 ) -> Result<(), String> {
-    if status == Status::Done && !was_done && month.is_none() && !month_given {
-        *month = Some(current_month(conn)?);
+    if status == Status::Done && !was_done && when.is_none() && !given {
+        *when = Some(current_month(conn)?[..len].to_string());
     }
     Ok(())
 }
@@ -161,6 +164,71 @@ pub fn check_month(m: &Option<String>) -> Result<(), String> {
 }
 
 /// `YYYY-MM-DD`, a real calendar date, year 1900–2100.
+pub fn check_year(y: &Option<String>) -> Result<(), String> {
+    let Some(y) = y else { return Ok(()) };
+    if y.len() == 4 && y.parse::<u32>().is_ok_and(|y| (1900..=2100).contains(&y)) {
+        Ok(())
+    } else {
+        Err(format!("完成时间格式不对：{y}（应为 2026 这样的年份）"))
+    }
+}
+
+/// 重读 / 重看 (books.rs, films.rs): a later time — its year and rating. Stored in `<table>` rows keyed
+/// by `<fk>`, in list order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Reread {
+    #[serde(default)]
+    pub year: Option<String>,
+    #[serde(default)]
+    pub rating: Option<i64>,
+}
+
+pub const MAX_REREADS: usize = 50;
+
+pub fn clean_rereads(rs: Vec<Reread>) -> Result<Vec<Reread>, String> {
+    if rs.len() > MAX_REREADS {
+        return Err(format!("最多记 {MAX_REREADS} 次"));
+    }
+    rs.into_iter()
+        .map(|r| {
+            let year = year_of(r.year);
+            check_year(&year)?;
+            check_rating(r.rating)?;
+            Ok(Reread { year, rating: r.rating })
+        })
+        .collect()
+}
+
+/// All rows (`id` = None) or one item's, by item id.
+pub fn load_rereads(conn: &Connection, table: &str, fk: &str, id: Option<i64>) -> Result<HashMap<i64, Vec<Reread>>, String> {
+    let mut st = conn
+        .prepare(&format!("SELECT {fk}, year, rating FROM {table} WHERE ?1 IS NULL OR {fk} = ?1 ORDER BY {fk}, sort_order, id"))
+        .map_err(err)?;
+    let rows = st.query_map([id], |r| Ok((r.get::<_, i64>(0)?, Reread { year: r.get(1)?, rating: r.get(2)? }))).map_err(err)?;
+    let mut out: HashMap<i64, Vec<Reread>> = HashMap::new();
+    for row in rows {
+        let (k, r) = row.map_err(err)?;
+        out.entry(k).or_default().push(r);
+    }
+    Ok(out)
+}
+
+/// Replaces one item's list (already cleaned).
+pub fn save_rereads(conn: &Connection, table: &str, fk: &str, id: i64, rs: &[Reread]) -> Result<(), String> {
+    conn.execute(&format!("DELETE FROM {table} WHERE {fk} = ?1"), [id]).map_err(err)?;
+    for (i, r) in rs.iter().enumerate() {
+        conn.execute(&format!("INSERT INTO {table} ({fk}, year, rating, sort_order) VALUES (?1, ?2, ?3, ?4)"), params![id, r.year, r.rating, i as i64 + 1])
+            .map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Old files wrote 完成时间 as `YYYY-MM`; a year-only field keeps the year.
+pub fn year_of(y: Option<String>) -> Option<String> {
+    clean(y).map(|y| if y.len() == 7 && y.as_bytes()[4] == b'-' { y[..4].to_string() } else { y })
+}
+
 pub fn check_date(d: &Option<String>, label: &str) -> Result<(), String> {
     let Some(d) = d else { return Ok(()) };
     let parts: Vec<u32> = d.split('-').filter_map(|p| p.parse().ok()).collect();

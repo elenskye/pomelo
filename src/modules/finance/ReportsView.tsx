@@ -1,6 +1,7 @@
 // 报表, one currency at a time (amounts are never converted here):
 //   月 — 支出 / 收入 / 结余, 分类占比 (donut + ranked list), 预算 vs spent
 //   年 — the same numbers for the year, 每月趋势 (支出 vs 收入 columns), 年度分类
+//   资产 — 账户变化 / 持仓变化 curves from the balance and holding snapshots (AssetTrends.tsx)
 // Category colors follow the category, not this period's rank: the 4 biggest spenders of all time
 // (in this currency) get --chart-3…6, everything else is 其他. --chart-1 / --chart-2 are 收入 / 支出.
 import { useState, type FormEvent, type ReactNode } from "react";
@@ -10,11 +11,12 @@ import { errorText, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { Modal } from "@/shared/Modal";
 import { Button, IconButton, Segmented } from "@/shared/ui";
-import { OUT_KINDS, useBudgets, useFinMutations, useTotals, type Total } from "./api";
+import { AssetTrends } from "./AssetTrends";
+import { OUT_KINDS, useAccounts, useAssets, useBudgets, useFinMutations, useHoldings, useTotals, type Total } from "./api";
 import { AmountInput, CurrencyPicker } from "./fields";
 import { CURRENCIES, money, moneyInput, moneyShort, monthTitle, parseMoney, shiftMonth, thisMonth, type Currency } from "./money";
 
-type Mode = "month" | "year";
+type Mode = "month" | "year" | "assets";
 const SLOTS = ["var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
 const OTHER = "var(--chart-other)";
 
@@ -68,7 +70,7 @@ function BudgetDialog(props: { currency: Currency; onClose: () => void }) {
   return (
     <Modal title="每月预算" onClose={props.onClose} onSubmit={save} error={error} submitLabel="保存" wide>
       <CurrencyPicker value={currency} onChange={setCurrency} />
-      <div className="grid max-h-[50vh] grid-cols-2 gap-x-4 gap-y-2 overflow-y-auto pr-1">
+      <div className="-m-1 grid max-h-[50vh] grid-cols-2 gap-x-4 gap-y-2 overflow-y-auto p-1 pr-2">
         {kinds.map((k) => (
           <label key={k.id} className="flex items-center gap-2 text-sm">
             <span className="w-16 shrink-0 truncate">{k.name}</span>
@@ -84,6 +86,9 @@ export function ReportsView() {
   const { data: totals = [] } = useTotals();
   const { data: budgets = [] } = useBudgets();
   const { data: kinds = [] } = useKinds(OUT_KINDS);
+  const { data: accounts = [] } = useAccounts();
+  const { data: assets } = useAssets();
+  const { data: holdings = [] } = useHoldings();
   const [mode, setMode] = useState<Mode>("month");
   const [month, setMonth] = useState(thisMonth());
   const [year, setYear] = useState(Number(thisMonth().slice(0, 4)));
@@ -93,9 +98,14 @@ export function ReportsView() {
   const inPeriod = (t: Total) => (mode === "month" ? t.month === month : t.month.startsWith(`${year}-`));
   const periodRows = totals.filter(inPeriod);
   // currency: the one picked, else this period's most used, else any with data
-  const used = CURRENCIES.filter((c) => totals.some((t) => t.currency === c));
+  // 资产: currencies of accounts with a balance or holdings
+  const used =
+    mode === "assets"
+      ? CURRENCIES.filter((c) => accounts.some((a) => a.currency === c && (assets?.balances.some((b) => b.accountId === a.id) || holdings.some((h) => h.accountId === a.id))))
+      : CURRENCIES.filter((c) => totals.some((t) => t.currency === c));
   const busiest = CURRENCIES.map((c) => [c, periodRows.filter((t) => t.currency === c).reduce((s, t) => s + t.count, 0)] as const).sort((a, b) => b[1] - a[1])[0];
-  const currency: Currency = picked ?? (busiest && busiest[1] > 0 ? busiest[0] : (used[0] ?? "CNY"));
+  const fallback: Currency = mode !== "assets" && busiest && busiest[1] > 0 ? busiest[0] : (used[0] ?? "CNY");
+  const currency: Currency = picked && (used.length === 0 || used.includes(picked)) ? picked : fallback;
   const rows = periodRows.filter((t) => t.currency === currency);
   const sum = (flow: "out" | "in", rs = rows) => rs.filter((t) => t.flow === flow).reduce((s, t) => s + t.amount, 0);
   const fmt = (n: number) => money(n, currency);
@@ -157,15 +167,19 @@ export function ReportsView() {
   return (
     <>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 pb-3">
-        <div className="flex items-center gap-1">
-          <h2 className="text-lg font-bold">{mode === "month" ? monthTitle(month) : `${year} 年`}</h2>
-          <IconButton label="往前" onClick={() => (mode === "month" ? setMonth((x) => shiftMonth(x, -1)) : setYear((y) => y - 1))}>
-            <ChevronLeft size={16} />
-          </IconButton>
-          <IconButton label="往后" onClick={() => (mode === "month" ? setMonth((x) => shiftMonth(x, 1)) : setYear((y) => y + 1))}>
-            <ChevronRight size={16} />
-          </IconButton>
-        </div>
+        {mode === "assets" ? (
+          <h2 className="py-1 text-lg font-bold">资产变化</h2>
+        ) : (
+          <div className="flex items-center gap-1">
+            <h2 className="text-lg font-bold">{mode === "month" ? monthTitle(month) : `${year} 年`}</h2>
+            <IconButton label="往前" onClick={() => (mode === "month" ? setMonth((x) => shiftMonth(x, -1)) : setYear((y) => y - 1))}>
+              <ChevronLeft size={16} />
+            </IconButton>
+            <IconButton label="往后" onClick={() => (mode === "month" ? setMonth((x) => shiftMonth(x, 1)) : setYear((y) => y + 1))}>
+              <ChevronRight size={16} />
+            </IconButton>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <Segmented
             ariaLabel="按月还是按年"
@@ -174,68 +188,75 @@ export function ReportsView() {
             options={[
               { value: "month" as Mode, label: "月" },
               { value: "year" as Mode, label: "年" },
+              { value: "assets" as Mode, label: "资产" },
             ]}
           />
           <CurrencyPicker value={currency} onChange={setPicked} only={used.length > 0 ? used : undefined} />
         </div>
       </div>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4">
-        <div className={`grid gap-3 ${mode === "month" ? "grid-cols-3" : "grid-cols-4"}`}>
-          <Kpi label={mode === "month" ? "支出" : "全年支出"} value={fmt(spent)} />
-          <Kpi label={mode === "month" ? "收入" : "全年收入"} value={fmt(income)} />
-          <Kpi label="结余" value={money(balance, currency, true)} tone={balance > 0 ? "good" : balance < 0 ? "bad" : undefined} />
-          {mode === "year" && <Kpi label="月均支出" value={monthsElapsed > 0 ? fmt(Math.round(spent / monthsElapsed)) : "—"} />}
-        </div>
-        {mode === "year" && (
-          <Card title="每月趋势">
-            <div className="pt-6">
-              <ColumnChart
-                labels={months.map((x) => `${Number(x.slice(5))}月`)}
-                series={[
-                  { name: "支出", color: "var(--chart-2)" },
-                  { name: "收入", color: "var(--chart-1)" },
-                ]}
-                values={[months.map((x) => sum("out", totals.filter((t) => t.currency === currency && t.month === x))), months.map((x) => sum("in", totals.filter((t) => t.currency === currency && t.month === x)))]}
-                format={fmt}
-                axisFormat={(n) => moneyShort(n, currency)}
-                title={(i) => monthTitle(months[i])}
-              />
+      <div className="-m-1 min-h-0 flex-1 space-y-4 overflow-y-auto p-1 pb-4">
+        {mode === "assets" ? (
+          <AssetTrends currency={currency} />
+        ) : (
+          <>
+            <div className={`grid gap-3 ${mode === "month" ? "grid-cols-3" : "grid-cols-4"}`}>
+              <Kpi label={mode === "month" ? "支出" : "全年支出"} value={fmt(spent)} />
+              <Kpi label={mode === "month" ? "收入" : "全年收入"} value={fmt(income)} />
+              <Kpi label="结余" value={money(balance, currency, true)} tone={balance > 0 ? "good" : balance < 0 ? "bad" : undefined} />
+              {mode === "year" && <Kpi label="月均支出" value={monthsElapsed > 0 ? fmt(Math.round(spent / monthsElapsed)) : "—"} />}
             </div>
-          </Card>
-        )}
-        {share}
-        {mode === "month" && (
-          <Card
-            title="预算"
-            actions={
-              <Button variant="ghost" onClick={() => setBudgetDialog(true)}>
-                <Target size={14} /> 设预算
-              </Button>
-            }
-          >
-            {myBudgets.length === 0 ? (
-              <p className="py-4 text-center text-sm text-muted-foreground">还没有设预算</p>
-            ) : (
-              <ul className="space-y-3">
-                {myBudgets.map((b) => {
-                  const used = byKind.get(b.kindId) ?? 0;
-                  const over = used - b.amount;
-                  return (
-                    <li key={b.kindId} className="space-y-1">
-                      <div className="flex items-baseline justify-between text-sm">
-                        <span>{kindName.get(b.kindId)}</span>
-                        <span className="tabular-nums">
-                          {fmt(used)} <span className="text-muted-foreground">/ {fmt(b.amount)}</span>
-                          {over > 0 ? <span className="ml-2 text-destructive">超出 {fmt(over)}</span> : <span className="ml-2 text-muted-foreground">还剩 {fmt(-over)}</span>}
-                        </span>
-                      </div>
-                      <Meter value={used} max={b.amount} />
-                    </li>
-                  );
-                })}
-              </ul>
+            {mode === "year" && (
+              <Card title="每月趋势">
+                <div className="pt-6">
+                  <ColumnChart
+                    labels={months.map((x) => `${Number(x.slice(5))}月`)}
+                    series={[
+                      { name: "支出", color: "var(--chart-2)" },
+                      { name: "收入", color: "var(--chart-1)" },
+                    ]}
+                    values={[months.map((x) => sum("out", totals.filter((t) => t.currency === currency && t.month === x))), months.map((x) => sum("in", totals.filter((t) => t.currency === currency && t.month === x)))]}
+                    format={fmt}
+                    axisFormat={(n) => moneyShort(n, currency)}
+                    title={(i) => monthTitle(months[i])}
+                  />
+                </div>
+              </Card>
             )}
-          </Card>
+            {share}
+            {mode === "month" && (
+              <Card
+                title="预算"
+                actions={
+                  <Button variant="ghost" onClick={() => setBudgetDialog(true)}>
+                    <Target size={14} /> 设预算
+                  </Button>
+                }
+              >
+                {myBudgets.length === 0 ? (
+                  <p className="py-4 text-center text-sm text-muted-foreground">还没有设预算</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {myBudgets.map((b) => {
+                      const used = byKind.get(b.kindId) ?? 0;
+                      const over = used - b.amount;
+                      return (
+                        <li key={b.kindId} className="space-y-1">
+                          <div className="flex items-baseline justify-between text-sm">
+                            <span>{kindName.get(b.kindId)}</span>
+                            <span className="tabular-nums">
+                              {fmt(used)} <span className="text-muted-foreground">/ {fmt(b.amount)}</span>
+                              {over > 0 ? <span className="ml-2 text-destructive">超出 {fmt(over)}</span> : <span className="ml-2 text-muted-foreground">还剩 {fmt(-over)}</span>}
+                            </span>
+                          </div>
+                          <Meter value={used} max={b.amount} />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </Card>
+            )}
+          </>
         )}
       </div>
       {budgetDialog && <BudgetDialog currency={currency} onClose={() => setBudgetDialog(false)} />}

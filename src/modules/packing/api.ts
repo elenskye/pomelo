@@ -53,7 +53,8 @@ const api = {
   updateTemplate: (v: { id: number; patch: NamePatch }) => invoke<Template>("packing_template_update", v),
   deleteTemplate: (id: number) => invoke<void>("packing_template_delete", { id }),
   trips: () => invoke<Trip[]>("packing_trips"),
-  createTrip: (v: { patch: TripPatch; templateId: number | null }) => invoke<Trip>("packing_trip_create", v),
+  /** List copied from a template, or from an earlier trip (`fromTripId`, all unpacked), or blank. */
+  createTrip: (v: { patch: TripPatch; templateId: number | null; fromTripId: number | null }) => invoke<Trip>("packing_trip_create", v),
   updateTrip: (v: { id: number; patch: TripPatch }) => invoke<Trip>("packing_trip_update", v),
   deleteTrip: (id: number) => invoke<void>("packing_trip_delete", { id }),
   items: (list: ListKind, parentId: number) => invoke<PackItem[]>(`packing_${list}_items`, parentArg(list, parentId)),

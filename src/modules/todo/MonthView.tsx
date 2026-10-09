@@ -72,7 +72,7 @@ export function MonthView(props: { today: string; selectedId: number | null; onO
           </IconButton>
         </div>
       </div>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4">
+      <div className="-m-1 min-h-0 flex-1 space-y-4 overflow-y-auto p-1 pb-4">
         <div className="overflow-hidden rounded-card border bg-card">
           <div className="grid grid-cols-7 border-b text-center text-xs text-muted-foreground">
             {WEEK.map((w) => (

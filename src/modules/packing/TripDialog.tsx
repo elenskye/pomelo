@@ -1,4 +1,4 @@
-// Create a trip (optionally from a template: its items are copied) / edit / delete a trip.
+// Create a trip (its list copied from a template or an earlier trip, or blank) / edit / delete a trip.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
@@ -10,20 +10,23 @@ import { usePackingMutations, type Template, type Trip } from "./api";
 export function TripDialog(props: {
   trip: Trip | null; // null = create
   templates: Template[];
+  trips: Trip[];
   presetTemplateId?: number | null;
   onClose: () => void;
   onCreated: (t: Trip) => void;
   onDeleted: () => void;
 }) {
-  const { trip, templates } = props;
+  const { trip, templates, trips } = props;
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
   }, []);
+  // list source: "t:<template id>" · "p:<trip id>" · "" blank
   const firstTemplate = props.presetTemplateId ?? templates[0]?.id ?? null;
-  const [templateId, setTemplateId] = useState<number | null>(firstTemplate);
-  const [name, setName] = useState(trip?.name ?? templates.find((t) => t.id === firstTemplate)?.name ?? "");
+  const [source, setSource] = useState(firstTemplate !== null ? `t:${firstTemplate}` : "");
+  const sourceName = (v: string) => (v.startsWith("t:") ? templates : v.startsWith("p:") ? trips : []).find((x) => x.id === Number(v.slice(2)))?.name ?? "";
+  const [name, setName] = useState(trip?.name ?? sourceName(source));
   const [nameTouched, setNameTouched] = useState(!!trip);
   const [departOn, setDepartOn] = useState(trip?.departOn ?? "");
   const [note, setNote] = useState(trip?.note ?? "");
@@ -32,9 +35,9 @@ export function TripDialog(props: {
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
 
-  const pickTemplate = (id: number | null) => {
-    setTemplateId(id);
-    if (!nameTouched) setName(templates.find((t) => t.id === id)?.name ?? "");
+  const pickSource = (v: string) => {
+    setSource(v);
+    if (!nameTouched) setName(sourceName(v));
   };
 
   const save = async (e: FormEvent) => {
@@ -46,7 +49,8 @@ export function TripDialog(props: {
         await m.updateTrip.mutateAsync({ id: trip.id, patch });
         toast("已保存");
       } else {
-        const t = await m.createTrip.mutateAsync({ patch, templateId });
+        const id = source ? Number(source.slice(2)) : null;
+        const t = await m.createTrip.mutateAsync({ patch, templateId: source.startsWith("t:") ? id : null, fromTripId: source.startsWith("p:") ? id : null });
         toast(t.total > 0 ? `已新建「${t.name}」，清单里有 ${t.total} 件物品` : `已新建「${t.name}」`);
         props.onCreated(t);
       }
@@ -90,12 +94,14 @@ export function TripDialog(props: {
           <Field label="清单从哪来">
             <div>
               <Dropdown
-                ariaLabel="模板"
-                value={templateId}
-                onChange={pickTemplate}
+                ariaLabel="清单从哪来"
+                value={source}
+                onChange={pickSource}
+                menuMaxHeight={300}
                 options={[
-                  ...templates.map((t) => ({ value: t.id as number | null, label: `${t.name}（${t.itemCount} 件）` })),
-                  { value: null, label: "空白清单" },
+                  { value: "", label: "空白清单" },
+                  ...templates.map((t) => ({ value: `t:${t.id}`, label: `${t.name}（${t.itemCount} 件）`, group: "模板" })),
+                  ...trips.map((t) => ({ value: `p:${t.id}`, label: `${t.name}（${t.total} 件）`, group: "以前的出行" })),
                 ]}
               />
             </div>

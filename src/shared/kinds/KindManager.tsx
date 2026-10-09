@@ -99,7 +99,7 @@ export function KindManager(props: {
         <span className="text-xs text-muted-foreground">{props.moduleLabel}</span>
       </div>
 
-      <ul className="mt-3 max-h-80 space-y-0.5 overflow-y-auto">
+      <ul className="-mx-1 mt-3 max-h-80 space-y-0.5 overflow-y-auto p-1">
         {kinds.map((k, i) => (
           <li key={k.id} className="flex items-center gap-1 rounded-control pr-1 hover:bg-muted/60">
             <KindName kind={k} onSave={(name) => run(m.rename.mutateAsync({ id: k.id, name }))} />

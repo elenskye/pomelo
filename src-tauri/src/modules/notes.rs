@@ -6,13 +6,16 @@
 //!   Renaming a tag rewrites the notes' text (into an existing tag = merge).
 //! - Refs (Flomo 批注): a note may quote others (`note_refs`, ordered); both sides list the link.
 //! - created_at (UTC, ms) is a note's identity in data files: unique, refs are exported by it.
+//! - Tag settings (`note_tag_meta`, by full path): pinned (first-level tags only; listed above the tag
+//!   tree with their sub-tags, in pin order) and an icon (an emoji, or `i:<name>` for one of the UI's
+//!   line icons). They outlive a tag's last note (it comes back with them) and move on rename.
 //! Formatting is the UI's business: **bold**, ==highlight==, ++underline++, `- ` / `1. ` lists
 //! (2 spaces per level), bare URLs.
 
 use super::common::{self, err};
 use crate::AppState;
 use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::State;
@@ -22,6 +25,7 @@ pub const LABEL: &str = "念念不忘";
 pub const MAX_CHARS: usize = 50_000;
 pub const TAG_MAX: usize = 50;
 pub const MAX_REFS: usize = 50;
+pub const ICON_MAX: usize = 16;
 const EXCERPT_CHARS: usize = 60;
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -456,8 +460,103 @@ pub fn rename_tag(conn: &Connection, from: &str, to: &str) -> Result<usize, Stri
         tx.execute(&format!("UPDATE notes SET content = ?1, updated_at = {NOW} WHERE id = ?2"), params![next, id]).map_err(err)?;
         sync_tags(&tx, *id, &next)?;
     }
+    move_meta(&tx, from, &to)?;
     tx.commit()?;
     Ok(rows.len())
+}
+
+// ---------- tag settings (pinned, icon) ----------
+
+type Meta = (Option<i64>, Option<String>);
+
+fn meta_of(conn: &Connection, tag: &str) -> Result<Option<Meta>, String> {
+    conn.query_row("SELECT pin_order, icon FROM note_tag_meta WHERE tag = ?1", [tag], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()
+        .map_err(err)
+}
+
+/// Writes a tag's settings; a row with nothing set is removed.
+fn put_meta(conn: &Connection, tag: &str, (pin, icon): Meta) -> Result<(), String> {
+    if pin.is_none() && icon.is_none() {
+        conn.execute("DELETE FROM note_tag_meta WHERE tag = ?1", [tag]).map_err(err)?;
+    } else {
+        conn.execute(
+            &format!(
+                "INSERT INTO note_tag_meta (tag, pin_order, icon) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(tag) DO UPDATE SET pin_order = excluded.pin_order, icon = excluded.icon, updated_at = {NOW}"
+            ),
+            params![tag, pin, icon],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Rename: settings of `from` and its sub-tags follow; merging into a tag that has its own keeps
+/// the target's icon (else takes this one) and the earlier pin. A pin doesn't survive becoming a sub-tag.
+fn move_meta(conn: &Connection, from: &str, to: &str) -> Result<(), String> {
+    let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta").map_err(err)?;
+    let rows: Vec<(String, Option<i64>, Option<String>)> =
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    for (tag, pin, icon) in rows.into_iter().filter(|(t, _, _)| under(t, from)) {
+        let target = format!("{to}{}", &tag[from.len()..]);
+        let (tpin, ticon) = meta_of(conn, &target)?.unwrap_or((None, None));
+        let pin = match (tpin, pin) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+        .filter(|_| !target.contains('/'));
+        conn.execute("DELETE FROM note_tag_meta WHERE tag = ?1", [&tag]).map_err(err)?;
+        put_meta(conn, &target, (pin, ticon.or(icon)))?;
+    }
+    Ok(())
+}
+
+fn clean_icon(icon: Option<String>) -> Result<Option<String>, String> {
+    let icon = common::clean(icon);
+    if let Some(i) = &icon {
+        if i.chars().count() > ICON_MAX || i.chars().any(char::is_whitespace) {
+            return Err("图标只能是一个 emoji 或自带的图标".into());
+        }
+    }
+    Ok(icon)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TagPatch {
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    /// null = back to 「#」.
+    #[serde(default, deserialize_with = "common::some")]
+    pub icon: Option<Option<String>>,
+}
+
+/// Pins / unpins a first-level tag (a new pin goes last) or sets any tag's icon. Only tags some note uses.
+pub fn set_tag(conn: &Connection, tag: &str, p: TagPatch) -> Result<(), String> {
+    let tag = clean_tag(tag)?;
+    if p.pinned == Some(true) && tag.contains('/') {
+        return Err("只能置顶第一级标签".into());
+    }
+    let used: i64 = conn
+        .query_row("SELECT count(*) FROM note_tags WHERE tag = ?1 OR substr(tag, 1, length(?1) + 1) = ?1 || '/'", [&tag], |r| r.get(0))
+        .map_err(err)?;
+    if used == 0 {
+        return Err(format!("没有笔记用到「#{tag}」"));
+    }
+    let (pin, icon) = meta_of(conn, &tag)?.unwrap_or((None, None));
+    let pin = match p.pinned {
+        Some(true) if pin.is_none() => {
+            Some(conn.query_row("SELECT coalesce(max(pin_order), 0) + 1 FROM note_tag_meta", [], |r| r.get::<_, i64>(0)).map_err(err)?)
+        }
+        Some(false) => None,
+        _ => pin,
+    };
+    let icon = match p.icon {
+        Some(i) => clean_icon(i)?,
+        None => icon,
+    };
+    put_meta(conn, &tag, (pin, icon))
 }
 
 // ---------- overview (left column: counts, heatmap, tag tree) ----------
@@ -476,6 +575,8 @@ pub struct TagCount {
     pub tag: String,
     /// Notes at or under this tag.
     pub count: i64,
+    /// Emoji shown instead of 「#」.
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -485,6 +586,8 @@ pub struct Overview {
     /// Local dates with notes, ascending.
     pub days: Vec<DayCount>,
     pub tags: Vec<TagCount>,
+    /// Pinned (first-level) tags in use, in pin order.
+    pub pinned: Vec<String>,
 }
 
 pub fn overview(conn: &Connection) -> Result<Overview, String> {
@@ -510,11 +613,20 @@ pub fn overview(conn: &Connection) -> Result<Overview, String> {
             under.entry(path.clone()).or_default().insert(id);
         }
     }
-    let tags = under.into_iter().map(|(tag, ids)| TagCount { tag, count: ids.len() as i64 }).collect();
-    Ok(Overview { total, days, tags })
+    let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY pin_order, tag").map_err(err)?;
+    let meta: Vec<(String, Option<i64>, Option<String>)> =
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let pinned = meta.iter().filter(|(t, p, _)| p.is_some() && !t.contains('/') && under.contains_key(t)).map(|(t, _, _)| t.clone()).collect();
+    let icons: HashMap<&str, &str> = meta.iter().filter_map(|(t, _, i)| i.as_deref().map(|i| (t.as_str(), i))).collect();
+    let tags = under
+        .iter()
+        .map(|(tag, ids)| TagCount { tag: tag.clone(), count: ids.len() as i64, icon: icons.get(tag.as_str()).map(|i| i.to_string()) })
+        .collect();
+    Ok(Overview { total, days, tags, pinned })
 }
 
-// ---------- import / export: { notes: [{ content, pinned?, refs?: [createdAt], createdAt, updatedAt }] } ----------
+// ---------- import / export: { notes: [{ content, pinned?, refs?: [createdAt], createdAt, updatedAt }],
+//            tags?: [{ tag, pinned?, icon? }] (pinned ones in pin order) } ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -532,11 +644,24 @@ pub struct NoteRecord {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TagRecord {
+    pub tag: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NotesRecord {
     #[serde(default)]
     pub notes: Vec<NoteRecord>,
+    /// v9 and older: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<TagRecord>,
 }
 
 impl NotesRecord {
@@ -568,6 +693,15 @@ pub fn validate_records(rec: &NotesRecord) -> Result<(), String> {
                 Some(&j) if j == i => return Err(ctx("不能引用它自己".into())),
                 _ => {}
             }
+        }
+    }
+    let mut seen = HashSet::new();
+    for t in &rec.tags {
+        let ctx = |e: String| format!("{LABEL}的标签「{}」：{e}", t.tag);
+        let tag = clean_tag(&t.tag).map_err(ctx)?;
+        clean_icon(t.icon.clone()).map_err(ctx)?;
+        if !seen.insert(tag) {
+            return Err(ctx("重复了".into()));
         }
     }
     Ok(())
@@ -605,6 +739,12 @@ pub fn replace_all(conn: &Connection, rec: &NotesRecord) -> Result<usize, String
         let refs: Vec<i64> = n.refs.iter().map(|r| ids[r.as_str()]).collect();
         set_refs(conn, *id, &refs)?;
     }
+    conn.execute("DELETE FROM note_tag_meta", []).map_err(err)?;
+    for (i, t) in rec.tags.iter().enumerate() {
+        let tag = clean_tag(&t.tag)?;
+        // v10 files may pin a sub-tag: dropped, as migration 22 did
+        put_meta(conn, &tag, ((t.pinned && !tag.contains('/')).then_some(i as i64 + 1), clean_icon(t.icon.clone())?))?;
+    }
     Ok(rec.len())
 }
 
@@ -627,7 +767,13 @@ pub fn export(conn: &Connection) -> Result<NotesRecord, String> {
             updated_at: Some(updated_at),
         })
         .collect();
-    Ok(NotesRecord { notes })
+    let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY pin_order IS NULL, pin_order, tag").map_err(err)?;
+    let tags = st
+        .query_map([], |r| Ok(TagRecord { tag: r.get(0)?, pinned: r.get::<_, Option<i64>>(1)?.is_some(), icon: r.get(2)? }))
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    Ok(NotesRecord { notes, tags })
 }
 
 // ---------- commands ----------
@@ -656,6 +802,15 @@ pub fn note_update(state: State<AppState>, id: i64, patch: NotePatch) -> Result<
 #[tauri::command]
 pub fn note_delete(state: State<AppState>, id: i64) -> Result<(), String> {
     state.with_undo("删除笔记", |c| delete(c, id))
+}
+#[tauri::command]
+pub fn notes_tag_set(state: State<AppState>, tag: String, patch: TagPatch) -> Result<(), String> {
+    let label = match (patch.pinned, &patch.icon) {
+        (Some(true), _) => "置顶标签",
+        (Some(false), _) => "取消置顶标签",
+        _ => "标签图标",
+    };
+    state.with_undo(label, |c| set_tag(c, &tag, patch))
 }
 #[tauri::command]
 pub fn notes_tag_rename(state: State<AppState>, from: String, to: String) -> Result<usize, String> {
@@ -787,6 +942,53 @@ mod tests {
         let tags: Vec<(&str, i64)> = o.tags.iter().map(|t| (t.tag.as_str(), t.count)).collect();
         assert_eq!(tags, [("商业", 3), ("商业/案例", 1), ("宏观叙事", 1)]);
         assert_eq!((o.total, o.days.len(), o.days[0].count), (3, 1, 3));
+    }
+
+    #[test]
+    fn tag_settings_pin_icon_and_follow_renames() {
+        let c = memory_db();
+        add(&c, "#读书/摘抄 一");
+        add(&c, "#读书 二 #电影");
+        add(&c, "#舒宇 三");
+        let tp = |v: serde_json::Value| -> TagPatch { serde_json::from_value(v).unwrap() };
+        set_tag(&c, "#电影", tp(json!({"pinned": true}))).unwrap();
+        set_tag(&c, "读书", tp(json!({"pinned": true, "icon": "i:book-open"}))).unwrap();
+        assert!(set_tag(&c, "读书/摘抄", tp(json!({"pinned": true}))).unwrap_err().contains("第一级"));
+        set_tag(&c, "读书/摘抄", tp(json!({"icon": "📖"}))).unwrap(); // icons: any level
+        set_tag(&c, "舒宇", tp(json!({"icon": "🍊"}))).unwrap();
+        assert!(set_tag(&c, "没有", tp(json!({"pinned": true}))).is_err());
+        assert!(set_tag(&c, "电影", tp(json!({"icon": "太长了太长了太长了太长了太长了太长了"}))).is_err());
+        let o = overview(&c).unwrap();
+        assert_eq!(o.pinned, ["电影", "读书"]); // pin order
+        let icon = |o: &Overview, t: &str| o.tags.iter().find(|x| x.tag == t).unwrap().icon.clone();
+        assert_eq!((icon(&o, "读书").as_deref(), icon(&o, "读书/摘抄").as_deref()), (Some("i:book-open"), Some("📖")));
+        // renaming a first-level tag keeps its pin; the sub-tag's settings move with it
+        rename_tag(&c, "读书", "书").unwrap();
+        let o = overview(&c).unwrap();
+        assert_eq!((o.pinned.clone(), icon(&o, "书/摘抄").as_deref()), (vec!["电影".to_string(), "书".to_string()], Some("📖")));
+        // becoming a sub-tag drops the pin, not the icon
+        rename_tag(&c, "书", "爱好/书").unwrap();
+        let o = overview(&c).unwrap();
+        assert_eq!((o.pinned.clone(), icon(&o, "爱好/书").as_deref()), (vec!["电影".to_string()], Some("i:book-open")));
+        // merging keeps the target's icon
+        set_tag(&c, "电影", tp(json!({"icon": "🎬"}))).unwrap();
+        rename_tag(&c, "舒宇", "电影").unwrap();
+        assert_eq!(icon(&overview(&c).unwrap(), "电影").as_deref(), Some("🎬"));
+        // unpin + clear icon → no settings left
+        set_tag(&c, "电影", tp(json!({"pinned": false, "icon": null}))).unwrap();
+        assert_eq!(c.query_row("SELECT count(*) FROM note_tag_meta WHERE tag = '电影'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        // a tag whose notes are gone keeps its settings (exported too)
+        let only = list(&c, &serde_json::from_value(json!({"tag": "爱好/书/摘抄"})).unwrap()).unwrap()[0].id;
+        delete(&c, only).unwrap();
+        let out = export(&c).unwrap();
+        assert_eq!(serde_json::to_value(&out.tags).unwrap(), json!([{"tag": "爱好/书", "icon": "i:book-open"}, {"tag": "爱好/书/摘抄", "icon": "📖"}]));
+        let c2 = memory_db();
+        replace_all(&c2, &out).unwrap();
+        assert_eq!(serde_json::to_value(&out).unwrap(), serde_json::to_value(export(&c2).unwrap()).unwrap());
+        // an old file pinning a sub-tag: the pin is dropped
+        replace_all(&c2, &serde_json::from_value(json!({"notes": [{"content": "#a/b x"}], "tags": [{"tag": "a/b", "pinned": true}, {"tag": "a", "pinned": true}]})).unwrap()).unwrap();
+        assert_eq!(overview(&c2).unwrap().pinned, ["a"]);
+        assert!(validate_records(&serde_json::from_value(json!({"tags": [{"tag": "a"}, {"tag": "#a"}]})).unwrap()).is_err());
     }
 
     #[test]

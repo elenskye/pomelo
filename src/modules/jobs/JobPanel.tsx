@@ -1,44 +1,34 @@
-// Side panel for one application. Rust stamps 投递日期, keeps 「最远到过」 and the linked task.
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ExternalLink, FolderOpen } from "lucide-react";
+// Side panel for one application. 状态: pick which statuses it goes through (chips), then check them
+// off on the timeline below — checking fills today's date, which stays editable. Rust derives the
+// current status (last checked; none = 想投) and 投递日期 (first checked day).
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Check, ExternalLink, FolderOpen, Settings2 } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
+import { DateInput } from "@/shared/DateInput";
+import { localToday } from "@/shared/dates";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { SidePanel } from "@/shared/panel";
-import { DateInput } from "@/shared/DateInput";
 import { Field, IconButton, TextArea, TextInput } from "@/shared/ui";
-import { CHANNELS, jobLabel, useJobMutations, useStatuses, type Job } from "./api";
+import { CHANNELS, jobLabel, useJobMutations, useStatuses, type Job, type Status } from "./api";
+
+type DraftStep = { statusId: number; done: boolean; doneOn: string };
 
 type Draft = {
   company: string;
   position: string;
   location: string;
-  statusId: number | null;
-  stepOn: string;
-  deadline: string;
-  appliedOn: string;
   kindId: number | null;
   link: string;
   resume: string;
-  coverLetter: string;
-  salary: string;
   note: string;
+  steps: DraftStep[];
 };
 
 const SEEKER = "Documents/Seeker";
-
-function DateField(props: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <Field label={props.label}>
-      <div>
-        <DateInput clearable ariaLabel={props.label} value={props.value} onChange={props.onChange} />
-      </div>
-    </Field>
-  );
-}
 
 /** Path / URL input with 打开 (and 选择… for files, starting in Seeker). Paths under home are kept as ~/…. */
 function OpenableInput(props: { label: string; value: string; onChange: (v: string) => void; file?: boolean }) {
@@ -65,6 +55,70 @@ function OpenableInput(props: { label: string; value: string; onChange: (v: stri
   );
 }
 
+/** Chips for every non-准备 status (which steps this application has), then those steps as a timeline. */
+function Steps(props: { statuses: Status[]; value: DraftStep[]; onChange: (v: DraftStep[]) => void; onManage: () => void }) {
+  const choosable = props.statuses.filter((s) => s.stage !== "wish");
+  const name = new Map(props.statuses.map((s) => [s.id, s.name]));
+  const has = (id: number) => props.value.some((s) => s.statusId === id);
+  const toggle = (id: number) => {
+    const next = has(id) ? props.value.filter((s) => s.statusId !== id) : [...props.value, { statusId: id, done: false, doneOn: "" }];
+    const order = (sid: number) => props.statuses.findIndex((s) => s.id === sid);
+    props.onChange(next.sort((a, b) => order(a.statusId) - order(b.statusId)));
+  };
+  const set = (id: number, p: Partial<DraftStep>) => props.onChange(props.value.map((s) => (s.statusId === id ? { ...s, ...p } : s)));
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {choosable.map((s) => {
+          const on = has(s.id);
+          return (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => toggle(s.id)}
+              className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                on ? "border-transparent bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {s.name}
+            </button>
+          );
+        })}
+        <IconButton label="管理状态" onClick={props.onManage}>
+          <Settings2 size={14} />
+        </IconButton>
+      </div>
+      {props.value.length > 0 && (
+        <ol className="relative mt-2">
+          {props.value.length > 1 && <span aria-hidden className="absolute top-5 bottom-5 left-[9px] w-px bg-border" />}
+          {props.value.map((s) => {
+            const label = name.get(s.statusId) ?? "";
+            return (
+              <li key={s.statusId} className="relative flex h-10 items-center gap-3">
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={s.done}
+                  aria-label={label}
+                  onClick={() => set(s.statusId, s.done ? { done: false, doneOn: "" } : { done: true, doneOn: localToday() })}
+                  className={`grid size-[19px] shrink-0 place-items-center rounded-[5px] border transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                    s.done ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-foreground/40"
+                  }`}
+                >
+                  {s.done && <Check size={13} strokeWidth={3} />}
+                </button>
+                <span className={`min-w-0 flex-1 truncate text-sm ${s.done ? "" : "text-muted-foreground"}`}>{label}</span>
+                {s.done && <DateInput clearable ariaLabel={`${label}的日期`} value={s.doneOn} onChange={(v) => set(s.statusId, { doneOn: v })} />}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </>
+  );
+}
+
 export function JobPanel(props: {
   job: Job | null;
   onClose: () => void;
@@ -76,30 +130,34 @@ export function JobPanel(props: {
   const j = props.job;
   const { data: statuses = [] } = useStatuses();
   const { data: channels = [] } = useKinds(CHANNELS);
+  // a new application starts with every status that isn't 准备 / 结束 (as Rust does)
+  const defaults = useMemo<DraftStep[]>(
+    () => statuses.filter((s) => s.stage !== "wish" && s.stage !== "closed").map((s) => ({ statusId: s.id, done: false, doneOn: "" })),
+    [statuses],
+  );
   const initial = useMemo<Draft>(
     () => ({
       company: j?.company ?? "",
       position: j?.position ?? "",
       location: j?.location ?? "",
-      statusId: j?.statusId ?? null,
-      stepOn: j?.stepOn ?? "",
-      deadline: j?.deadline ?? "",
-      appliedOn: j?.appliedOn ?? "",
       kindId: j?.kindId ?? null,
       link: j?.link ?? "",
       resume: j?.resume ?? "",
-      coverLetter: j?.coverLetter ?? "",
-      salary: j?.salary ?? "",
       note: j?.note ?? "",
+      steps: j ? j.steps.map((s) => ({ statusId: s.statusId, done: s.done, doneOn: s.doneOn ?? "" })) : defaults,
     }),
-    [j],
+    [j, defaults],
   );
   const [d, setD] = useState(initial);
-  // new applications start in the first 准备 status
+  // statuses may load after the panel opens: give a still-untouched new application its default steps
+  const seeded = useRef(j !== null || defaults.length > 0);
   useEffect(() => {
-    if (d.statusId === null && statuses.length) setD((x) => ({ ...x, statusId: (statuses.find((s) => s.stage === "wish") ?? statuses[0]).id }));
-  }, [statuses, d.statusId]);
-  const dirty = JSON.stringify(d) !== JSON.stringify(initial) && !(j === null && JSON.stringify({ ...d, statusId: null }) === JSON.stringify(initial));
+    if (!seeded.current && defaults.length) {
+      seeded.current = true;
+      setD((x) => ({ ...x, steps: defaults }));
+    }
+  }, [defaults]);
+  const dirty = JSON.stringify(d) !== JSON.stringify(initial);
   useEffect(() => {
     props.onDirtyChange(dirty);
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -108,29 +166,20 @@ export function JobPanel(props: {
   const m = useJobMutations();
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
-  const status = statuses.find((s) => s.id === d.statusId);
-  const reached = statuses.find((s) => s.id === j?.reachedId);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     const t = (s: string) => s.trim() || null;
-    const changedStatus = j !== null && d.statusId !== j.statusId;
     const patch = {
       company: d.company,
       position: t(d.position),
       location: t(d.location),
-      statusId: d.statusId ?? undefined,
-      // a new status with an untouched date: let Rust start the new step without one
-      ...(changedStatus && d.stepOn === initial.stepOn ? {} : { stepOn: t(d.stepOn) }),
-      deadline: t(d.deadline),
-      appliedOn: t(d.appliedOn),
       kindId: d.kindId,
       link: t(d.link),
       resume: t(d.resume),
-      coverLetter: t(d.coverLetter),
-      salary: t(d.salary),
       note: t(d.note),
+      steps: d.steps.map((s) => ({ statusId: s.statusId, done: s.done, doneOn: s.done ? s.doneOn || null : null })),
     };
     try {
       if (j) {
@@ -162,7 +211,7 @@ export function JobPanel(props: {
       onSubmit={save}
       onDelete={j ? () => void del() : undefined}
       error={error}
-      meta={[reached && reached.id !== j?.statusId && `最远到过「${reached.name}」`, j?.followedOn && `${j.followedOn.split("-").join(" / ")} 跟进过`].filter(Boolean).join(" · ") || undefined}
+      meta={j?.followedOn ? `${j.followedOn.split("-").join(" / ")} 跟进过` : undefined}
       extra={confirmDialog}
     >
       <Field label="公司">
@@ -176,41 +225,24 @@ export function JobPanel(props: {
           <TextInput value={d.location} onChange={(e) => set("location", e.target.value)} maxLength={50} />
         </Field>
       </div>
-      <Field label="状态">
+      <Field label="渠道">
         <div>
           <Dropdown
-            ariaLabel="状态"
-            value={d.statusId}
-            onChange={(v) => set("statusId", v)}
-            options={statuses.map((s) => ({ value: s.id as number | null, label: s.name }))}
-            actions={[{ label: "管理状态…", onSelect: props.onManageStatuses }]}
+            ariaLabel="渠道"
+            value={d.kindId}
+            onChange={(v) => set("kindId", v)}
+            options={[...channels.map((k) => ({ value: k.id as number | null, label: k.name })), { value: null, label: UNCATEGORIZED }]}
+            actions={[{ label: "管理渠道…", onSelect: props.onManageChannels }]}
           />
         </div>
       </Field>
-      {status?.stage === "active" && <DateField label={`${status.name}哪天`} value={d.stepOn} onChange={(v) => set("stepOn", v)} />}
-      <div className="flex gap-4">
-        <DateField label="截止日期" value={d.deadline} onChange={(v) => set("deadline", v)} />
-        <DateField label="投递日期" value={d.appliedOn} onChange={(v) => set("appliedOn", v)} />
-      </div>
-      <div className="grid grid-cols-[1fr_8rem] gap-3">
-        <Field label="渠道">
-          <div>
-            <Dropdown
-              ariaLabel="渠道"
-              value={d.kindId}
-              onChange={(v) => set("kindId", v)}
-              options={[...channels.map((k) => ({ value: k.id as number | null, label: k.name })), { value: null, label: UNCATEGORIZED }]}
-              actions={[{ label: "管理渠道…", onSelect: props.onManageChannels }]}
-            />
-          </div>
-        </Field>
-        <Field label="薪资">
-          <TextInput value={d.salary} onChange={(e) => set("salary", e.target.value)} maxLength={50} />
-        </Field>
-      </div>
+      <Field label="状态">
+        <div>
+          <Steps statuses={statuses} value={d.steps} onChange={(v) => set("steps", v)} onManage={props.onManageStatuses} />
+        </div>
+      </Field>
       <OpenableInput label="JD 链接" value={d.link} onChange={(v) => set("link", v)} />
       <OpenableInput label="简历" file value={d.resume} onChange={(v) => set("resume", v)} />
-      <OpenableInput label="求职信" file value={d.coverLetter} onChange={(v) => set("coverLetter", v)} />
       <Field label="备注">
         <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
       </Field>

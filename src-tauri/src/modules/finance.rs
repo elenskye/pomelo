@@ -1,7 +1,12 @@
 //! 钱来钱往 (finance). Money is integer cents in the row's currency; currencies are never mixed
-//! except for total assets, which converts each month's balances with that month's CNY rates.
-//! - Accounts hold one currency each; balances (and a broker's holdings) are monthly snapshots.
-//! - 收支 entries: flow out / in, amount, currency (= the account's, if one is set), day, 分类.
+//! except for total assets, which converts balances with CNY rates.
+//! - Accounts hold one currency each. Balances, rates and a broker's holdings are dated snapshots
+//!   (更新余额 / 更新持仓 on some day). Total assets on a day with any balance = each account's latest
+//!   balance up to that day (a closed account stops counting after its last one) × the latest rate
+//!   up to that day.
+//! - Holdings: quantity × unit price (currency units, not cents) = market value.
+//! - 收支 entries: flow out / in, amount, currency, day (… `end_day` for a period, e.g. 记小额), 分类.
+//!   Monthly sums spread a period's amount evenly over its days (`spread`). No account.
 //! - 固定支出 (`fin_fixed`): on `next_day` an entry is posted and `next_day` moves on by the rule
 //!   (`post_due`: on create / update, and from the daily sweep). Entries keep `fixed_id`.
 //! - Budgets: monthly amount per 支出分类 + currency.
@@ -12,7 +17,7 @@ use super::kinds;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::State;
 
 pub const KEY: &str = "finance";
@@ -68,6 +73,19 @@ fn check_day(d: &str, what: &str) -> Result<(), String> {
     common::check_date(&Some(d.to_string()), what)
 }
 
+/// v7 and older files dated snapshots by month (`YYYY-MM`): read as that month's last day.
+fn day_or_month_end(s: &str) -> String {
+    let s = s.trim();
+    if s.len() == 7 && s.as_bytes()[4] == b'-' {
+        if let (Ok(y), Ok(m)) = (s[..4].parse::<i64>(), s[5..].parse::<u32>()) {
+            if (1..=12).contains(&m) {
+                return format!("{s}-{:02}", common::days_in_month(y, m));
+            }
+        }
+    }
+    s.to_string()
+}
+
 // ---------- accounts ----------
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -83,7 +101,7 @@ pub struct Account {
     pub created_at: String,
     pub updated_at: String,
     /// Latest snapshot.
-    pub last_month: Option<String>,
+    pub last_day: Option<String>,
     pub last_amount: Option<i64>,
 }
 
@@ -103,9 +121,9 @@ pub struct AccountPatch {
 }
 
 const ACCOUNT_SQL: &str = "SELECT a.id, a.name, a.kind, a.currency, a.closed, a.note, a.sort_order, a.created_at, a.updated_at,
-    b.month, b.amount
+    b.day, b.amount
   FROM fin_accounts a
-  LEFT JOIN fin_balances b ON b.id = (SELECT id FROM fin_balances WHERE account_id = a.id ORDER BY month DESC LIMIT 1)";
+  LEFT JOIN fin_balances b ON b.id = (SELECT id FROM fin_balances WHERE account_id = a.id ORDER BY day DESC LIMIT 1)";
 
 fn account_row(r: &Row) -> rusqlite::Result<Account> {
     Ok(Account {
@@ -118,7 +136,7 @@ fn account_row(r: &Row) -> rusqlite::Result<Account> {
         sort_order: r.get(6)?,
         created_at: r.get(7)?,
         updated_at: r.get(8)?,
-        last_month: r.get(9)?,
+        last_day: r.get(9)?,
         last_amount: r.get(10)?,
     })
 }
@@ -164,8 +182,7 @@ pub fn create_account(conn: &Connection, p: AccountPatch) -> Result<Account, Str
 fn account_used(conn: &Connection, id: i64) -> Result<bool, String> {
     let n: i64 = conn
         .query_row(
-            "SELECT (SELECT count(*) FROM fin_balances WHERE account_id = ?1) + (SELECT count(*) FROM fin_entries WHERE account_id = ?1)
-              + (SELECT count(*) FROM fin_fixed WHERE account_id = ?1) + (SELECT count(*) FROM fin_holdings WHERE account_id = ?1)",
+            "SELECT (SELECT count(*) FROM fin_balances WHERE account_id = ?1) + (SELECT count(*) FROM fin_holdings WHERE account_id = ?1)",
             [id],
             |r| r.get(0),
         )
@@ -203,8 +220,7 @@ pub fn update_account(conn: &Connection, id: i64, p: AccountPatch) -> Result<Acc
     account(conn, id)
 }
 
-/// Deletes the account with its balances and holdings; entries and 固定支出 keep their rows
-/// (account → 不填).
+/// Deletes the account with its balances and holdings.
 pub fn delete_account(conn: &Connection, id: i64) -> Result<(), String> {
     match conn.execute("DELETE FROM fin_accounts WHERE id = ?1", [id]).map_err(err)? {
         0 => Err(gone("账户")),
@@ -218,26 +234,26 @@ pub fn delete_account(conn: &Connection, id: i64) -> Result<(), String> {
 #[serde(rename_all = "camelCase")]
 pub struct Balance {
     pub account_id: i64,
-    pub month: String,
+    pub day: String,
     pub amount: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rate {
-    pub month: String,
+    pub day: String,
     pub currency: Currency,
     pub rate: f64,
 }
 
-/// One month of total assets.
+/// Total assets on one day that has any balance.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MonthTotal {
-    pub month: String,
-    /// Sum of balances × that month's rates, in CNY cents; None while a rate is missing.
+pub struct DayTotal {
+    pub day: String,
+    /// In CNY cents; None while a currency has no rate yet.
     pub total_cny: Option<i64>,
-    /// Currencies with balances but no rate that month.
+    /// Currencies with balances but no rate up to that day.
     pub missing: Vec<Currency>,
 }
 
@@ -246,46 +262,53 @@ pub struct MonthTotal {
 pub struct Assets {
     pub balances: Vec<Balance>,
     pub rates: Vec<Rate>,
-    /// Months with any balance, oldest first.
-    pub totals: Vec<MonthTotal>,
+    /// Days with any balance, oldest first.
+    pub totals: Vec<DayTotal>,
 }
 
 pub fn assets(conn: &Connection) -> Result<Assets, String> {
-    let mut st = conn.prepare("SELECT account_id, month, amount FROM fin_balances ORDER BY month, account_id").map_err(err)?;
+    let mut st = conn.prepare("SELECT account_id, day, amount FROM fin_balances ORDER BY day, account_id").map_err(err)?;
     let balances: Vec<Balance> = st
-        .query_map([], |r| Ok(Balance { account_id: r.get(0)?, month: r.get(1)?, amount: r.get(2)? }))
+        .query_map([], |r| Ok(Balance { account_id: r.get(0)?, day: r.get(1)?, amount: r.get(2)? }))
         .map_err(err)?
         .collect::<Result<_, _>>()
         .map_err(err)?;
-    let mut st = conn.prepare("SELECT month, currency, rate FROM fin_rates ORDER BY month, currency").map_err(err)?;
+    let mut st = conn.prepare("SELECT day, currency, rate FROM fin_rates ORDER BY day, currency").map_err(err)?;
     let rates: Vec<Rate> = st
-        .query_map([], |r| Ok(Rate { month: r.get(0)?, currency: r.get(1)?, rate: r.get(2)? }))
+        .query_map([], |r| Ok(Rate { day: r.get(0)?, currency: r.get(1)?, rate: r.get(2)? }))
         .map_err(err)?
         .collect::<Result<_, _>>()
         .map_err(err)?;
-    let currency: HashMap<i64, Currency> = accounts(conn)?.into_iter().map(|a| (a.id, a.currency)).collect();
-    let rate_of: HashMap<(String, &str), f64> = rates.iter().map(|r| ((r.month.clone(), r.currency.as_str()), r.rate)).collect();
-    let mut totals: Vec<MonthTotal> = Vec::new();
-    for b in &balances {
-        if totals.last().is_none_or(|t| t.month != b.month) {
-            totals.push(MonthTotal { month: b.month.clone(), total_cny: Some(0), missing: Vec::new() });
+    let accs = accounts(conn)?;
+    let mut days: Vec<&str> = balances.iter().map(|b| b.day.as_str()).collect();
+    days.dedup();
+    let (mut bi, mut ri) = (0, 0);
+    let mut balance: HashMap<i64, i64> = HashMap::new();
+    let mut rate: HashMap<&str, f64> = HashMap::new();
+    let mut totals = Vec::with_capacity(days.len());
+    for day in days {
+        while bi < balances.len() && balances[bi].day.as_str() <= day {
+            balance.insert(balances[bi].account_id, balances[bi].amount);
+            bi += 1;
         }
-        let t = totals.last_mut().unwrap();
-        let c = currency[&b.account_id];
-        let rate = if c == Currency::Cny { Some(1.0) } else { rate_of.get(&(b.month.clone(), c.as_str())).copied() };
-        match rate {
-            Some(r) => t.total_cny = t.total_cny.map(|s| s + (b.amount as f64 * r).round() as i64),
-            None => {
-                if !t.missing.contains(&c) {
-                    t.missing.push(c);
-                }
+        while ri < rates.len() && rates[ri].day.as_str() <= day {
+            rate.insert(rates[ri].currency.as_str(), rates[ri].rate);
+            ri += 1;
+        }
+        let mut sum = 0;
+        let mut missing = Vec::new();
+        for a in &accs {
+            let Some(&amount) = balance.get(&a.id) else { continue };
+            if a.closed && a.last_day.as_deref().is_some_and(|last| last < day) {
+                continue;
+            }
+            match if a.currency == Currency::Cny { Some(1.0) } else { rate.get(a.currency.as_str()).copied() } {
+                Some(r) => sum += (amount as f64 * r).round() as i64,
+                None if !missing.contains(&a.currency) => missing.push(a.currency),
+                None => {}
             }
         }
-    }
-    for t in &mut totals {
-        if !t.missing.is_empty() {
-            t.total_cny = None;
-        }
+        totals.push(DayTotal { day: day.to_string(), total_cny: missing.is_empty().then_some(sum), missing });
     }
     Ok(Assets { balances, rates, totals })
 }
@@ -294,7 +317,7 @@ pub fn assets(conn: &Connection) -> Result<Assets, String> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BalanceInput {
     pub account_id: i64,
-    /// None = no snapshot for this account this month.
+    /// None = no snapshot for this account that day.
     pub amount: Option<i64>,
 }
 
@@ -312,9 +335,9 @@ fn check_rate(rate: f64) -> Result<(), String> {
     Ok(())
 }
 
-/// 更新余额: a month's balances and rates in one go (None clears that row).
-pub fn save_month(conn: &Connection, month: &str, balances: &[BalanceInput], rates: &[RateInput]) -> Result<(), String> {
-    check_month(month)?;
+/// 更新余额: one day's balances and rates in one go (None clears that row).
+pub fn save_balances(conn: &Connection, day: &str, balances: &[BalanceInput], rates: &[RateInput]) -> Result<(), String> {
+    check_day(day, "日期")?;
     let tx = common::Tx::begin(conn)?;
     for b in balances {
         account(&tx, b.account_id)?;
@@ -325,15 +348,15 @@ pub fn save_month(conn: &Connection, month: &str, balances: &[BalanceInput], rat
                 }
                 tx.execute(
                     &format!(
-                        "INSERT INTO fin_balances (account_id, month, amount) VALUES (?1, ?2, ?3)
-                         ON CONFLICT(account_id, month) DO UPDATE SET amount = excluded.amount, updated_at = {NOW}"
+                        "INSERT INTO fin_balances (account_id, day, amount) VALUES (?1, ?2, ?3)
+                         ON CONFLICT(account_id, day) DO UPDATE SET amount = excluded.amount, updated_at = {NOW}"
                     ),
-                    params![b.account_id, month, a],
+                    params![b.account_id, day, a],
                 )
                 .map_err(err)?;
             }
             None => {
-                tx.execute("DELETE FROM fin_balances WHERE account_id = ?1 AND month = ?2", params![b.account_id, month]).map_err(err)?;
+                tx.execute("DELETE FROM fin_balances WHERE account_id = ?1 AND day = ?2", params![b.account_id, day]).map_err(err)?;
             }
         }
     }
@@ -346,15 +369,15 @@ pub fn save_month(conn: &Connection, month: &str, balances: &[BalanceInput], rat
                 check_rate(v)?;
                 tx.execute(
                     &format!(
-                        "INSERT INTO fin_rates (month, currency, rate) VALUES (?1, ?2, ?3)
-                         ON CONFLICT(month, currency) DO UPDATE SET rate = excluded.rate, updated_at = {NOW}"
+                        "INSERT INTO fin_rates (day, currency, rate) VALUES (?1, ?2, ?3)
+                         ON CONFLICT(day, currency) DO UPDATE SET rate = excluded.rate, updated_at = {NOW}"
                     ),
-                    params![month, r.currency, v],
+                    params![day, r.currency, v],
                 )
                 .map_err(err)?;
             }
             None => {
-                tx.execute("DELETE FROM fin_rates WHERE month = ?1 AND currency = ?2", params![month, r.currency]).map_err(err)?;
+                tx.execute("DELETE FROM fin_rates WHERE day = ?1 AND currency = ?2", params![day, r.currency]).map_err(err)?;
             }
         }
     }
@@ -368,58 +391,68 @@ pub fn save_month(conn: &Connection, month: &str, balances: &[BalanceInput], rat
 pub struct Holding {
     pub id: i64,
     pub account_id: i64,
-    pub month: String,
+    pub day: String,
     pub name: String,
-    pub quantity: Option<f64>,
+    pub quantity: f64,
+    /// Unit price in the account's currency (not cents).
+    pub price: f64,
+    /// Market value in cents = quantity × price.
     pub value: i64,
 }
 
-/// All broker holdings, by account, month, then row order.
+fn market_value(quantity: f64, price: f64) -> i64 {
+    (quantity * price * 100.0).round() as i64
+}
+
+/// All broker holdings, by account, day, then row order.
 pub fn holdings(conn: &Connection) -> Result<Vec<Holding>, String> {
     let mut st = conn
-        .prepare("SELECT id, account_id, month, name, quantity, value FROM fin_holdings ORDER BY account_id, month, sort_order, id")
+        .prepare("SELECT id, account_id, day, name, quantity, price FROM fin_holdings ORDER BY account_id, day, sort_order, id")
         .map_err(err)?;
     let rows = st
         .query_map([], |r| {
-            Ok(Holding { id: r.get(0)?, account_id: r.get(1)?, month: r.get(2)?, name: r.get(3)?, quantity: r.get(4)?, value: r.get(5)? })
+            let (quantity, price): (f64, f64) = (r.get(4)?, r.get(5)?);
+            Ok(Holding { id: r.get(0)?, account_id: r.get(1)?, day: r.get(2)?, name: r.get(3)?, quantity, price, value: market_value(quantity, price) })
         })
         .map_err(err)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(err)
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HoldingInput {
     pub name: String,
-    #[serde(default)]
-    pub quantity: Option<f64>,
-    pub value: i64,
+    pub quantity: f64,
+    pub price: f64,
 }
 
 fn check_holding(h: &HoldingInput) -> Result<String, String> {
     let name = common::require(&h.name, "持仓名称", 50)?;
-    if h.quantity.is_some_and(|q| !(q.is_finite() && q >= 0.0)) {
-        return Err(format!("「{name}」的数量不对"));
+    if !(h.quantity.is_finite() && h.quantity > 0.0) {
+        return Err(format!("「{name}」的数量要大于 0"));
     }
-    if h.value.abs() > MAX_CENTS {
+    if !(h.price.is_finite() && h.price >= 0.0) {
+        return Err(format!("「{name}」的单价不对"));
+    }
+    if market_value(h.quantity, h.price) > MAX_CENTS {
         return Err(format!("「{name}」的市值太大了"));
     }
     Ok(name)
 }
 
-/// Replaces one broker account's holdings for one month.
-pub fn save_holdings(conn: &Connection, account_id: i64, month: &str, rows: &[HoldingInput]) -> Result<(), String> {
-    check_month(month)?;
+/// Replaces one broker account's holdings on one day.
+pub fn save_holdings(conn: &Connection, account_id: i64, day: &str, rows: &[HoldingInput]) -> Result<(), String> {
+    check_day(day, "日期")?;
     if account(conn, account_id)?.kind != AccountKind::Broker {
         return Err("只有券商账户能记持仓".into());
     }
     let tx = common::Tx::begin(conn)?;
-    tx.execute("DELETE FROM fin_holdings WHERE account_id = ?1 AND month = ?2", params![account_id, month]).map_err(err)?;
+    tx.execute("DELETE FROM fin_holdings WHERE account_id = ?1 AND day = ?2", params![account_id, day]).map_err(err)?;
     for (i, h) in rows.iter().enumerate() {
         let name = check_holding(h)?;
         tx.execute(
-            "INSERT INTO fin_holdings (account_id, month, name, quantity, value, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![account_id, month, name, h.quantity, h.value, i as i64 + 1],
+            "INSERT INTO fin_holdings (account_id, day, name, quantity, price, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![account_id, day, name, h.quantity, h.price, i as i64 + 1],
         )
         .map_err(err)?;
     }
@@ -435,9 +468,11 @@ pub struct Entry {
     pub flow: Flow,
     pub amount: i64,
     pub currency: Currency,
+    /// The day, or a period's first day.
     pub day: String,
+    /// A period's last day (after `day`).
+    pub end_day: Option<String>,
     pub kind_id: Option<i64>,
-    pub account_id: Option<i64>,
     pub fixed_id: Option<i64>,
     pub note: Option<String>,
     pub created_at: String,
@@ -455,15 +490,16 @@ pub struct EntryPatch {
     pub currency: Option<Currency>,
     #[serde(default)]
     pub day: Option<String>,
+    /// null / same as `day` = a single day.
+    #[serde(default, deserialize_with = "some")]
+    pub end_day: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
     pub kind_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "some")]
-    pub account_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "some")]
     pub note: Option<Option<String>>,
 }
 
-const ENTRY_COLS: &str = "id, flow, amount, currency, day, kind_id, account_id, fixed_id, note, created_at, updated_at";
+const ENTRY_COLS: &str = "id, flow, amount, currency, day, end_day, kind_id, fixed_id, note, created_at, updated_at";
 
 fn entry_row(r: &Row) -> rusqlite::Result<Entry> {
     Ok(Entry {
@@ -472,8 +508,8 @@ fn entry_row(r: &Row) -> rusqlite::Result<Entry> {
         amount: r.get(2)?,
         currency: r.get(3)?,
         day: r.get(4)?,
-        kind_id: r.get(5)?,
-        account_id: r.get(6)?,
+        end_day: r.get(5)?,
+        kind_id: r.get(6)?,
         fixed_id: r.get(7)?,
         note: r.get(8)?,
         created_at: r.get(9)?,
@@ -481,11 +517,14 @@ fn entry_row(r: &Row) -> rusqlite::Result<Entry> {
     })
 }
 
-/// One month (YYYY-MM), newest first.
+/// Entries touching one month (YYYY-MM; a period shows in every month it covers), latest first.
 pub fn entries(conn: &Connection, month: &str) -> Result<Vec<Entry>, String> {
     check_month(month)?;
     let mut st = conn
-        .prepare(&format!("SELECT {ENTRY_COLS} FROM fin_entries WHERE substr(day, 1, 7) = ?1 ORDER BY day DESC, id DESC"))
+        .prepare(&format!(
+            "SELECT {ENTRY_COLS} FROM fin_entries WHERE day <= ?1 || '-31' AND coalesce(end_day, day) >= ?1 || '-01'
+             ORDER BY coalesce(end_day, day) DESC, day DESC, id DESC"
+        ))
         .map_err(err)?;
     let rows = st.query_map([month], entry_row).map_err(err)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(err)
@@ -498,13 +537,17 @@ pub fn entry(conn: &Connection, id: i64) -> Result<Entry, String> {
         .ok_or_else(|| gone("记录"))
 }
 
-/// Shared by entries and 固定支出: the 分类 matches the flow, the currency matches the account.
-fn check_money(conn: &Connection, flow: Flow, currency: Currency, kind_id: Option<i64>, account_id: Option<i64>) -> Result<(), String> {
-    kinds::check(conn, flow.kinds_module(), kind_id).map_err(|_| "选择的分类不存在，或者不是这一类（支出 / 收入）的".to_string())?;
-    if let Some(a) = account_id {
-        let a = account(conn, a)?;
-        if a.currency != currency {
-            return Err(format!("「{}」是 {} 账户，币种要一致", a.name, a.currency.as_str()));
+/// Shared by entries and 固定支出: the 分类 matches the flow.
+fn check_kind(conn: &Connection, flow: Flow, kind_id: Option<i64>) -> Result<(), String> {
+    kinds::check(conn, flow.kinds_module(), kind_id).map_err(|_| "选择的分类不存在，或者不是这一类（支出 / 收入）的".to_string())
+}
+
+fn check_period(day: &str, end_day: &Option<String>) -> Result<(), String> {
+    check_day(day, "日期")?;
+    if let Some(e) = end_day {
+        check_day(e, "结束日期")?;
+        if e.as_str() < day {
+            return Err("结束日期不能早于开始日期".into());
         }
     }
     Ok(())
@@ -515,8 +558,8 @@ struct EntryFields {
     amount: i64,
     currency: Currency,
     day: String,
+    end_day: Option<String>,
     kind_id: Option<i64>,
-    account_id: Option<i64>,
     note: Option<String>,
 }
 
@@ -526,25 +569,25 @@ impl EntryFields {
         let amount = p.amount.or(old.map(|e| e.amount)).ok_or("请填金额")?;
         let currency = p.currency.or(old.map(|e| e.currency)).ok_or("请选择币种")?;
         let day = p.day.or(old.map(|e| e.day.clone())).ok_or("请选择日期")?;
+        let end_day = common::clean(p.end_day.unwrap_or(old.and_then(|e| e.end_day.clone()))).filter(|e| *e != day);
         let kind_id = p.kind_id.unwrap_or(old.and_then(|e| e.kind_id));
-        let account_id = p.account_id.unwrap_or(old.and_then(|e| e.account_id));
         let note = common::clean(p.note.unwrap_or(old.and_then(|e| e.note.clone())));
-        Ok(Self { flow, amount, currency, day, kind_id, account_id, note })
+        Ok(Self { flow, amount, currency, day, end_day, kind_id, note })
     }
 
     fn check(&self, conn: &Connection) -> Result<(), String> {
         check_amount(self.amount, "金额")?;
-        check_day(&self.day, "日期")?;
+        check_period(&self.day, &self.end_day)?;
         common::check_len(&self.note, "备注", 1000)?;
-        check_money(conn, self.flow, self.currency, self.kind_id, self.account_id)
+        check_kind(conn, self.flow, self.kind_id)
     }
 }
 
 fn insert_entry(conn: &Connection, f: &EntryFields, fixed_id: Option<i64>) -> Result<i64, String> {
     conn.execute(
-        "INSERT INTO fin_entries (flow, amount, currency, day, kind_id, account_id, fixed_id, note)
+        "INSERT INTO fin_entries (flow, amount, currency, day, end_day, kind_id, fixed_id, note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![f.flow, f.amount, f.currency, f.day, f.kind_id, f.account_id, fixed_id, f.note],
+        params![f.flow, f.amount, f.currency, f.day, f.end_day, f.kind_id, fixed_id, f.note],
     )
     .map_err(err)?;
     Ok(conn.last_insert_rowid())
@@ -557,7 +600,7 @@ pub fn create_entry(conn: &Connection, p: EntryPatch) -> Result<Entry, String> {
     entry(conn, id)
 }
 
-/// 记一周小额 etc.: several entries in one step (all or nothing).
+/// 记小额 etc.: several entries in one step (all or nothing).
 pub fn create_entries(conn: &Connection, patches: Vec<EntryPatch>) -> Result<usize, String> {
     if patches.is_empty() {
         return Err("没有要记的".into());
@@ -579,10 +622,10 @@ pub fn update_entry(conn: &Connection, id: i64, p: EntryPatch) -> Result<Entry, 
     f.check(conn)?;
     conn.execute(
         &format!(
-            "UPDATE fin_entries SET flow = ?1, amount = ?2, currency = ?3, day = ?4, kind_id = ?5, account_id = ?6, note = ?7,
+            "UPDATE fin_entries SET flow = ?1, amount = ?2, currency = ?3, day = ?4, end_day = ?5, kind_id = ?6, note = ?7,
                updated_at = {NOW} WHERE id = ?8"
         ),
-        params![f.flow, f.amount, f.currency, f.day, f.kind_id, f.account_id, f.note, id],
+        params![f.flow, f.amount, f.currency, f.day, f.end_day, f.kind_id, f.note, id],
     )
     .map_err(err)?;
     entry(conn, id)
@@ -593,6 +636,56 @@ pub fn delete_entry(conn: &Connection, id: i64) -> Result<(), String> {
         0 => Err(gone("记录")),
         _ => Ok(()),
     }
+}
+
+/// 多选: the same change (e.g. 分类 or 币种) on several entries, all or nothing.
+pub fn update_entries(conn: &Connection, ids: &[i64], p: EntryPatch) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Err("没有选中的记录".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    for &id in ids {
+        update_entry(&tx, id, p.clone())?;
+    }
+    tx.commit().map_err(err)?;
+    Ok(ids.len())
+}
+
+pub fn delete_entries(conn: &Connection, ids: &[i64]) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Err("没有选中的记录".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    for &id in ids {
+        delete_entry(&tx, id)?;
+    }
+    tx.commit().map_err(err)?;
+    Ok(ids.len())
+}
+
+/// Where the latest period ends (记小额 starts the next one the day after).
+pub fn last_period_end(conn: &Connection) -> Result<Option<String>, String> {
+    conn.query_row("SELECT max(end_day) FROM fin_entries", [], |r| r.get(0)).map_err(err)
+}
+
+/// A period's amount by month, in proportion to its days there (each day = amount ÷ days); the
+/// parts are rounded so they add up to the amount exactly.
+pub fn spread(amount: i64, day: &str, end_day: &str) -> Vec<(String, i64)> {
+    let (first, last) = (common::day_number(day), common::day_number(end_day));
+    let days = last - first + 1;
+    let mut out = Vec::new();
+    let (mut d, mut covered, mut given) = (first, 0, 0);
+    while d <= last {
+        let date = common::from_day_number(d);
+        let (y, m) = (date[..4].parse::<i64>().unwrap(), date[5..7].parse::<u32>().unwrap());
+        let to = last.min(d - date[8..10].parse::<i64>().unwrap() + common::days_in_month(y, m) as i64);
+        covered += to - d + 1;
+        let upto = (2 * amount * covered + days) / (2 * days); // amount × covered ÷ days, rounded
+        out.push((date[..7].to_string(), upto - given));
+        given = upto;
+        d = to + 1;
+    }
+    out
 }
 
 // ---------- 固定支出 ----------
@@ -651,7 +744,6 @@ pub struct Fixed {
     pub amount: i64,
     pub currency: Currency,
     pub kind_id: Option<i64>,
-    pub account_id: Option<i64>,
     pub rule: String,
     pub next_day: String,
     pub stopped: bool,
@@ -674,8 +766,6 @@ pub struct FixedPatch {
     pub currency: Option<Currency>,
     #[serde(default, deserialize_with = "some")]
     pub kind_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "some")]
-    pub account_id: Option<Option<i64>>,
     #[serde(default)]
     pub rule: Option<String>,
     /// Next day to post; omitted on create / rule change = the rule's first day from today.
@@ -687,8 +777,7 @@ pub struct FixedPatch {
     pub note: Option<Option<String>>,
 }
 
-const FIXED_COLS: &str =
-    "id, name, flow, amount, currency, kind_id, account_id, rule, next_day, stopped, note, sort_order, created_at, updated_at";
+const FIXED_COLS: &str = "id, name, flow, amount, currency, kind_id, rule, next_day, stopped, note, sort_order, created_at, updated_at";
 
 fn fixed_row(r: &Row) -> rusqlite::Result<Fixed> {
     Ok(Fixed {
@@ -698,14 +787,13 @@ fn fixed_row(r: &Row) -> rusqlite::Result<Fixed> {
         amount: r.get(3)?,
         currency: r.get(4)?,
         kind_id: r.get(5)?,
-        account_id: r.get(6)?,
-        rule: r.get(7)?,
-        next_day: r.get(8)?,
-        stopped: r.get(9)?,
-        note: r.get(10)?,
-        sort_order: r.get(11)?,
-        created_at: r.get(12)?,
-        updated_at: r.get(13)?,
+        rule: r.get(6)?,
+        next_day: r.get(7)?,
+        stopped: r.get(8)?,
+        note: r.get(9)?,
+        sort_order: r.get(10)?,
+        created_at: r.get(11)?,
+        updated_at: r.get(12)?,
     })
 }
 
@@ -728,7 +816,6 @@ struct FixedFields {
     amount: i64,
     currency: Currency,
     kind_id: Option<i64>,
-    account_id: Option<i64>,
     rule: String,
     next_day: String,
     stopped: bool,
@@ -757,7 +844,6 @@ fn fixed_fields(conn: &Connection, old: Option<&Fixed>, p: FixedPatch, today: &s
         amount: p.amount.or(old.map(|f| f.amount)).ok_or("请填金额")?,
         currency: p.currency.or(old.map(|f| f.currency)).ok_or("请选择币种")?,
         kind_id: p.kind_id.unwrap_or(old.and_then(|f| f.kind_id)),
-        account_id: p.account_id.unwrap_or(old.and_then(|f| f.account_id)),
         rule: rule_text,
         next_day,
         stopped: p.stopped.or(old.map(|f| f.stopped)).unwrap_or(false),
@@ -765,7 +851,7 @@ fn fixed_fields(conn: &Connection, old: Option<&Fixed>, p: FixedPatch, today: &s
     };
     check_amount(f.amount, "金额")?;
     common::check_len(&f.note, "备注", 1000)?;
-    check_money(conn, f.flow, f.currency, f.kind_id, f.account_id)?;
+    check_kind(conn, f.flow, f.kind_id)?;
     Ok(f)
 }
 
@@ -796,8 +882,8 @@ fn post_due_in(conn: &Connection, today: &str) -> Result<usize, String> {
                 amount: f.amount,
                 currency: f.currency,
                 day: day.clone(),
+                end_day: None,
                 kind_id: f.kind_id,
-                account_id: f.account_id,
                 note: Some(f.name.clone()),
             };
             insert_entry(conn, &e, Some(f.id))?;
@@ -813,9 +899,9 @@ pub fn create_fixed(conn: &Connection, p: FixedPatch, today: &str) -> Result<Fix
     let f = fixed_fields(conn, None, p, today)?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
-        "INSERT INTO fin_fixed (name, flow, amount, currency, kind_id, account_id, rule, next_day, stopped, note, sort_order)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, (SELECT coalesce(max(sort_order), 0) + 1 FROM fin_fixed))",
-        params![f.name, f.flow, f.amount, f.currency, f.kind_id, f.account_id, f.rule, f.next_day, f.stopped, f.note],
+        "INSERT INTO fin_fixed (name, flow, amount, currency, kind_id, rule, next_day, stopped, note, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, (SELECT coalesce(max(sort_order), 0) + 1 FROM fin_fixed))",
+        params![f.name, f.flow, f.amount, f.currency, f.kind_id, f.rule, f.next_day, f.stopped, f.note],
     )
     .map_err(err)?;
     let id = tx.last_insert_rowid();
@@ -830,10 +916,10 @@ pub fn update_fixed(conn: &Connection, id: i64, p: FixedPatch, today: &str) -> R
     let tx = common::Tx::begin(conn)?;
     tx.execute(
         &format!(
-            "UPDATE fin_fixed SET name = ?1, flow = ?2, amount = ?3, currency = ?4, kind_id = ?5, account_id = ?6, rule = ?7,
-               next_day = ?8, stopped = ?9, note = ?10, updated_at = {NOW} WHERE id = ?11"
+            "UPDATE fin_fixed SET name = ?1, flow = ?2, amount = ?3, currency = ?4, kind_id = ?5, rule = ?6,
+               next_day = ?7, stopped = ?8, note = ?9, updated_at = {NOW} WHERE id = ?10"
         ),
-        params![f.name, f.flow, f.amount, f.currency, f.kind_id, f.account_id, f.rule, f.next_day, f.stopped, f.note, id],
+        params![f.name, f.flow, f.amount, f.currency, f.kind_id, f.rule, f.next_day, f.stopped, f.note, id],
     )
     .map_err(err)?;
     post_due_in(&tx, today)?;
@@ -900,7 +986,8 @@ pub fn save_budgets(conn: &Connection, currency: Currency, rows: &[BudgetInput])
     tx.commit().map_err(err)
 }
 
-/// Entry sums by month × currency × flow × 分类 (reports pick what they need).
+/// Entry sums by month × currency × flow × 分类 (reports pick what they need). A period counts in
+/// every month it covers, with that month's share of its amount (`spread`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Total {
@@ -913,21 +1000,35 @@ pub struct Total {
 }
 
 pub fn totals(conn: &Connection) -> Result<Vec<Total>, String> {
-    let mut st = conn
-        .prepare(
-            "SELECT substr(day, 1, 7) AS m, currency, flow, kind_id, sum(amount), count(*) FROM fin_entries
-             GROUP BY m, currency, flow, kind_id ORDER BY m, currency, flow, kind_id",
-        )
-        .map_err(err)?;
+    let mut st = conn.prepare("SELECT day, end_day, currency, flow, kind_id, amount FROM fin_entries").map_err(err)?;
     let rows = st
         .query_map([], |r| {
-            Ok(Total { month: r.get(0)?, currency: r.get(1)?, flow: r.get(2)?, kind_id: r.get(3)?, amount: r.get(4)?, count: r.get(5)? })
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Currency>(2)?, r.get::<_, Flow>(3)?, r.get::<_, Option<i64>>(4)?, r.get::<_, i64>(5)?))
         })
         .map_err(err)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+    // keyed by codes so the output sorts like the old GROUP BY (month, currency, flow, kind)
+    let mut sums: BTreeMap<(String, &str, &str, Option<i64>), (Currency, Flow, i64, i64)> = BTreeMap::new();
+    for row in rows {
+        let (day, end_day, currency, flow, kind_id, amount) = row.map_err(err)?;
+        let parts = match &end_day {
+            Some(e) => spread(amount, &day, e),
+            None => vec![(day[..7].to_string(), amount)],
+        };
+        for (month, part) in parts {
+            let s = sums.entry((month, currency.as_str(), flow.as_str(), kind_id)).or_insert((currency, flow, 0, 0));
+            s.2 += part;
+            s.3 += 1;
+        }
+    }
+    Ok(sums
+        .into_iter()
+        .map(|((month, _, _, kind_id), (currency, flow, amount, count))| Total { month, currency, flow, kind_id, amount, count })
+        .collect())
 }
 
 // ---------- import / export: accounts (with balances, holdings), rates, fixed, entries, budgets ----------
+// v7 and older files: snapshots by `month`, holdings as `value` (+ optional quantity), entries and
+// 固定支出 with an `account` (ignored now).
 
 fn is_false(b: &bool) -> bool {
     !*b
@@ -936,18 +1037,39 @@ fn is_false(b: &bool) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BalanceRecord {
-    pub month: String,
+    #[serde(alias = "month")]
+    pub day: String,
     pub amount: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HoldingRecord {
-    pub month: String,
+    #[serde(alias = "month")]
+    pub day: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub quantity: Option<f64>,
-    pub value: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<f64>,
+    /// v7 and older: market value in cents.
+    #[serde(default, skip_serializing)]
+    pub value: Option<i64>,
+}
+
+impl HoldingRecord {
+    /// Old rows: price = value ÷ quantity (no quantity → 1 × value), as migration 18 did.
+    fn input(&self) -> Result<HoldingInput, String> {
+        let (quantity, price) = match (self.price, self.value) {
+            (Some(p), _) => (self.quantity.ok_or_else(|| format!("「{}」缺少数量", self.name.trim()))?, p),
+            (None, Some(v)) => match self.quantity.filter(|q| *q > 0.0) {
+                Some(q) => (q, v as f64 / 100.0 / q),
+                None => (1.0, v as f64 / 100.0),
+            },
+            (None, None) => return Err(format!("「{}」缺少单价", self.name.trim())),
+        };
+        Ok(HoldingInput { name: self.name.clone(), quantity, price })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -974,7 +1096,8 @@ pub struct AccountRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RateRecord {
-    pub month: String,
+    #[serde(alias = "month")]
+    pub day: String,
     pub currency: Currency,
     pub rate: f64,
 }
@@ -989,7 +1112,9 @@ pub struct FixedRecord {
     pub currency: Currency,
     #[serde(default)]
     pub category: Option<String>,
-    #[serde(default)]
+    /// v7 and older; ignored.
+    #[allow(dead_code)]
+    #[serde(default, skip_serializing)]
     pub account: Option<String>,
     pub rule: String,
     pub next_day: String,
@@ -1011,9 +1136,13 @@ pub struct EntryRecord {
     pub amount: i64,
     pub currency: Currency,
     pub day: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_day: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
-    #[serde(default)]
+    /// v7 and older; ignored.
+    #[allow(dead_code)]
+    #[serde(default, skip_serializing)]
     pub account: Option<String>,
     /// Name of the 固定支出 that posted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1058,48 +1187,38 @@ impl FinanceRecord {
 
 pub fn validate_records(rec: &FinanceRecord) -> Result<(), String> {
     let e = |what: String| move |msg: String| format!("{LABEL}{what}：{msg}");
-    let mut names = std::collections::HashSet::new();
-    let mut currency: HashMap<String, Currency> = HashMap::new();
+    let mut names = HashSet::new();
     for a in &rec.accounts {
         let name = common::require(&a.name, "账户名", 30).map_err(e("的账户".into()))?;
         if !names.insert(name.clone()) {
             return Err(format!("{LABEL}：账户「{name}」重复了"));
         }
-        currency.insert(name.clone(), a.currency);
-        let mut months = std::collections::HashSet::new();
+        let mut days = HashSet::new();
         for b in &a.balances {
-            check_month(&b.month).map_err(e(format!("「{name}」的余额")))?;
-            if !months.insert(&b.month) {
-                return Err(format!("{LABEL}「{name}」：{} 的余额重复了", b.month));
+            let day = day_or_month_end(&b.day);
+            check_day(&day, "日期").map_err(e(format!("「{name}」的余额")))?;
+            if !days.insert(day.clone()) {
+                return Err(format!("{LABEL}「{name}」：{day} 的余额重复了"));
             }
         }
         for h in &a.holdings {
-            check_month(&h.month).map_err(e(format!("「{name}」的持仓")))?;
-            check_holding(&HoldingInput { name: h.name.clone(), quantity: h.quantity, value: h.value }).map_err(e(format!("「{name}」的持仓")))?;
+            check_day(&day_or_month_end(&h.day), "日期").map_err(e(format!("「{name}」的持仓")))?;
+            h.input().and_then(|i| check_holding(&i)).map_err(e(format!("「{name}」的持仓")))?;
         }
         if !a.holdings.is_empty() && a.kind != AccountKind::Broker {
             return Err(format!("{LABEL}「{name}」：只有券商账户能记持仓"));
         }
     }
-    let mut rate_keys = std::collections::HashSet::new();
+    let mut rate_keys = HashSet::new();
     for r in &rec.rates {
-        check_month(&r.month).map_err(e("的汇率".into()))?;
+        let day = day_or_month_end(&r.day);
+        check_day(&day, "日期").map_err(e("的汇率".into()))?;
         check_rate(r.rate).map_err(e("的汇率".into()))?;
-        if !rate_keys.insert((r.month.clone(), r.currency.as_str())) {
-            return Err(format!("{LABEL}：{} {} 的汇率重复了", r.month, r.currency.as_str()));
+        if !rate_keys.insert((day.clone(), r.currency.as_str())) {
+            return Err(format!("{LABEL}：{day} {} 的汇率重复了", r.currency.as_str()));
         }
     }
-    let account_ok = |acc: &Option<String>, cur: Currency| -> Result<(), String> {
-        match acc.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            None => Ok(()),
-            Some(n) => match currency.get(n) {
-                None => Err(format!("找不到账户「{n}」")),
-                Some(c) if *c != cur => Err(format!("「{n}」是 {} 账户，币种要一致", c.as_str())),
-                Some(_) => Ok(()),
-            },
-        }
-    };
-    let mut fixed_names = std::collections::HashSet::new();
+    let mut fixed_names = HashSet::new();
     for f in &rec.fixed {
         let name = common::require(&f.name, "名称", 50).map_err(e("的固定支出".into()))?;
         if !fixed_names.insert(name.clone()) {
@@ -1110,19 +1229,17 @@ pub fn validate_records(rec: &FinanceRecord) -> Result<(), String> {
         FixedRule::parse(&f.rule).map_err(&ctx)?;
         check_day(&f.next_day, "下次日期").map_err(&ctx)?;
         kinds::check_name(&f.category).map_err(&ctx)?;
-        account_ok(&f.account, f.currency).map_err(&ctx)?;
     }
     for x in &rec.entries {
         let ctx = e(format!("{} 的记录", x.day));
         check_amount(x.amount, "金额").map_err(&ctx)?;
-        check_day(&x.day, "日期").map_err(&ctx)?;
+        check_period(&x.day, &x.end_day).map_err(&ctx)?;
         kinds::check_name(&x.category).map_err(&ctx)?;
-        account_ok(&x.account, x.currency).map_err(&ctx)?;
         if let Some(f) = x.fixed.as_deref().filter(|f| !fixed_names.contains(f.trim())) {
             return Err(ctx(format!("找不到固定支出「{f}」")));
         }
     }
-    let mut budget_keys = std::collections::HashSet::new();
+    let mut budget_keys = HashSet::new();
     for b in &rec.budgets {
         let name = common::require(&b.category, "分类", 20).map_err(e("的预算".into()))?;
         check_amount(b.amount, "预算").map_err(e(format!("「{name}」的预算")))?;
@@ -1149,7 +1266,6 @@ pub fn replace_all(conn: &Connection, rec: &FinanceRecord) -> Result<usize, Stri
     for t in ["fin_entries", "fin_fixed", "fin_budgets", "fin_holdings", "fin_balances", "fin_rates", "fin_accounts"] {
         conn.execute(&format!("DELETE FROM {t}"), []).map_err(err)?;
     }
-    let mut account_ids: HashMap<String, i64> = HashMap::new();
     for (i, a) in rec.accounts.iter().enumerate() {
         conn.execute(
             &format!(
@@ -1160,36 +1276,34 @@ pub fn replace_all(conn: &Connection, rec: &FinanceRecord) -> Result<usize, Stri
         )
         .map_err(err)?;
         let id = conn.last_insert_rowid();
-        account_ids.insert(a.name.trim().to_string(), id);
         for b in &a.balances {
-            conn.execute("INSERT INTO fin_balances (account_id, month, amount) VALUES (?1, ?2, ?3)", params![id, b.month, b.amount])
+            conn.execute("INSERT INTO fin_balances (account_id, day, amount) VALUES (?1, ?2, ?3)", params![id, day_or_month_end(&b.day), b.amount])
                 .map_err(err)?;
         }
         for (j, h) in a.holdings.iter().enumerate() {
+            let input = h.input()?;
             conn.execute(
-                "INSERT INTO fin_holdings (account_id, month, name, quantity, value, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, h.month, h.name.trim(), h.quantity, h.value, j as i64 + 1],
+                "INSERT INTO fin_holdings (account_id, day, name, quantity, price, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, day_or_month_end(&h.day), h.name.trim(), input.quantity, input.price, j as i64 + 1],
             )
             .map_err(err)?;
         }
     }
     for r in &rec.rates {
-        conn.execute("INSERT INTO fin_rates (month, currency, rate) VALUES (?1, ?2, ?3)", params![r.month, r.currency, r.rate])
+        conn.execute("INSERT INTO fin_rates (day, currency, rate) VALUES (?1, ?2, ?3)", params![day_or_month_end(&r.day), r.currency, r.rate])
             .map_err(err)?;
     }
-    let acc = |n: &Option<String>| n.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|n| account_ids[n]);
     let mut fixed_ids: HashMap<String, i64> = HashMap::new();
     for (i, f) in rec.fixed.iter().enumerate() {
         let kind_id = kinds::resolve(conn, f.flow.kinds_module(), f.category.as_deref())?;
         conn.execute(
             &format!(
-                "INSERT INTO fin_fixed (name, flow, amount, currency, kind_id, account_id, rule, next_day, stopped, note, sort_order,
-                   created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, coalesce(?12, {NOW}), coalesce(?13, ?12, {NOW}))"
+                "INSERT INTO fin_fixed (name, flow, amount, currency, kind_id, rule, next_day, stopped, note, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, coalesce(?11, {NOW}), coalesce(?12, ?11, {NOW}))"
             ),
             params![
-                f.name.trim(), f.flow, f.amount, f.currency, kind_id, acc(&f.account), f.rule, f.next_day, f.stopped,
-                common::clean(f.note.clone()), i as i64 + 1, f.created_at, f.updated_at
+                f.name.trim(), f.flow, f.amount, f.currency, kind_id, f.rule, f.next_day, f.stopped, common::clean(f.note.clone()), i as i64 + 1,
+                f.created_at, f.updated_at
             ],
         )
         .map_err(err)?;
@@ -1199,12 +1313,12 @@ pub fn replace_all(conn: &Connection, rec: &FinanceRecord) -> Result<usize, Stri
         let kind_id = kinds::resolve(conn, x.flow.kinds_module(), x.category.as_deref())?;
         conn.execute(
             &format!(
-                "INSERT INTO fin_entries (flow, amount, currency, day, kind_id, account_id, fixed_id, note, created_at, updated_at)
+                "INSERT INTO fin_entries (flow, amount, currency, day, end_day, kind_id, fixed_id, note, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, {NOW}), coalesce(?10, ?9, {NOW}))"
             ),
             params![
-                x.flow, x.amount, x.currency, x.day, kind_id, acc(&x.account), x.fixed.as_deref().map(|f| fixed_ids[f.trim()]),
-                common::clean(x.note.clone()), x.created_at, x.updated_at
+                x.flow, x.amount, x.currency, x.day, x.end_day.as_deref().filter(|e| *e != x.day), kind_id,
+                x.fixed.as_deref().map(|f| fixed_ids[f.trim()]), common::clean(x.note.clone()), x.created_at, x.updated_at
             ],
         )
         .map_err(err)?;
@@ -1221,11 +1335,9 @@ pub fn export(conn: &Connection) -> Result<FinanceRecord, String> {
     let out_names = kinds::name_map(conn, OUT_KINDS)?;
     let in_names = kinds::name_map(conn, IN_KINDS)?;
     let cat = |flow: Flow, id: Option<i64>| id.and_then(|id| if flow == Flow::Out { &out_names } else { &in_names }.get(&id).cloned());
-    let accs = accounts(conn)?;
-    let acc_name: HashMap<i64, String> = accs.iter().map(|a| (a.id, a.name.clone())).collect();
-    let all_balances = assets(conn)?.balances;
+    let all = assets(conn)?;
     let all_holdings = holdings(conn)?;
-    let accounts = accs
+    let accounts = accounts(conn)?
         .iter()
         .map(|a| AccountRecord {
             name: a.name.clone(),
@@ -1233,21 +1345,17 @@ pub fn export(conn: &Connection) -> Result<FinanceRecord, String> {
             currency: a.currency,
             closed: a.closed,
             note: a.note.clone(),
-            balances: all_balances
-                .iter()
-                .filter(|b| b.account_id == a.id)
-                .map(|b| BalanceRecord { month: b.month.clone(), amount: b.amount })
-                .collect(),
+            balances: all.balances.iter().filter(|b| b.account_id == a.id).map(|b| BalanceRecord { day: b.day.clone(), amount: b.amount }).collect(),
             holdings: all_holdings
                 .iter()
                 .filter(|h| h.account_id == a.id)
-                .map(|h| HoldingRecord { month: h.month.clone(), name: h.name.clone(), quantity: h.quantity, value: h.value })
+                .map(|h| HoldingRecord { day: h.day.clone(), name: h.name.clone(), quantity: Some(h.quantity), price: Some(h.price), value: None })
                 .collect(),
             created_at: Some(a.created_at.clone()),
             updated_at: Some(a.updated_at.clone()),
         })
         .collect();
-    let rates = assets(conn)?.rates.into_iter().map(|r| RateRecord { month: r.month, currency: r.currency, rate: r.rate }).collect();
+    let rates = all.rates.into_iter().map(|r| RateRecord { day: r.day, currency: r.currency, rate: r.rate }).collect();
     let fixed_all = fixed_list(conn)?;
     let fixed_name: HashMap<i64, String> = fixed_all.iter().map(|f| (f.id, f.name.clone())).collect();
     let fixed = fixed_all
@@ -1258,7 +1366,7 @@ pub fn export(conn: &Connection) -> Result<FinanceRecord, String> {
             amount: f.amount,
             currency: f.currency,
             category: cat(f.flow, f.kind_id),
-            account: f.account_id.and_then(|id| acc_name.get(&id).cloned()),
+            account: None,
             rule: f.rule.clone(),
             next_day: f.next_day.clone(),
             stopped: f.stopped,
@@ -1279,8 +1387,9 @@ pub fn export(conn: &Connection) -> Result<FinanceRecord, String> {
             amount: x.amount,
             currency: x.currency,
             day: x.day,
+            end_day: x.end_day,
             category: cat(x.flow, x.kind_id),
-            account: x.account_id.and_then(|id| acc_name.get(&id).cloned()),
+            account: None,
             fixed: x.fixed_id.and_then(|id| fixed_name.get(&id).cloned()),
             note: x.note,
             created_at: Some(x.created_at),
@@ -1325,16 +1434,16 @@ pub fn fin_assets(state: State<AppState>) -> Result<Assets, String> {
     state.with_db(|c| assets(c))
 }
 #[tauri::command]
-pub fn fin_month_save(state: State<AppState>, month: String, balances: Vec<BalanceInput>, rates: Vec<RateInput>) -> Result<(), String> {
-    state.with_undo("更新余额", |c| save_month(c, &month, &balances, &rates))
+pub fn fin_balances_save(state: State<AppState>, day: String, balances: Vec<BalanceInput>, rates: Vec<RateInput>) -> Result<(), String> {
+    state.with_undo("更新余额", |c| save_balances(c, &day, &balances, &rates))
 }
 #[tauri::command]
 pub fn fin_holdings(state: State<AppState>) -> Result<Vec<Holding>, String> {
     state.with_db(|c| holdings(c))
 }
 #[tauri::command]
-pub fn fin_holdings_save(state: State<AppState>, account_id: i64, month: String, rows: Vec<HoldingInput>) -> Result<(), String> {
-    state.with_undo("更新持仓", |c| save_holdings(c, account_id, &month, &rows))
+pub fn fin_holdings_save(state: State<AppState>, account_id: i64, day: String, rows: Vec<HoldingInput>) -> Result<(), String> {
+    state.with_undo("更新持仓", |c| save_holdings(c, account_id, &day, &rows))
 }
 #[tauri::command]
 pub fn fin_entries(state: State<AppState>, month: String) -> Result<Vec<Entry>, String> {
@@ -1346,7 +1455,7 @@ pub fn fin_entry_create(state: State<AppState>, patch: EntryPatch) -> Result<Ent
 }
 #[tauri::command]
 pub fn fin_entries_create(state: State<AppState>, patches: Vec<EntryPatch>) -> Result<usize, String> {
-    state.with_undo("记一周小额", |c| create_entries(c, patches))
+    state.with_undo("记小额", |c| create_entries(c, patches))
 }
 #[tauri::command]
 pub fn fin_entry_update(state: State<AppState>, id: i64, patch: EntryPatch) -> Result<Entry, String> {
@@ -1355,6 +1464,18 @@ pub fn fin_entry_update(state: State<AppState>, id: i64, patch: EntryPatch) -> R
 #[tauri::command]
 pub fn fin_entry_delete(state: State<AppState>, id: i64) -> Result<(), String> {
     state.with_undo("删除记录", |c| delete_entry(c, id))
+}
+#[tauri::command]
+pub fn fin_entries_update(state: State<AppState>, ids: Vec<i64>, patch: EntryPatch) -> Result<usize, String> {
+    state.with_undo(&format!("修改 {} 笔记录", ids.len()), |c| update_entries(c, &ids, patch))
+}
+#[tauri::command]
+pub fn fin_entries_delete(state: State<AppState>, ids: Vec<i64>) -> Result<usize, String> {
+    state.with_undo(&format!("删除 {} 笔记录", ids.len()), |c| delete_entries(c, &ids))
+}
+#[tauri::command]
+pub fn fin_period_last(state: State<AppState>) -> Result<Option<String>, String> {
+    state.with_db(|c| last_period_end(c))
 }
 #[tauri::command]
 pub fn fin_fixed(state: State<AppState>) -> Result<Vec<Fixed>, String> {
@@ -1405,6 +1526,9 @@ mod tests {
     fn ap(v: serde_json::Value) -> AccountPatch {
         serde_json::from_value(v).unwrap()
     }
+    fn bal(id: i64, amount: i64) -> BalanceInput {
+        BalanceInput { account_id: id, amount: Some(amount) }
+    }
 
     #[test]
     fn fixed_rules() {
@@ -1428,35 +1552,49 @@ mod tests {
         assert!(create_account(&c, ap(json!({"name": " DBS ", "currency": "CNY"}))).is_err());
         assert!(create_account(&c, ap(json!({"name": "x"}))).is_err()); // currency required
         let food = kind_id(&c, OUT_KINDS, "餐饮");
-        // currency must match the account; 分类 must match the flow
-        assert!(create_entry(&c, ep(json!({"amount": 1000, "currency": "CNY", "day": "2026-10-01", "accountId": sg.id}))).is_err());
+        // 分类 must match the flow; entries have no account
         assert!(create_entry(&c, ep(json!({"flow": "in", "amount": 1000, "currency": "SGD", "day": "2026-10-01", "kindId": food}))).is_err());
         assert!(create_entry(&c, ep(json!({"amount": 0, "currency": "SGD", "day": "2026-10-01"}))).is_err());
-        let e = create_entry(&c, ep(json!({"amount": 1250, "currency": "SGD", "day": "2026-10-01", "accountId": sg.id, "kindId": food, "note": " 午饭 "})))
-            .unwrap();
-        assert_eq!((e.flow, e.note.as_deref()), (Flow::Out, Some("午饭")));
-        assert!(update_account(&c, sg.id, ap(json!({"currency": "USD"}))).unwrap_err().contains("不能改币种"));
+        assert!(serde_json::from_value::<EntryPatch>(json!({"accountId": sg.id})).is_err());
+        let e = create_entry(&c, ep(json!({"amount": 1250, "currency": "SGD", "day": "2026-10-01", "kindId": food, "note": " 午饭 "}))).unwrap();
+        assert_eq!((e.flow, e.note.as_deref(), e.end_day.as_deref()), (Flow::Out, Some("午饭"), None));
+        // currency is free until the account has balances or holdings
+        assert_eq!(update_account(&c, sg.id, ap(json!({"currency": "USD"}))).unwrap().currency, Currency::Usd);
+        save_balances(&c, "2026-10-01", &[bal(sg.id, 100)], &[]).unwrap();
+        assert!(update_account(&c, sg.id, ap(json!({"currency": "SGD"}))).unwrap_err().contains("不能改币种"));
         assert_eq!(update_account(&c, sg.id, ap(json!({"closed": true, "name": "DBS 储蓄"}))).unwrap().name, "DBS 储蓄");
         delete_account(&c, sg.id).unwrap();
-        assert_eq!(entry(&c, e.id).unwrap().account_id, None); // entry stays
+        assert!(assets(&c).unwrap().balances.is_empty());
     }
 
     #[test]
-    fn month_totals_need_rates() {
+    fn day_totals_carry_balances_and_rates_forward() {
         let c = memory_db();
         let cn = create_account(&c, ap(json!({"name": "招行", "currency": "CNY"}))).unwrap().id;
         let sg = create_account(&c, ap(json!({"name": "DBS", "currency": "SGD"}))).unwrap().id;
-        let b = |id: i64, amount: i64| BalanceInput { account_id: id, amount: Some(amount) };
-        save_month(&c, "2026-09", &[b(cn, 1_000_00), b(sg, 200_00)], &[RateInput { currency: Currency::Sgd, rate: Some(5.5) }]).unwrap();
-        save_month(&c, "2026-10", &[b(cn, 1_200_00), b(sg, 300_00)], &[]).unwrap();
-        let a = assets(&c).unwrap();
-        assert_eq!(a.totals[0], MonthTotal { month: "2026-09".into(), total_cny: Some(2_100_00), missing: vec![] });
-        assert_eq!((a.totals[1].total_cny, a.totals[1].missing.clone()), (None, vec![Currency::Sgd]));
-        save_month(&c, "2026-10", &[BalanceInput { account_id: sg, amount: None }], &[]).unwrap(); // cleared
-        assert_eq!(assets(&c).unwrap().totals[1].total_cny, Some(1_200_00));
-        assert_eq!(account(&c, cn).unwrap().last_month.as_deref(), Some("2026-10"));
-        assert!(save_month(&c, "2026-13", &[], &[]).is_err());
-        assert!(save_month(&c, "2026-10", &[], &[RateInput { currency: Currency::Usd, rate: Some(0.0) }]).is_err());
+        let usd = create_account(&c, ap(json!({"name": "嘉信", "currency": "USD", "kind": "broker"}))).unwrap().id;
+        let sgd = |r: f64| RateInput { currency: Currency::Sgd, rate: Some(r) };
+        save_balances(&c, "2026-09-03", &[bal(cn, 1_000_00), bal(sg, 200_00)], &[sgd(5.5)]).unwrap();
+        save_balances(&c, "2026-09-10", &[bal(cn, 1_100_00)], &[]).unwrap(); // only one account that day
+        save_balances(&c, "2026-09-20", &[bal(usd, 10_00)], &[]).unwrap(); // USD has no rate yet
+        save_balances(&c, "2026-09-25", &[bal(sg, 300_00)], &[sgd(5.4), RateInput { currency: Currency::Usd, rate: Some(7.0) }]).unwrap();
+        let t = assets(&c).unwrap().totals;
+        let days: Vec<&str> = t.iter().map(|t| t.day.as_str()).collect();
+        assert_eq!(days, ["2026-09-03", "2026-09-10", "2026-09-20", "2026-09-25"]); // only days with updates
+        assert_eq!(t[0].total_cny, Some(1_000_00 + 1_100_00));
+        assert_eq!(t[1].total_cny, Some(1_100_00 + 1_100_00)); // DBS and its rate carried forward
+        assert_eq!((t[2].total_cny, t[2].missing.clone()), (None, vec![Currency::Usd]));
+        assert_eq!(t[3].total_cny, Some(1_100_00 + 1_620_00 + 70_00));
+        // a closed account stops counting after its last balance (09-20)
+        update_account(&c, usd, ap(json!({"closed": true}))).unwrap();
+        save_balances(&c, "2026-10-01", &[bal(cn, 900_00)], &[]).unwrap();
+        let t = assets(&c).unwrap().totals;
+        assert_eq!((t[2].total_cny, t[3].total_cny, t[4].total_cny), (None, Some(1_100_00 + 1_620_00), Some(900_00 + 1_620_00)));
+        // clearing a balance; account shows its latest snapshot
+        save_balances(&c, "2026-10-01", &[BalanceInput { account_id: cn, amount: None }], &[]).unwrap();
+        assert_eq!(account(&c, cn).unwrap().last_day.as_deref(), Some("2026-09-10"));
+        assert!(save_balances(&c, "2026-10", &[], &[]).is_err());
+        assert!(save_balances(&c, "2026-10-02", &[], &[RateInput { currency: Currency::Usd, rate: Some(0.0) }]).is_err());
     }
 
     #[test]
@@ -1480,6 +1618,7 @@ mod tests {
         // changing the rule re-plans from today
         assert_eq!(update_fixed(&c, phone.id, fp(json!({"rule": "yearly:03-15"})), "2026-10-02").unwrap().next_day, "2027-03-15");
         assert!(create_fixed(&c, fp(json!({"name": "房租", "amount": 1, "currency": "SGD", "rule": "monthly:1"})), "2026-10-02").is_err());
+        assert!(serde_json::from_value::<FixedPatch>(json!({"accountId": 1})).is_err());
         delete_fixed(&c, f.id).unwrap();
         assert_eq!(entries(&c, "2026-12").unwrap()[0].fixed_id, None);
     }
@@ -1510,15 +1649,63 @@ mod tests {
     }
 
     #[test]
+    fn periods_spread_over_their_days() {
+        assert_eq!(spread(7000, "2026-09-28", "2026-10-04"), [("2026-09".to_string(), 3000), ("2026-10".to_string(), 4000)]);
+        assert_eq!(spread(100, "2026-09-30", "2026-10-02"), [("2026-09".to_string(), 33), ("2026-10".to_string(), 67)]); // adds up
+        assert_eq!(spread(100, "2026-12-31", "2027-02-01").iter().map(|x| x.1).sum::<i64>(), 100);
+        assert_eq!(spread(5, "2026-10-03", "2026-10-03"), [("2026-10".to_string(), 5)]);
+
+        let c = memory_db();
+        let food = kind_id(&c, OUT_KINDS, "餐饮");
+        assert_eq!(last_period_end(&c).unwrap(), None);
+        let e = create_entry(&c, ep(json!({"amount": 7000, "currency": "SGD", "day": "2026-09-28", "endDay": "2026-10-04", "kindId": food}))).unwrap();
+        assert_eq!(e.end_day.as_deref(), Some("2026-10-04"));
+        assert_eq!(last_period_end(&c).unwrap().as_deref(), Some("2026-10-04"));
+        // listed in both months, summed by share
+        assert_eq!((entries(&c, "2026-09").unwrap().len(), entries(&c, "2026-10").unwrap().len(), entries(&c, "2026-11").unwrap().len()), (1, 1, 0));
+        let t = totals(&c).unwrap();
+        assert_eq!(t.iter().map(|x| (x.month.as_str(), x.amount)).collect::<Vec<_>>(), [("2026-09", 3000), ("2026-10", 4000)]);
+        // end = start → a single day; end before start → error
+        assert_eq!(update_entry(&c, e.id, ep(json!({"endDay": "2026-09-28"}))).unwrap().end_day, None);
+        assert!(update_entry(&c, e.id, ep(json!({"endDay": "2026-09-01"}))).unwrap_err().contains("结束日期"));
+    }
+
+    #[test]
+    fn batch_edit_and_delete() {
+        let c = memory_db();
+        let food = kind_id(&c, OUT_KINDS, "餐饮");
+        let fun = kind_id(&c, OUT_KINDS, "娱乐");
+        let pay = kind_id(&c, IN_KINDS, "津贴");
+        let a = create_entry(&c, ep(json!({"amount": 100, "currency": "SGD", "day": "2026-10-01", "kindId": food}))).unwrap().id;
+        let b = create_entry(&c, ep(json!({"amount": 200, "currency": "SGD", "day": "2026-10-02"}))).unwrap().id;
+        let i = create_entry(&c, ep(json!({"flow": "in", "amount": 300, "currency": "SGD", "day": "2026-10-03", "kindId": pay}))).unwrap().id;
+        assert_eq!(update_entries(&c, &[a, b], ep(json!({"kindId": fun}))).unwrap(), 2);
+        assert_eq!((entry(&c, a).unwrap().kind_id, entry(&c, b).unwrap().kind_id), (Some(fun), Some(fun)));
+        // an out 分类 on an income: nothing changes
+        assert!(update_entries(&c, &[a, i], ep(json!({"kindId": food}))).is_err());
+        assert_eq!(entry(&c, a).unwrap().kind_id, Some(fun));
+        update_entries(&c, &[a, i], ep(json!({"currency": "CNY"}))).unwrap();
+        assert_eq!((entry(&c, a).unwrap().currency, entry(&c, i).unwrap().amount), (Currency::Cny, 300));
+        assert!(delete_entries(&c, &[a, 999]).is_err()); // all or nothing
+        assert_eq!(delete_entries(&c, &[a, b]).unwrap(), 2);
+        assert_eq!(entries(&c, "2026-10").unwrap().len(), 1);
+        assert!(update_entries(&c, &[], ep(json!({"currency": "CNY"}))).is_err());
+    }
+
+    #[test]
     fn holdings_only_for_brokers() {
         let c = memory_db();
         let bank = create_account(&c, ap(json!({"name": "DBS", "currency": "SGD"}))).unwrap().id;
         let ib = create_account(&c, ap(json!({"name": "嘉信", "currency": "USD", "kind": "broker"}))).unwrap().id;
-        let rows = vec![HoldingInput { name: "VOO".into(), quantity: Some(3.5), value: 180000 }];
-        assert!(save_holdings(&c, bank, "2026-10", &rows).is_err());
-        save_holdings(&c, ib, "2026-10", &rows).unwrap();
-        save_holdings(&c, ib, "2026-10", &rows).unwrap(); // replaces, not appends
-        assert_eq!(holdings(&c).unwrap().len(), 1);
+        let rows = vec![HoldingInput { name: "VOO".into(), quantity: 3.5, price: 512.5 }];
+        assert!(save_holdings(&c, bank, "2026-10-07", &rows).is_err());
+        save_holdings(&c, ib, "2026-10-07", &rows).unwrap();
+        save_holdings(&c, ib, "2026-10-07", &rows).unwrap(); // replaces, not appends
+        let h = holdings(&c).unwrap();
+        assert_eq!((h.len(), h[0].value, h[0].day.as_str()), (1, 179375, "2026-10-07")); // 3.5 × 512.5
+        for bad in [(0.0, 1.0), (1.0, -1.0), (f64::NAN, 1.0)] {
+            assert!(save_holdings(&c, ib, "2026-10-08", &[HoldingInput { name: "x".into(), quantity: bad.0, price: bad.1 }]).is_err());
+        }
         assert!(update_account(&c, ib, ap(json!({"kind": "bank"}))).is_err());
     }
 
@@ -1527,16 +1714,16 @@ mod tests {
         let c = memory_db();
         let rec: FinanceRecord = serde_json::from_value(json!({
             "accounts": [
-                {"name": "招行", "currency": "CNY", "balances": [{"month": "2026-09", "amount": 100000}]},
-                {"name": "嘉信", "kind": "broker", "currency": "USD", "balances": [{"month": "2026-09", "amount": 500000}],
-                 "holdings": [{"month": "2026-09", "name": "VOO", "quantity": 1.5, "value": 400000}]}
+                {"name": "招行", "currency": "CNY", "balances": [{"day": "2026-09-30", "amount": 100000}]},
+                {"name": "嘉信", "kind": "broker", "currency": "USD", "balances": [{"day": "2026-09-30", "amount": 500000}],
+                 "holdings": [{"day": "2026-09-30", "name": "VOO", "quantity": 1.5, "price": 2666.67}]}
             ],
-            "rates": [{"month": "2026-09", "currency": "USD", "rate": 7.1}],
-            "fixed": [{"name": "话费", "amount": 3000, "currency": "CNY", "category": "通讯", "account": "招行", "rule": "monthly:20", "nextDay": "2026-10-20"}],
+            "rates": [{"day": "2026-09-30", "currency": "USD", "rate": 7.1}],
+            "fixed": [{"name": "话费", "amount": 3000, "currency": "CNY", "category": "通讯", "rule": "monthly:20", "nextDay": "2026-10-20"}],
             "entries": [
-                {"amount": 3000, "currency": "CNY", "day": "2026-09-20", "category": "通讯", "account": "招行", "fixed": "话费", "note": "话费"},
+                {"amount": 3000, "currency": "CNY", "day": "2026-09-20", "category": "通讯", "fixed": "话费", "note": "话费"},
                 {"flow": "in", "amount": 200000, "currency": "CNY", "day": "2026-09-01", "category": "家里"},
-                {"amount": 999, "currency": "SGD", "day": "2026-09-02", "category": "新分类"}
+                {"amount": 999, "currency": "SGD", "day": "2026-09-02", "endDay": "2026-09-08", "category": "新分类"}
             ],
             "budgets": [{"category": "餐饮", "currency": "CNY", "amount": 100000}]
         }))
@@ -1548,14 +1735,39 @@ mod tests {
         replace_all(&c2, &out).unwrap();
         assert_eq!(a, serde_json::to_value(export(&c2).unwrap()).unwrap());
         assert_eq!(out.entries.iter().find(|e| e.day == "2026-09-20").unwrap().fixed.as_deref(), Some("话费"));
+        assert_eq!(a["entries"][1]["endDay"], "2026-09-08");
+        assert!(a["entries"][0].get("account").is_none());
         assert!(kinds::list(&c, OUT_KINDS).unwrap().iter().any(|k| k.name == "新分类")); // created on import
         assert_eq!(assets(&c).unwrap().totals[0].total_cny, Some(100000 + 3550000));
 
         let bad = |v: serde_json::Value| validate_records(&serde_json::from_value(v).unwrap()).is_err();
-        assert!(bad(json!({"entries": [{"amount": 1, "currency": "CNY", "day": "2026-09-01", "account": "无"}]})));
-        assert!(bad(json!({"accounts": [{"name": "a", "currency": "SGD"}], "entries": [{"amount": 1, "currency": "CNY", "day": "2026-09-01", "account": "a"}]})));
-        assert!(bad(json!({"accounts": [{"name": "a", "currency": "SGD", "holdings": [{"month": "2026-09", "name": "x", "value": 1}]}]})));
+        assert!(bad(json!({"accounts": [{"name": "a", "currency": "SGD", "holdings": [{"day": "2026-09-01", "name": "x", "quantity": 1, "price": 1}]}]})));
+        assert!(bad(json!({"accounts": [{"name": "a", "kind": "broker", "currency": "SGD", "holdings": [{"day": "2026-09-01", "name": "x", "price": 1}]}]})));
         assert!(bad(json!({"fixed": [{"name": "f", "amount": 1, "currency": "CNY", "rule": "weekly:1", "nextDay": "2026-09-01"}]})));
         assert!(bad(json!({"entries": [{"amount": 1, "currency": "CNY", "day": "2026-09-01", "fixed": "无"}]})));
+        assert!(bad(json!({"entries": [{"amount": 1, "currency": "CNY", "day": "2026-09-05", "endDay": "2026-09-01"}]})));
+    }
+
+    #[test]
+    fn reads_v7_records() {
+        // monthly snapshots, holdings by value, entries / 固定支出 with an account
+        let rec: FinanceRecord = serde_json::from_value(json!({
+            "accounts": [
+                {"name": "招行", "currency": "CNY", "balances": [{"month": "2026-02", "amount": 100000}]},
+                {"name": "嘉信", "kind": "broker", "currency": "USD",
+                 "holdings": [{"month": "2026-09", "name": "VOO", "quantity": 4, "value": 200000}, {"month": "2026-09", "name": "现金", "value": 12345}]}
+            ],
+            "rates": [{"month": "2026-02", "currency": "USD", "rate": 7.1}],
+            "fixed": [{"name": "话费", "amount": 3000, "currency": "CNY", "account": "招行", "rule": "monthly:20", "nextDay": "2026-10-20"}],
+            "entries": [{"amount": 3000, "currency": "CNY", "day": "2026-09-20", "account": "招行", "fixed": "话费"}]
+        }))
+        .unwrap();
+        let c = memory_db();
+        replace_all(&c, &rec).unwrap();
+        let a = assets(&c).unwrap();
+        assert_eq!((a.balances[0].day.as_str(), a.rates[0].day.as_str()), ("2026-02-28", "2026-02-28"));
+        let h = holdings(&c).unwrap();
+        assert_eq!(h.iter().map(|h| (h.day.as_str(), h.quantity, h.price, h.value)).collect::<Vec<_>>(), [("2026-09-30", 4.0, 500.0, 200000), ("2026-09-30", 1.0, 123.45, 12345)]);
+        assert_eq!(entries(&c, "2026-09").unwrap()[0].fixed_id, Some(fixed_list(&c).unwrap()[0].id));
     }
 }

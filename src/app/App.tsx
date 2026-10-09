@@ -1,41 +1,13 @@
-import { useEffect, useState } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router";
+import { useCallback, useEffect, useState } from "react";
+import { Outlet } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, TriangleAlert } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
-import { api, SETTING_LAST_ROUTE, type AppInfo } from "@/shared/ipc";
+import { api, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
 import { IDLE_MS, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "@/modules/vault/api";
+import { SearchBox } from "./Search";
 import { Sidebar } from "./Sidebar";
-import { DEFAULT_ROUTE, MODULES } from "./modules";
-
-const KNOWN_ROUTES = [...MODULES.map((m) => `/${m.id}`), "/settings"];
-
-/** Opens the last visited page on launch and remembers navigation. */
-function useRouteMemory(enabled: boolean) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [restored, setRestored] = useState(false);
-
-  useEffect(() => {
-    if (!enabled || restored) return;
-    api
-      .settingsGet<string>(SETTING_LAST_ROUTE)
-      .catch(() => null)
-      .then((last) => {
-        if (location.pathname === "/") {
-          navigate(last && KNOWN_ROUTES.includes(last) ? last : DEFAULT_ROUTE, { replace: true });
-        }
-        setRestored(true);
-      });
-  }, [enabled, restored, location.pathname, navigate]);
-
-  useEffect(() => {
-    if (restored && KNOWN_ROUTES.includes(location.pathname)) {
-      api.settingsSet(SETTING_LAST_ROUTE, location.pathname).catch(() => {});
-    }
-  }, [restored, location.pathname]);
-}
 
 /** Daily chores: Rust takes the day's first snapshot at launch (this covers an app left open past
  * midnight), and the sweep completes finished check-ins and posts due 固定支出 (launch + new day). */
@@ -145,19 +117,37 @@ function StartupError({ info }: { info: AppInfo }) {
   );
 }
 
+/** ⌘K opens 全局搜索 (not over another dialog). */
+function useSearchKey(enabled: boolean, open: () => void) {
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.key.toLowerCase() !== "k" || e.shiftKey || e.altKey || e.ctrlKey) return;
+      if (document.querySelector("dialog[open]")) return;
+      e.preventDefault();
+      open();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [enabled, open]);
+}
+
 export function App() {
   const info = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
   const ok = !!info.data && !info.data.startupError;
-  useRouteMemory(ok);
+  const [searching, setSearching] = useState(false);
+  const openSearch = useCallback(() => setSearching(true), []);
   useDailyChores(ok);
   useUndoKeys(ok);
   useVaultIdleLock(ok);
+  useSearchKey(ok, openSearch);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (
     <div className="flex h-full">
-      <Sidebar isDev={info.data?.isDev} />
+      <Sidebar isDev={info.data?.isDev} onSearch={ok ? openSearch : undefined} />
       <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">{ok && <Outlet />}</main>
+      {searching && <SearchBox onClose={() => setSearching(false)} />}
     </div>
   );
 }

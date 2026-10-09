@@ -1,5 +1,6 @@
-//! 出门走走 (packing): templates (scene lists) → trips. Creating a trip from a template copies
-//! its items; afterwards trip and template are independent (history stays intact).
+//! 出门走走 (packing): templates (scene lists) → trips. Creating a trip from a template — or from an
+//! earlier trip (its items, all unpacked again) — copies the items; afterwards the lists are
+//! independent (history stays intact). A trip copied from a trip records no template.
 //! 类别 = kinds.rs (module "packing"), shared by template items and trip items.
 
 use super::common::{self, err, some};
@@ -214,6 +215,21 @@ pub fn create_trip(conn: &Connection, patch: TripPatch, template_id: Option<i64>
     }
     tx.commit().map_err(err)?;
     trip(conn, id)
+}
+
+/// A new trip with a copy of an earlier trip's list (nothing packed yet).
+pub fn copy_trip(conn: &Connection, patch: TripPatch, from_trip: i64) -> Result<Trip, String> {
+    trip(conn, from_trip)?;
+    let tx = common::Tx::begin(conn)?;
+    let t = create_trip(&tx, patch, None)?;
+    tx.execute(
+        "INSERT INTO trip_items (trip_id, kind_id, name, note, sort_order)
+         SELECT ?1, kind_id, name, note, sort_order FROM trip_items WHERE trip_id = ?2",
+        params![t.id, from_trip],
+    )
+    .map_err(err)?;
+    tx.commit().map_err(err)?;
+    trip(conn, t.id)
 }
 
 pub fn update_trip(conn: &Connection, id: i64, patch: TripPatch) -> Result<Trip, String> {
@@ -661,8 +677,12 @@ pub fn packing_trips(state: State<AppState>) -> Result<Vec<Trip>, String> {
     state.with_db(|c| trips(c))
 }
 #[tauri::command]
-pub fn packing_trip_create(state: State<AppState>, patch: TripPatch, template_id: Option<i64>) -> Result<Trip, String> {
-    state.with_undo("新建出行", |c| create_trip(c, patch, template_id))
+/// From a template, from an earlier trip (`from_trip_id`), or blank.
+pub fn packing_trip_create(state: State<AppState>, patch: TripPatch, template_id: Option<i64>, from_trip_id: Option<i64>) -> Result<Trip, String> {
+    state.with_undo("新建出行", |c| match from_trip_id {
+        Some(from) => copy_trip(c, patch, from),
+        None => create_trip(c, patch, template_id),
+    })
 }
 #[tauri::command]
 pub fn packing_trip_update(state: State<AppState>, id: i64, patch: TripPatch) -> Result<Trip, String> {
@@ -766,6 +786,16 @@ mod tests {
         delete_template(&c, t.id).unwrap();
         let tr = self::trip(&c, trip.id).unwrap();
         assert_eq!((tr.template_id, tr.total), (None, 3)); // trip survives
+
+        // reuse this trip's list: everything unpacked again, no template recorded
+        let again = copy_trip(&c, trp(json!({"name": "2027 春节"})), trip.id).unwrap();
+        assert_eq!((again.total, again.packed, again.template_id), (3, 0, None));
+        let ai = items(&c, List::Trip, again.id).unwrap();
+        assert_eq!(ai.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["护照", "护肤品", "转换插头"]);
+        assert_eq!((ai[0].kind_id, ai[1].note.as_deref()), (Some(key), Some("随身最多 1L")));
+        assert_eq!(self::trip(&c, trip.id).unwrap().packed, 2); // the old trip is untouched
+        assert!(copy_trip(&c, trp(json!({"name": "x"})), 999).is_err());
+        delete_trip(&c, again.id).unwrap();
 
         let blank = create_trip(&c, trp(json!({"name": "临时"})), None).unwrap();
         assert_eq!(blank.total, 0);

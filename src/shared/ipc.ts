@@ -47,4 +47,3 @@ export const api = {
   settingsSet: (key: string, value: unknown) => invoke<void>("settings_set", { key, value }),
 };
 
-export const SETTING_LAST_ROUTE = "ui.last_route";

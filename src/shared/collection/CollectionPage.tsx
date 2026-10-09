@@ -4,13 +4,14 @@ import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { KindManager } from "@/shared/kinds/KindManager";
+import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
 import { Button, EmptyState, PageHeader, SearchInput, Segmented } from "@/shared/ui";
 import { useItems } from "./api";
 import { CollectionPanel } from "./CollectionPanel";
 import { CollectionTable } from "./CollectionTable";
-import type { CollectionApi, CollectionConfig, Item } from "./types";
+import { latestYear, type CollectionApi, type CollectionConfig, type Item } from "./types";
 
 type Filter = "all" | StatusCode;
 type KindFilter = "all" | "none" | number;
@@ -31,7 +32,7 @@ function arrange(items: Item[], query: string, filter: Filter, kind: KindFilter,
     recent: byRecent,
     title: (a, b) => collator.compare(a.title, b.title),
     rating: (a, b) => (b.rating ?? 0) - (a.rating ?? 0) || byRecent(a, b),
-    finished: (a, b) => (b.finishedMonth ?? "").localeCompare(a.finishedMonth ?? "") || byRecent(a, b),
+    finished: (a, b) => (latestYear(b) ?? "").localeCompare(latestYear(a) ?? "") || byRecent(a, b),
   };
   return xs.sort(cmp[sort]);
 }
@@ -71,6 +72,7 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
   const sel = panel.selection;
   const selected = typeof sel === "number" ? (items.find((it) => it.id === sel) ?? null) : null;
 
+  useOpenRequest((h) => void panel.request(h.id));
   usePageKeys({
     onNew: () => void panel.request("new"),
     onFind: () => searchRef.current?.focus(),

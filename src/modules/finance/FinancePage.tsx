@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { ChartPie, Landmark, ReceiptText, type LucideIcon } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { useOpenRequest, type Hit } from "@/shared/open";
 import { PageHeader } from "@/shared/ui";
 import { AssetsView } from "./AssetsView";
 import { EntriesView } from "./EntriesView";
@@ -17,6 +18,12 @@ const VIEWS: { id: View; label: string; icon: LucideIcon }[] = [
 export default function FinancePage() {
   const m = moduleById("finance");
   const [view, setView] = useState<View>("entries");
+  // 全局搜索: switch to the view that has it; the view opens the record
+  const [focus, setFocus] = useState<Hit | null>(null);
+  useOpenRequest((h) => {
+    setView(h.kind === "account" || h.kind === "assets" ? "assets" : "entries");
+    setFocus(h);
+  });
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader icon={m.icon} color={m.color} title={m.label} />
@@ -30,7 +37,10 @@ export default function FinancePage() {
                 key={v.id}
                 type="button"
                 aria-current={active}
-                onClick={() => setView(v.id)}
+                onClick={() => {
+                  setFocus(null);
+                  setView(v.id);
+                }}
                 className={`flex items-center gap-2 rounded-control px-2.5 py-1.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${
                   active ? "bg-accent" : "hover:bg-muted/70"
                 }`}
@@ -42,8 +52,8 @@ export default function FinancePage() {
           })}
         </nav>
         <section className="flex min-w-0 flex-1 flex-col">
-          {view === "entries" && <EntriesView />}
-          {view === "assets" && <AssetsView />}
+          {view === "entries" && <EntriesView focus={focus} />}
+          {view === "assets" && <AssetsView focus={focus} />}
           {view === "reports" && <ReportsView />}
         </section>
       </div>

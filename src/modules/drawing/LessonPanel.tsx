@@ -21,7 +21,7 @@ const toDraft = (l: Lesson | null, defaultKindId: number | null): Draft => ({
   title: l?.title ?? "",
   code: l?.code ?? "",
   kindId: l ? l.kindId : defaultKindId,
-  status: l?.status ?? "unmarked",
+  status: l?.status ?? "todo", // new lessons start as 未开始
   finishedMonth: l?.finishedMonth ?? null,
   note: l?.note ?? "",
 });

@@ -1,4 +1,4 @@
-// 念念不忘 (after Flomo): left column = counts · heatmap · 全部笔记 · tag tree; right = the box for a
+// 念念不忘 (after Flomo): left column = counts · heatmap · 全部笔记 · pinned tags · tag tree; right = the box for a
 // new note, then the stream (newest first; pinned on top when unfiltered). Filters (tag incl. sub-tags,
 // day, words, one note) combine; clicking a #tag in a note or a day in the heatmap sets them.
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
@@ -7,6 +7,7 @@ import { moduleById } from "@/app/modules";
 import { Heatmap } from "@/shared/charts";
 import { localToday, slashDate } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
+import { useOpenRequest } from "@/shared/open";
 import { usePageKeys } from "@/shared/panel";
 import { Button, PageHeader, SearchInput } from "@/shared/ui";
 import { useNoteMutations, useNotes, useOverview, type Brief, type Note, type NoteFilter } from "./api";
@@ -131,6 +132,7 @@ export default function NotesPage() {
     editor.current?.focus();
   };
 
+  useOpenRequest((h) => openNote(h.id));
   usePageKeys({
     onNew: () => editor.current?.focus(),
     onFind: () => searchRef.current?.focus(),
@@ -145,7 +147,7 @@ export default function NotesPage() {
   );
 
   const nav = (
-    <nav aria-label={mod.label} className="flex w-60 shrink-0 flex-col overflow-y-auto pr-1">
+    <nav aria-label={mod.label} className="-m-1 flex w-[248px] shrink-0 flex-col overflow-y-auto p-1 pr-2">
       <div className="grid grid-cols-3 px-2.5 pb-3">
         {stat(overview?.total, "笔记")}
         {stat(overview?.tags.length, "标签")}
@@ -172,12 +174,7 @@ export default function NotesPage() {
         <span className="flex-1">全部笔记</span>
         <span className="text-xs text-muted-foreground tabular-nums">{overview?.total ?? ""}</span>
       </button>
-      {tagNames.length > 0 && (
-        <>
-          <div className="px-2.5 pt-4 pb-1 text-xs text-muted-foreground">标签</div>
-          <TagTree tags={overview?.tags ?? []} active={f.tag} onSelect={(tag) => go({ tag })} />
-        </>
-      )}
+      {tagNames.length > 0 && <TagTree tags={overview?.tags ?? []} pinned={overview?.pinned ?? []} active={f.tag} onSelect={(tag) => go({ tag })} />}
     </nav>
   );
 
@@ -191,7 +188,7 @@ export default function NotesPage() {
       />
       <div className="flex min-h-0 flex-1 gap-6 px-8 pb-6">
         {nav}
-        <section ref={scroller} className="min-w-0 flex-1 overflow-y-auto">
+        <section ref={scroller} className="-m-1 min-w-0 flex-1 overflow-y-auto p-1">
           <div className="max-w-3xl space-y-3 pb-8">
             <Composer tags={tagNames} activeTag={f.tag} quoting={quoting} setQuoting={setQuoting} editor={editor} onOpen={openNote} />
             {filtered && (
