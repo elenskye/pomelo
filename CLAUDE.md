@@ -97,6 +97,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **界面**：用 Bash 后台跑 `pnpm dev`（预览面板没有「文稿」权限，自己启动不了），再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据，改了 mock 要刷新页面）。`&notes=prototype` 换成真实的 179 条笔记；芝麻开门用 `&vault=new|open`（默认锁着，测试主密码 `mock-master-1`）、`&touch=fail|none`；小拾用 `&picky=ready`（一打开就有模拟的本地模型），问题里写「滚动测试」「失败测试」得到长回复 / 失败。截图常慢一拍，面板没显示时截不了图，关键结果用 JS 读页面确认；拖拽用 `left_click_drag` 测。
 - **真实窗口**：`pnpm app:build` 后 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"`，用 `screencapture` 截图看；测完 `pkill -f "target/release/bundle"`（别用 osascript quit，会连正式版一起关）并删掉这个 `.app`。**不要用 osascript 碰 System Events**（发键盘事件、查窗口编号都会弹系统「辅助功能」授权框），截图用 `screencapture -x` 截全屏，交互在浏览器里测。
 - **升级测试（装正式版前做）**：先在正式版二进制里 `grep -c -a` 各 migration 的特征 SQL，确定它在哪个版本（不要读真实数据目录；`picky.db` 的升级脚本也要查）；在临时目录里用 `sqlite3` 依次执行到那个版本的 migration、`PRAGMA user_version=<版本>`、插几条会被新 migration 改动的数据，再用上面的方法打开新打包的 App，检查版本号、`backups/` 里的「升级前」备份和数据。
+- **真模型（先问我）**：`llmctl.sh start qwen359b` 后 `POMELO_REAL_LLM=1 POMELO_ASK='问题1|问题2>>追问' cargo test --manifest-path src-tauri/Cargo.toml real_local_model -- --ignored --nocapture`（导入文件加编的数据，在内存里；`POMELO_SHOW=1` 显示查到的原文，`POMELO_AS_CLOUD=1` 按云端的规则）。用完马上 `llmctl.sh stop`。
 - **真实数据**：`POMELO_SEED_DB=<临时目录>/pomelo.db cargo test --manifest-path src-tauri/Cargo.toml seed_scratch_db -- --ignored` 生成含全部导入文件的临时数据库；`cargo test -- --ignored --skip seed_scratch_db` 跑真实导入文件的测试。打开 App 总是首页；浏览器里想直接看某页用 `/?mock#/finance`。
 
 ## 环境

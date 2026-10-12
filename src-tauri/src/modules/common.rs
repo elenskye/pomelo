@@ -290,6 +290,14 @@ pub fn weekday(d: &str) -> u32 {
     ((day_number(d) + 3).rem_euclid(7) + 1) as u32 // 1970-01-01 was a Thursday
 }
 
+/// `d` moved by `n` months, the day kept or clamped to the month's end.
+pub fn add_months(d: &str, n: i64) -> String {
+    let (y, m, day) = (d[..4].parse::<i64>().unwrap(), d[5..7].parse::<i64>().unwrap(), d[8..10].parse::<u32>().unwrap());
+    let k = y * 12 + (m - 1) + n;
+    let (y, m) = (k.div_euclid(12), (k.rem_euclid(12) + 1) as u32);
+    format!("{y:04}-{m:02}-{:02}", day.min(days_in_month(y, m)))
+}
+
 pub fn days_in_month(y: i64, m: u32) -> u32 {
     match m {
         2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,

@@ -1699,12 +1699,14 @@ const pMockCalls = (q: string): [string, Record<string, string>][] => {
   const has = (...w: string[]) => w.some((x) => q.includes(x));
   const out: [string, Record<string, string>][] = [];
   if (has("跟进")) out.push(["jobs", { view: "follow_up" }]);
+  else if (has("进展")) out.push(["jobs", { view: "moves" }]);
   else if (has("漏斗", "投递")) out.push(["jobs", { view: "stats" }]);
   if (has("资产")) out.push(["finance", { view: "assets" }]);
   else if (has("花", "支出", "钱")) out.push(["finance", { view: "entries" }]);
-  if (has("待办", "做完", "任务")) out.push(["todo", { view: q.includes("今天") ? "today" : "done" }]);
-  if (has("书")) out.push(["books", { view: "list" }]);
-  if (has("电影", "剧", "片")) out.push(["films", { view: "list" }]);
+  if (has("拖", "没动")) out.push(["todo", { view: "stuck" }]);
+  else if (has("待办", "做完", "任务")) out.push(["todo", { view: q.includes("今天") ? "today" : "done" }]);
+  if (has("书")) out.push(["books", { view: has("推荐") ? "taste" : "list" }]);
+  if (has("电影", "剧", "片")) out.push(["films", { view: has("推荐") ? "taste" : "list" }]);
   if (has("画")) out.push(["drawing", { view: "courses" }]);
   if (has("出门", "行李", "漏带")) out.push(["packing", { view: "trip" }]);
   if (has("笔记")) out.push(["notes", { view: "recent" }]);

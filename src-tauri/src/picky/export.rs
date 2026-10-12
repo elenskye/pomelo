@@ -8,6 +8,8 @@
 //!   their reading notes. The package also holds 附件/ with a copy of every file the conversation
 //!   used (deleted ones are noted), linked from the Markdown; the JSON keeps passages and memories
 //!   per run (memories stay out of the Markdown).
+//! - Lookups in Pomelo (v0.3.5): replies show 「查了：…」 and fold what each lookup returned, in every
+//!   Markdown form (复制 only the line); the JSON keeps them per message (with their records).
 
 use super::chat;
 use super::files::{self, MessageFile};
@@ -41,6 +43,7 @@ struct Node {
     created_at: String,
     files: Vec<MessageFile>,
     notes: Vec<NoteRecord>,
+    queries: Vec<super::data::Query>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +118,7 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
                 created_at: r.get(10)?,
                 files: vec![],
                 notes: vec![],
+                queries: vec![],
             })
         })
         .map_err(err)?
@@ -131,6 +135,7 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
             n.files = files::message_files(conn, n.id)?;
         } else if let Some(run) = n.run_id {
             n.notes = reading::notes_of(conn, run)?.into_iter().map(|(label, content)| NoteRecord { label, content }).collect();
+            n.queries = super::data::queries_of(conn, run)?;
         }
     }
     Ok(nodes)
@@ -154,6 +159,11 @@ fn role_label(role: &str, model: Option<&str>) -> String {
     }
 }
 
+/// 查了：投石问路 · 该跟进的投递（2 份）；…
+fn looked_line(queries: &[super::data::Query]) -> String {
+    format!("查了：{}", queries.iter().map(|q| q.label.as_str()).collect::<Vec<_>>().join("；"))
+}
+
 /// 复制整段对话.
 pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
     let mut parts = vec![format!("# {}", title(conn, id)?)];
@@ -163,6 +173,9 @@ pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
             lines.push(format!("状态：{s}"));
         }
         lines.extend(m.files.iter().map(|f| format!("{}：{}", if f.file_id.is_some() { "资料" } else { "附件" }, f.file.name.replace('\n', " "))));
+        if !m.queries.is_empty() {
+            lines.push(looked_line(&m.queries));
+        }
         if !m.content.is_empty() {
             lines.push(m.content.clone());
         }
@@ -198,6 +211,17 @@ fn document(heading: &str, msgs: &[Node], all: bool, sums: &[SummaryRecord], lin
                 (false, Some(l)) => format!("{kind}：[{name}](<{l}>)\n\n"),
                 (false, None) => format!("{kind}：{name}\n\n"),
             };
+        }
+        if !m.queries.is_empty() {
+            out += &looked_line(&m.queries);
+            out += "\n\n<details>\n<summary>查到的内容</summary>\n\n";
+            for q in &m.queries {
+                out += &format!("### {}\n\n", q.label);
+                if !q.result.is_empty() {
+                    out += &format!("```text\n{}\n```\n\n", q.result.replace("```", "ʼʼʼ"));
+                }
+            }
+            out += "</details>\n\n";
         }
         out += &m.content;
         out += "\n\n";

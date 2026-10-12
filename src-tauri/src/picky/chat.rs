@@ -256,7 +256,7 @@ pub fn begin_run_in(conn: &Connection, session: Option<i64>, new: &NewSession, p
         }
     };
     let shown = path(&tx, session_id)?;
-    let turns: Vec<Turn> = shown.iter().map(|m| Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone() }).collect();
+    let turns: Vec<Turn> = shown.iter().map(|m| Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries: m.queries.clone() }).collect();
     let mut request = context::request(&tx, session_id, &turns, prompt)?;
     let leaf = shown.last().map(|m| m.id);
     let project: Option<i64> = tx.query_row("SELECT project_id FROM sessions WHERE id = ?1", [session_id], |r| r.get(0)).map_err(err)?;
@@ -400,7 +400,11 @@ pub fn begin_version(conn: &Connection, source: i64, edited: Option<&str>, model
     }
     chain.reverse();
     let earlier: Vec<i64> = chain.iter().filter(|m| m.role == "user").map(|m| m.id).collect();
-    let turns: Vec<Turn> = chain.into_iter().map(|m| Turn { id: m.id, role: m.role, content: m.content, state: m.state }).collect();
+    let mut turns = vec![];
+    for m in chain {
+        let queries = if m.role == "assistant" { data::queries_of_message(&tx, m.id)? } else { vec![] };
+        turns.push(Turn { id: m.id, role: m.role, content: m.content, state: m.state, queries });
+    }
     let mut request = context::request(&tx, src.session_id, &turns, &prompt)?;
     let asked = question.as_ref().map_or(src.id, |q| q.id);
     let attachments: Vec<i64> = files::attachments_of(&tx, asked)?.into_iter().map(|f| f.id).collect();
@@ -713,11 +717,15 @@ const TOOLS_OVERHEAD: i64 = 64;
 /// Below this the next request must answer (no more lookups).
 const MIN_ROOM: i64 = 256;
 
-pub(crate) async fn lookup_plan(app: &AppHandle, route: &Route, counter: &Counter) -> Option<Lookup> {
+/// Who may be read this time, and today (None: the databases couldn't say — then nothing is read).
+pub(crate) fn access_for(app: &AppHandle, route: &Route) -> Option<(data::Access, String)> {
     let st = app.state::<AppState>();
     let allowed = st.picky.with_db(|c| Ok(data::cloud_allowed(c))).ok()?;
     let (hidden, today) = st.with_db(|c| Ok((data::hidden(c), crate::modules::todo::today(c)?))).ok()?;
-    let access = data::Access { hidden, cloud: route.model.starts_with("cloud:"), cloud_allowed: allowed };
+    Some((data::Access { hidden, cloud: route.model.starts_with("cloud:"), cloud_allowed: allowed }, today))
+}
+
+pub(crate) async fn lookup_plan(access: data::Access, today: String, counter: &Counter) -> Option<Lookup> {
     let tools = data::tools(&access);
     if tools.is_empty() {
         return None;
@@ -887,7 +895,17 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     let window = context::window(&route).await;
     shared.buf.lock().unwrap_or_else(|e| e.into_inner()).window = Some(window);
     let counter = Counter::for_target(&route.target);
-    let mut lookup = lookup_plan(&app, &route, &counter).await;
+    // earlier lookups go with their questions only where this model may still see them
+    let mut lookup = match access_for(&app, &route) {
+        Some((access, today)) => {
+            request.with_lookups(|q| access.may_send(q));
+            lookup_plan(access, today, &counter).await
+        }
+        None => {
+            request.looked.clear();
+            None
+        }
+    };
     if let Some(l) = &lookup {
         request.data = l.instructions();
         // the definitions and room for results come first; a question that only fits without them goes without
@@ -1278,11 +1296,14 @@ mod tests {
         greedy: bool,
         /// Refuse requests with tools (like a model without tool support).
         reject_tools: bool,
+        /// Mock by default; the real-model harness points it at 8080.
+        target: Target,
+        reasoning: String,
     }
 
     impl TestHost {
         fn new(pomelo: Connection, access: data::Access) -> Self {
-            TestHost { pomelo, access, requests: vec![], recorded: Default::default(), content: String::new(), greedy: false, reject_tools: false }
+            TestHost { pomelo, access, requests: vec![], recorded: Default::default(), content: String::new(), greedy: false, reject_tools: false, target: Target::Mock { thinking: false }, reasoning: String::new() }
         }
     }
 
@@ -1297,13 +1318,15 @@ mod tests {
                 r.calls = vec![ToolCall { id: String::new(), name: "pomelo_jobs".into(), arguments: r#"{"view":"stats"}"#.into() }];
                 return (Ok(()), r);
             }
-            let res = provider::stream(Target::Mock { thinking: false }, messages, opts, |e| match e {
+            let res = provider::stream(self.target.clone(), messages, opts, |e| match e {
                 Event::Content(t) => r.content.push_str(&t),
+                Event::Reasoning(t) => r.reasoning.push_str(&t),
                 Event::ToolCalls(c) => r.calls = c,
                 _ => {}
             })
             .await;
             self.content.push_str(&r.content);
+            self.reasoning.push_str(&r.reasoning);
             (res, r)
         }
         fn lookup(&self, call: &ToolCall, budget: i64) -> data::Answer {
@@ -1316,10 +1339,120 @@ mod tests {
     }
 
     fn ask(host: &mut TestHost, question: &str) -> Result<(), String> {
+        ask_in(host, question, context::MOCK_WINDOW)
+    }
+
+    fn ask_in(host: &mut TestHost, question: &str, window: i64) -> Result<(), String> {
+        ask_after(host, Request::default(), question, window)
+    }
+
+    /// `before`: earlier turns (history + what they looked up), as chat.rs builds them.
+    fn ask_after(host: &mut TestHost, before: Request, question: &str, window: i64) -> Result<(), String> {
         let tools = data::tools(&host.access);
-        let request = Request { data: data::instructions(data::tests::TODAY, &host.access), prompt: question.into(), ..Default::default() };
+        let mut request = Request { data: data::instructions(data::tests::TODAY, &host.access), prompt: question.into(), ..before };
+        let access = host.access.clone();
+        request.with_lookups(|q| access.may_send(q));
         let messages = request.messages_with(0, question);
-        tauri::async_runtime::block_on(answer_with_lookups(host, &tools, 1500, &Counter::for_target(&Target::Mock { thinking: false }), &request, messages, context::MOCK_WINDOW, 600))
+        let est = |s: &str| context::estimate(s);
+        let cost = est(&serde_json::to_string(&tools).unwrap()) + TOOLS_OVERHEAD;
+        let used = context::PROMPT_OVERHEAD + messages.iter().map(|m| est(&m.content) + context::PER_MESSAGE).sum::<i64>();
+        tauri::async_runtime::block_on(answer_with_lookups(host, &tools, cost, &Counter::for_target(&host.target), &request, messages, window, used))
+    }
+
+    /// The real import files (local only) with made-up finance and jobs around 2026-10-12.
+    fn real_db() -> Connection {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype");
+        let mut c = crate::db::tests::memory_db();
+        let scratch = crate::db::tests::temp_dir("real-llm");
+        for f in ["pomelo-import.json", "todo-import.json", "jobs-import.json", "notes-import.json"] {
+            if let Ok(text) = std::fs::read_to_string(dir.join(f)) {
+                crate::transfer::apply(&mut c, &text, true, &scratch).unwrap();
+            }
+        }
+        data::tests::seed_jobs(&c);
+        data::tests::seed_finance(&c);
+        seed_more(&c);
+        c
+    }
+
+    /// What the import files lack for the seven questions: holdings, recent task activity, a trip.
+    fn seed_more(c: &Connection) {
+        use crate::modules::{finance, packing, todo};
+        let v = |j: serde_json::Value| j;
+        let ib = finance::create_account(c, serde_json::from_value(v(serde_json::json!({ "name": "盈透", "kind": "broker", "currency": "USD" }))).unwrap()).unwrap().id;
+        let h = |n: &str, q: f64, p: f64| -> finance::HoldingInput { serde_json::from_value(serde_json::json!({ "name": n, "quantity": q, "price": p })).unwrap() };
+        finance::save_holdings(c, ib, "2026-05-01", &[h("VOO", 10.0, 480.0), h("AAPL", 20.0, 190.0)]).unwrap();
+        finance::save_holdings(c, ib, "2026-10-01", &[h("VOO", 12.0, 530.0), h("AAPL", 20.0, 170.0), h("NVDA", 5.0, 150.0)]).unwrap();
+        let bal = |id: i64, amount: i64| -> finance::BalanceInput { serde_json::from_value(serde_json::json!({ "accountId": id, "amount": amount })).unwrap() };
+        let usd = |r: f64| -> finance::RateInput { serde_json::from_value(serde_json::json!({ "currency": "USD", "rate": r })).unwrap() };
+        finance::save_balances(c, "2026-05-01", &[bal(ib, 860_000)], &[usd(7.2)]).unwrap();
+        finance::save_balances(c, "2026-10-01", &[bal(ib, 1_051_000)], &[usd(7.1)]).unwrap();
+
+        let g = todo::create_group(c, "毕业").unwrap().id;
+        let goal = |name: &str| todo::create_goal(c, serde_json::from_value(serde_json::json!({ "groupId": g, "name": name, "endDate": "2026-12-31" })).unwrap()).unwrap().id;
+        let (thesis, gym) = (goal("论文初稿"), goal("考雅思"));
+        let task = |title: &str, goal: Option<i64>, due: Option<&str>| todo::create_task_on(c, serde_json::from_value(serde_json::json!({ "groupId": g, "goalId": goal, "title": title, "dueDate": due })).unwrap(), "2026-09-01").unwrap().id;
+        for (t, day) in [("读完三篇相关文献", "2026-10-06"), ("整理实验数据", "2026-10-08"), ("和导师开会", "2026-10-09")] {
+            let id = task(t, Some(thesis), None);
+            todo::set_done_on(c, id, true, day).unwrap();
+            c.execute("UPDATE todo_tasks SET done_at = ?1 WHERE id = ?2", (format!("{day}T06:00:00Z"), id)).unwrap();
+        }
+        task("交开题报告", Some(thesis), Some("2026-10-01"));
+        task("背单词 List 5", Some(gym), Some("2026-09-20"));
+        let old = task("整理书架", None, None);
+        c.execute("UPDATE todo_tasks SET created_at = '2026-08-20T04:00:00Z' WHERE id = ?1", [old]).unwrap();
+
+        if let Some(tp) = packing::templates(c).unwrap().first() {
+            let trip = packing::create_trip(c, serde_json::from_value(serde_json::json!({ "name": "东京五天", "departOn": "2026-10-24" })).unwrap(), Some(tp.id)).unwrap().id;
+            for it in packing::items(c, packing::List::Trip, trip).unwrap().into_iter().take(3) {
+                packing::delete_item(c, packing::List::Trip, it.id).unwrap();
+            }
+        }
+    }
+
+    /// The real local model (8080) through the lookup loop: what it looked up and what it said.
+    /// Opt-in: POMELO_REAL_LLM=1 [POMELO_MODEL=qwen3.5-9b] [POMELO_AS_CLOUD=1] [POMELO_ASK='问题1|问题2']
+    ///   cargo test real_local_model -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_local_model() {
+        if std::env::var("POMELO_REAL_LLM").as_deref() != Ok("1") {
+            return;
+        }
+        let model = std::env::var("POMELO_MODEL").unwrap_or_else(|_| "qwen3.5-9b".into());
+        let window = tauri::async_runtime::block_on(provider::local_window()).unwrap_or(16384);
+        // '|' separates conversations, '>>' follow-ups in one conversation
+        let asks = std::env::var("POMELO_ASK").unwrap_or_else(|_| "这周该跟进哪些投递|总资产这半年怎么变的".into());
+        for conversation in asks.split('|') {
+            let mut access = data::Access::default();
+            if std::env::var("POMELO_AS_CLOUD").as_deref() == Ok("1") {
+                access = data::Access { cloud: true, cloud_allowed: data::MODULES.iter().filter(|m| m.key != "finance").map(|m| m.key.to_string()).collect(), ..access };
+            }
+            let mut h = TestHost::new(real_db(), access);
+            h.target = Target::Local { model: model.clone() };
+            let mut before = Request::default();
+            for q in conversation.split(">>") {
+                (h.requests, h.content, h.reasoning) = (vec![], String::new(), String::new());
+                h.recorded.borrow_mut().clear();
+                let t = std::time::Instant::now();
+                let r = ask_after(&mut h, before.clone(), q, window);
+                println!("\n==================== {q}  ({:.1}s, {} requests, {r:?})", t.elapsed().as_secs_f64(), h.requests.len());
+                for (_, round, call, q) in h.recorded.borrow().iter() {
+                    println!("  [{round}] {} {} → {} ({})", call.name, call.arguments, q.label, q.state);
+                    if std::env::var("POMELO_SHOW").as_deref() == Ok("1") {
+                        println!("{}", q.result);
+                    }
+                }
+                println!("--- reasoning: {} chars\n{}", h.reasoning.chars().count(), h.content);
+                // this turn joins the history with what it looked up
+                let queries: Vec<Query> = h.recorded.borrow().iter().map(|r| r.3.clone()).collect();
+                before.history.push(Msg::new("user", q));
+                if !queries.is_empty() {
+                    before.looked.push((before.history.len() - 1, queries));
+                }
+                before.history.push(Msg::new("assistant", &h.content));
+            }
+        }
     }
 
     #[test]

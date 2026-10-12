@@ -112,6 +112,10 @@ impl Access {
             Ok(())
         }
     }
+    /// An earlier result may go to this model (its module is readable and allowed here).
+    pub fn may_send(&self, q: &Query) -> bool {
+        q.module.as_deref().and_then(module).is_some_and(|m| self.check(m).is_ok())
+    }
     /// Modules that have a tool this time (hidden ones don't; cloud-refused ones do, to say so).
     pub fn offered(&self) -> Vec<&'static Module> {
         MODULES.iter().filter(|m| !self.hidden.iter().any(|h| h == m.key)).collect()
@@ -131,12 +135,18 @@ const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 /// The part of the system message about looking things up.
 pub fn instructions(today: &str, access: &Access) -> String {
     let wd = WEEKDAYS[(common::weekday(today) as usize + 6) % 7];
+    let monday = jobs::week_start(today);
+    let (last_mon, last_sun) = (common::add_days(&monday, -7), common::add_days(&monday, -1));
+    let sunday = common::add_days(&monday, 6);
+    let month = &today[..7];
     let mut s = format!(
-        "【查数据】你可以调用工具查用户在「柚儿园」（Pomelo，用户自己的生活记录 App）里的数据，只能读。今天是 {today}（周{wd}）。\n\
+        "【查数据】你可以调用工具查用户在「柚儿园」（Pomelo，用户自己的生活记录 App）里的数据，只能读。今天是 {today}（周{wd}）；本周是 {monday} 至 {sunday}，上周是 {last_mon} 至 {last_sun}，本月从 {month}-01 开始。\n\
          - 问题和这些数据有关时先查再答，可以连查几次；和这些数据无关就直接回答，不要查。\n\
-         - 合计、平均、占比、天数这类数字以查到的为准，不要自己重新加总或推算。\n\
+         - 合计、平均、占比、变化、天数、预计完成这类数字以查到的为准，直接引用，不要自己重新加总或推算。\n\
          - 用户没说时间时，自己选合适的时间段，并在回答里写明看的是哪段时间。\n\
-         - 查到的内容里没有的，就说没有记录，不要编造。"
+         - 查到的内容里没有的，就说没有记录，不要编造。提到具体的记录时写出它的完整名称。\n\
+         - 要推荐书、电影或剧时，先用 view taste 看用户的口味，再推荐用户单子里还没有的新作品（用你自己的知识，不联网，说明可能不准）；不要只把用户读过看过的列一遍。\n\
+         - 出行清单可能漏了什么，除了查到的，也可以按目的地和天数用常识补充。"
     );
     let refused: Vec<&str> = access.refused().iter().map(|m| m.label).collect();
     if !refused.is_empty() {
@@ -165,8 +175,8 @@ fn definition(m: &Module) -> Value {
     match m.key {
         "todo" => tool(
             m.tool,
-            "一步一步（待办）：分组 → 目标 → 任务。view：today 今天要做的（含已过期）和今天做完的；done 一段时间里做完的（含每次重复、打卡、进度记录，默认最近 7 天）；open 所有没完成的任务（截止日期、过期天数、加入日期、所在分组和目标）；goals 目标（状态、时间段、进度、最近一次有完成的日子）。",
-            &["today", "done", "open", "goals"],
+            "一步一步（待办）：分组 → 目标 → 任务。view：today 今天要做的（含已过期）和今天做完的；done 一段时间里做完的（含每次重复、打卡、进度记录，默认最近 7 天）；stuck 拖着的任务（过期的、加了很久还没做的）和最近没动的目标；open 所有没完成的任务（截止日期、过期天数、加入日期、所在分组和目标）；goals 目标（状态、时间段、进度、最近一次有完成的日子）。",
+            &["today", "done", "stuck", "open", "goals"],
             json!({ "from": date_param("开始日期（done 用）"), "to": date_param("结束日期（done 用）"), "keyword": text("open：标题或内容里的字") }),
         ),
         "finance" => tool(
@@ -182,16 +192,16 @@ fn definition(m: &Module) -> Value {
         ),
         "jobs" => tool(
             m.tool,
-            "投石问路（求职投递）。等回音满 14 天就该跟进。view：follow_up 现在该跟进的和本周内会到期的；list 投递列表（现在的状态、时间线、渠道、备注；可按状态、关键词、投递日期筛选）；stats 统计（投出、本周投了、进行中、拿到、漏斗、最近 12 周每周投了几份、现在的状态分布）。",
-            &["follow_up", "list", "stats"],
-            json!({ "status": text("list：状态名称，比如 面试"), "keyword": text("list：公司、岗位、地点或备注里的字"), "from": date_param("list：投递日期从"), "to": date_param("list：投递日期到") }),
+            "投石问路（求职投递）。等回音满 14 天就该跟进。view：follow_up 现在该跟进的和本周内会到期的；moves 一段时间里的进展（哪天哪份投递走到了哪一步，默认最近 14 天）；list 投递列表（现在的状态、时间线、渠道、备注；可按状态、关键词、投递日期筛选）；stats 统计（投出、本周投了、进行中、拿到、漏斗、最近 12 周每周投了几份、现在的状态分布）。",
+            &["follow_up", "moves", "list", "stats"],
+            json!({ "status": text("list：状态名称，比如 面试"), "keyword": text("list：公司、岗位、地点或备注里的字"), "from": date_param("moves / list：从（list 按投递日期）"), "to": date_param("moves / list：到") }),
         ),
         "books" | "films" => {
             let (thing, verb) = if m.key == "books" { ("书", "读") } else { ("电影和剧", "看") };
             tool(
                 m.tool,
-                &format!("{}（{thing}）。view：list 列出{thing}（作者 / 导演、国家、类型、状态、星级 1～5、{verb}完的年份、重{verb}、备注；可筛选）；stats 按状态、年份、星级的数量。", m.label),
-                &["list", "stats"],
+                &format!("{}（{thing}）。view：taste 用户想要推荐时用它：打了高分的（4 星以上）、偏好的类型和国家，和已经在单子里的全部名称（推荐新的、避开这些）；list 列出{thing}（作者 / 导演、国家、类型、状态、星级 1～5、{verb}完的年份、重{verb}、备注；可筛选）；stats 按状态、年份、星级的数量。", m.label),
+                &["taste", "list", "stats"],
                 json!({
                     "status": { "type": "string", "enum": ["todo", "doing", "done", "unmarked"], "description": format!("todo 想{verb}，doing 在{verb}，done 已{verb}，unmarked 待标记") },
                     "min_rating": { "type": "integer", "description": "最低星级 1～5" },
@@ -202,21 +212,21 @@ fn definition(m: &Module) -> Value {
         }
         "drawing" => tool(
             m.tool,
-            "随意画画（绘画课）：课程 → 课节。view：courses 各门课的进度（完成几节、进行中、下一节、最近 6 个月画完几节）；lessons 某门课的课节（course 填课程名里的字；可按状态筛选）。",
+            "随意画画（绘画课）：课程 → 课节。view：courses 各门课和全部的进度（完成几节、还剩几节、下一节、最近 6 个月的速度、照这个速度预计哪个月画完）；lessons 某门课的课节（course 填课程名里的字；可按状态筛选）。",
             &["courses", "lessons"],
             json!({ "course": text("lessons：课程名里的字"), "status": { "type": "string", "enum": ["todo", "doing", "done"], "description": "todo 未开始，doing 进行中，done 已完成" } }),
         ),
         "packing" => tool(
             m.tool,
-            "出门走走（出行清单）。view：trips 每次出行（出发日期、装好几件）；trip 某次出行的清单（name 填出行名里的字，不填就是最近要出发的那次）；templates 场景模板和里面的物品。",
+            "出门走走（出行清单）。view：trips 每次出行（出发日期、装好几件）；trip 某次出行的清单，和模板、以前的出行里常带但这次没有的（name 填出行名里的字，不填就是最近要出发的那次）；templates 场景模板和里面的物品。",
             &["trips", "trip", "templates"],
             json!({ "name": text("trip：出行名里的字") }),
         ),
         "notes" => tool(
             m.tool,
-            "念念不忘（随手记的笔记，正文里写 #标签）。view：search 按关键词找笔记（keyword 必填，几个词用空格隔开、要同时出现）；recent 一段时间里的笔记全文（默认最近 30 天）；tags 标签和各有几条笔记。",
+            "念念不忘（随手记的笔记，正文里写 #标签）。view：search 找和某件事有关的笔记（keyword 必填，可以写几个相关的词、用空格隔开，含任意一个就算，命中多的排前面）；recent 一段时间里的笔记全文和常用的标签（默认最近 30 天）；tags 全部标签和各有几条笔记。",
             &["search", "recent", "tags"],
-            json!({ "keyword": text("search：关键词"), "tag": text("只看这个标签（含下一级）"), "from": date_param("开始日期"), "to": date_param("结束日期") }),
+            json!({ "keyword": text("search：几个相关的词，空格隔开（比如找读书相关的写「读书 书 阅读 摘抄」）"), "tag": text("只看这个标签（含下一级）"), "from": date_param("开始日期"), "to": date_param("结束日期") }),
         ),
         _ => Value::Null,
     }
@@ -610,8 +620,55 @@ fn task_line(p: &todo::PlacedTask, today: &str) -> String {
     format!("- {}（{}）{}", plain(&t.title), join_bits(vec![join_bits(bits), place(p)]), if note.is_empty() { String::new() } else { format!(" {note}") })
 }
 
+/// 「拖着」: no due date, not done, added at least this many days ago; a goal 「没动」 when nothing in it
+/// got done for this long.
+pub const STUCK_DAYS: i64 = 14;
+
 fn todo_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> {
-    match a.view(&["today", "done", "open", "goals"])? {
+    match a.view(&["today", "done", "stuck", "open", "goals"])? {
+        "stuck" => {
+            let open = todo::open_tasks(conn, today)?;
+            let goals = todo::goals(conn)?;
+            let status: HashMap<i64, todo::GoalStatus> = goals.iter().map(|g| (g.id, g.status)).collect();
+            let live = |p: &todo::PlacedTask| p.task.goal_id.and_then(|g| status.get(&g)).is_none_or(|s| *s == todo::GoalStatus::Active);
+            let mut overdue: Vec<(&todo::PlacedTask, i64)> = open
+                .iter()
+                .filter(|p| live(p))
+                .filter_map(|p| p.task.due_date.as_deref().filter(|d| *d < today).map(|d| (p, common::day_number(today) - common::day_number(d))))
+                .collect();
+            overdue.sort_by_key(|x| std::cmp::Reverse(x.1));
+            let since = common::add_days(today, -STUCK_DAYS);
+            let mut old: Vec<(&todo::PlacedTask, String)> = open
+                .iter()
+                .filter(|p| live(p) && p.task.due_date.is_none() && p.task.task_type == todo::TaskType::Normal)
+                .map(|p| (p, local_day(conn, &p.task.created_at)))
+                .filter(|(_, d)| d.as_str() <= since.as_str())
+                .collect();
+            old.sort_by(|x, y| x.1.cmp(&y.1));
+            let last = todo::goals_last_done(conn)?;
+            let groups: HashMap<i64, String> = todo::groups(conn)?.into_iter().map(|g| (g.id, g.name)).collect();
+            let idle: Vec<&todo::Goal> = goals.iter().filter(|g| g.status == todo::GoalStatus::Active && last.get(&g.id).is_none_or(|d| d.as_str() < since.as_str())).collect();
+            let head = vec![format!(
+                "今天 {today}。过期 = 截止日期已过还没做完；久没动 = 没有截止日期、加了 {STUCK_DAYS} 天以上还没做；没动的目标 = 进行中、最近 {STUCK_DAYS} 天里面没有完成任何东西。暂停或已完成的目标里的任务不算。"
+            )];
+            Ok(Found::new(format!("拖着的任务和没动的目标（过期 {} 件，久没动 {} 件，目标 {} 个）", overdue.len(), old.len(), idle.len()), head)
+                .section("过期的（过期久的在前）", overdue.iter().map(|(p, _)| Row { text: task_line(p, today), rec: Some(task_rec(p)) }).collect())
+                .section("久没动的（加得早的在前）", old.iter().map(|(p, d)| Row { text: format!("{} · 加入于 {d}，{} 天了", task_line(p, today), common::day_number(today) - common::day_number(d)), rec: Some(task_rec(p)) }).collect())
+                .section(
+                    "没动的目标",
+                    idle.iter()
+                        .map(|g| {
+                            let bits = vec![
+                                format!("进度 {} / {}", g.done, g.total),
+                                last.get(&g.id).map(|d| format!("最近一次有完成：{d}（{} 天前）", common::day_number(today) - common::day_number(d))).unwrap_or_else(|| "还没有完成过".into()),
+                                g.end_date.clone().map(|e| format!("结束 {e}")).unwrap_or_default(),
+                                groups.get(&g.group_id).cloned().unwrap_or_default(),
+                            ];
+                            Row { text: format!("- {}（{}）", g.name, join_bits(bits)), rec: Some(Rec { parent: Some(g.group_id), ..rec("todo", "goal", g.id, &g.name) }) }
+                        })
+                        .collect(),
+                ))
+        }
         "today" => {
             let ag = todo::agenda(conn, today)?;
             let line = |p: &todo::PlacedTask| Row { text: task_line(p, today), rec: Some(task_rec(p)) };
@@ -744,10 +801,11 @@ fn assets_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String
     let accounts = finance::accounts(conn)?;
     let inside: Vec<&finance::DayTotal> = all.totals.iter().filter(|t| t.day >= from && t.day <= to).collect();
     let full: Vec<(&str, i64)> = inside.iter().filter_map(|t| t.total_cny.map(|v| (t.day.as_str(), v))).collect();
+    let before = all.totals.iter().filter(|t| t.day < from && t.total_cny.is_some()).next_back();
     let mut head = vec![format!("总资产 = 每次更新余额那天各账户最近的余额按汇率折成人民币。{}（{from} 至 {to}）更新过 {} 次。", span(&from, &to), inside.len())];
     if let (Some(first), Some(last)) = (full.first(), full.last()) {
-        let hi = full.iter().max_by_key(|x| x.1).unwrap();
-        let lo = full.iter().min_by_key(|x| x.1).unwrap();
+        let hi = full.iter().max_by_key(|x| x.1).unwrap_or(first);
+        let lo = full.iter().min_by_key(|x| x.1).unwrap_or(first);
         head.push(format!(
             "最早 {} {}，最近 {} {}，变化 {}（{}）；最高 {} {}，最低 {} {}。",
             first.0,
@@ -762,61 +820,112 @@ fn assets_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String
             money(lo.1, Currency::Cny)
         ));
     }
-    if let Some(b) = all.totals.iter().filter(|t| t.day < from && t.total_cny.is_some()).next_back() {
+    if let Some(b) = before {
         head.push(format!("这段时间之前最后一次：{} {}。", b.day, money(b.total_cny.unwrap_or(0), Currency::Cny)));
     }
+    let mut prev = before.and_then(|b| b.total_cny);
     let totals = inside
         .iter()
         .map(|t| {
             row(match t.total_cny {
-                Some(v) => format!("- {} {}", t.day, money(v, Currency::Cny)),
+                Some(v) => {
+                    let change = prev.map(|p| format!("（比上次 {}）", signed(v - p, Currency::Cny))).unwrap_or_default();
+                    prev = Some(v);
+                    format!("- {} {}{change}", t.day, money(v, Currency::Cny))
+                }
                 None => format!("- {} 缺{}的汇率，没算总数", t.day, t.missing.iter().map(|c| currency_name(*c)).collect::<Vec<_>>().join("、")),
             })
         })
         .collect();
+    // a change in CNY at the end day's rate, to rank accounts / holdings in different currencies
+    let in_cny = |cents: i64, c: Currency, day: &str| finance::rate_on(&all.rates, c, day).map(|r| (cents as f64 * r).round() as i64);
+    let ranked_text = |name: &str, change: i64, c: Currency, cny: Option<i64>| {
+        let approx = if c == Currency::Cny { String::new() } else { cny.map(|v| format!("（约 {}）", signed(v, Currency::Cny))).unwrap_or_default() };
+        format!("{name} {}{approx}", signed(change, c))
+    };
     // each account: its balance as of `from` (or its first one inside) → as of `to`
-    let mut acc_rows = vec![];
+    let mut accs: Vec<(Option<i64>, String, Row)> = vec![];
     for acc in &accounts {
         let mine: Vec<&finance::Balance> = all.balances.iter().filter(|b| b.account_id == acc.id && b.day <= to).collect();
         let Some(end) = mine.last() else { continue };
         let start = mine.iter().rev().find(|b| b.day <= from).or_else(|| mine.iter().find(|b| b.day >= from)).copied().unwrap_or(end);
-        let change = if start.day == end.day { "这段时间没更新".to_string() } else { format!("{} → {} {}，变化 {}（{}）", money(start.amount, acc.currency), end.day, money(end.amount, acc.currency), signed(end.amount - start.amount, acc.currency), percent(end.amount - start.amount, start.amount)) };
         let bits = vec![account_kind(acc.kind).to_string(), currency_name(acc.currency).to_string(), if acc.closed { "已停用".into() } else { String::new() }];
-        acc_rows.push(Row {
-            text: format!("- {}（{}）：{} {}{}", acc.name, join_bits(bits), start.day, if start.day == end.day { money(end.amount, acc.currency) } else { String::new() }, if start.day == end.day { format!("，{change}") } else { change }),
-            rec: Some(rec("finance", "account", acc.id, &acc.name)),
-        });
+        let (text, change_cny) = if start.day == end.day {
+            (format!("- {}（{}）：{} {}，这段时间没更新", acc.name, join_bits(bits), end.day, money(end.amount, acc.currency)), None)
+        } else {
+            let change = end.amount - start.amount;
+            let cny = in_cny(change, acc.currency, &end.day);
+            let approx = if acc.currency == Currency::Cny { String::new() } else { cny.map(|v| format!("，约 {}", signed(v, Currency::Cny))).unwrap_or_default() };
+            (
+                format!(
+                    "- {}（{}）：{} {} → {} {}，变化 {}（{}{approx}）",
+                    acc.name,
+                    join_bits(bits),
+                    start.day,
+                    money(start.amount, acc.currency),
+                    end.day,
+                    money(end.amount, acc.currency),
+                    signed(change, acc.currency),
+                    percent(change, start.amount)
+                ),
+                cny,
+            )
+        };
+        let summary = change_cny.map(|v| ranked_text(&acc.name, end.amount - start.amount, acc.currency, Some(v))).unwrap_or_default();
+        accs.push((change_cny, summary, Row { text, rec: Some(rec("finance", "account", acc.id, &acc.name)) }));
     }
     // holdings: per broker account, the snapshot as of `from` (or the first inside) → as of `to`
     let holdings = finance::holdings(conn)?;
-    let mut hold_rows = vec![];
+    let mut holds: Vec<(Option<i64>, String, Row)> = vec![];
     for acc in accounts.iter().filter(|x| x.kind == AccountKind::Broker) {
         let mut days: Vec<&str> = holdings.iter().filter(|h| h.account_id == acc.id && h.day.as_str() <= to.as_str()).map(|h| h.day.as_str()).collect();
         days.dedup();
         let Some(&end) = days.last() else { continue };
         let start = days.iter().rev().find(|d| **d <= from.as_str()).or_else(|| days.iter().find(|d| **d >= from.as_str())).copied().unwrap_or(end);
         let at = |day: &str| holdings.iter().filter(|h| h.account_id == acc.id && h.day == day).collect::<Vec<_>>();
-        let (before, after) = (at(start), at(end));
-        let mut names: Vec<&str> = after.iter().map(|h| h.name.as_str()).collect();
-        names.extend(before.iter().map(|h| h.name.as_str()).filter(|n| !after.iter().any(|h| h.name == *n)));
+        let (old, new) = (at(start), at(end));
+        let mut names: Vec<&str> = new.iter().map(|h| h.name.as_str()).collect();
+        names.extend(old.iter().map(|h| h.name.as_str()).filter(|n| !new.iter().any(|h| h.name == *n)));
         for n in names {
-            let b = before.iter().find(|h| h.name == n);
-            let e = after.iter().find(|h| h.name == n);
+            let b = old.iter().find(|h| h.name == n);
+            let e = new.iter().find(|h| h.name == n);
             let now = e.map(|h| format!("{} × {} = {}", number(h.quantity), number(h.price), money(h.value, acc.currency))).unwrap_or_else(|| "已不持有".into());
             let change = match (b, e) {
+                _ if start == end => None,
+                (Some(b), Some(e)) => Some(e.value - b.value),
+                (None, Some(e)) => Some(e.value),
+                (Some(b), None) => Some(-b.value),
+                (None, None) => None,
+            };
+            let detail = match (b, e) {
                 _ if start == end => String::new(),
                 (Some(b), Some(e)) => format!("，{start} {} → {end} {}，变化 {}（{}）", money(b.value, acc.currency), money(e.value, acc.currency), signed(e.value - b.value, acc.currency), percent(e.value - b.value, b.value)),
                 (None, Some(_)) => format!("，{start} 之后新买入"),
                 (Some(b), None) => format!("，{start} 时 {}", money(b.value, acc.currency)),
                 (None, None) => String::new(),
             };
-            hold_rows.push(Row { text: format!("- {} · {}：{end} {now}{change}", acc.name, n), rec: Some(rec("finance", "account", acc.id, &acc.name)) });
+            let cny = change.and_then(|c| in_cny(c, acc.currency, end));
+            let summary = change.map(|c| ranked_text(&format!("{} · {n}", acc.name), c, acc.currency, cny)).unwrap_or_default();
+            holds.push((cny, summary, Row { text: format!("- {} · {}：{end} {now}{detail}", acc.name, n), rec: Some(rec("finance", "account", acc.id, &acc.name)) }));
         }
+    }
+    // biggest changes first
+    for list in [&mut accs, &mut holds] {
+        list.sort_by_key(|x| std::cmp::Reverse(x.0.map(i64::abs)));
+    }
+    let top = |list: &[(Option<i64>, String, Row)]| list.iter().filter(|x| x.0.is_some_and(|v| v != 0)).take(3).map(|x| x.1.clone()).collect::<Vec<_>>().join("、");
+    let (ta, th) = (top(&accs), top(&holds));
+    if !ta.is_empty() || !th.is_empty() {
+        head.push(format!(
+            "按人民币折算（期末汇率）变化最大的{}{}。",
+            if ta.is_empty() { String::new() } else { format!("账户：{ta}") },
+            if th.is_empty() { String::new() } else { format!("{}持仓：{th}", if ta.is_empty() { "" } else { "；" }) }
+        ));
     }
     Ok(Found::new(format!("总资产 {}（{} 次更新）", span(&from, &to), inside.len()), head)
         .section("每次更新的总资产", totals)
-        .section("各账户余额（各自的币种，期初 → 期末）", acc_rows)
-        .section("持仓市值（各自的币种）", hold_rows))
+        .section("各账户余额（各自的币种，期初 → 期末，变化大的在前）", accs.into_iter().map(|x| x.2).collect())
+        .section("持仓市值（各自的币种，变化大的在前）", holds.into_iter().map(|x| x.2).collect()))
 }
 
 fn entries_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> {
@@ -945,7 +1054,7 @@ fn job_rec(j: &jobs::Job) -> Rec {
 }
 
 fn jobs_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> {
-    let view = a.view(&["follow_up", "list", "stats"])?;
+    let view = a.view(&["follow_up", "moves", "list", "stats"])?;
     let sts = jobs::statuses(conn)?;
     let name_of = |id: Option<i64>| id.and_then(|i| sts.iter().find(|s| s.id == i)).map_or("想投".to_string(), |s| s.name.clone());
     let all = jobs::jobs(conn, today)?;
@@ -969,6 +1078,25 @@ fn jobs_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> 
             Ok(Found::new(format!("该跟进的投递（{} 份{}）", now.len(), if soon.is_empty() { String::new() } else { format!("，本周还有 {} 份", soon.len()) }), head)
                 .section("现在该跟进", now.iter().map(|j| Row { text: line(j), rec: Some(job_rec(j)) }).collect())
                 .section("本周内会到期", soon.iter().map(|(j, due)| Row { text: format!("{}，{due} 到期", line(j)), rec: Some(job_rec(j)) }).collect()))
+        }
+        "moves" => {
+            let (from, to) = a.range(common::add_days(today, -13), today.to_string())?;
+            let mut moves: Vec<(&str, &jobs::Job, String)> = vec![];
+            for j in &all {
+                for st in j.steps.iter().filter(|x| x.done) {
+                    if let Some(d) = st.done_on.as_deref().filter(|d| *d >= from.as_str() && *d <= to.as_str()) {
+                        moves.push((d, j, name_of(Some(st.status_id))));
+                    }
+                }
+            }
+            moves.sort_by(|x, y| y.0.cmp(x.0).then(y.1.id.cmp(&x.1.id)));
+            let mut touched: Vec<i64> = moves.iter().map(|m| m.1.id).collect();
+            touched.sort_unstable();
+            touched.dedup();
+            let new = all.iter().filter(|j| j.applied_on.as_deref().is_some_and(|d| d >= from.as_str() && d <= to.as_str())).count();
+            let head = vec![format!("{}（{from} 至 {to}）时间线上勾了 {} 步，涉及 {} 份投递；其中新投出 {new} 份。新的在前。", span(&from, &to), moves.len(), touched.len())];
+            let rows = moves.iter().map(|(d, j, st)| Row { text: format!("- {d} {}：{st}（现在：{}）", job_title(j), name_of(j.status_id)), rec: Some(job_rec(j)) }).collect();
+            Ok(Found::new(format!("{}的进展（{} 步）", span(&from, &to), moves.len()), head).rows(rows))
         }
         "list" => {
             let channels = kinds::name_map(conn, jobs::CHANNELS)?;
@@ -1063,8 +1191,55 @@ fn parse_mark(s: &str) -> Option<Mark> {
     })
 }
 
+fn work_line(w: &Work, verb: &str, by_label: &str) -> String {
+    let rereads = w.rereads.iter().map(|r| format!("{}{}", r.year.clone().unwrap_or_else(|| "?".into()), r.rating.map(|n| format!(" ★{n}")).unwrap_or_default())).collect::<Vec<_>>().join("、");
+    let bits = vec![
+        w.by.clone().map(|b| format!("{by_label} {b}")).unwrap_or_default(),
+        w.country.clone().unwrap_or_default(),
+        w.kind.clone(),
+        status_text(w.status, verb),
+        w.year.clone().map(|y| format!("{y} {verb}完")).unwrap_or_default(),
+        stars(w.rating),
+        if rereads.is_empty() { String::new() } else { format!("重{verb}：{rereads}") },
+    ];
+    format!("- 《{}》（{}）{}", w.title, join_bits(bits), w.note.as_deref().map(|n| format!(" 备注：{}", clip(n, 80))).unwrap_or_default())
+}
+
+/// The best rating a work got (first time or any reread).
+fn best(w: &Work) -> Option<i64> {
+    w.rereads.iter().filter_map(|r| r.rating).chain(w.rating).max()
+}
+
 fn works_view(a: &Args, works: Vec<Work>, module: &str, kind: &str, verb: &str, unit: &str, by_label: &str) -> Result<Found, String> {
-    let view = a.view(&["list", "stats"])?;
+    let view = a.view(&["taste", "list", "stats"])?;
+    if view == "taste" {
+        let mut high: Vec<&Work> = works.iter().filter(|w| w.status == Mark::Done && best(w).is_some_and(|r| r >= 4)).collect();
+        high.sort_by(|x, y| best(y).cmp(&best(x)).then_with(|| y.year.cmp(&x.year)));
+        let count = |f: &dyn Fn(&Work) -> Option<String>| {
+            let mut m: BTreeMap<String, usize> = BTreeMap::new();
+            for w in &high {
+                if let Some(k) = f(w).filter(|k| !k.is_empty() && k != "未分类") {
+                    *m.entry(k).or_default() += 1;
+                }
+            }
+            let mut v: Vec<(String, usize)> = m.into_iter().collect();
+            v.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+            v.iter().take(6).map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join("、")
+        };
+        let done = works.iter().filter(|w| w.status == Mark::Done).count();
+        let head = vec![format!(
+            "{verb}完的 {done} {unit}里，打了 4 星以上的 {} {unit}（含重{verb}的星级）。高分里的类型：{}；国家：{}。单子里一共 {} {unit}，下面「已经在单子里的」推荐时避开。",
+            high.len(),
+            if count(&|w| Some(w.kind.clone())).is_empty() { "—".into() } else { count(&|w| Some(w.kind.clone())) },
+            if count(&|w| w.country.clone()).is_empty() { "—".into() } else { count(&|w| w.country.clone()) },
+            works.len()
+        )];
+        let titles: Vec<String> = works.iter().map(|w| format!("《{}》", w.title)).collect();
+        let listed = titles.chunks(20).map(|c| row(format!("- {}", c.join("、")))).collect();
+        return Ok(Found::new(format!("口味（4 星以上 {} {unit}）", high.len()), head)
+            .section("4 星以上的（星级高的在前）", high.iter().map(|w| Row { text: work_line(w, verb, by_label), rec: Some(rec(module, kind, w.id, &w.title)) }).collect())
+            .section(&format!("已经在单子里的（全部 {} {unit}）", works.len()), listed));
+    }
     if view == "stats" {
         let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
         let mut by_year: BTreeMap<String, usize> = BTreeMap::new();
@@ -1105,22 +1280,7 @@ fn works_view(a: &Args, works: Vec<Work>, module: &str, kind: &str, verb: &str, 
         .collect();
     // highest rated, then the latest finished first
     list.sort_by(|x, y| y.rating.cmp(&x.rating).then_with(|| y.year.cmp(&x.year)).then(y.id.cmp(&x.id)));
-    let rows = list
-        .iter()
-        .map(|w| {
-            let rereads = w.rereads.iter().map(|r| format!("{}{}", r.year.clone().unwrap_or_else(|| "?".into()), r.rating.map(|n| format!(" ★{n}")).unwrap_or_default())).collect::<Vec<_>>().join("、");
-            let bits = vec![
-                w.by.clone().map(|b| format!("{by_label} {b}")).unwrap_or_default(),
-                w.country.clone().unwrap_or_default(),
-                w.kind.clone(),
-                status_text(w.status, verb),
-                w.year.clone().map(|y| format!("{y} {verb}完")).unwrap_or_default(),
-                stars(w.rating),
-                if rereads.is_empty() { String::new() } else { format!("重{verb}：{rereads}") },
-            ];
-            Row { text: format!("- 《{}》（{}）{}", w.title, join_bits(bits), w.note.as_deref().map(|n| format!(" 备注：{}", clip(n, 80))).unwrap_or_default()), rec: Some(rec(module, kind, w.id, &w.title)) }
-        })
-        .collect();
+    let rows = list.iter().map(|w| Row { text: work_line(w, verb, by_label), rec: Some(rec(module, kind, w.id, &w.title)) }).collect();
     let mut filters = vec![];
     if let Some(s) = status {
         filters.push(status_text(s, verb));
@@ -1158,6 +1318,14 @@ fn films_view(conn: &Connection, a: &Args) -> Result<Found, String> {
 
 // ---------- 随意画画 ----------
 
+fn pace_text(p: &drawing::Pace) -> String {
+    match (p.months_left, &p.finish) {
+        (Some(0), _) => "全部画完了".into(),
+        (Some(m), Some(f)) => format!("还剩 {} 节，最近 {} 个月画完 {} 节（每月约 {:.1} 节），照这个速度还要约 {m} 个月，{}前后画完", p.remaining, drawing::PACE_MONTHS, p.recent, p.rate, month_text(f)),
+        _ => format!("还剩 {} 节，最近 {} 个月没有画完的，没法估计什么时候画完", p.remaining, drawing::PACE_MONTHS),
+    }
+}
+
 fn lesson_status(s: Mark) -> &'static str {
     match s {
         Mark::Done => "已完成",
@@ -1177,22 +1345,26 @@ fn drawing_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, Strin
     let courses = drawing::courses(conn)?;
     match a.view(&["courses", "lessons"])? {
         "courses" => {
-            let since = &common::add_days(today, -182)[..7];
             let mut rows = vec![];
+            let mut everything = vec![];
             for c in &courses {
                 let lessons = drawing::lessons(conn, c.id)?;
                 let next = lessons.iter().find(|l| l.status == Mark::Doing).or_else(|| lessons.iter().find(|l| l.status != Mark::Done));
-                let recent = lessons.iter().filter(|l| l.status == Mark::Done && l.finished_month.as_deref().is_some_and(|m| m >= since)).count();
                 let bits = vec![
                     format!("完成 {} / {} 节", c.done, c.total),
                     if c.doing > 0 { format!("进行中 {} 节", c.doing) } else { String::new() },
-                    next.map(|l| format!("下一节：{}", lesson_title(l))).unwrap_or_else(|| if c.total > 0 { "全部画完了".into() } else { "还没有课节".into() }),
-                    format!("最近 6 个月画完 {recent} 节"),
+                    next.map(|l| format!("下一节：{}", lesson_title(l))).unwrap_or_default(),
+                    if c.total > 0 { pace_text(&drawing::pace(&lessons, today)) } else { "还没有课节".into() },
                 ];
                 rows.push(Row { text: format!("- {}（{}）", c.name, join_bits(bits)), rec: Some(rec("drawing", "course", c.id, &c.name)) });
+                everything.extend(lessons);
             }
             let (done, total): (i64, i64) = courses.iter().fold((0, 0), |(d, t), c| (d + c.done, t + c.total));
-            Ok(Found::new(format!("课程进度（{} 门）", courses.len()), vec![format!("今天 {today}。{} 门课一共 {total} 节，完成 {done} 节。", courses.len())]).rows(rows))
+            let head = vec![
+                format!("今天 {today}。速度 = 最近 {} 个月（含本月）画完的节数 ÷ {}；预计 = 还剩的节数 ÷ 速度，向上取整。", drawing::PACE_MONTHS, drawing::PACE_MONTHS),
+                format!("全部 {} 门课一共 {total} 节，完成 {done} 节，还剩 {} 节；一起算：{}。", courses.len(), total - done, pace_text(&drawing::pace(&everything, today))),
+            ];
+            Ok(Found::new(format!("课程进度（{} 门，还剩 {} 节）", courses.len(), total - done), head).rows(rows))
         }
         _ => {
             let want = a.str("course").map(|s| s.to_lowercase());
@@ -1258,19 +1430,33 @@ fn packing_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, Strin
                     .ok_or("还没有出行")?,
             };
             let items = packing::items(conn, packing::List::Trip, t.id)?;
+            let when = match t.depart_on.as_deref() {
+                Some(d) if d >= today => format!("出发 {d}（还有 {} 天）", common::day_number(d) - common::day_number(today)),
+                Some(d) => format!("{d} 出发的（已经过去了）"),
+                None => "没定出发日期".into(),
+            };
             let head = vec![format!(
-                "{}：{}，{} 件，已装好 {} 件（✓ 是装好的）{}。",
+                "{}：{when}，{} 件，已装好 {} 件（✓ 是装好的）{}{}。",
                 t.name,
-                t.depart_on.clone().map(|d| format!("出发 {d}")).unwrap_or_else(|| "没定出发日期".into()),
                 t.total,
                 t.packed,
+                t.template_name.as_deref().map(|n| format!("；用的模板：{n}")).unwrap_or_default(),
                 t.note.as_deref().map(|n| format!("；备注：{}", clip(n, 80))).unwrap_or_default()
             )];
             let mut rows = items_by_kind(&items, &names);
             if let Some(first) = rows.first_mut() {
                 first.rec = Some(rec("packing", "trip", t.id, &t.name));
             }
-            Ok(Found::new(format!("{}的清单（{} 件）", t.name, t.total), head).rows(rows))
+            let missing = packing::maybe_missing(conn, t.id)?
+                .into_iter()
+                .map(|(name, kind, n, own)| {
+                    let k = kind.and_then(|k| names.get(&k).cloned()).unwrap_or_else(|| "其他".into());
+                    row(format!("- {name}（{k}，{n} 个清单里有{}）", if own { "，这次用的模板里有" } else { "" }))
+                })
+                .collect();
+            Ok(Found::new(format!("{}的清单（{} 件）", t.name, t.total), head)
+                .section("这次的清单", rows)
+                .section("模板或以前的出行里有、这次清单里没有的（这次的模板里有的在前，再按出现次数）", missing))
         }
         _ => {
             let templates = packing::templates(conn)?;
@@ -1303,18 +1489,64 @@ fn notes_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String>
     match a.view(&["search", "recent", "tags"])? {
         "search" => {
             let q = a.str("keyword").ok_or("search 要填 keyword")?;
+            let words: Vec<String> = q.split_whitespace().take(8).map(str::to_lowercase).collect();
             let dated = a.str("from").is_some() || a.str("to").is_some();
             let (from, to) = a.range("1900-01-01".into(), today.to_string())?;
-            let f = notes::Filter { q: Some(q.clone()), tag: tag.clone(), from: dated.then(|| from.clone()), to: dated.then(|| to.clone()), ..Default::default() };
-            let list = notes::list(conn, &f)?;
+            let f = notes::Filter { tag: tag.clone(), from: dated.then(|| from.clone()), to: dated.then(|| to.clone()), ..Default::default() };
+            // any word counts; more words found first, then the newest
+            let mut hits: Vec<(usize, notes::Note)> = notes::list(conn, &f)?
+                .into_iter()
+                .map(|n| {
+                    let text = n.content.to_lowercase();
+                    (words.iter().filter(|w| text.contains(w.as_str())).count(), n)
+                })
+                .filter(|(k, _)| *k > 0)
+                .collect();
+            hits.sort_by(|x, y| y.0.cmp(&x.0).then_with(|| y.1.created_at.cmp(&x.1.created_at)));
+            let list: Vec<notes::Note> = hits.into_iter().map(|(_, n)| n).collect();
             let when = if dated { format!("{}，", span(&from, &to)) } else { String::new() };
-            Ok(Found::new(format!("「{q}」{tag_text}相关的笔记（{} 条）", list.len()), vec![format!("{when}{tag_text}含「{q}」的笔记 {} 条，新的在前。", list.len())]).rows(note_rows(conn, &list)))
+            let mut head = vec![format!("{when}{tag_text}含「{}」里任意一个词的笔记 {} 条，含的词多的在前，同样多的新的在前。", words.join(" "), list.len())];
+            if list.is_empty() {
+                head.push("没找到：可以换几个相关的词、或者去掉时间和标签再查。".into());
+            }
+            Ok(Found::new(format!("「{q}」{tag_text}相关的笔记（{} 条）", list.len()), head).rows(note_rows(conn, &list)))
         }
         "recent" => {
-            let (from, to) = a.range(common::add_days(today, -29), today.to_string())?;
-            let f = notes::Filter { tag: tag.clone(), from: Some(from.clone()), to: Some(to.clone()), ..Default::default() };
-            let list = notes::list(conn, &f)?;
-            Ok(Found::new(format!("{}{tag_text}的笔记（{} 条）", span(&from, &to), list.len()), vec![format!("{}（{from} 至 {to}）{tag_text}记了 {} 条，新的在前。", span(&from, &to), list.len())]).rows(note_rows(conn, &list)))
+            let (mut from, mut to) = a.range(common::add_days(today, -29), today.to_string())?;
+            let mut list = notes::list(conn, &notes::Filter { tag: tag.clone(), from: Some(from.clone()), to: Some(to.clone()), ..Default::default() })?;
+            let mut moved = None;
+            // nothing in the default 30 days: the latest 30 days that have notes
+            if list.is_empty() && a.str("from").is_none() && a.str("to").is_none() {
+                if let Some(latest) = notes::list(conn, &notes::Filter { tag: tag.clone(), ..Default::default() })?.iter().map(|n| local_day(conn, &n.created_at)).max() {
+                    moved = Some(format!("最近 30 天（{from} 至 {to}）没有笔记，下面是最近有笔记的 30 天。"));
+                    (from, to) = (common::add_days(&latest, -29), latest);
+                    list = notes::list(conn, &notes::Filter { tag: tag.clone(), from: Some(from.clone()), to: Some(to.clone()), ..Default::default() })?;
+                }
+            }
+            let mut tags: BTreeMap<&str, usize> = BTreeMap::new();
+            for n in &list {
+                for t in &n.tags {
+                    *tags.entry(t.as_str()).or_default() += 1;
+                }
+            }
+            let mut tags: Vec<(&str, usize)> = tags.into_iter().collect();
+            tags.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(y.0)));
+            let common_tags = tags.iter().take(10).map(|(t, n)| format!("#{t} {n}")).collect::<Vec<_>>().join("、");
+            let mut head: Vec<String> = moved.into_iter().collect();
+            head.push(format!(
+                "{}（{from} 至 {to}）{tag_text}记了 {} 条，新的在前。这段时间用得最多的标签：{}。",
+                span(&from, &to),
+                list.len(),
+                if common_tags.is_empty() { "没有".into() } else { common_tags }
+            ));
+            if list.is_empty() {
+                let latest = notes::overview(conn)?.days.last().map(|d| d.day.clone());
+                head.push(match latest {
+                    Some(d) => format!("这段时间没有笔记；最近一条记于 {d}，可以把时间段往前放再查。"),
+                    None => "还没有笔记。".into(),
+                });
+            }
+            Ok(Found::new(format!("{}{tag_text}的笔记（{} 条）", span(&from, &to), list.len()), head).rows(note_rows(conn, &list)))
         }
         _ => {
             let o = notes::overview(conn)?;
@@ -1336,6 +1568,8 @@ pub fn mock_calls(question: &str, system: &str, offered: &[&str]) -> Vec<ToolCal
     let mut want: Vec<(&str, Value)> = vec![];
     if has(&["跟进"]) {
         want.push(("pomelo_jobs", json!({ "view": "follow_up" })));
+    } else if has(&["进展"]) {
+        want.push(("pomelo_jobs", json!({ "view": "moves" })));
     } else if has(&["漏斗", "投递"]) {
         want.push(("pomelo_jobs", json!({ "view": "stats" })));
     }
@@ -1344,14 +1578,17 @@ pub fn mock_calls(question: &str, system: &str, offered: &[&str]) -> Vec<ToolCal
     } else if has(&["花", "支出", "钱"]) {
         want.push(("pomelo_finance", json!({ "view": "entries", "flow": "out" })));
     }
-    if has(&["待办", "做完", "任务"]) {
+    if has(&["拖", "没动"]) {
+        want.push(("pomelo_todo", json!({ "view": "stuck" })));
+    } else if has(&["待办", "做完", "任务"]) {
         want.push(("pomelo_todo", json!({ "view": if question.contains("今天") { "today" } else { "done" } })));
     }
+    let works = if has(&["推荐"]) { json!({ "view": "taste" }) } else { json!({ "view": "list", "status": "done" }) };
     if has(&["书"]) {
-        want.push(("pomelo_books", json!({ "view": "list", "status": "done" })));
+        want.push(("pomelo_books", works.clone()));
     }
     if has(&["电影", "剧", "片"]) {
-        want.push(("pomelo_films", json!({ "view": "list", "status": "done" })));
+        want.push(("pomelo_films", works));
     }
     if has(&["画"]) {
         want.push(("pomelo_drawing", json!({ "view": "courses" })));
@@ -1436,6 +1673,11 @@ pub fn save_query(conn: &Connection, run_id: i64, position: usize, round: usize,
     )
     .map(|_| ())
     .map_err(common::err)
+}
+
+pub fn queries_of_message(conn: &Connection, message_id: i64) -> Result<Vec<Query>, String> {
+    let run: Option<i64> = conn.query_row("SELECT run_id FROM messages WHERE id = ?1", [message_id], |r| r.get(0)).map_err(common::err)?;
+    run.map_or(Ok(vec![]), |r| queries_of(conn, r))
 }
 
 pub fn queries_of(conn: &Connection, run_id: i64) -> Result<Vec<Query>, String> {
@@ -1699,6 +1941,161 @@ pub mod tests {
                 assert!(super::super::context::estimate(&a.text) <= MAX_RESULT + 200);
             }
         }
+    }
+
+    #[test]
+    fn stuck_tasks_and_idle_goals() {
+        let c = memory_db();
+        let g = todo::create_group(&c, "学习").unwrap().id;
+        let goal = todo::create_goal(&c, from(json!({ "groupId": g, "name": "论文" }))).unwrap().id;
+        let busy = todo::create_goal(&c, from(json!({ "groupId": g, "name": "健身" }))).unwrap().id;
+        todo::create_task_on(&c, from(json!({ "groupId": g, "goalId": goal, "title": "交开题报告", "dueDate": "2026-10-01" })), TODAY).unwrap();
+        let old = todo::create_task_on(&c, from(json!({ "groupId": g, "title": "整理书架" })), TODAY).unwrap().id;
+        c.execute("UPDATE todo_tasks SET created_at = '2026-09-01T04:00:00Z' WHERE id = ?1", [old]).unwrap();
+        todo::create_task_on(&c, from(json!({ "groupId": g, "title": "新加的" })), TODAY).unwrap();
+        let ran = todo::create_task_on(&c, from(json!({ "groupId": g, "goalId": busy, "title": "跑步" })), TODAY).unwrap().id;
+        todo::set_done_on(&c, ran, true, TODAY).unwrap();
+        let r = ask(&c, &all(), "pomelo_todo", json!({ "view": "stuck" }));
+        assert_eq!(r.label, "一步一步 · 拖着的任务和没动的目标（过期 1 件，久没动 1 件，目标 1 个）");
+        assert!(r.text.contains("过期的（过期久的在前）：\n- 交开题报告（截止 2026-10-01 · 过期 11 天 · 学习 / 论文）"), "{}", r.text);
+        assert!(r.text.contains("- 整理书架（学习） · 加入于 2026-09-01，41 天了"), "{}", r.text);
+        assert!(r.text.contains("没动的目标：\n- 论文（进度 0 / 1 · 还没有完成过 · 学习）"), "{}", r.text);
+        assert!(!r.text.contains("新加的") && !r.text.contains("健身"));
+    }
+
+    #[test]
+    fn job_moves_in_a_fortnight() {
+        let c = memory_db();
+        seed_jobs(&c);
+        let r = ask(&c, &all(), "pomelo_jobs", json!({ "view": "moves" }));
+        assert_eq!(r.label, "投石问路 · 2026 年 9 月 29 日 – 10 月 12 日的进展（2 步）");
+        assert!(r.text.contains("勾了 2 步，涉及 2 份投递；其中新投出 2 份"), "{}", r.text);
+        assert!(r.text.contains("- 2026-10-10 丙公司 · 产品经理：已投递（现在：已投递）\n- 2026-10-01 乙公司"), "{}", r.text);
+    }
+
+    #[test]
+    fn taste_for_recommendations() {
+        let c = memory_db();
+        for (t, by, country, rating, status) in [("沙丘", "赫伯特", "美国", Some(5), "done"), ("三体", "刘慈欣", "中国", Some(4), "done"), ("平庸之作", "某人", "美国", Some(2), "done"), ("想读的", "某人", "日本", None, "todo")] {
+            books::create(&c, from(json!({ "title": t, "author": by, "country": country, "rating": rating, "status": status, "finishedYear": if status == "done" { Some("2025") } else { None } }))).unwrap();
+        }
+        let r = ask(&c, &all(), "pomelo_books", json!({ "view": "taste" }));
+        assert_eq!(r.label, "摸鱼读读 · 口味（4 星以上 2 本）");
+        assert!(r.text.contains("读完的 3 本里，打了 4 星以上的 2 本（含重读的星级）"), "{}", r.text);
+        assert!(r.text.contains("国家：中国 1、美国 1"), "{}", r.text);
+        assert!(r.text.contains("4 星以上的（星级高的在前）：\n- 《沙丘》（作者 赫伯特 · 美国 · 未分类 · 已读 · 2025 读完 · ★5）\n- 《三体》"), "{}", r.text);
+        assert!(r.text.contains("已经在单子里的（全部 4 本）：\n- 《沙丘》、《三体》、《平庸之作》、《想读的》"), "{}", r.text);
+        assert_eq!(r.records.len(), 2);
+    }
+
+    #[test]
+    fn notes_by_any_word_and_recent_topics() {
+        let c = memory_db();
+        for (text, at) in [("晨跑五公里 #运动", "2026-10-10T01:00:00Z"), ("读书时想到跑步的节奏 #读书", "2026-10-09T01:00:00Z"), ("读完一本书 #读书", "2026-10-08T01:00:00Z"), ("很久以前 #读书", "2026-01-01T01:00:00Z")] {
+            let id = notes::create(&c, from(json!({ "content": text }))).unwrap().id;
+            c.execute("UPDATE notes SET created_at = ?1 WHERE id = ?2", (at, id)).unwrap();
+        }
+        let r = ask(&c, &all(), "pomelo_notes", json!({ "view": "search", "keyword": "跑步 读书" }));
+        assert_eq!(r.label, "念念不忘 · 「跑步 读书」相关的笔记（3 条）");
+        let order: Vec<&str> = r.text.lines().filter(|l| l.starts_with("- ")).map(|l| l.split('：').nth(1).unwrap_or("")).collect();
+        assert!(order[0].starts_with("读书时想到跑步"), "{order:?}"); // both words first
+        let r = ask(&c, &all(), "pomelo_notes", json!({ "view": "recent" }));
+        assert!(r.label.ends_with("的笔记（3 条）"), "{}", r.label);
+        assert!(r.text.contains("这段时间用得最多的标签：#读书 2、#运动 1。"), "{}", r.text);
+    }
+
+    #[test]
+    fn recent_notes_fall_back_to_the_latest_month_with_notes() {
+        let c = memory_db();
+        let id = notes::create(&c, from(json!({ "content": "旧想法 #读书" }))).unwrap().id;
+        c.execute("UPDATE notes SET created_at = ?1 WHERE id = ?2", ("2026-02-20T04:00:00Z", id)).unwrap();
+        let r = ask(&c, &all(), "pomelo_notes", json!({ "view": "recent" }));
+        assert!(r.text.starts_with("最近 30 天（2026-09-13 至 2026-10-12）没有笔记，下面是最近有笔记的 30 天。"), "{}", r.text);
+        assert!(r.label.ends_with("的笔记（1 条）") && r.text.contains("旧想法"), "{}", r.text);
+        // a range the model chose stays as asked
+        let r = ask(&c, &all(), "pomelo_notes", json!({ "view": "recent", "from": "2026-09-01" }));
+        assert!(r.text.contains("记了 0 条") && r.text.contains("最近一条记于 2026-02-20"), "{}", r.text);
+    }
+
+    #[test]
+    fn drawing_pace_and_finish() {
+        let lesson = |status: Mark, month: Option<&str>| drawing::Lesson { id: 0, course_id: 1, code: None, kind_id: None, title: "x".into(), status, finished_month: month.map(String::from), note: None, sort_order: 0, created_at: String::new(), updated_at: String::new() };
+        let mut ls: Vec<drawing::Lesson> = ["2026-05", "2026-06", "2026-08", "2026-09", "2026-10", "2026-10"].iter().map(|m| lesson(Mark::Done, Some(m))).collect();
+        ls.push(lesson(Mark::Done, Some("2026-04"))); // before the six months
+        ls.extend((0..4).map(|_| lesson(Mark::Todo, None)));
+        let p = drawing::pace(&ls, TODAY);
+        assert_eq!((p.recent, p.remaining, p.months_left, p.finish.as_deref()), (6, 4, Some(4), Some("2027-02")));
+        assert_eq!(pace_text(&p), "还剩 4 节，最近 6 个月画完 6 节（每月约 1.0 节），照这个速度还要约 4 个月，2027 年 2 月前后画完");
+        assert_eq!(drawing::pace(&ls[..7], TODAY).months_left, Some(0));
+        assert_eq!(pace_text(&drawing::pace(&ls[6..], TODAY)), "还剩 4 节，最近 6 个月没有画完的，没法估计什么时候画完");
+    }
+
+    #[test]
+    fn what_a_trip_may_have_forgotten() {
+        let c = memory_db();
+        let tp = packing::create_template(&c, from(json!({ "name": "出国" }))).unwrap().id;
+        for n in ["护照", "充电器"] {
+            packing::create_item(&c, packing::List::Template, tp, from(json!({ "name": n }))).unwrap();
+        }
+        let older = packing::create_trip(&c, from(json!({ "name": "去年大阪", "departOn": "2025-12-01" })), None).unwrap().id;
+        packing::create_item(&c, packing::List::Trip, older, from(json!({ "name": "雨伞" }))).unwrap();
+        let trip = packing::create_trip(&c, from(json!({ "name": "东京五天", "departOn": "2026-11-01" })), Some(tp)).unwrap().id;
+        let passport = packing::items(&c, packing::List::Trip, trip).unwrap().into_iter().find(|i| i.name == "护照").unwrap().id;
+        packing::delete_item(&c, packing::List::Trip, passport).unwrap();
+        let missing = packing::maybe_missing(&c, trip).unwrap();
+        assert_eq!(missing.iter().map(|m| (m.0.as_str(), m.2, m.3)).collect::<Vec<_>>(), [("护照", 1, true), ("雨伞", 1, false)]);
+        let r = ask(&c, &all(), "pomelo_packing", json!({ "view": "trip" }));
+        assert!(r.text.starts_with("东京五天：出发 2026-11-01（还有 20 天），1 件，已装好 0 件（✓ 是装好的）；用的模板：出国。"), "{}", r.text);
+        assert!(r.text.contains("- 护照（其他，1 个清单里有，这次用的模板里有）\n- 雨伞（其他，1 个清单里有）"), "{}", r.text);
+    }
+
+    #[test]
+    fn biggest_changes_first_in_cny() {
+        let c = memory_db();
+        seed_finance(&c);
+        let r = ask(&c, &all(), "pomelo_finance", json!({ "view": "assets" }));
+        assert!(r.text.contains("按人民币折算（期末汇率）变化最大的账户：招行 +¥2,000、DBS +S$100（约 +¥540）。"), "{}", r.text);
+        assert!(r.text.contains("- 2026-08-01 ¥2,530（比上次 +¥1,000）\n- 2026-10-01 ¥4,080（比上次 +¥1,550）"), "{}", r.text);
+        assert!(r.text.contains("变化 +S$100（+100.0%，约 +¥540）"), "{}", r.text);
+    }
+
+    #[test]
+    fn earlier_lookups_go_only_where_allowed() {
+        let q = |module: &str, state: &str| Query { module: Some(module.into()), label: format!("{module} 标签"), state: state.into(), result: format!("{module} 的数据"), records: vec![] };
+        let mut r = crate::picky::context::Request {
+            history: vec![Msg::new("user", "问"), Msg::new("assistant", "答")],
+            looked: vec![(0, vec![q("finance", "ok"), q("jobs", "ok"), q("notes", "blocked")])],
+            ..Default::default()
+        };
+        let cloud = Access { cloud: true, cloud_allowed: vec!["jobs".into(), "notes".into()], ..all() };
+        r.with_lookups(|x| cloud.may_send(x));
+        assert_eq!(r.history[0].content, "问\n\n【回答这个问题时查到的柚儿园数据，之后可能有变化】\n### jobs 标签\njobs 的数据");
+        assert_eq!(r.history[1].content, "答");
+        // hidden now: not sent either
+        let mut r2 = crate::picky::context::Request { history: vec![Msg::new("user", "问")], looked: vec![(0, vec![q("jobs", "ok")])], ..Default::default() };
+        let hidden = Access { hidden: vec!["jobs".into()], ..all() };
+        r2.with_lookups(|x| hidden.may_send(x));
+        assert_eq!(r2.history[0].content, "问");
+    }
+
+    #[test]
+    fn follow_ups_and_exports_carry_lookups() {
+        let p = crate::picky::store::tests::memory_db();
+        let b = crate::picky::chat::begin_run(&p, None, None, "这周该跟进哪些投递", "local:x", "X").unwrap();
+        let c = memory_db();
+        seed_jobs(&c);
+        let call = ToolCall { id: "c1".into(), name: "pomelo_jobs".into(), arguments: r#"{"view":"follow_up"}"#.into() };
+        save_query(&p, b.run_id, 0, 1, &call, &Query::of(&ask(&c, &all(), &call.name, json!({ "view": "follow_up" })))).unwrap();
+        crate::picky::chat::finish(&p, b.run_id, b.reply_id, &crate::picky::chat::Outcome { content: "跟进甲公司。".into(), state: "completed", ..Default::default() }).unwrap();
+        let mut next = crate::picky::chat::begin_run(&p, Some(b.session_id), None, "甲公司是哪天投的", "local:x", "X").unwrap().request;
+        assert_eq!(next.looked.len(), 1);
+        next.with_lookups(|x| all().may_send(x));
+        assert!(next.history[0].content.starts_with("这周该跟进哪些投递\n\n【回答这个问题时查到的柚儿园数据，之后可能有变化】\n### 投石问路 · 该跟进的投递"), "{}", next.history[0].content);
+        assert!(next.history[0].content.contains("甲公司 · 产品经理：已投递 2026-09-20"));
+        let md = crate::picky::export::markdown(&p, b.session_id).unwrap();
+        assert!(md.contains("查了：投石问路 · 该跟进的投递（1 份，本周还有 1 份）\n\n<details>\n<summary>查到的内容</summary>"), "{md}");
+        assert!(md.contains("```text\n今天 2026-10-12。"), "{md}");
+        assert!(crate::picky::export::copy_markdown(&p, b.session_id).unwrap().contains("查了：投石问路"));
     }
 
     #[test]

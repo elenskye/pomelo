@@ -4,17 +4,19 @@
 //   switch "‹ 2/3 ›". The newest reply keeps its actions visible; others show them on hover. No branch
 //   changes while a reply is being written. A failed / stopped / interrupted last reply offers 重试.
 // - "已切换到 X" above a question answered by another model than the one before.
-// - 「查了：…」 above a reply that looked things up in Pomelo; unfolds to what each lookup returned.
+// - 「查了：…」 above a reply that looked things up in Pomelo; unfolds to what each lookup returned. Records
+//   the lookups returned are linked where the finished reply names them; a click opens them like 全局搜索.
 // - Follows new text only while the reader is at the bottom (scrolling up stops it; ↓ comes back).
 // - Links open in the browser (Rust); code blocks copy; right-click a formula → 复制 LaTeX; a selection
 //   spanning messages or formulas copies as plain text with formulas as written.
 // - ⌘F finds in the page with the CSS Custom Highlight API (no DOM changes).
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useNavigate } from "react-router";
 import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Pencil, RotateCcw, X } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
-import { pickyApi, type ChatMessage, type Note, type Query, type ReadingProgress } from "./api";
+import { pickyApi, type ChatMessage, type Note, type Query, type QueryRecord, type ReadingProgress } from "./api";
 import { MessageFiles } from "./Files";
 import { UsedMemories } from "./Memory";
 import { MarkdownView } from "./MarkdownView";
@@ -228,6 +230,7 @@ type ItemProps = {
 
 function Item(p: ItemProps) {
   const { m } = p;
+  const links = useMemo(() => (m.queries ?? []).flatMap((q) => q.records), [m.queries]);
   const streaming = m.state === "streaming";
   const divider = p.divider && (
     <div data-find-skip className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -276,7 +279,7 @@ function Item(p: ItemProps) {
           <MarkdownView className="reasoning mt-1 border-l-2 pl-3" source={m.reasoning} streaming={thinkingLive} />
         </details>
       )}
-      {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={streaming} />}
+      {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={streaming} links={streaming ? undefined : links} />}
       {streaming && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">正在生成…</p>}
       {!streaming && <UsedMemories memories={m.memories ?? []} />}
       <Notice m={m} retry={p.last && !p.busy && RETRYABLE.has(m.state) ? p.onRegenerate : undefined} />
@@ -565,9 +568,26 @@ export function Transcript(props: {
     return () => document.removeEventListener("copy", onCopy);
   }, []);
 
-  // ----- clicks inside messages: links, code copy -----
+  // ----- clicks inside messages: records, links, code copy -----
+  const navigate = useNavigate();
+  const openRecord = (el: HTMLElement) => {
+    const r = JSON.parse(el.dataset.record ?? "null") as QueryRecord | null;
+    if (r) void navigate(`/${r.module}`, { state: { open: { ...r, detail: null, parent: r.parent ?? null, day: r.day ?? null, amount: null, currency: null, flow: null } } });
+  };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const rec = (e.target as HTMLElement).closest?.(".record-link") as HTMLElement | null;
+    if (rec && e.key === "Enter") {
+      e.preventDefault();
+      openRecord(rec);
+    }
+  };
   const onClick = (e: React.MouseEvent) => {
     const t = e.target as HTMLElement;
+    const rec = t.closest(".record-link") as HTMLElement | null;
+    if (rec) {
+      openRecord(rec);
+      return;
+    }
     const link = t.closest("a[href]") as HTMLAnchorElement | null;
     if (link && link.closest(".md")) {
       e.preventDefault();
@@ -627,6 +647,7 @@ export function Transcript(props: {
           if (e.deltaY < 0 && distance() > 0) following.current = false;
         }}
         onClick={onClick}
+        onKeyDown={onKeyDown}
         onContextMenu={onContextMenu}
         className="-m-1 min-h-0 flex-1 overflow-y-auto p-1"
       >

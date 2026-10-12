@@ -2,6 +2,8 @@
 //! earlier trip (its items, all unpacked again) — copies the items; afterwards the lists are
 //! independent (history stays intact). A trip copied from a trip records no template.
 //! 类别 = kinds.rs (module "packing"), shared by template items and trip items.
+//! 可能漏的 (小拾): names in the templates or other trips that this trip lacks (case / spaces
+//! ignored), most frequent first; its own template's come first.
 
 use super::common::{self, err, some};
 use super::kinds;
@@ -17,6 +19,22 @@ const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 fn gone(what: &str) -> String {
     format!("找不到这个{what}，可能已经被删除了")
+}
+
+/// What this trip may have forgotten: (name, 类别, how many other lists have it, in its own template).
+pub fn maybe_missing(conn: &Connection, trip_id: i64) -> Result<Vec<(String, Option<i64>, i64, bool)>, String> {
+    let t = trip(conn, trip_id)?;
+    let mut st = conn
+        .prepare(
+            "SELECT min(name), min(kind_id), count(*), max(own) FROM (
+               SELECT name, kind_id, template_id = ?2 AS own FROM packing_template_items
+               UNION ALL SELECT name, kind_id, 0 FROM trip_items WHERE trip_id != ?1)
+             WHERE lower(trim(name)) NOT IN (SELECT lower(trim(name)) FROM trip_items WHERE trip_id = ?1)
+             GROUP BY lower(trim(name)) ORDER BY max(own) DESC, count(*) DESC, min(name)",
+        )
+        .map_err(err)?;
+    let rows = st.query_map(params![trip_id, t.template_id.unwrap_or(-1)], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? == 1))).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
 }
 
 // ---------- templates ----------

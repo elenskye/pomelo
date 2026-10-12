@@ -313,6 +313,14 @@ pub fn assets(conn: &Connection) -> Result<Assets, String> {
     Ok(Assets { balances, rates, totals })
 }
 
+/// 1 unit of `c` in CNY as of `day` (the latest rate up to it; CNY = 1).
+pub fn rate_on(rates: &[Rate], c: Currency, day: &str) -> Option<f64> {
+    if c == Currency::Cny {
+        return Some(1.0);
+    }
+    rates.iter().filter(|r| r.currency == c && r.day.as_str() <= day).max_by(|a, b| a.day.cmp(&b.day)).map(|r| r.rate)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BalanceInput {

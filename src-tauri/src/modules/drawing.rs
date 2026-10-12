@@ -1,5 +1,7 @@
 //! 随意画画 (drawing courses → lessons, progress). 类型 = kinds.rs (module "drawing").
 //! New lessons append to the end of their course; order comes from import / creation.
+//! Pace (小拾 「照现在的速度什么时候画完」): lessons finished in the last `PACE_MONTHS` months (this
+//! month included) ÷ `PACE_MONTHS` = per month; remaining ÷ that, rounded up = months left.
 
 use super::common::{self, err, some, Status};
 use super::kinds;
@@ -238,6 +240,32 @@ fn lesson_row(r: &Row) -> rusqlite::Result<Lesson> {
         created_at: r.get(9)?,
         updated_at: r.get(10)?,
     })
+}
+
+pub const PACE_MONTHS: i64 = 6;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pace {
+    /// Finished in the last PACE_MONTHS months.
+    pub recent: i64,
+    pub remaining: i64,
+    /// Lessons per month.
+    pub rate: f64,
+    /// None: nothing finished lately, so no estimate. 0 = all done.
+    pub months_left: Option<i64>,
+    /// YYYY-MM it would be done in.
+    pub finish: Option<String>,
+}
+
+/// `lessons`: one course's (or several); `today`: YYYY-MM-DD.
+pub fn pace(lessons: &[Lesson], today: &str) -> Pace {
+    let this = format!("{}-01", &today[..7]);
+    let since = common::add_months(&this, 1 - PACE_MONTHS)[..7].to_string();
+    let recent = lessons.iter().filter(|l| l.status == Status::Done && l.finished_month.as_deref().is_some_and(|m| m >= since.as_str() && m <= &today[..7])).count() as i64;
+    let remaining = lessons.iter().filter(|l| l.status != Status::Done).count() as i64;
+    let rate = recent as f64 / PACE_MONTHS as f64;
+    let months_left = if remaining == 0 { Some(0) } else if recent == 0 { None } else { Some((remaining as f64 / rate).ceil() as i64) };
+    Pace { recent, remaining, rate, months_left, finish: months_left.map(|m| common::add_months(&this, m)[..7].to_string()) }
 }
 
 pub fn lessons(conn: &Connection, course_id: i64) -> Result<Vec<Lesson>, String> {

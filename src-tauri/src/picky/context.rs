@@ -1,5 +1,8 @@
 //! Fitting a conversation into the model's context window, and summarising earlier turns (from
 //! Picky's ContextBudget / ContextSummaries):
+//! - Earlier lookups in Pomelo (v0.3.5): the results of the last `LOOKED_TURNS` replies that looked
+//!   things up go with the question that led to them (clipped), once chat.rs has checked each one may
+//!   still be read and sent to this model (`with_lookups`).
 //! - A request = system (the composed instructions) + the applicable summary + the history after it
 //!   + the new question. The question, instructions and summary always go; history is added from
 //!   the newest message back while it fits, leaving `reserve` tokens for the reply (the reply's
@@ -112,7 +115,13 @@ pub struct Turn {
     pub role: String,
     pub content: String,
     pub state: String,
+    /// Replies: what they looked up in Pomelo.
+    pub queries: Vec<super::data::Query>,
 }
+
+/// Replies whose lookups follow-up questions still get, and how much of each result.
+pub const LOOKED_TURNS: usize = 3;
+pub const LOOKED_RESULT: i64 = 1500;
 
 impl Turn {
     /// Questions always count; replies only once finished with some text (a stopped reply's text
@@ -137,9 +146,21 @@ pub struct Request {
     pub prompt: String,
     /// Material sent with the question (reading.rs); set by chat.rs.
     pub sources: Vec<super::reading::Source>,
+    /// Earlier lookups: (history index of the question, what its reply looked up).
+    pub looked: Vec<(usize, Vec<super::data::Query>)>,
 }
 
 impl Request {
+    /// Adds the earlier lookups `allowed` lets through to their questions (the last LOOKED_TURNS).
+    pub fn with_lookups(&mut self, allowed: impl Fn(&super::data::Query) -> bool) {
+        let looked = std::mem::take(&mut self.looked);
+        for (i, queries) in looked.iter().rev().take(LOOKED_TURNS) {
+            let parts: Vec<String> = queries.iter().filter(|q| q.state == "ok" && allowed(q)).map(|q| format!("### {}\n{}", q.label, clip_tokens(&q.result, LOOKED_RESULT))).collect();
+            if let (false, Some(m)) = (parts.is_empty(), self.history.get_mut(*i)) {
+                m.content = format!("{}\n\n【回答这个问题时查到的柚儿园数据，之后可能有变化】\n{}", m.content, parts.join("\n\n"));
+            }
+        }
+    }
     /// Everything, before fitting.
     #[cfg(test)]
     pub fn messages(&self) -> Vec<Msg> {
@@ -168,21 +189,37 @@ impl Request {
     }
 }
 
+/// `text` cut by lines to about `max` tokens (estimated).
+fn clip_tokens(text: &str, max: i64) -> String {
+    if estimate(text) <= max {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    for line in text.lines() {
+        if estimate(&out) + estimate(line) > max {
+            out.push_str("……（后面略）");
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// The request for a question asked after `turns` (the path before it) in `session_id`.
 pub fn request(conn: &Connection, session_id: i64, turns: &[Turn], prompt: &str) -> Result<Request, String> {
     let system = super::instructions::text(&super::instructions::preview(conn, Some(session_id), None, None)?.layers);
     let ids: Vec<i64> = turns.iter().map(|t| t.id).collect();
     let summary = applicable(conn, session_id, &ids)?;
     let start = summary.as_ref().and_then(|s| ids.iter().position(|id| *id == s.through)).map_or(0, |i| i + 1);
-    Ok(Request {
-        system,
-        memory: String::new(),
-        data: String::new(),
-        summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)),
-        history: turns[start..].iter().filter(|t| t.in_history()).map(|t| Msg::new(&t.role, &t.content)).collect(),
-        prompt: prompt.to_string(),
-        sources: vec![],
-    })
+    let (mut history, mut looked) = (vec![], vec![]);
+    for t in turns[start..].iter().filter(|t| t.in_history()) {
+        if t.role == "assistant" && !t.queries.is_empty() && history.last().is_some_and(|m: &Msg| m.role == "user") {
+            looked.push((history.len() - 1, t.queries.clone()));
+        }
+        history.push(Msg::new(&t.role, &t.content));
+    }
+    Ok(Request { system, memory: String::new(), data: String::new(), summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)), history, prompt: prompt.to_string(), sources: vec![], looked })
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -509,17 +546,23 @@ pub async fn picky_context(app: AppHandle, session_id: i64, prompt: String) -> R
     let Ok(route) = st.picky.measure_route() else { return Ok(None) };
     let (req, summarizable) = st.picky.with_db(|c| {
         let shown = chat::path(c, session_id)?;
-        let turns: Vec<Turn> = shown.iter().map(|m| Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone() }).collect();
+        let turns: Vec<Turn> = shown.iter().map(|m| Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries: m.queries.clone() }).collect();
         let summarizable = shown.iter().any(|m| m.role == "assistant" && m.state == "complete" && !m.content.trim().is_empty());
         Ok((request(c, session_id, &turns, prompt.trim())?, summarizable))
     })?;
     let window = window(&route).await;
     let counter = Counter::for_target(&route.target);
-    // as sending will: room kept for looking things up in Pomelo
+    // as sending will: earlier lookups that may go, room kept for looking things up in Pomelo
     let (mut req, mut kept) = (req, 0);
-    if let Some(l) = chat::lookup_plan(&app, &route, &counter).await {
-        req.data = l.instructions();
-        kept = l.kept(window);
+    match chat::access_for(&app, &route) {
+        Some((access, today)) => {
+            req.with_lookups(|q| access.may_send(q));
+            if let Some(l) = chat::lookup_plan(access, today, &counter).await {
+                req.data = l.instructions();
+                kept = l.kept(window);
+            }
+        }
+        None => req.looked.clear(),
     }
     let sizes = Sizes::of(&req, &counter).await;
     Ok(Some(Assessment { summarizable, ..assess(&sizes, window - kept) }))
@@ -580,7 +623,7 @@ mod tests {
         assert!(fit(&req, &sizes(7000, &[]), 8192).unwrap_err().starts_with("这条消息太长"));
         let big = Sizes { system: Some(7000), ..sizes(10, &[]) };
         assert!(fit(&req, &big, 8192).unwrap_err().starts_with("指令或摘要太长"));
-        let req = Request { system: "s".into(), memory: "m".into(), data: String::new(), summary: Some("摘要".into()), history: vec![Msg::new("user", "旧"), Msg::new("assistant", "答")], prompt: "q".into(), sources: vec![] };
+        let req = Request { system: "s".into(), memory: "m".into(), data: String::new(), summary: Some("摘要".into()), history: vec![Msg::new("user", "旧"), Msg::new("assistant", "答")], prompt: "q".into(), sources: vec![], looked: vec![] };
         let (msgs, _) = fit(&req, &Sizes { system: Some(1), summary: Some(1), history: vec![7000, 10], prompt: 1 }, 8192).unwrap();
         assert_eq!(msgs.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["s\n\nm", "摘要", "答", "q"]);
     }

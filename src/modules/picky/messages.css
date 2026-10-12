@@ -24,6 +24,10 @@
 .md hr { border: 0; border-top: 1px solid var(--border); }
 .md a { color: var(--primary); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
+/* a record named in a reply (its lookups returned it): opens like 全局搜索 */
+.md .record-link { text-decoration: underline dotted; text-decoration-color: var(--muted-foreground); text-underline-offset: 3px; cursor: pointer; border-radius: 3px; outline: none; }
+.md .record-link:hover { color: var(--primary); text-decoration-color: var(--primary); }
+.md .record-link:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
 .md a .ext { display: inline-block; width: 0.8em; height: 0.8em; margin-left: 0.1em; vertical-align: -0.05em; }
 .md .img-link { color: var(--muted-foreground); }
 .md :not(pre) > code {
