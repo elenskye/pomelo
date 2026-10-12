@@ -31,12 +31,21 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - 个人数据（xlsx、数据库、备份、导出文件、`prototype/`）不进 Git。
 - **芝麻开门**：密码只以密文存（规则见 `modules/vault.rs` 开头）。不要把它的命令做成 AI 工具，不要加进导出和全局搜索，不要向我要主密码；测试只用临时目录和自己编的测试主密码，不往真实钥匙串写东西（单元测试用 `secure.rs` 的假实现）。
 
+## 小拾（AI）
+
+- 需求见 `requirements.md` 的「小拾」，进度见 `roadmap.md`。原来的 Picky 已停用，它的项目和数据都删了。
+- 小拾的数据只在 `picky.db`（自己的升级脚本和版本号）；不为小拾给 `pomelo.db` 加 migration。
+- 开发和测试只用模拟模型和假的流式服务（用 TS 或 Rust 写，不用 Picky 的 Python 脚本）：不调 `llmctl.sh` / `embeddingctl.sh`，不连真实的 8080 / 8081 和云端，不读写钥匙串；要用真模型先问我。`~/Documents/LLM` 里的东西一律不改。运行方式由 `picky::mode` 决定：只有正式数据目录的打包版（或 `POMELO_REAL_MODELS=1`）是真实的，开发版、测试、设了 `POMELO_DATA_DIR` 的打包版都是模拟。
+- 打包用钥匙串里的自签名证书 `Pomelo Self-Signed` 签名（`tauri.conf.json`），这样更新后钥匙串里的 Key 还能读；不要改回临时签名。
+- 启停模型、芝麻开门的命令永远不做成 AI 工具；云端 Key 只在钥匙串，不进数据库、日志、导出。
+- 小拾查数据（v0.3.5 起）只调用各模块的只读函数，任何写数据的命令都不做成工具；能不能读、这次能不能发给云端都在 Rust 里判断（芝麻开门、隐藏的模块挡掉），界面只传当前页面和记录编号，不传记录内容。合计和统计只写一份：查询和页面共用 Rust 函数，还在界面里算的先搬进 Rust。模拟模型和 `mockIpc.ts` 都要能模拟查数据。
+
 ## 界面规则
 
 - 不写使用提示（快捷键、怎么操作、撤销提醒、输入框示例）；列表行只放最必要的信息。细则见 `docs/design.md`。
 - 图表用 `src/shared/charts.tsx`，颜色只用 `--chart-*`；新增模块颜色要同时写进 `index.css` 和 `design.md`。
 - 能滚动的区域用 `-m-1 … p-1`，焦点框才不会被切掉。
-- 字体只用 `font-sans`（`index.css` 里的 `Pomelo Hand`），不要直接写 `Hannotate SC`，否则粗体会被系统描粗发糊。
+- 字体只用 `font-sans`（`index.css` 里的 `Pomelo Hand`），不要直接写 `Hannotate SC`，否则粗体会被系统描粗发糊。小拾消息正文用苹方是唯一的例外（见 `design.md`）。
 
 ## 文档规则
 
@@ -50,17 +59,19 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 |---|---|
 | `src-tauri/src/modules/` | 每个模块一个文件：类型、校验、SQL、命令（`todo` `finance` `jobs` `notes` `vault` `books` `films` `drawing` `packing`），文件开头是规则摘要；`kinds.rs` 可自定义的类型；`common.rs` 校验、日期、排序、链接、重读重看、`Tx` |
 | `src-tauri/src/search.rs` · `home.rs` | 全局搜索：每个模块搜哪些字段（芝麻开门不搜）· 首页的汇总（一个只读命令） |
-| `src-tauri/src/undo.rs` | 撤销 / 重做（SQLite session） |
+| `src-tauri/src/picky/` | 小拾：`store.rs` picky.db 和它的升级脚本、`runtime.rs` 本地模型和向量服务（llmctl / embeddingctl，含模拟）、`catalog.rs` 模型清单、`cloud.rs` 云端模型和 Key、`provider.rs` 流式连接、`chat.rs` 对话、版本和生成、`library.rs` 列表整理（项目、置顶、归档、拖动）、`find.rs` 搜索（也给 ⌘K）、`export.rs` 导出、`templates.rs` 模板、`instructions.rs` 四层指令和用途预设、`context.rs` 上下文预算和总结、`files.rs` 附件和项目资料（副本、取文字、版本）、`pdf.rs` PDFKit 取文字、`reading.rs` 附件和资料怎么发（放不下就分段阅读）、`data.rs` 查 Pomelo 数据（每个模块的只读查询、能不能读和发给云端、查了什么）、`embed.rs` 向量服务（8081，含模拟）、`index.rs` 资料索引和检索、`memory.rs` 记忆（范围、挑选、/记住）、`transfer.rs` 数据文件里的小拾部分、`storage.rs` 空间管理；`mod.rs` 运行方式、状态和命令。前端 `src/modules/picky/`：`markdown.ts` 消息排版和公式、`Transcript.tsx` 消息区、`Composer.tsx` · `slots.ts` 输入框（「/」菜单、待填位置） |
+| `src-tauri/src/tray.rs` | 菜单栏图标和菜单（关窗口不退出） |
+| `src-tauri/src/undo.rs` | 撤销 / 重做（SQLite session；记得每一步属于 pomelo.db 还是 picky.db） |
 | `src-tauri/src/secure.rs` | 芝麻开门用到的 macOS 功能：钥匙串、Touch ID、剪贴板；测试里换成假的 |
 | `src-tauri/src/transfer.rs` · `backup.rs` | 数据文件导出导入 · 备份、恢复、每日备份 |
 | `src-tauri/src/db.rs` · `migrations/` | 连接、升级脚本列表（含升级测试）· 升级脚本 |
 | `src/home/` | 首页（今天的待办直接用一步一步的组件） |
 | `src/app/` | `App.tsx` 外壳、⌘Z / ⌘K、每天的例行检查；`Sidebar.tsx` 侧栏；`hidden.ts` 隐藏的模块；`Search.tsx` 全局搜索框；`modules.ts` 模块列表 |
-| `src/modules/<模块>/` | 各模块页面（`todo/` `finance/` `jobs/` `notes/` `vault/` `drawing/` `packing/`）；书影共用 `src/shared/collection/`，`books/` `films/` 里只有配置 |
-| `src/settings/` | 设置页；`layout.tsx` 里有带 (?) 说明的行 |
+| `src/modules/<模块>/` | 各模块页面（`todo/` `finance/` `jobs/` `notes/` `vault/` `drawing/` `packing/` `picky/`）；书影共用 `src/shared/collection/`，`books/` `films/` 里只有配置 |
+| `src/settings/` | 设置页；`layout.tsx` 里有带 (?) 说明的行；`Picky.tsx` 小拾的设置，`PickyStorage.tsx` 空间管理 |
 | `src/shared/` | 共用：`Dropdown`、`DateInput`、`MonthInput`（年月 / 年）、`panel`（右侧面板）、`Modal`、`sortable`、`charts`、`settings`（记住界面状态）、`kinds/`、`feedback`、`dates`、`InlineMd`、`open`（从全局搜索、首页打开某条记录：页面用 `useOpenRequest` 接住） |
 | `src/dev/mockIpc.ts` | 浏览器测试用的模拟后端（新命令要加进来） |
-| `scripts/` | 一次性转换：Excel、Markdown 待办、Seeker 投递、Flomo 导出 → `prototype/*.json` |
+| `scripts/` | `install-app.sh` 安装正式版；`flomo-to-pomelo/` Flomo 导出 → `prototype/notes-import.json`（以后补回 Flomo 的图片和录音还要用，靠记录时间对上笔记） |
 
 ## 新增一个模块
 
@@ -79,13 +90,13 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `pnpm app:dev` | 运行开发版 |
 | `pnpm app:build` | 只打包，不安装 |
 | `pnpm app:install` | 打包并安装到「应用程序」，只在我同意时执行 |
-| `pnpm import:xlsx` · `import:todo` · `import:seeker` · `import:flomo` | 一次性转换 → `prototype/*.json`，再到「设置 → 导入」 |
+| `pnpm import:flomo` | Flomo 导出 → `prototype/notes-import.json`，再到「设置 → 导入」 |
 
 ## 验证方法
 
-- **界面**：用 Bash 后台跑 `pnpm dev`（预览面板没有「文稿」权限，自己启动不了），再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据，改了 mock 要刷新页面）。`&notes=prototype` 换成真实的 179 条笔记；芝麻开门用 `&vault=new|open`（默认锁着，测试主密码 `mock-master-1`）、`&touch=fail|none`。截图常慢一拍，面板没显示时截不了图，关键结果用 JS 读页面确认；拖拽用 `left_click_drag` 测。
+- **界面**：用 Bash 后台跑 `pnpm dev`（预览面板没有「文稿」权限，自己启动不了），再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据，改了 mock 要刷新页面）。`&notes=prototype` 换成真实的 179 条笔记；芝麻开门用 `&vault=new|open`（默认锁着，测试主密码 `mock-master-1`）、`&touch=fail|none`；小拾用 `&picky=ready`（一打开就有模拟的本地模型），问题里写「滚动测试」「失败测试」得到长回复 / 失败。截图常慢一拍，面板没显示时截不了图，关键结果用 JS 读页面确认；拖拽用 `left_click_drag` 测。
 - **真实窗口**：`pnpm app:build` 后 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"`，用 `screencapture` 截图看；测完 `pkill -f "target/release/bundle"`（别用 osascript quit，会连正式版一起关）并删掉这个 `.app`。**不要用 osascript 碰 System Events**（发键盘事件、查窗口编号都会弹系统「辅助功能」授权框），截图用 `screencapture -x` 截全屏，交互在浏览器里测。
-- **升级测试（装正式版前做）**：先在正式版二进制里 `grep -c -a` 各 migration 的特征 SQL，确定它在哪个版本（不要读真实数据目录）；在临时目录里用 `sqlite3` 依次执行到那个版本的 migration、`PRAGMA user_version=<版本>`、插几条会被新 migration 改动的数据，再用上面的方法打开新打包的 App，检查版本号、`backups/` 里的「升级前」备份和数据。
+- **升级测试（装正式版前做）**：先在正式版二进制里 `grep -c -a` 各 migration 的特征 SQL，确定它在哪个版本（不要读真实数据目录；`picky.db` 的升级脚本也要查）；在临时目录里用 `sqlite3` 依次执行到那个版本的 migration、`PRAGMA user_version=<版本>`、插几条会被新 migration 改动的数据，再用上面的方法打开新打包的 App，检查版本号、`backups/` 里的「升级前」备份和数据。
 - **真实数据**：`POMELO_SEED_DB=<临时目录>/pomelo.db cargo test --manifest-path src-tauri/Cargo.toml seed_scratch_db -- --ignored` 生成含全部导入文件的临时数据库；`cargo test -- --ignored --skip seed_scratch_db` 跑真实导入文件的测试。打开 App 总是首页；浏览器里想直接看某页用 `/?mock#/finance`。
 
 ## 环境

@@ -177,15 +177,16 @@ const pItemHandlers = (list: "template" | "trip") => {
 };
 
 // ---- backups (file names mirror backup.rs; restore only records the safety copy) ----
-type Backup = { fileName: string; label: string; createdAt: string; size: number };
+type Backup = { fileName: string; store: "pomelo" | "picky"; label: string; createdAt: string; size: number };
 const stamp = (d: Date) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 };
-const mkBackup = (label: string, d = new Date()): Backup => {
+const mkBackup = (label: string, d = new Date(), store: Backup["store"] = "pomelo"): Backup => {
   const s = stamp(d);
   return {
-    fileName: `pomelo-${s}-${label}.db`,
+    fileName: `${store}-${s}-${label}.db`,
+    store,
     label,
     createdAt: `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(9, 11)}:${s.slice(11, 13)}:${s.slice(13, 15)}`,
     size: 98304 + Math.floor(Math.random() * 4096),
@@ -196,9 +197,10 @@ let backups: Backup[] = [
   mkBackup("before-v7", new Date(Date.now() - 2 * 86400000 + 60000)),
   mkBackup("before-import", new Date(Date.now() - 3 * 86400000 + 120000)),
   mkBackup("manual", new Date(Date.now() - 5 * 86400000 + 180000)),
+  ...Array.from({ length: 3 }, (_, i) => mkBackup("daily", new Date(Date.now() - (i + 1) * 86400000 + 1000), "picky")),
 ];
-const addBackup = (label: string) => {
-  const b = mkBackup(label);
+const addBackup = (label: string, d = new Date(), store: Backup["store"] = "pomelo") => {
+  const b = mkBackup(label, d, store);
   backups = [b, ...backups];
   return b;
 };
@@ -1091,6 +1093,33 @@ const jobHandlers: Record<string, (a: Args) => unknown> = {
     const ord = (j: ReturnType<typeof jobOut>) => (j.statusId === null ? 999 : jOrder(j.statusId));
     return jb.jobs.map(jobOut).sort((x, y) => ord(x) - ord(y) || moved(y).localeCompare(moved(x)) || y.id - x.id);
   },
+  /** jobs.rs stats_of */
+  job_stats: () => {
+    const today = mockToday();
+    const week0 = addDays(today, 1 - isoWeekday(today));
+    const js = jb.jobs.map(jobOut);
+    const sts = jSorted().map((st) => ({ ...st, count: jCount(st.id), used: jUsing(st.id) }));
+    const between = (from: string, to: string) => js.filter((j) => j.appliedOn && j.appliedOn >= from && j.appliedOn <= to).length;
+    const started = js.filter((j) => j.steps.some((x) => x.done));
+    const firstGot = sts.find((x) => x.stage === "got")?.id;
+    const funnel = sts
+      .filter((x) => x.stage === "applied" || x.stage === "active" || x.id === firstGot)
+      .map((x) => {
+        const mine = started.flatMap((j) => j.steps.filter((y) => y.statusId === x.id));
+        return { statusId: x.id, name: x.name, have: mine.length, done: mine.filter((y) => y.done).length };
+      });
+    return {
+      today,
+      applied: js.filter((j) => j.appliedOn).length,
+      thisWeek: js.filter((j) => j.appliedOn && j.appliedOn >= week0).length,
+      ongoing: js.filter((j) => j.stage === "applied" || j.stage === "active").length,
+      got: js.filter((j) => j.stage === "got").length,
+      funnel,
+      days: Array.from({ length: 30 }, (_, i) => addDays(today, i - 29)).map((d) => ({ from: d, to: d, count: between(d, d) })),
+      weeks: Array.from({ length: 12 }, (_, i) => addDays(week0, (i - 11) * 7)).map((d) => ({ from: d, to: addDays(d, 6), count: between(d, addDays(d, 6)) })),
+      statuses: sts,
+    };
+  },
   job_create: undoable("添加投递", (a) => {
     const j: JRow = { id: nextId++, company: "", position: null, location: null, link: null, kindId: null, resume: null, note: null, followedOn: null, steps: jDefaultSteps(), createdAt: now(), updatedAt: now() };
     jobSave(j, a.patch as Partial<JRow>);
@@ -1475,9 +1504,1049 @@ function homeMock(hidden: string[]) {
   };
 }
 
+// ---- 小拾 (picky): simulated models (start 0.7 s → loading → ready 1.2 s), cloud list + keys, sessions with
+// a linear path, replies streamed over the Channel. `&picky=ready` starts with a local model running.
+type PModel = { key: string; name: string; title: string; note: string | null; quant: string; alias: string; context: number; thinking: boolean; listed: boolean };
+type PIssue = { kind: string; title: string; message: string; details: string | null; actions: { kind: string; key?: string }[] };
+type PMsg = { id: number; role: "user" | "assistant"; content: string; reasoning: string; reasoningMs: number | null; state: string; createdAt: string; model: string | null; error: string | null };
+// ---- phase 5: stored copies, project files (files.rs / index.rs) ----
+type PArtifact = { id: number; name: string; format: "PDF" | "Markdown" | "文本"; pageCount: number | null; byteCount: number; deleted: boolean; path: string; segments: string[] };
+type PFile = { id: number; projectId: number; currentVersion: number; indexed: boolean; versions: { version: number; artifact: number; addedAt: string }[] };
+type PIndex = { kind: string; done?: number; total?: number; message?: string };
+type PUsed = { attachments: number[]; files: { fileId: number; version: number; artifact: number }[] };
+let pPickCount = 0;
+// ---- phase 6: memories (memory.rs) ----
+type PMemory = { id: number; content: string; projectId: number | null; sharedProjectIds: number[]; enabled: boolean; localOnly: boolean; source: string; sourceSessionId: number | null; notedOn: string; createdAt: string; updatedAt: string };
+const pToday = () => toYmd(new Date());
+const pMemoryValid = (t: string) => {
+  const v = t.trim();
+  if (!v || [...v].length > 300) throw "记忆需要 1 至 300 个字。";
+  return v;
+};
+const pModels: PModel[] = (
+  [
+    ["qwen14b", "Qwen3 14B", "Qwen3 14B Abliterated", "Q4_K_M", "qwen3-14b-abliterated", 16384, true],
+    ["qwen359b", "Qwen3.5 9B", "Qwen3.5 9B", "Q8_0", "qwen3.5-9b", 32768, true],
+    ["qwen35heretic9b", "Qwen3.5 9B Heretic", "Qwen3.5 9B Heretic ARA Refusals5", "Q8_0", "qwen3.5-9b-heretic-ara-refusals5", 32768, true],
+    ["ministral14b", "Ministral 3 14B", "Ministral 3 14B Abliterated", "Q4_K_M", "ministral-3-14b-abliterated", 16384, false],
+  ] as const
+).map(([key, name, title, quant, alias, context, thinking]) => ({ key, name, title, note: "模拟清单", quant, alias, context, thinking, listed: true }));
+const pky = {
+  active: (new URLSearchParams(location.search).get("picky") === "ready" ? pModels[1] : null) as PModel | null,
+  readiness: (new URLSearchParams(location.search).get("picky") === "ready" ? "ready" : "idle") as "idle" | "loading" | "ready",
+  op: null as null | { kind: "starting" | "switching" | "stopping"; model: PModel | null },
+  issue: null as PIssue | null,
+  emb: { state: "stopped" as "stopped" | "starting" | "running", working: false },
+  selection: "local",
+  cloud: [
+    { id: "deepseek-flash", name: "DeepSeek Flash", apiModel: "deepseek-flash", service: "deepSeek", contextWindow: 1048576, maxOutputTokens: 8192 },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", apiModel: "deepseek-v4-pro", service: "deepSeek", contextWindow: 1048576, maxOutputTokens: 8192 },
+  ] as { id: string; name: string; apiModel: string; service: string; contextWindow: number; maxOutputTokens: number }[],
+  keys: new Set<string>(),
+  sessions: [] as PSession[],
+  projects: [] as { id: number; name: string; instructions: string; sortOrder: number; includeGlobalMemories?: boolean }[],
+  memories: [] as PMemory[],
+  memoryOn: true,
+  memoryOffSessions: new Set<number>(),
+  runMemories: new Map<number, { memoryId: number | null; content: string; notedOn: string }[]>(),
+  manual: new Set<string>(),
+  ui: new Map<string, unknown>(),
+  run: null as null | { id: number; session: number; kind: "reply" | "summary"; msg: PMsg | null; timer: number; done: (state: string, error: string | null) => void; reading?: { current: number; total: number; label: string } | null },
+  templates: [] as { id: number; title: string; category: string; body: string; pinnedAt: string | null; lastUsedAt: string | null }[],
+  presets: [] as { id: number; name: string; content: string }[],
+  global: "",
+  summaries: [] as { id: number; sessionId: number; through: number; content: string }[],
+  artifacts: [] as PArtifact[],
+  files: [] as PFile[],
+  /** project file → index job state; built indexes by artifact */
+  jobs: new Map<number, PIndex>(),
+  built: new Set<number>(),
+  used: new Map<number, PUsed>(),
+  notes: new Map<number, { label: string; content: string }[]>(),
+  // ---- v0.3.5: lookups in Pomelo (data.rs) ----
+  queries: new Map<number, PQuery[]>(),
+  dataCloud: new Map<string, boolean>(),
+  // ---- phase 7: space (storage.rs) ----
+  strays: [{ name: "a3f9c2-导入失败留下的.pdf", bytes: 245000 }],
+};
+const pOldEmpty = (s: PSession) => !s.nodes.length && Date.now() - Date.parse(s.updatedAt) > 30 * 86400000;
+const pInfo = (a: PArtifact) => ({ id: a.id, name: a.name, format: a.format, pageCount: a.pageCount, byteCount: a.byteCount, deleted: a.deleted });
+const pArt = (id: number) => {
+  const a = pky.artifacts.find((x) => x.id === id);
+  if (!a || a.deleted) throw "附件不存在了，请重新选择";
+  return a;
+};
+const pCurrent = (f: PFile) => pky.artifacts.find((a) => a.id === f.versions.find((v) => v.version === f.currentVersion)?.artifact);
+const pMemoryPlan = (sessionId: number | null, projectId: number | null, draftOff: boolean, nextOff: boolean) => {
+  const sess = sessionId != null ? pky.sessions.find((x) => x.id === sessionId) : null;
+  const project = sess ? sess.projectId : projectId;
+  const conversationOff = sess ? pky.memoryOffSessions.has(sess.id) : draftOff;
+  const out = { off: null as string | null, count: 0, global: 0, project: 0, shared: 0, skippedLocalOnly: 0, conversationOff, candidates: [] as PMemory[] };
+  if (!pky.memoryOn) out.off = "everywhere";
+  else if (conversationOff) out.off = "conversation";
+  else if (nextOff) out.off = "nextMessage";
+  if (out.off) return out;
+  const includeGlobal = pky.projects.find((x) => x.id === project)?.includeGlobalMemories ?? true;
+  const cloud = pky.selection.startsWith("cloud:");
+  for (const m of [...pky.memories].reverse()) {
+    if (!m.enabled) continue;
+    const applies = project == null ? m.projectId == null : m.projectId == null ? includeGlobal : m.projectId === project || m.sharedProjectIds.includes(project);
+    if (!applies) continue;
+    if (cloud && m.localOnly) {
+      out.skippedLocalOnly++;
+      continue;
+    }
+    if (m.projectId == null) out.global++;
+    else if (m.projectId === project) out.project++;
+    else out.shared++;
+    out.candidates.push(m);
+  }
+  out.count = out.candidates.length;
+  return out;
+};
+const pFileView = (f: PFile) => {
+  const cur = pCurrent(f);
+  const index = !f.indexed ? { kind: "none" } : (pky.jobs.get(f.id) ?? (cur && pky.built.has(cur.id) ? { kind: "ready" } : { kind: "incomplete" }));
+  return { id: f.id, projectId: f.projectId, currentVersion: f.currentVersion, indexed: f.indexed, versions: f.versions.map((v) => ({ version: v.version, addedAt: v.addedAt, file: pInfo(pky.artifacts.find((a) => a.id === v.artifact)!) })), index };
+};
+const pBuild = (f: PFile) => {
+  const total = 8;
+  let done = 0;
+  pky.jobs.set(f.id, { kind: "building", done, total });
+  const tick = () => {
+    if (pky.jobs.get(f.id)?.kind !== "building") return;
+    done += 1;
+    if (done >= total) {
+      pky.jobs.delete(f.id);
+      const cur = pCurrent(f);
+      if (cur && f.indexed) pky.built.add(cur.id);
+      return;
+    }
+    pky.jobs.set(f.id, { kind: "building", done, total });
+    window.setTimeout(tick, 300);
+  };
+  window.setTimeout(tick, 300);
+};
+const pMessageFiles = (m: PNode) => {
+  const u = pky.used.get(m.id);
+  if (!u) return [];
+  return [
+    ...u.attachments.map((id) => ({ ...pInfo(pky.artifacts.find((a) => a.id === id)!), fileId: null, version: null, label: null })),
+    ...u.files.map((f) => ({ ...pInfo(pky.artifacts.find((a) => a.id === f.artifact)!), fileId: f.fileId, version: f.version, label: f.version > 1 ? `资料 · 第 ${f.version} 版` : "资料" })),
+  ];
+};
+/** What a question sends: attachments of earlier questions and its own, its project files. */
+const pMaterial = (_s: PSession, chain: PNode[], used: PUsed) => {
+  const ids: number[] = [];
+  for (const m of chain) if (m.role === "user") for (const id of pky.used.get(m.id)?.attachments ?? []) if (!ids.includes(id)) ids.push(id);
+  for (const id of used.attachments) if (!ids.includes(id)) ids.push(id);
+  const arts = [...ids, ...used.files.map((f) => f.artifact).filter((id) => !ids.includes(id))].map((id) => pky.artifacts.find((a) => a.id === id)!).filter((a) => a && !a.deleted);
+  return arts.flatMap((a) => a.segments.map((seg, i) => ({ label: `${a.name} · ${a.format === "PDF" ? `第 ${i + 1} 页` : `第 ${i + 1} 段`}`, content: seg })));
+};
+const pPresent = () => {
+  const p = (dot: string, title: string, menuTitle = title, detail = "") => ({ dot, title, menuTitle, detail });
+  if (pky.op?.kind === "switching") return p("loading", `正在切换到 ${pky.op.model!.name}…`);
+  if (pky.op?.kind === "stopping") return p("loading", `正在停止 ${pky.op.model?.name ?? "聊天模型"}…`);
+  if (pky.op?.kind === "starting") return p("loading", `正在加载 ${pky.op.model!.name}…`);
+  if (pky.issue && (!pky.active || pky.issue.kind === "operation")) return p("error", "需要处理", "需要处理", pky.issue.title);
+  if (pky.active && pky.readiness === "ready") return p("ready", pky.active.name, `${pky.active.name} · 已就绪`, "已就绪");
+  if (pky.active) return p("loading", `正在加载 ${pky.active.name}…`);
+  return p("off", "未运行聊天模型", "未运行聊天模型", "未运行");
+};
+const pStatus = () => ({
+  mode: "mock",
+  error: null,
+  local: { models: pModels, catalogError: null, active: pky.active, readiness: pky.readiness, served: pky.readiness === "ready" ? pky.active?.alias ?? null : null, working: !!pky.op, issue: pky.issue, presentation: pPresent() },
+  embedding: { ...pky.emb, text: pky.emb.working ? "正在处理…" : { stopped: "未运行", starting: "正在启动…", running: "已就绪" }[pky.emb.state], issue: null },
+  selection: pky.cloud.some((m) => `cloud:${m.id}` === pky.selection) ? pky.selection : "local",
+  cloud: pky.cloud,
+  keys: (["openRouter", "deepSeek", "openAI"] as const).map((s) => ({ service: s, name: { openRouter: "OpenRouter", deepSeek: "DeepSeek", openAI: "OpenAI" }[s], saved: pky.keys.has(s) })),
+  generating: !!pky.run,
+  activeRun: pky.run?.id ?? null,
+  activeSession: pky.run?.session ?? null,
+  activeKind: pky.run?.kind ?? null,
+  activeReading: pky.run?.reading ?? null,
+});
+const pActivate = (key: string) => {
+  const m = pModels.find((x) => x.key === key);
+  if (!m) return void (pky.issue = { kind: "operation", title: `无法启动 ${key}`, message: "这个模型已不在模型清单中，所以没有启动。", details: null, actions: [{ kind: "openCatalog" }] });
+  pky.op = { kind: pky.active ? "switching" : "starting", model: m };
+  pky.issue = null;
+  pky.active = null;
+  pky.readiness = "idle";
+  setTimeout(() => ((pky.active = m), (pky.readiness = "loading")), 700);
+  setTimeout(() => ((pky.readiness = "ready"), (pky.op = null)), 1900);
+};
+const MOCK_REASONING = "用户想检查排版。先列出要覆盖的格式：标题、列表、引用、表格、代码，\n再放几处不该生效的输入，比如原始 HTML。";
+const MOCK_REPLY = "## 排版自检\n\n这是开发版的**模拟回复**，用来检查消息的显示；正式版才会连接真正的模型。\n这一行紧跟在上一行后面。\n\n### 列表\n\n1. 第一项：包含 `行内代码`\n2. 第二项，下面还有子项：\n   - 子项 A\n   - 子项 B，带一个[链接](https://example.com)\n3. 第三项\n\n> 引用段落：阅读旧消息时，界面不会被拉到底部。\n\n| 模型 | 量化 | 上下文 | 适合的任务 | 备注 |\n| --- | --- | --- | --- | --- |\n| Qwen3 14B | Q4_K_M | 16K | 中文写作、日常问答 | 会先思考再回答 |\n| Qwen3.5 9B | Q8_0 | 32K | 代码解释与长资料阅读 | 源自官方权重的转换版 |\n\n```rust\nfn greet(name: &str) -> String {\n    format!(\"你好，{name}\") // 这一行故意写得很长，用来检查长代码能否横向滚动而不撑破窗口\n}\n```\n\n行内公式 $E = mc^2$，金额 $5 和 $10 不是公式。独立公式：\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n这些应该原样显示：<b>不是粗体</b>。\n\n最后一段。";
+type Emit = (e: Record<string, unknown>) => void;
+// ---- v0.3.5 lookups (picky/data.rs, its mock_calls / mock_answer): a few views for real, the rest generic ----
+type PQuery = { module: string | null; label: string; state: string; result: string; records: { module: string; kind: string; id: number; title: string; day?: string }[] };
+const P_MODULES: [string, string, boolean][] = [
+  ["todo", "一步一步", true], ["books", "摸鱼读读", true], ["films", "好奇看看", true], ["drawing", "随意画画", true],
+  ["packing", "出门走走", true], ["finance", "钱来钱往", false], ["jobs", "投石问路", true], ["notes", "念念不忘", true],
+];
+const pDataCloud = () => P_MODULES.map(([module, label, def]) => ({ module, label, allowed: pky.dataCloud.get(module) ?? def }));
+const pMoney = (cents: number, cur: Cur = "CNY") => {
+  const sym = { CNY: "¥", SGD: "S$", HKD: "HK$", USD: "US$" }[cur];
+  const a = Math.abs(cents);
+  const units = Math.floor(a / 100).toLocaleString("en-US");
+  return `${cents < 0 ? "-" : ""}${sym}${units}${a % 100 ? "." + String(a % 100).padStart(2, "0") : ""}`;
+};
+const pMd = (d: string) => `${Number(d.slice(5, 7))} 月 ${Number(d.slice(8))} 日`;
+const pSpan = (from: string, to: string) => (from.slice(0, 4) === to.slice(0, 4) ? `${from.slice(0, 4)} 年 ${pMd(from)} – ${pMd(to)}` : `${from.slice(0, 4)} 年 ${pMd(from)} – ${to.slice(0, 4)} 年 ${pMd(to)}`);
+const pMockCalls = (q: string): [string, Record<string, string>][] => {
+  const has = (...w: string[]) => w.some((x) => q.includes(x));
+  const out: [string, Record<string, string>][] = [];
+  if (has("跟进")) out.push(["jobs", { view: "follow_up" }]);
+  else if (has("漏斗", "投递")) out.push(["jobs", { view: "stats" }]);
+  if (has("资产")) out.push(["finance", { view: "assets" }]);
+  else if (has("花", "支出", "钱")) out.push(["finance", { view: "entries" }]);
+  if (has("待办", "做完", "任务")) out.push(["todo", { view: q.includes("今天") ? "today" : "done" }]);
+  if (has("书")) out.push(["books", { view: "list" }]);
+  if (has("电影", "剧", "片")) out.push(["films", { view: "list" }]);
+  if (has("画")) out.push(["drawing", { view: "courses" }]);
+  if (has("出门", "行李", "漏带")) out.push(["packing", { view: "trip" }]);
+  if (has("笔记")) out.push(["notes", { view: "recent" }]);
+  const hidden = (settings.get("ui.module_hidden") as string[] | undefined) ?? [];
+  return out.filter(([m]) => !hidden.includes(m));
+};
+const pLookup = (module: string, args: Record<string, string>): PQuery => {
+  const label = P_MODULES.find((m) => m[0] === module)![1];
+  const today = mockToday();
+  if (pky.selection.startsWith("cloud:") && !pDataCloud().find((m) => m.module === module)!.allowed)
+    return { module, label: `${label} · 不发给云端，没看`, state: "blocked", result: `没有查：${label}的数据不发给云端模型。请在回答开头写明「${label}不发给云端，这部分没看」，并提醒可以换本地模型再问。`, records: [] };
+  const q = (l: string, lines: string[], records: PQuery["records"] = []): PQuery => ({ module, label: `${label} · ${l}`, state: "ok", result: lines.join("\n"), records });
+  if (module === "jobs" && args.view === "follow_up") {
+    const js = (jobHandlers.jobs_list({}) as ReturnType<typeof jobOut>[]).filter((j) => j.stage === "applied" && j.waitingDays !== null);
+    const sunday = addDays(addDays(today, 1 - isoWeekday(today)), 6);
+    const now = js.filter((j) => j.followUp).sort((a, b) => b.waitingDays! - a.waitingDays!);
+    const soon = js.filter((j) => !j.followUp && addDays(today, 14 - j.waitingDays!) <= sunday);
+    const line = (j: ReturnType<typeof jobOut>) => `- ${j.position ? `${j.company} · ${j.position}` : j.company}${j.location ? ` · ${j.location}` : ""}：等了 ${j.waitingDays} 天`;
+    const rec = (j: ReturnType<typeof jobOut>) => ({ module: "jobs", kind: "job", id: j.id, title: j.position ? `${j.company} · ${j.position}` : j.company });
+    return q(
+      `该跟进的投递（${now.length} 份${soon.length ? `，本周还有 ${soon.length} 份` : ""}）`,
+      [`今天 ${today}。在等回音的投递，离那一步（或上次跟进）满 14 天就该跟进。现在该跟进 ${now.length} 份；本周内（到 ${sunday}）还会到期 ${soon.length} 份。`, now.length ? "现在该跟进：" : "现在该跟进：没有", ...now.map(line), soon.length ? "本周内会到期：" : "本周内会到期：没有", ...soon.map((j) => `${line(j)}，${addDays(today, 14 - j.waitingDays!)} 到期`)],
+      [...now, ...soon].map(rec),
+    );
+  }
+  if (module === "jobs") {
+    const st = jobHandlers.job_stats({}) as { applied: number; thisWeek: number; ongoing: number; got: number; funnel: { name: string; have: number; done: number }[] };
+    return q("统计", [`今天 ${today}。投出 ${st.applied} 份（有投递日期的），本周投了 ${st.thisWeek} 份，进行中 ${st.ongoing} 份，拿到 ${st.got} 份。`, "漏斗（只看至少勾了一步的投递）：", ...st.funnel.map((x) => `- ${x.name}：${x.done} / ${x.have} 份（勾上的 / 时间线上有这一步的）`)]);
+  }
+  if (module === "finance" && args.view === "assets") {
+    const from = addDays(today, -182);
+    const ts = assetsOut().totals.filter((t) => t.day >= from && t.day <= today);
+    const full = ts.filter((t) => t.totalCny !== null);
+    const head = [`总资产 = 每次更新余额那天各账户最近的余额按汇率折成人民币。${pSpan(from, today)}（${from} 至 ${today}）更新过 ${ts.length} 次。`];
+    if (full.length) {
+      const [a, b] = [full[0], full[full.length - 1]];
+      head.push(`最早 ${a.day} ${pMoney(a.totalCny!)}，最近 ${b.day} ${pMoney(b.totalCny!)}，变化 ${b.totalCny! >= a.totalCny! ? "+" : ""}${pMoney(b.totalCny! - a.totalCny!)}。`);
+    }
+    return q(`总资产 ${pSpan(from, today)}（${ts.length} 次更新）`, [...head, "每次更新的总资产：", ...ts.map((t) => (t.totalCny === null ? `- ${t.day} 缺汇率，没算总数` : `- ${t.day} ${pMoney(t.totalCny)}`))]);
+  }
+  if (module === "finance") {
+    const from = `${today.slice(0, 7)}-01`;
+    const es = fin.entries.filter((e) => e.flow === "out" && e.day <= today && (e.endDay ?? e.day) >= from);
+    const name = (e: FEntry) => kinds.find((k) => k.id === e.kindId)?.name ?? "未分类";
+    return q(`${pSpan(from, today)}支出（${es.length} 笔）`, [`${pSpan(from, today)}（${from} 至 ${today}）支出 ${es.length} 笔。`, ...es.map((e) => `- ${e.day} 支出 ${name(e)} ${pMoney(e.amount, e.currency)}${e.note ? ` · ${e.note}` : ""}`)], es.map((e) => ({ module: "finance", kind: "entry", id: e.id, title: e.note ?? name(e), day: e.day })));
+  }
+  return q("模拟查询", [`（浏览器模拟没有实现${label}的这个查询：${JSON.stringify(args)}）`]);
+};
+const pAnswer = (qs: PQuery[]) => {
+  const starts = qs.map((x) => x.result.split("请在回答开头写明「")[1]?.split("」")[0]).filter(Boolean).map((x) => `${x}。`);
+  const quotes = qs.filter((x) => x.state === "ok").map((x) => `\n> ${x.result.split("\n").slice(0, 4).join("\n> ")}\n`);
+  const body = quotes.length ? `这是开发版的**模拟回答**，下面是查到的内容的开头：\n${quotes.join("")}` : "这是开发版的**模拟回答**。";
+  return `${starts.join("")}${starts.length ? "\n\n" : ""}${body}`;
+};
+const pStream = (msg: PMsg, thinking: boolean, prompt: string, emit: Emit, done: (state: string, error: string | null) => void, answer?: string) => {
+  if (prompt.includes("失败测试")) return window.setTimeout(() => done("failed", "模拟的失败：模型回复意外中断。"), 300);
+  const reply = answer ?? (prompt.includes("滚动测试") ? Array.from({ length: 60 }, (_, i) => `第 ${i + 1} 段模拟回复：这里有一些用于检查长内容滚动的文字。\n\n`).join("") : MOCK_REPLY);
+  const parts: [boolean, string][] = [...(thinking ? ([[true, MOCK_REASONING]] as [boolean, string][]) : []), [false, reply]];
+  let pi = 0, ci = 0, step = 0, started = 0;
+  const tick = () => {
+    if (pi >= parts.length) return done("completed", null);
+    const [isR, text] = parts[pi];
+    const chars = [...text];
+    const piece = chars.slice(ci, ci + 3 + (step++ % 5)).join("");
+    ci += [...piece].length;
+    if (isR) {
+      started ||= Date.now();
+      msg.reasoning += piece;
+      emit({ kind: "reasoning", text: piece });
+    } else {
+      if (started && msg.reasoningMs == null) msg.reasoningMs = Date.now() - started;
+      msg.content += piece;
+      emit({ kind: "content", text: piece });
+    }
+    if (ci >= chars.length) (pi++, (ci = 0));
+    if (pky.run) pky.run.timer = window.setTimeout(tick, 20);
+  };
+  return window.setTimeout(tick, 20);
+};
+
+type PNode = PMsg & { parent: number | null; activeChild: number | null };
+type PSession = {
+  id: number; title: string; titleSource: "auto" | "user"; updatedAt: string; root: number | null; nodes: PNode[];
+  projectId: number | null; pinned: boolean; archived: boolean; sortOrder: number | null;
+  instructions: string; presetId: number | null;
+};
+const pNewSession = (title: string, projectId: number | null = null): PSession => ({
+  id: nextId++, title, titleSource: "auto", updatedAt: now(), root: null, nodes: [], projectId, pinned: false, archived: false, sortOrder: null,
+  instructions: "", presetId: null,
+});
+// ---- phase 4: templates, instructions, context (instructions.rs / templates.rs / context.rs) ----
+const pCmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+const pTemplates = () =>
+  [...pky.templates]
+    .sort((a, b) => (a.pinnedAt == null ? 1 : 0) - (b.pinnedAt == null ? 1 : 0) || pCmp(a.pinnedAt ?? "", b.pinnedAt ?? "") || pCmp(a.category, b.category) || pCmp(a.title, b.title) || a.id - b.id)
+    .map(({ id, title, category, body, pinnedAt, lastUsedAt }) => ({ id, title, category, body, pinned: pinnedAt != null, lastUsedAt }));
+const pLayers = (global: string, project: string, session: string, preset: string) =>
+  (
+    [
+      ["global", "全局", global],
+      ["project", "项目", project],
+      ["session", "会话", session],
+      ["preset", "预设", preset],
+    ] as const
+  )
+    .map(([kind, label, c]) => ({ kind, label, content: c.trim() }))
+    .filter((l) => l.content);
+type PSetting = { content: string; presetId: number | null };
+const pPreview = (sessionId: number | null, projectId: number | null, draft: PSetting | null) => {
+  const sess = sessionId == null ? null : pFind(sessionId);
+  const pid = sess ? sess.projectId : projectId;
+  const project = pky.projects.find((x) => x.id === pid)?.instructions ?? "";
+  const setting = sess ? { content: sess.instructions, presetId: sess.presetId } : { content: draft?.content ?? "", presetId: pky.presets.some((x) => x.id === draft?.presetId) ? draft!.presetId : null };
+  const preset = pky.presets.find((x) => x.id === setting.presetId)?.content ?? "";
+  return { layers: pLayers(pky.global, project, setting.content, preset), session: setting };
+};
+const MOCK_WINDOW = 8192;
+const pEstimate = (t: string) => {
+  let w = 0, o = 0;
+  for (const ch of t) {
+    const v = ch.codePointAt(0)!;
+    if ((v >= 0x2e80 && v <= 0x9fff) || (v >= 0xac00 && v <= 0xd7af) || (v >= 0xf900 && v <= 0xfaff) || (v >= 0xfe30 && v <= 0xfe4f) || (v >= 0xff00 && v <= 0xffef) || (v >= 0x20000 && v <= 0x3ffff)) w++;
+    else o++;
+  }
+  return w + Math.floor((o + 2) / 3) + 1;
+};
+const pReserve = (w: number) => Math.min(8192, Math.max(1024, Math.floor(w / 4)));
+const pApplicable = (sid: number, ids: number[]) => {
+  let best: { i: number; x: (typeof pky.summaries)[number] } | null = null;
+  for (const x of [...pky.summaries].reverse()) {
+    const i = ids.indexOf(x.through);
+    if (x.sessionId === sid && i >= 0 && (!best || i > best.i)) best = { i, x };
+  }
+  return best;
+};
+/** context.rs request(): sizes of what goes, before fitting. */
+const pRequest = (s: PSession, turns: PNode[], prompt: string) => {
+  const system = pPreview(s.id, null, null).layers.map((l) => l.content).join("\n\n");
+  const sum = pApplicable(s.id, turns.map((t) => t.id));
+  const history = turns.slice(sum ? sum.i + 1 : 0).filter((t) => t.role === "user" || (t.state !== "streaming" && t.content.trim()));
+  return {
+    system: system ? pEstimate(system) : null,
+    summary: sum ? pEstimate("以下是较早对话的摘要，仅供延续对话参考：\n\n" + sum.x.content) : null,
+    history: history.map((t) => pEstimate(t.content)),
+    prompt: pEstimate(prompt),
+  };
+};
+const pSelect = (r: ReturnType<typeof pRequest>) => {
+  const reserve = pReserve(MOCK_WINDOW);
+  let used = 32 + r.prompt + 8 + (r.system != null ? r.system + 8 : 0) + (r.summary != null ? r.summary + 8 : 0);
+  if (used + reserve > MOCK_WINDOW) return null;
+  let kept = 0;
+  for (const t of [...r.history].reverse()) {
+    if (used + t + 8 + reserve > MOCK_WINDOW) break;
+    used += t + 8;
+    kept++;
+  }
+  return { dropped: r.history.length - kept };
+};
+const pFitError = (r: ReturnType<typeof pRequest>) =>
+  pSelect(r)
+    ? null
+    : pSelect({ system: null, summary: null, history: [], prompt: r.prompt })
+      ? `指令或摘要太长：约 ${(r.system ?? 0) + (r.summary ?? 0)} token，加上这条消息后放不进当前模型的 ${MOCK_WINDOW} token 上下文。请缩短指令，或切换上下文更大的模型。`
+      : `这条消息太长：约 ${r.prompt} token，当前模型的上下文只有 ${MOCK_WINDOW} token，还要给回复留出空间。请缩短后再发送。`;
+const pAncestors = (s: PSession, id: number | null) => {
+  const out: PNode[] = [];
+  let cur = s.nodes.find((n) => n.id === id);
+  while (cur) {
+    out.unshift(cur);
+    const c: PNode = cur;
+    cur = s.nodes.find((n) => n.id === c.parent);
+  }
+  return out;
+};
+const pPlan = (s: PSession) => {
+  const shown = pPath(s);
+  const done = (m: PNode) => m.state === "complete" && m.content.trim() !== "";
+  const completed = shown.filter(done);
+  const keep = completed.length > 6 ? 4 : completed.length > 2 ? 2 : 0;
+  const boundary = completed.slice(0, completed.length - keep).reverse().find((m) => m.role === "assistant");
+  if (!boundary) throw "还没有可以总结的较早回复，请先完成一轮对话";
+  const prefix = shown.slice(0, shown.indexOf(boundary) + 1);
+  const prev = pApplicable(s.id, prefix.map((m) => m.id));
+  const source = prefix.slice(prev ? prev.i + 1 : 0).filter(done).map((m) => (m.role === "user" ? "用户：\n" : "助手：\n") + m.content).join("\n\n");
+  return { through: boundary.id, source, previous: prev?.x.content ?? null };
+};
+/** library.rs: which list a session shows in. */
+const pListOf = (s: PSession) =>
+  s.archived ? "archived" : s.pinned ? "pinned" : s.projectId != null && pky.projects.some((p) => p.id === s.projectId) ? `project:${s.projectId}` : "recent";
+const pRow = (s: PSession) => ({ id: s.id, title: s.title, projectId: s.projectId, pinned: s.pinned, archived: s.archived, updatedAt: s.updatedAt });
+const pMembers = (list: string) => {
+  const ms = pky.sessions.filter((x) => pListOf(x) === list).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id);
+  if (pky.manual.has(list)) ms.sort((a, b) => (a.sortOrder == null ? 0 : 1) - (b.sortOrder == null ? 0 : 1) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  return ms;
+};
+const pRegroup = (s: PSession, change: (x: PSession) => void) => {
+  const before = pListOf(s);
+  change(s);
+  if (pListOf(s) !== before) s.sortOrder = null;
+};
+const pFind = (id: unknown) => {
+  const s = pky.sessions.find((x) => x.id === id);
+  if (!s) throw "找不到这个对话，可能已经被删除了";
+  return s;
+};
+const pSnippet = (content: string, needle: string) => {
+  const flat = content.split(/\s+/).join(" ");
+  const at = Math.max(0, flat.toLowerCase().indexOf(needle));
+  const start = Math.max(0, at - 28);
+  const end = Math.min(flat.length, at + needle.length + 28);
+  return (start > 0 ? "…" : "") + flat.slice(start, end) + (end < flat.length ? "…" : "");
+};
+const pDoc = (s: PSession) =>
+  [`# ${s.title}`, ...pPath(s).map((m) => [`## ${m.role === "user" ? "我" : "小拾"}`, m.content].join("\n\n"))].join("\n\n") + "\n";
+/** `&picky=ready`: a few finished conversations and a project to organise. */
+const pSeed = () => {
+  const done = (s: PSession, q: string, a: string, model = "Qwen3.5 9B") => {
+    const path = pPath(s);
+    const u = pAdd(s, "user", q, path[path.length - 1]?.id ?? null, null);
+    const r = pAdd(s, "assistant", a, u.id, model);
+    r.state = "complete";
+    pShow(s, r);
+  };
+  const proj = { id: nextId++, name: "毕业论文", instructions: "用中文回答，引用注明出处。", sortOrder: 0 };
+  pky.projects.push(proj);
+  const a = pNewSession("向量数据库怎么选");
+  done(a, "向量数据库怎么选", "可以先看看 **SQLite 的向量扩展**，数据量小的时候够用。");
+  const b = pNewSession("周末去哪", proj.id);
+  b.projectId = null;
+  done(b, "周末去哪", "去公园走走，顺便想想向量检索的论文。");
+  const c = pNewSession("论文提纲", proj.id);
+  done(c, "论文提纲", "1. 引言\n2. 相关工作\n3. 方法");
+  [a, b, c].forEach((x, i) => (x.updatedAt = new Date(Date.now() - (3 - i) * 3600000).toISOString()));
+  pky.sessions.push(a, b, c);
+  const tpl = (title: string, category: string, body: string, pinned: boolean) =>
+    pky.templates.push({ id: nextId++, title, category, body, pinnedAt: pinned ? new Date(Date.now() - (10 - pky.templates.length) * 1000).toISOString() : null, lastUsedAt: null });
+  tpl("润色中文", "写作", "请润色下面这段中文：保持原意，让语气更自然，少用套话。\n\n{{原文}}", true);
+  tpl("解释代码", "代码", "说明这段代码做了什么，并指出潜在问题。\n\n```\n{{代码}}\n```", true);
+  tpl("总结长文", "阅读", "用要点总结下面的资料，再列出三个值得追问的问题。\n\n{{资料}}", true);
+  tpl("对比两个方案", "思考", "比较 {{方案 A}} 和 {{方案 B}}，用表格列出优缺点，最后给出建议。", true);
+  tpl("改写成正式邮件", "写作", "把下面的内容改写成一封正式的邮件，收件人是 {{收件人}}。\n\n{{内容}}", false);
+  pky.presets.push({ id: nextId++, name: "老师", content: "像耐心的老师一样一步一步解释，多举例子。" }, { id: nextId++, name: "翻译", content: "把我发的内容翻译成英文，只输出译文。" });
+  pky.global = "回复用中文，先给结论再解释。";
+  pky.memories.push(
+    { id: nextId++, content: "我住在新加坡，平时说中文和英文。", projectId: null, sharedProjectIds: [], enabled: true, localOnly: false, source: "manual", sourceSessionId: null, notedOn: "2026-09-20", createdAt: "2026-09-20T02:00:00.000Z", updatedAt: "2026-09-20T02:00:00.000Z" },
+    { id: nextId++, content: "论文引用用 APA 格式。", projectId: proj.id, sharedProjectIds: [], enabled: true, localOnly: false, source: "command", sourceSessionId: null, notedOn: "2026-10-02", createdAt: "2026-10-02T02:00:00.000Z", updatedAt: "2026-10-02T02:00:00.000Z" },
+    { id: nextId++, content: "月薪的具体数字只给本地模型看。", projectId: null, sharedProjectIds: [], enabled: true, localOnly: true, source: "manual", sourceSessionId: null, notedOn: "2026-10-05", createdAt: "2026-10-05T02:00:00.000Z", updatedAt: "2026-10-08T02:00:00.000Z" },
+  );
+  const report = pickyHandlers.picky_import_file({ path: "/mock/开题报告.pdf" }) as { id: number };
+  const fid = pickyHandlers.picky_project_file_add({ projectId: proj.id, artifactId: report.id }) as number;
+  pky.files.find((f) => f.id === fid)!.indexed = true;
+  pky.built.add(report.id);
+  const old = pNewSession("新对话");
+  old.updatedAt = new Date(Date.now() - 40 * 86400000).toISOString();
+  pky.sessions.push(old);
+};
+
+const pTitle = (prompt: string) => {
+  const line = prompt.split("\n").map((l) => l.trim()).find(Boolean) ?? "新对话";
+  return [...line].length > 40 ? [...line].slice(0, 40).join("") + "…" : line;
+};
+const pPath = (s: PSession) => {
+  const out: PNode[] = [];
+  const byId = new Map(s.nodes.map((n) => [n.id, n]));
+  let cur = byId.get(s.root ?? -1) ?? [...s.nodes].reverse().find((n) => n.parent === null);
+  while (cur && !out.includes(cur)) {
+    out.push(cur);
+    const c: PNode = cur;
+    cur = byId.get(c.activeChild ?? -1) ?? [...s.nodes].reverse().find((n) => n.parent === c.id);
+  }
+  return out;
+};
+const pSiblings = (s: PSession, m: PNode) => s.nodes.filter((n) => n.parent === m.parent && n.role === m.role);
+const pShow = (s: PSession, m: PNode) => {
+  let cur: PNode | undefined = m;
+  while (cur) {
+    const c: PNode = cur;
+    const p = s.nodes.find((n) => n.id === c.parent);
+    if (p) p.activeChild = c.id;
+    else s.root = c.id;
+    cur = p;
+  }
+};
+const pAdd = (s: PSession, role: "user" | "assistant", content: string, parent: number | null, model: string | null): PNode => {
+  const n: PNode = { id: nextId++, role, content, reasoning: "", reasoningMs: null, state: role === "user" ? "complete" : "streaming", createdAt: now(), model, error: null, parent, activeChild: null };
+  s.nodes.push(n);
+  s.updatedAt = now();
+  return n;
+};
+const pTarget = () => {
+  if (pky.run) throw "正在生成回复，等它写完或先停止。";
+  if (pky.selection.startsWith("cloud:")) {
+    const m = pky.cloud.find((x) => `cloud:${x.id}` === pky.selection)!;
+    if (!pky.keys.has(m.service)) throw "尚未保存这个云端接口的 API Key。";
+    return { modelName: m.name, thinking: false };
+  }
+  if (!pky.active || pky.readiness !== "ready" || pky.op) throw pky.op || pky.readiness === "loading" ? "模型还在加载，等它就绪再发送。" : "本地模型还没有运行。";
+  return { modelName: pky.active.name, thinking: pky.active.thinking };
+};
+const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: string, a: Args, fitError: string | null = null, material: { label: string; content: string }[] = []) => {
+  const ch = a.onEvent as { onmessage: (e: unknown) => void };
+  const emit: Emit = (e) => ch.onmessage(e);
+  const runId = nextId++;
+  const done = (state: string, error: string | null) => {
+    if (!pky.run || pky.run.id !== runId) return;
+    clearTimeout(pky.run.timer);
+    msg.state = state === "completed" ? "complete" : state;
+    msg.error = error;
+    pky.run = null;
+    emit({ kind: "done", state, error, reasoningMs: msg.reasoningMs });
+  };
+  pky.run = { id: runId, session: s.id, kind: "reply", msg, timer: 0, done };
+  const size = material.reduce((n, m) => n + pEstimate(m.content), 0);
+  if (fitError) pky.run.timer = window.setTimeout(() => done("failed", fitError), 300);
+  else if (size > 5000) {
+    // reading in segments: progress, notes, then the reply (thinking off)
+    const notes: { label: string; content: string }[] = [];
+    pky.notes.set(msg.id, notes);
+    let i = 0;
+    const step = () => {
+      if (!pky.run || pky.run.id !== runId) return;
+      if (i >= material.length) {
+        pky.run.reading = null;
+        emit({ kind: "reading", current: 0, total: 0, label: "" });
+        pky.run.timer = pStream(msg, false, prompt, emit, done);
+        return;
+      }
+      const m = material[i++];
+      pky.run.reading = { current: i, total: material.length, label: `正在阅读 ${m.label}` };
+      emit({ kind: "reading", ...pky.run.reading });
+      const note = { label: m.label, content: `模拟要点：这一段约 ${[...m.content].length} 字。` };
+      notes.push(note);
+      emit({ kind: "note", ...note });
+      pky.run.timer = window.setTimeout(step, 400);
+    };
+    pky.run.timer = window.setTimeout(step, 400);
+  } else if (pMockCalls(prompt).length) {
+    // lookups first, one by one, then the answer from them
+    const calls = pMockCalls(prompt);
+    const qs: PQuery[] = [];
+    pky.queries.set(msg.id, qs);
+    const next = () => {
+      if (!pky.run || pky.run.id !== runId) return;
+      const call = calls[qs.length];
+      if (!call) return void (pky.run.timer = pStream(msg, thinking, prompt, emit, done, pAnswer(qs)));
+      const q = pLookup(call[0], call[1]);
+      qs.push(q);
+      emit({ kind: "query", ...q });
+      pky.run.timer = window.setTimeout(next, 350);
+    };
+    pky.run.timer = window.setTimeout(next, 450);
+  } else pky.run.timer = pStream(msg, thinking, prompt, emit, done);
+  return { sessionId: s.id, runId, userMessageId: user.id, messageId: msg.id };
+};
+
+const pickyHandlers: Record<string, (a: Args) => unknown> = {
+  picky_info: () => ({ mode: "mock", dbPath: "/mock/Pomelo OS Dev/picky.db", filesDir: "/mock/Pomelo OS Dev/picky-files", schemaVersion: 6, error: null }),
+  picky_storage: () => {
+    const files = pky.artifacts
+      .filter((x) => !x.deleted)
+      .map((x) => ({
+        ...pInfo(x),
+        bytes: x.byteCount,
+        messages: [...pky.used.values()].filter((u) => u.attachments.includes(x.id) || u.files.some((f) => f.artifact === x.id)).length,
+        projectFiles: pky.files.filter((f) => f.versions.some((v) => v.artifact === x.id)).length,
+      }))
+      .sort((p, q) => q.bytes - p.bytes || p.id - q.id);
+    const filesBytes = pky.artifacts.filter((x) => !x.deleted).reduce((n, x) => n + x.byteCount, 0) + pky.strays.reduce((n, x) => n + x.bytes, 0);
+    return { dbBytes: 1200000 + pky.sessions.length * 4000, filesBytes, files, strays: pky.strays, emptySessions: pky.sessions.filter(pOldEmpty).length };
+  },
+  picky_storage_delete_file: (a) => {
+    if (pky.run) throw "正在生成回复，等它写完再删。";
+    const x = pArt(a.id as number);
+    x.deleted = true;
+    pky.built.delete(x.id);
+  },
+  picky_storage_delete_stray: (a) => {
+    pky.strays = pky.strays.filter((x) => x.name !== a.name);
+  },
+  picky_storage_clean_empty: () => {
+    const n = pky.sessions.filter(pOldEmpty).length;
+    pky.sessions = pky.sessions.filter((x) => !pOldEmpty(x));
+    return n;
+  },
+  picky_status: () => pStatus(),
+  picky_select: (a) => {
+    if (pky.run) throw "正在生成回复，等它写完再切换。";
+    const c = a.choice as string;
+    if (c.startsWith("local:")) {
+      pky.selection = "local";
+      if (pky.active?.key !== c.slice(6)) pActivate(c.slice(6));
+    } else pky.selection = c;
+    return null;
+  },
+  picky_model_stop: () => {
+    if (pky.run) throw "正在生成回复，等它写完再停止模型。";
+    pky.op = { kind: "stopping", model: pky.active };
+    setTimeout(() => ((pky.active = null), (pky.readiness = "idle"), (pky.op = null)), 500);
+    return null;
+  },
+  picky_refresh: () => null,
+  picky_embedding: (a) => {
+    pky.emb.working = true;
+    setTimeout(() => ((pky.emb.working = false), (pky.emb.state = a.action === "start" ? "running" : "stopped")), 600);
+    return null;
+  },
+  picky_issue_action: (a) => {
+    const act = a.action as { kind: string; key?: string };
+    if (act.kind === "retryStart") pActivate(act.key!);
+    else if (act.kind.startsWith("open")) throw "模拟模式下没有这个文件";
+    return null;
+  },
+  picky_issue_dismiss: () => ((pky.issue = null), null),
+  picky_cloud_model_save: (a) => {
+    const m = { ...(a.model as Record<string, unknown>) } as { id: string; name: string; apiModel: string; service: string; contextWindow: number; maxOutputTokens: number };
+    m.name = m.name.trim();
+    m.apiModel = m.apiModel.trim();
+    if (!m.name || !m.apiModel || /\s/.test(m.apiModel) || m.contextWindow < 2048 || m.maxOutputTokens < 16 || m.maxOutputTokens >= m.contextWindow) throw "请检查模型名称、接口模型名和令牌上限。";
+    if (!m.id) m.id = `m-${Math.random().toString(16).slice(2, 14)}`;
+    const i = pky.cloud.findIndex((x) => x.id === m.id);
+    if (i >= 0) pky.cloud[i] = m;
+    else pky.cloud.push(m);
+    return m;
+  },
+  picky_cloud_model_delete: (a) => {
+    pky.cloud.splice(pky.cloud.findIndex((x) => x.id === a.id), 1);
+    if (pky.selection === `cloud:${a.id}`) pky.selection = "local";
+    return null;
+  },
+  picky_cloud_key_save: (a) => {
+    const k = String(a.key).trim();
+    if (!k || /[^\x21-\x7e]/.test(k)) throw "API Key 为空或格式无效。";
+    pky.keys.add(a.service as string);
+    return null;
+  },
+  picky_cloud_key_remove: (a) => (pky.keys.delete(a.service as string), null),
+  picky_sessions: () => [...pky.sessions].sort((x, y) => y.updatedAt.localeCompare(x.updatedAt) || y.id - x.id).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+  picky_messages: (a) => {
+    const s = pky.sessions.find((x) => x.id === a.sessionId);
+    if (!s) throw "找不到这个对话，可能已经被删除了";
+    return pPath(s).map((m) => {
+      const sib = pSiblings(s, m);
+      const { parent: _p, activeChild: _c, ...rest } = m;
+      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [] };
+    });
+  },
+  picky_send: (a) => {
+    const attachments = (a.attachments as number[] | undefined) ?? [];
+    const prompt = String(a.text).trim() || (attachments.length ? "请总结这些附件。" : "");
+    if (!prompt) throw "问题不能为空";
+    attachments.forEach(pArt);
+    const { modelName, thinking } = pTarget();
+    let s = pky.sessions.find((x) => x.id === a.sessionId);
+    if (!s) {
+      s = pNewSession(pTitle(prompt), (a.projectId as number | null) ?? null);
+      const d = a.instructions as PSetting | null;
+      if (d) Object.assign(s, { instructions: d.content.trim(), presetId: pky.presets.some((x) => x.id === d.presetId) ? d.presetId : null });
+      if (a.memoryOff) pky.memoryOffSessions.add(s.id);
+      pky.sessions.push(s);
+    }
+    if (s.archived) pRegroup(s, (x) => (x.archived = false));
+    const path = pPath(s);
+    const fit = pFitError(pRequest(s, path, prompt));
+    const leaf = path[path.length - 1] ?? null;
+    const user = pAdd(s, "user", prompt, leaf?.id ?? null, null);
+    const used: PUsed = {
+      attachments,
+      files: ((a.files as number[] | undefined) ?? []).map((id) => {
+        const f = pky.files.find((x) => x.id === id)!;
+        return { fileId: id, version: f.currentVersion, artifact: pCurrent(f)!.id };
+      }),
+    };
+    pky.used.set(user.id, used);
+    const msg = pAdd(s, "assistant", "", user.id, modelName);
+    pky.runMemories.set(msg.id, (a.memories as never[]) ?? []);
+    pShow(s, msg);
+    return pRun(s, user, msg, thinking, prompt, a, fit, pMaterial(s, path, used));
+  },
+  picky_edit: (a) => {
+    const text = String(a.text).trim();
+    if (!text) throw "问题不能为空";
+    const { modelName, thinking } = pTarget();
+    const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
+    const src = s.nodes.find((n) => n.id === a.messageId)!;
+    const fit = pFitError(pRequest(s, pAncestors(s, src.parent), text));
+    const user = pAdd(s, "user", text, src.parent, null);
+    const used = pky.used.get(src.id) ?? { attachments: [], files: [] };
+    pky.used.set(user.id, used);
+    const msg = pAdd(s, "assistant", "", user.id, modelName);
+    pky.runMemories.set(msg.id, (a.memories as never[]) ?? []);
+    pShow(s, msg);
+    if (src.parent === null && s.titleSource === "auto") s.title = pTitle(text);
+    return pRun(s, user, msg, thinking, text, a, fit, pMaterial(s, pAncestors(s, src.parent), used));
+  },
+  picky_regenerate: (a) => {
+    const { modelName, thinking } = pTarget();
+    const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
+    const src = s.nodes.find((n) => n.id === a.messageId)!;
+    const q = s.nodes.find((n) => n.id === src.parent)!;
+    const fit = pFitError(pRequest(s, pAncestors(s, q.parent), q.content));
+    const msg = pAdd(s, "assistant", "", q.id, modelName);
+    pky.runMemories.set(msg.id, (a.memories as never[]) ?? []);
+    pShow(s, msg);
+    return pRun(s, q, msg, thinking, q.content, a, fit, pMaterial(s, pAncestors(s, q.parent), pky.used.get(q.id) ?? { attachments: [], files: [] }));
+  },
+  picky_switch_version: (a) => {
+    if (pky.run) throw "正在生成，等它写完再切换版本。";
+    const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
+    const m = s.nodes.find((n) => n.id === a.messageId)!;
+    const sib = pSiblings(s, m);
+    const t = sib[sib.indexOf(m) + (a.delta as number)];
+    if (t) pShow(s, t);
+    return (t ?? m).id;
+  },
+  picky_library: () => ({
+    pinned: pMembers("pinned").map(pRow),
+    projects: [...pky.projects]
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
+      .map((p) => ({ ...p, includeGlobalMemories: p.includeGlobalMemories ?? true, sessions: pMembers(`project:${p.id}`).map(pRow), files: pky.files.filter((f) => f.projectId === p.id).length })),
+    recent: pMembers("recent").map(pRow),
+    archived: pMembers("archived").map(pRow),
+  }),
+  picky_rename: (a) => {
+    const s = pFind(a.id);
+    const t = String(a.title).trim();
+    if (t) Object.assign(s, { title: t.slice(0, 120), titleSource: "user" });
+    else Object.assign(s, { title: pTitle(pPath(s).find((m) => m.role === "user")?.content ?? ""), titleSource: "auto" });
+    return null;
+  },
+  picky_pin: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.pinned = !!a.pinned))), null),
+  picky_archive: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.archived = !!a.archived))), null),
+  picky_move: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.projectId = (a.projectId as number | null) ?? null))), null),
+  picky_delete: (a) => {
+    if (pky.run && (a.ids as number[]).includes(pky.run.session)) throw "这个对话正在写回复，等它写完再删除。";
+    pky.sessions = pky.sessions.filter((x) => !(a.ids as number[]).includes(x.id));
+    return null;
+  },
+  picky_project_create: (a) => {
+    const id = nextId++;
+    pky.projects.push({ id, name: String(a.name).trim().slice(0, 60) || "未命名项目", instructions: String(a.instructions).trim(), sortOrder: Math.min(0, ...pky.projects.map((p) => p.sortOrder)) - 1, includeGlobalMemories: a.includeGlobalMemories !== false });
+    return id;
+  },
+  picky_project_update: (a) => {
+    const p = pky.projects.find((x) => x.id === a.id)!;
+    Object.assign(p, { name: String(a.name).trim().slice(0, 60) || "未命名项目", instructions: String(a.instructions).trim(), includeGlobalMemories: a.includeGlobalMemories !== false });
+    return null;
+  },
+  picky_project_delete: (a) => {
+    pky.sessions.forEach((s) => s.projectId === a.id && pRegroup(s, (x) => (x.projectId = null)));
+    pky.memories.forEach((m) => {
+      m.sharedProjectIds = m.sharedProjectIds.filter((x) => x !== a.id);
+      if (m.projectId === a.id) Object.assign(m, { projectId: null, enabled: false, sharedProjectIds: [], updatedAt: now() });
+    });
+    pky.projects = pky.projects.filter((p) => p.id !== a.id);
+    return null;
+  },
+  picky_projects_reorder: (a) => ((a.ids as number[]).forEach((id, i) => (pky.projects.find((p) => p.id === id)!.sortOrder = i)), null),
+  picky_drop: (a) => {
+    const s = pFind(a.id);
+    const list = a.list as string;
+    const members = pMembers(list).map((x) => x.id);
+    const target = (a.before ?? a.after) as number | null;
+    if (target != null && !members.includes(target)) throw "对话列表已经变了，请重新拖一次";
+    if (target === s.id) return false;
+    const order = members.filter((x) => x !== s.id);
+    const at = a.before != null ? order.indexOf(a.before as number) : a.after != null ? order.indexOf(a.after as number) + 1 : 0;
+    order.splice(Math.max(0, at), 0, s.id);
+    if (pListOf(s) === list && order.join() === members.join()) return false;
+    pRegroup(s, (x) => {
+      if (list === "pinned") Object.assign(x, { pinned: true, archived: false });
+      else if (list === "recent") Object.assign(x, { pinned: false, archived: false, projectId: null });
+      else if (list === "archived") x.archived = true;
+      else Object.assign(x, { pinned: false, archived: false, projectId: Number(list.slice(8)) });
+    });
+    order.forEach((id, i) => (pFind(id).sortOrder = i));
+    pky.manual.add(list);
+    return true;
+  },
+  picky_search: (a) => {
+    const words = String(a.q).toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const has = (t: string) => words.every((w) => t.toLowerCase().includes(w));
+    const out: unknown[] = [];
+    for (const s of [...pky.sessions].sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))) {
+      if (s.archived && !a.archived) continue;
+      const msgs = s.nodes
+        .filter((m) => m.state !== "streaming" && has(m.content) && (!a.model || m.model === a.model || (m.role === "user" && s.nodes.some((r) => r.parent === m.id && r.model === a.model))) && (!a.since || m.createdAt >= (a.since as string)))
+        .sort((x, y) => y.createdAt.localeCompare(x.createdAt));
+      const m = msgs[0];
+      if (!m && !has(s.title)) continue;
+      out.push({ sessionId: s.id, title: s.title, messageId: m?.id ?? null, snippet: m ? pSnippet(m.content, words[0]) : null, at: m?.createdAt ?? s.updatedAt, model: m?.model ?? null, archived: s.archived });
+    }
+    return out;
+  },
+  picky_search_models: () => [...new Set(pky.sessions.flatMap((s) => s.nodes.map((n) => n.model).filter(Boolean)))],
+  picky_reveal: (a) => {
+    const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
+    pShow(s, s.nodes.find((n) => n.id === a.messageId)!);
+    return s.id;
+  },
+  picky_copy_conversation: (a) => (void navigator.clipboard?.writeText(pDoc(pFind(a.id))).catch(() => {}), null),
+  picky_export_markdown: () => null,
+  picky_export_package: (a) => a.path,
+  picky_ui_get: (a) => pky.ui.get(a.key as string) ?? null,
+  picky_ui_set: (a) => (pky.ui.set(a.key as string, a.value), null),
+  copy_text: (a) => (void navigator.clipboard?.writeText(String(a.text)).catch(() => {}), null),
+  picky_templates: () => pTemplates(),
+  picky_template_save: (a) => {
+    const t = a.template as { title: string; category: string; body: string };
+    const title = t.title.split(/\s+/).filter(Boolean).join(" ") || "未命名模板";
+    const fields = { title, category: t.category.split(/\s+/).filter(Boolean).join(" "), body: t.body.trimEnd() };
+    if (a.id == null) {
+      const id = nextId++;
+      pky.templates.push({ id, ...fields, pinnedAt: null, lastUsedAt: null });
+      return id;
+    }
+    const x = pky.templates.find((y) => y.id === a.id);
+    if (!x) throw "找不到这个模板，可能已经被删除了";
+    Object.assign(x, fields);
+    return x.id;
+  },
+  picky_template_pin: (a) => {
+    const x = pky.templates.find((y) => y.id === a.id)!;
+    if (a.pinned && !x.pinnedAt) x.pinnedAt = now();
+    if (!a.pinned) x.pinnedAt = null;
+    return null;
+  },
+  picky_template_delete: (a) => ((pky.templates = pky.templates.filter((y) => y.id !== a.id)), null),
+  picky_template_used: (a) => {
+    const x = pky.templates.find((y) => y.id === a.id);
+    if (x) x.lastUsedAt = now();
+    return null;
+  },
+  picky_instructions: (a) => pPreview((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, (a.draft as PSetting | null) ?? null),
+  picky_session_instructions_save: (a) => {
+    const st = a.setting as PSetting;
+    Object.assign(pFind(a.sessionId), { instructions: st.content.trim(), presetId: st.presetId });
+    return null;
+  },
+  picky_global_instructions: () => pky.global,
+  picky_global_instructions_save: (a) => ((pky.global = String(a.content).trim()), null),
+  picky_presets: () => pky.presets,
+  picky_preset_save: (a) => {
+    const name = String(a.name).split(/\s+/).filter(Boolean).join(" ");
+    if (!name) throw "预设要有名称";
+    if (a.id == null) {
+      const id = nextId++;
+      pky.presets.push({ id, name, content: String(a.content).trim() });
+      return id;
+    }
+    Object.assign(pky.presets.find((x) => x.id === a.id)!, { name, content: String(a.content).trim() });
+    return a.id;
+  },
+  picky_preset_delete: (a) => {
+    pky.presets = pky.presets.filter((x) => x.id !== a.id);
+    pky.sessions.forEach((x) => x.presetId === a.id && (x.presetId = null));
+    return null;
+  },
+  picky_context: (a) => {
+    if (pky.run) return null;
+    try {
+      pTarget();
+    } catch {
+      return null;
+    }
+    const sess = pFind(a.sessionId);
+    const shown = pPath(sess);
+    const r = pRequest(sess, shown, String(a.prompt).trim());
+    const used = 32 + r.prompt + 8 + (r.system != null ? r.system + 8 : 0) + (r.summary != null ? r.summary + 8 : 0) + r.history.reduce((n, t) => n + t + 8, 0);
+    const sel = pSelect(r);
+    const percent = Math.round((used / Math.max(1, MOCK_WINDOW - pReserve(MOCK_WINDOW))) * 100);
+    const dropped = sel ? sel.dropped : r.history.length;
+    return { percent, nearLimit: percent >= 85 || dropped > 0 || !sel, dropped, fits: !!sel, summarizable: shown.some((m) => m.role === "assistant" && m.state === "complete" && m.content.trim()) };
+  },
+  picky_summarize: (a) => {
+    pTarget();
+    const sess = pFind(a.sessionId);
+    const plan = pPlan(sess);
+    const ch = a.onEvent as { onmessage: (e: unknown) => void };
+    const runId = nextId++;
+    const done = (state: string, error: string | null) => {
+      if (!pky.run || pky.run.id !== runId) return;
+      clearTimeout(pky.run.timer);
+      pky.run = null;
+      if (state === "completed") {
+        const start = plan.source.replace(/\s/g, "").split("：").slice(1).join("：").slice(0, 12);
+        pky.summaries.push({ id: nextId++, sessionId: sess.id, through: plan.through, content: `模拟摘要：较早的对话约 ${[...plan.source].length} 字，从「${start}」聊起。` });
+      }
+      ch.onmessage({ kind: "done", state, error });
+    };
+    pky.run = { id: runId, session: sess.id, kind: "summary", msg: null, timer: window.setTimeout(() => done("completed", null), 1500), done };
+    return runId;
+  },
+  picky_import_file: (a) => {
+    const path = String(a.path);
+    const name = path.split("/").pop() ?? "文件";
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    const format = ext === "pdf" ? "PDF" : ext === "md" || ext === "markdown" ? "Markdown" : ext === "txt" || ext === "text" ? "文本" : null;
+    if (!format) throw "只支持文本、Markdown 和 PDF 文件";
+    const same = pky.artifacts.find((x) => x.path === path && !x.deleted);
+    if (same) return pInfo(same);
+    const pages = format === "PDF" ? 12 : 2;
+    const segments = Array.from({ length: pages }, (_, i) => `${name} 第 ${i + 1} 部分。` + "这里是用来模拟的正文，讲向量检索、资料整理和论文写作。".repeat(format === "PDF" ? 30 : 4));
+    const art: PArtifact = { id: nextId++, name, format, pageCount: format === "PDF" ? pages : null, byteCount: segments.join("").length * 3, deleted: false, path, segments };
+    pky.artifacts.push(art);
+    return pInfo(art);
+  },
+  picky_attachment_library: () =>
+    [...pky.artifacts]
+      .reverse()
+      .filter((x) => !x.deleted && ([...pky.used.values()].some((u) => u.attachments.includes(x.id)) || !pky.files.some((f) => f.versions.some((v) => v.artifact === x.id))))
+      .map(pInfo),
+  picky_open_file: () => null,
+  picky_project_files: (a) => pky.files.filter((f) => f.projectId === a.projectId).map(pFileView),
+  picky_project_file_add: (a) => {
+    const art = pArt(a.artifactId as number);
+    const dup = pky.files.find((f) => f.projectId === a.projectId && f.versions.some((v) => v.artifact === art.id));
+    if (dup) throw `项目里已有这份资料：${pCurrent(dup)?.name}`;
+    const id = nextId++;
+    pky.files.push({ id, projectId: a.projectId as number, currentVersion: 1, indexed: false, versions: [{ version: 1, artifact: art.id, addedAt: now() }] });
+    return id;
+  },
+  picky_project_file_replace: (a) => {
+    const f = pky.files.find((x) => x.id === a.fileId)!;
+    const art = pArt(a.artifactId as number);
+    if (pCurrent(f)?.id === art.id) throw "选的文件和现在的版本一样";
+    const next = Math.max(...f.versions.map((v) => v.version)) + 1;
+    f.versions.push({ version: next, artifact: art.id, addedAt: now() });
+    f.currentVersion = next;
+    pky.jobs.delete(f.id);
+    if (f.indexed) pBuild(f);
+    return null;
+  },
+  picky_project_file_remove: (a) => {
+    pky.files = pky.files.filter((x) => x.id !== a.fileId);
+    pky.jobs.delete(a.fileId as number);
+    return null;
+  },
+  picky_project_file_index: (a) => {
+    const f = pky.files.find((x) => x.id === a.fileId)!;
+    f.indexed = !!a.indexed;
+    pky.jobs.delete(f.id);
+    if (f.indexed) pBuild(f);
+    else pky.built.delete(pCurrent(f)?.id ?? -1);
+    return null;
+  },
+  picky_index_rebuild: (a) => (pBuild(pky.files.find((x) => x.id === a.fileId)!), null),
+  picky_index_stop: (a) => (pky.jobs.delete(a.fileId as number), null),
+  picky_retrieval_plan: (a) => {
+    const proj = a.sessionId != null ? pFind(a.sessionId).projectId : ((a.projectId as number | null) ?? null);
+    const fs_ = pky.files.filter((f) => f.projectId === proj && f.indexed && !(a.excludeFiles as number[]).includes(f.id));
+    const ready = fs_.filter((f) => pky.built.has(pCurrent(f)?.id ?? -1));
+    return { readyNames: ready.map((f) => pCurrent(f)!.name), pending: fs_.length - ready.length };
+  },
+  picky_retrieve: async (a) => {
+    const plan = pickyHandlers.picky_retrieval_plan(a) as { readyNames: string[] };
+    if (!plan.readyNames.length) return [];
+    await new Promise((r) => setTimeout(r, 600));
+    if (String(a.question).includes("向量失败测试")) throw "模拟：8081 向量服务没有就绪。";
+    const proj = a.sessionId != null ? pFind(a.sessionId).projectId : ((a.projectId as number | null) ?? null);
+    return pky.files
+      .filter((f) => f.projectId === proj && f.indexed && pky.built.has(pCurrent(f)?.id ?? -1) && !(a.excludeFiles as number[]).includes(f.id))
+      .slice(0, 2)
+      .map((f) => {
+        const art = pCurrent(f)!;
+        return { fileId: f.id, artifactId: art.id, segmentOrdinal: 0, label: `${art.name} · 第 1 段`, content: art.segments[0].slice(0, 80) };
+      });
+  },
+  picky_memories: () => [...pky.memories].reverse(),
+  picky_memory_save: (a) => {
+    const m = a.memory as { content: string; projectId: number | null; sharedProjectIds: number[]; enabled: boolean; localOnly: boolean };
+    const content = pMemoryValid(m.content);
+    const shared = m.projectId == null ? [] : [...new Set(m.sharedProjectIds.filter((x) => x !== m.projectId))];
+    if (a.id == null) {
+      const id = nextId++;
+      pky.memories.push({ id, content, projectId: m.projectId, sharedProjectIds: shared, enabled: m.enabled, localOnly: m.localOnly, source: "manual", sourceSessionId: null, notedOn: pToday(), createdAt: now(), updatedAt: now() });
+      return id;
+    }
+    const x = pky.memories.find((y) => y.id === a.id)!;
+    if (x.content !== content) x.notedOn = pToday();
+    Object.assign(x, { content, projectId: m.projectId, sharedProjectIds: shared, enabled: m.enabled, localOnly: m.localOnly, updatedAt: now() });
+    return x.id;
+  },
+  picky_remember: (a) => {
+    const contents = (a.entries as string[]).map(pMemoryValid);
+    for (const content of contents)
+      pky.memories.push({ id: nextId++, content, projectId: (a.projectId as number | null) ?? null, sharedProjectIds: [], enabled: true, localOnly: !!a.localOnly, source: "command", sourceSessionId: (a.sessionId as number | null) ?? null, notedOn: pToday(), createdAt: now(), updatedAt: now() });
+    return null;
+  },
+  picky_memory_flag: (a) => {
+    const x = pky.memories.find((y) => y.id === a.id)!;
+    if (a.flag === "enabled") x.enabled = !!a.on;
+    else x.localOnly = !!a.on;
+    x.updatedAt = now();
+    return null;
+  },
+  picky_memory_delete: (a) => ((pky.memories = pky.memories.filter((y) => y.id !== a.id)), null),
+  picky_memory_enabled: () => pky.memoryOn,
+  picky_memory_enabled_set: (a) => ((pky.memoryOn = !!a.on), null),
+  picky_data_cloud: () => pDataCloud(),
+  picky_data_cloud_set: (a) => {
+    if (!P_MODULES.some((m) => m[0] === a.module)) throw `没有这个模块：${a.module}`;
+    pky.dataCloud.set(a.module as string, !!a.allowed);
+    return null;
+  },
+  picky_conversation_memory: (a) => (a.off ? pky.memoryOffSessions.add(a.sessionId as number) : pky.memoryOffSessions.delete(a.sessionId as number), null),
+  picky_memory_plan: (a) => {
+    const { candidates: _c, ...plan } = pMemoryPlan((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, !!a.draftOff, !!a.nextOff);
+    return plan;
+  },
+  picky_choose_memories: async (a) => {
+    const plan = pMemoryPlan((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, !!a.draftOff, !!a.nextOff);
+    if (plan.off || !plan.count) return [];
+    await new Promise((r) => setTimeout(r, 500));
+    const q = String(a.question);
+    if (q.includes("向量失败测试")) throw "模拟：8081 向量服务没有就绪。";
+    // shared characters stand in for similarity
+    const score = (t: string) => [...new Set([...t])].filter((ch) => /\p{L}/u.test(ch) && q.includes(ch)).length;
+    return plan.candidates
+      .map((m) => ({ m, s: score(m.content) }))
+      .filter((x) => x.s >= 2)
+      .sort((x, y) => y.s - x.s)
+      .slice(0, 6)
+      .map(({ m }) => ({ memoryId: m.id, content: m.content, notedOn: m.notedOn }));
+  },
+  picky_stop: (a) => {
+    const r = pky.run;
+    if (r && r.id === a.runId) r.done("cancelled", null);
+    return null;
+  },
+};
+
 const handlers: Record<string, (a: Args) => unknown> = {
+  ...pickyHandlers,
   home_overview: (a) => homeMock((a.hidden as string[]) ?? []),
-  search_all: (a) => searchAllMock(String(a.q)),
+  search_all: (a) => [
+    ...(searchAllMock(String(a.q)) as unknown[]),
+    ...(pickyHandlers.picky_search({ q: a.q, model: null, since: null, archived: false }) as { sessionId: number; title: string; messageId: number | null; snippet: string | null; at: string }[])
+      .slice(0, 6)
+      .map((h) => ({ module: "picky", kind: "chat", id: h.sessionId, title: h.title, detail: h.snippet, parent: h.messageId, day: h.at.slice(0, 10), amount: null, currency: null, flow: null })),
+  ],
   app_info: () => ({
     appVersion: "0.1.0-mock",
     isDev: true,
@@ -1610,7 +2679,12 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...pItemHandlers("template"),
   ...pItemHandlers("trip"),
 
-  "plugin:dialog|open": () => "/mock/pomelo-import.json",
+  "plugin:dialog|open": (a) => {
+    const o = (a.options ?? {}) as { multiple?: boolean; filters?: { extensions: string[] }[] };
+    if (!o.filters?.some((f) => f.extensions.includes("pdf"))) return "/mock/pomelo-import.json";
+    pPickCount += 1;
+    return o.multiple ? [`/mock/论文初稿${pPickCount > 1 ? pPickCount : ""}.pdf`, `/mock/读书笔记${pPickCount > 1 ? pPickCount : ""}.md`] : `/mock/提纲-第${pPickCount}版.md`;
+  },
   "plugin:dialog|save": () => "/mock/pomelo-export.json",
   export_to: (a) => ({
     path: a.path,
@@ -1619,9 +2693,10 @@ const handlers: Record<string, (a: Args) => unknown> = {
       { key: "films", label: "好奇看看", incoming: handlers["films__count"]({}) },
       { key: "drawing", label: "随意画画", incoming: courses.length },
       { key: "packing", label: "出门走走", incoming: tpls.length + tripRows.length },
+      { key: "picky", label: "小拾", incoming: pky.projects.length + pky.presets.length + pky.templates.length + pky.memories.length },
     ],
   }),
-  backups_list: () => [...backups].sort((x, y) => y.fileName.localeCompare(x.fileName)),
+  backups_list: () => [...backups].sort((x, y) => y.createdAt.localeCompare(x.createdAt)),
   backup_now: () => addBackup("manual"),
   backup_daily: () => (backups.some((b) => b.label === "daily" && b.fileName.includes(stamp(new Date()).slice(0, 8))) ? null : addBackup("daily")),
   backup_restore: (a) => {
@@ -1667,6 +2742,7 @@ async function loadPrototypeNotes() {
 }
 
 export async function installMockIpc() {
+  if (new URLSearchParams(location.search).get("picky") === "ready") pSeed();
   await loadPrototypeNotes();
   mockWindows("main");
   mockIPC((cmd, payload) => {

@@ -3,6 +3,7 @@ import { FolderOpen, Settings } from "lucide-react";
 import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";
 import { BackupsSection } from "./Backups";
+import { PickySection } from "./Picky";
 import { Path, Row, Section } from "./layout";
 import { SidebarSection } from "./Sidebar";
 import { ExportRow, ImportRow } from "./Transfer";
@@ -40,13 +41,14 @@ export default function SettingsPage() {
           <ImportRow />
         </Section>
         <BackupsSection />
+        <PickySection />
         <VaultSection />
         <Section title="关于">
           <Row label="版本">{info.appVersion}</Row>
           <Row label="运行方式" help={info.isDev ? "开发版使用测试数据，和正式版的数据完全分开。" : undefined}>
             {info.isDev ? "开发版" : "正式版"}
           </Row>
-          <Row label="撤销" help="⌘Z 撤销、⌘⇧Z 重做最近的修改（新增、修改、删除、勾选、排序都算）。关掉 App 后就不能撤销了。">
+          <Row label="撤销" help="⌘Z 撤销、⌘⇧Z 重做最近的修改（新增、修改、删除、勾选、排序都算）。退出 App 后就不能撤销了；关窗口不算退出。">
             ⌘Z 撤销 · ⌘⇧Z 重做
           </Row>
         </Section>

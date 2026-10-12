@@ -11,9 +11,6 @@
     "app:build": "tauri build --bundles app",
     "app:install": "bash scripts/install-app.sh",
     "check": "tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml",
-    "import:xlsx": "node scripts/xlsx-to-pomelo/convert.ts",
-    "import:todo": "node scripts/md-todo-to-pomelo/convert.ts",
-    "import:seeker": "node scripts/seeker-to-pomelo/convert.ts",
     "import:flomo": "node scripts/flomo-to-pomelo/convert.ts"
   },
   "dependencies": {
@@ -21,7 +18,10 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.8.0",
     "@tauri-apps/plugin-opener": "^2",
+    "highlight.js": "^11.12.0",
+    "katex": "~0.19.0",
     "lucide-react": "^1.48.0",
+    "markdown-it": "^15.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router": "^8.4.0"
@@ -29,11 +29,11 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.6.3",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
-    "exceljs": "^4.4.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"

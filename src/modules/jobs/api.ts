@@ -1,5 +1,5 @@
 // Typed wrappers for Rust job_* commands (src-tauri/src/modules/jobs.rs) + React Query hooks.
-// Rules (current status from the checked steps, 投递日期, follow-up) live in Rust.
+// Rules (current status from the checked steps, 投递日期, follow-up, 统计) live in Rust.
 import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
@@ -36,6 +36,21 @@ export type Job = {
   waitingDays: number | null;
   followUp: boolean;
 };
+/** 统计 (jobs.rs `stats`; 首页 and 小拾 use the same numbers). */
+export type JobStats = {
+  today: string;
+  applied: number;
+  thisWeek: number;
+  ongoing: number;
+  got: number;
+  /** 已投递 → … → Offer: checked / applications that have the step. */
+  funnel: { statusId: number; name: string; have: number; done: number }[];
+  /** Applications by 投递日期, oldest first: the last 30 days, the last 12 weeks (Monday first). */
+  days: Bucket[];
+  weeks: Bucket[];
+  statuses: Status[];
+};
+export type Bucket = { from: string; to: string; count: number };
 export type JobPatch = Partial<Pick<Job, "company" | "position" | "location" | "link" | "kindId" | "resume" | "note" | "steps">>;
 
 const api = {
@@ -46,6 +61,7 @@ const api = {
   deleteStatus: (id: number) => invoke<void>("job_status_delete", { id }),
   reorderStatuses: (ids: number[]) => invoke<void>("job_statuses_reorder", { ids }),
   jobs: () => invoke<Job[]>("jobs_list"),
+  stats: () => invoke<JobStats>("job_stats"),
   create: (patch: JobPatch) => invoke<Job>("job_create", { patch }),
   update: (v: { id: number; patch: JobPatch }) => invoke<Job>("job_update", v),
   followUp: (id: number) => invoke<Job>("job_follow_up", { id }),
@@ -55,6 +71,7 @@ const api = {
 export const JOBS_KEY = ["jobs"];
 export const useStatuses = () => useQuery({ queryKey: [...JOBS_KEY, "statuses"], queryFn: api.statuses });
 export const useJobs = () => useQuery({ queryKey: [...JOBS_KEY, "list"], queryFn: api.jobs });
+export const useJobStats = () => useQuery({ queryKey: [...JOBS_KEY, "stats"], queryFn: api.stats });
 
 export function useJobMutations() {
   const qc = useQueryClient();

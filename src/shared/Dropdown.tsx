@@ -1,5 +1,5 @@
-// Custom dropdown (replaces native <select>): popover rendered in a portal (never clipped by
-// scroll containers / tables), flips upward when needed, keyboard: ↑↓ Home End Enter Space Esc Tab.
+// Custom dropdown (replaces native <select>): popover rendered in a portal and shown in the top layer
+// (never clipped by scroll containers, tables or a modal dialog it sits in), flips upward when needed, keyboard: ↑↓ Home End Enter Space Esc Tab.
 // Clicks inside never bubble to parents (safe inside clickable table rows).
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -52,11 +52,17 @@ export function Dropdown<T>(props: {
     } else actions[i - options.length]?.onSelect();
   };
 
-  // Position after the menu renders (measure its size), before paint.
+  // Position after the menu renders (measure its size), before paint. In the top layer first: a
+  // dialog (WebKit) would otherwise clip it, and a hidden popover has no size.
   useLayoutEffect(() => {
     if (!open || !btn.current || !menu.current) return;
     const r = btn.current.getBoundingClientRect();
     const m = menu.current;
+    try {
+      if (typeof m.showPopover === "function" && !m.matches(":popover-open")) m.showPopover();
+    } catch {
+      // no Popover API: stays a fixed element (fine outside dialogs)
+    }
     const w = Math.max(m.offsetWidth, r.width);
     const h = m.offsetHeight;
     const fitsBelow = window.innerHeight - r.bottom - 8 >= h || r.top < h + 8;
@@ -173,6 +179,7 @@ export function Dropdown<T>(props: {
         createPortal(
           <div
             ref={menu}
+            popover="manual"
             role="listbox"
             aria-label={props.ariaLabel}
             onMouseDown={(e) => e.preventDefault()} // keep focus on the trigger
@@ -181,6 +188,9 @@ export function Dropdown<T>(props: {
               position: "fixed",
               top: pos?.top ?? 0,
               left: pos?.left ?? 0,
+              right: "auto",
+              bottom: "auto",
+              margin: 0,
               minWidth: pos?.minWidth,
               maxHeight: props.menuMaxHeight ?? 320,
               visibility: pos ? "visible" : "hidden",

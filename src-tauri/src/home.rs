@@ -138,7 +138,7 @@ fn year_numbers(conn: &Connection, year: &str, shown: &impl Fn(&str) -> bool, jo
 
 fn jobs_card(conn: &Connection, js: &[jobs::Job], today: &str) -> Result<JobsCard, String> {
     let sts = jobs::statuses(conn)?;
-    let week0 = common::add_days(today, 1 - common::weekday(today) as i64);
+    let numbers = jobs::stats_of(js, &sts, today);
     let line = |j: &jobs::Job| {
         let title = match &j.position {
             Some(p) => format!("{} · {p}", j.company),
@@ -155,9 +155,9 @@ fn jobs_card(conn: &Connection, js: &[jobs::Job], today: &str) -> Result<JobsCar
     follow.sort_by_key(|j| std::cmp::Reverse(j.waiting_days));
     Ok(JobsCard {
         total: js.len() as i64,
-        this_week: js.iter().filter(|j| j.applied_on.as_deref().is_some_and(|d| d >= week0.as_str())).count() as i64,
-        ongoing: js.iter().filter(|j| matches!(j.stage, Stage::Applied | Stage::Active)).count() as i64,
-        got: js.iter().filter(|j| j.stage == Stage::Got).count() as i64,
+        this_week: numbers.this_week,
+        ongoing: numbers.ongoing,
+        got: numbers.got,
         follow: follow.into_iter().map(line).collect(),
         active: js.iter().filter(|j| j.stage == Stage::Active).map(line).collect(),
     })

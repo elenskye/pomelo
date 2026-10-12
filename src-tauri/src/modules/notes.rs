@@ -237,6 +237,11 @@ pub struct Filter {
     pub q: Option<String>,
     #[serde(default)]
     pub id: Option<i64>,
+    /// Local dates written, inclusive (小拾).
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -297,6 +302,14 @@ pub fn list(conn: &Connection, f: &Filter) -> Result<Vec<Note>, String> {
     if let Some(id) = f.id {
         let p = arg(Value::Integer(id));
         conds.push(format!("n.id = {p}"));
+    }
+    if let Some(d) = common::clean(f.from.clone()) {
+        let p = arg(Value::Text(d));
+        conds.push(format!("date(n.created_at, 'localtime') >= {p}"));
+    }
+    if let Some(d) = common::clean(f.to.clone()) {
+        let p = arg(Value::Text(d));
+        conds.push(format!("date(n.created_at, 'localtime') <= {p}"));
     }
     let order = if conds.is_empty() { "n.pinned DESC, n.created_at DESC" } else { "n.created_at DESC" };
     let filter = if conds.is_empty() { "1 = 1".to_string() } else { conds.join(" AND ") };

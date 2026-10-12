@@ -14,14 +14,14 @@
 | 投石问路 | 求职投递：每条投递自己的状态时间线、跟进提醒、统计 |
 | 念念不忘 | 笔记（参考 Flomo）：多级标签、热力图、互相引用 |
 | 芝麻开门 | 密码：主密码或 Touch ID 才能打开，加密保存 |
+| 小拾 | AI（原来的 Picky）：本地和云端模型聊天；项目、模板和指令、附件和项目资料、记忆 |
 
-全局：打开先到首页（今天的待办、总资产、求职近况、今年的数字等一览）；⌘K 搜索所有模块、⌘Z 撤销；侧栏能收起、拖动排序、在设置里隐藏模块。做到哪了见[开发路线](docs/roadmap.md)。
+全局：打开先到首页（今天的待办、总资产、求职近况、今年的数字等一览）；⌘K 搜索所有模块、⌘Z 撤销；侧栏能收起、拖动排序、在设置里隐藏模块。关掉窗口不退出，菜单栏留一个小鸟图标（看模型状态、切换模型），⌘Q 才退出。做到哪了见[开发路线](docs/roadmap.md)。
 
 ## 怎么用
 
 - **安装或更新**：`pnpm app:install`，装进「应用程序」，只用这一个。新版第一次打开会先备份、再升级数据库。
 - **导出和备份**：「设置 → 导出…」把所有数据存成一个文件；App 每天自动备份，「设置 → 备份」里能立即备份或恢复。想异地保存，就复制备份文件夹里的文件。
-- **一次性导入**（都已导入过）：`pnpm import:xlsx`（Excel）、`import:todo`（Markdown 待办）、`import:seeker`（Seeker 投递）、`import:flomo`（Flomo 导出）生成 `prototype/*.json`，再在「设置 → 导入」里选。
 - **开发**：`pnpm app:dev`，用测试数据，不影响日常数据。
 
 ## 文档
@@ -38,6 +38,6 @@
 
 ## 数据在哪里
 
-- 真实数据：`~/Library/Application Support/Pomelo OS/`
+- 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`picky.db` 小拾，`picky-files/` 小拾的附件和资料）
 - 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`
-- 原型和导入文件：`prototype/`（只在本机，不进 Git）
+- 原型和转换好的导入文件：`prototype/`（只在本机，不进 Git）

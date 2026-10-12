@@ -66,6 +66,11 @@ pub fn migrate(conn: &mut Connection, migrations: &[Migration], backups_dir: &Pa
 
 /// `backups_dir = None`: no pre-upgrade snapshot (caller already holds one, e.g. restore).
 pub fn migrate_with(conn: &mut Connection, migrations: &[Migration], backups_dir: Option<&Path>) -> Result<i64, String> {
+    migrate_as(conn, migrations, backups_dir, backup::Store::Pomelo)
+}
+
+/// Same for either database; `store` names the pre-upgrade snapshot (`picky-…-before-v2.db`).
+pub fn migrate_as(conn: &mut Connection, migrations: &[Migration], backups_dir: Option<&Path>, store: backup::Store) -> Result<i64, String> {
     let current = user_version(conn)?;
     let latest = migrations.last().map_or(0, |m| m.version);
     if current > latest {
@@ -78,7 +83,7 @@ pub fn migrate_with(conn: &mut Connection, migrations: &[Migration], backups_dir
         return Ok(current);
     };
     if let (true, Some(dir)) = (current > 0, backups_dir) {
-        backup::snapshot(conn, dir, &format!("before-v{}", first.version))?;
+        backup::snapshot_of(store, conn, dir, &format!("before-v{}", first.version))?;
     }
     for m in pending {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -100,11 +105,33 @@ pub mod tests {
         MIGRATIONS.last().map_or(0, |m| m.version)
     }
 
-    pub fn temp_dir(name: &str) -> PathBuf {
+    /// Fresh dir under $TMPDIR, removed on drop (also on panic).
+    pub struct TempDir(PathBuf);
+
+    impl std::ops::Deref for TempDir {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for TempDir {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    pub fn temp_dir(name: &str) -> TempDir {
         let d = std::env::temp_dir().join(format!("pomelo-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        d
+        TempDir(d)
     }
 
     pub fn memory_db() -> Connection {

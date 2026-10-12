@@ -19,7 +19,10 @@
         "minHeight": 600,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 18, "y": 24 }
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 24
+        }
       }
     ],
     "security": {
@@ -28,8 +31,19 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "category": "Productivity",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "signingIdentity": "Pomelo Self-Signed",
+      "hardenedRuntime": false
+    }
   }
 }

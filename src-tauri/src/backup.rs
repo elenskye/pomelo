@@ -1,7 +1,8 @@
-//! Snapshot backups: `backups/pomelo-YYYYMMDD-HHMMSS-<label>[-n].db`, written with `VACUUM INTO`
-//! (consistent single-file copy, WAL-safe). The file name is the only metadata (time + label).
-//! Labels: `daily` (auto, first launch/focus of the day; pruned), `manual`, `before-vN` (migration),
-//! `before-import`, `before-restore`. Only `daily` is ever pruned automatically.
+//! Snapshot backups: `backups/<store>-YYYYMMDD-HHMMSS-<label>[-n].db`, written with `VACUUM INTO`
+//! (consistent single-file copy, WAL-safe). The file name is the only metadata (store + time + label).
+//! Stores: `pomelo` (pomelo.db, life data) and `picky` (picky.db, 小拾); each is backed up, pruned and
+//! restored on its own. Labels: `daily` (auto, first launch/focus of the day; pruned), `manual`,
+//! `before-vN` (migration), `before-import`, `before-picky-import`, `before-restore`. Only `daily` is ever pruned automatically.
 //! Restore copies a snapshot into the live connection via the SQLite backup API (atomic), then migrates.
 
 use crate::{db, AppState};
@@ -15,20 +16,56 @@ use tauri_plugin_opener::OpenerExt;
 pub const DAILY: &str = "daily";
 pub const MANUAL: &str = "manual";
 pub const BEFORE_RESTORE: &str = "before-restore";
-/// Retention for `daily`: newest N are kept, plus the newest one of every month (forever).
-pub const KEEP_DAILY: usize = 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Store {
+    Pomelo,
+    Picky,
+}
+
+impl Store {
+    pub const ALL: [Store; 2] = [Store::Pomelo, Store::Picky];
+
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Store::Pomelo => "pomelo",
+            Store::Picky => "picky",
+        }
+    }
+
+    /// Retention for `daily`: newest N are kept, plus the newest one of every month (forever).
+    pub fn keep_daily(self) -> usize {
+        match self {
+            Store::Pomelo => 30,
+            Store::Picky => 7,
+        }
+    }
+
+    pub fn migrations(self) -> &'static [db::Migration] {
+        match self {
+            Store::Pomelo => db::MIGRATIONS,
+            Store::Picky => crate::picky::store::MIGRATIONS,
+        }
+    }
+}
 
 /// Writes `pomelo-YYYYMMDD-HHMMSS-<label>.db` into `dir`. Never overwrites.
 pub fn snapshot(conn: &Connection, dir: &Path, label: &str) -> Result<PathBuf, String> {
+    snapshot_of(Store::Pomelo, conn, dir, label)
+}
+
+pub fn snapshot_of(store: Store, conn: &Connection, dir: &Path, label: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("无法创建备份目录：{e}"))?;
     let stamp: String = conn
         .query_row("SELECT strftime('%Y%m%d-%H%M%S', 'now', 'localtime')", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    let mut path = dir.join(format!("pomelo-{stamp}-{label}.db"));
+    let p = store.prefix();
+    let mut path = dir.join(format!("{p}-{stamp}-{label}.db"));
     let mut n = 1;
     while path.exists() {
         n += 1;
-        path = dir.join(format!("pomelo-{stamp}-{label}-{n}.db"));
+        path = dir.join(format!("{p}-{stamp}-{label}-{n}.db"));
     }
     let target = path.to_str().ok_or("备份路径包含无法识别的字符")?;
     conn.execute("VACUUM INTO ?1", [target])
@@ -40,6 +77,7 @@ pub fn snapshot(conn: &Connection, dir: &Path, label: &str) -> Result<PathBuf, S
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Name {
+    store: Store,
     /// `YYYYMMDD-HHMMSS` (local time)
     stamp: String,
     label: String,
@@ -54,7 +92,8 @@ impl Name {
 }
 
 fn parse_name(file: &str) -> Option<Name> {
-    let rest = file.strip_prefix("pomelo-")?.strip_suffix(".db")?;
+    let (store, rest) = Store::ALL.iter().find_map(|s| Some((*s, file.strip_prefix(s.prefix())?.strip_prefix('-')?)))?;
+    let rest = rest.strip_suffix(".db")?;
     let (stamp, label) = (rest.get(..15)?, rest.get(15..)?.strip_prefix('-')?);
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     if !(digits(&stamp[..8]) && stamp.as_bytes()[8] == b'-' && digits(&stamp[9..])) || label.is_empty() {
@@ -65,13 +104,15 @@ fn parse_name(file: &str) -> Option<Name> {
         Some((l, n)) if digits(n) && !l.is_empty() => (l, n.parse().ok()?),
         _ => (label, 1),
     };
-    Some(Name { stamp: stamp.into(), label: label.into(), n })
+    Some(Name { store, stamp: stamp.into(), label: label.into(), n })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupInfo {
     pub file_name: String,
+    /// Which database: `pomelo` (life data) or `picky` (小拾).
+    pub store: Store,
     /// Raw label (`daily`, `manual`, `before-v7`, ...); UI maps to Chinese.
     pub label: String,
     /// `YYYY-MM-DD HH:MM:SS`, local time.
@@ -97,13 +138,14 @@ fn info(name: &Name, path: &Path) -> BackupInfo {
     let s = &name.stamp;
     BackupInfo {
         file_name: path.file_name().and_then(|f| f.to_str()).unwrap_or_default().into(),
+        store: name.store,
         label: name.label.clone(),
         created_at: format!("{}-{}-{} {}:{}:{}", &s[..4], &s[4..6], &s[6..8], &s[9..11], &s[11..13], &s[13..15]),
         size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
     }
 }
 
-/// Newest first.
+/// Both stores, newest first.
 pub fn list(dir: &Path) -> Result<Vec<BackupInfo>, String> {
     Ok(scan(dir)?.iter().map(|(n, p)| info(n, p)).collect())
 }
@@ -116,10 +158,10 @@ fn info_of(path: &Path) -> Result<BackupInfo, String> {
 
 // ---------- daily + retention ----------
 
-/// Deletes `daily` snapshots beyond the newest `keep`, except the newest one of each month.
+/// Deletes `store`'s `daily` snapshots beyond the newest `keep`, except the newest one of each month.
 /// Returns the deleted paths.
-pub fn prune_daily(dir: &Path, keep: usize) -> Result<Vec<PathBuf>, String> {
-    let daily: Vec<(Name, PathBuf)> = scan(dir)?.into_iter().filter(|(n, _)| n.label == DAILY).collect();
+pub fn prune_daily(dir: &Path, store: Store, keep: usize) -> Result<Vec<PathBuf>, String> {
+    let daily: Vec<(Name, PathBuf)> = scan(dir)?.into_iter().filter(|(n, _)| n.store == store && n.label == DAILY).collect();
     let mut months = HashSet::new();
     let mut deleted = Vec::new();
     for (i, (name, path)) in daily.iter().enumerate() {
@@ -133,35 +175,41 @@ pub fn prune_daily(dir: &Path, keep: usize) -> Result<Vec<PathBuf>, String> {
     Ok(deleted)
 }
 
-/// Takes today's `daily` snapshot unless one exists, then prunes. Returns the new snapshot.
+/// Takes today's `daily` snapshot of `pomelo.db` unless one exists, then prunes.
 pub fn daily(conn: &Connection, dir: &Path) -> Result<Option<PathBuf>, String> {
+    daily_of(Store::Pomelo, conn, dir)
+}
+
+/// Takes today's `daily` snapshot of `store` unless one exists, then prunes. Returns the new snapshot.
+pub fn daily_of(store: Store, conn: &Connection, dir: &Path) -> Result<Option<PathBuf>, String> {
     let today: String = conn
         .query_row("SELECT strftime('%Y%m%d', 'now', 'localtime')", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    if scan(dir)?.iter().any(|(n, _)| n.label == DAILY && n.stamp.starts_with(&today)) {
+    if scan(dir)?.iter().any(|(n, _)| n.store == store && n.label == DAILY && n.stamp.starts_with(&today)) {
         return Ok(None);
     }
-    let path = snapshot(conn, dir, DAILY)?;
-    prune_daily(dir, KEEP_DAILY)?;
+    let path = snapshot_of(store, conn, dir, DAILY)?;
+    prune_daily(dir, store, store.keep_daily())?;
     Ok(Some(path))
 }
 
 // ---------- restore ----------
 
-/// Resolves a file name from `list` to a path inside `dir` (no traversal, must exist).
-fn resolve(dir: &Path, file_name: &str) -> Result<PathBuf, String> {
-    if file_name.contains(['/', '\\']) || parse_name(file_name).is_none() {
+/// Resolves a file name from `list` to its store and a path inside `dir` (no traversal, must exist).
+fn resolve(dir: &Path, file_name: &str) -> Result<(Store, PathBuf), String> {
+    let name = (!file_name.contains(['/', '\\'])).then(|| parse_name(file_name)).flatten();
+    let Some(name) = name else {
         return Err("这不是 Pomelo 的备份文件".into());
-    }
+    };
     let path = dir.join(file_name);
     if !path.is_file() {
         return Err("找不到这份备份，可能已经被删除了".into());
     }
-    Ok(path)
+    Ok((name.store, path))
 }
 
-/// Opens a snapshot read-only and checks it is an intact Pomelo DB this app can open.
-fn open_snapshot(path: &Path) -> Result<Connection, String> {
+/// Opens a snapshot read-only and checks it is an intact database of `store` this app can open.
+fn open_snapshot(store: Store, path: &Path) -> Result<Connection, String> {
     let bad = |e: String| format!("这份备份不能用：{e}");
     let src = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
         .map_err(|e| bad(e.to_string()))?;
@@ -170,7 +218,7 @@ fn open_snapshot(path: &Path) -> Result<Connection, String> {
         return Err(bad("文件已损坏".into()));
     }
     let v = db::user_version(&src).map_err(bad)?;
-    let latest = db::MIGRATIONS.last().map_or(0, |m| m.version);
+    let latest = store.migrations().last().map_or(0, |m| m.version);
     if v < 1 {
         return Err(bad("里面没有数据".into()));
     }
@@ -189,15 +237,21 @@ fn copy_into(src: &Connection, dst: &mut Connection) -> Result<(), String> {
     }
 }
 
+/// Which store a backup file belongs to (for picking the connection before `restore`).
+pub fn store_of(dir: &Path, file_name: &str) -> Result<Store, String> {
+    resolve(dir, file_name).map(|(s, _)| s)
+}
+
 /// Snapshots current data (`before-restore`), then replaces it with `file_name` and migrates it
 /// to the current schema. If migrating fails, the current data is put back.
-/// Returns the safety snapshot.
+/// `conn` must be the connection of the file's store. Returns the safety snapshot.
 pub fn restore(conn: &mut Connection, dir: &Path, file_name: &str) -> Result<PathBuf, String> {
-    let src = open_snapshot(&resolve(dir, file_name)?)?;
-    let safety = snapshot(conn, dir, BEFORE_RESTORE)?;
+    let (store, path) = resolve(dir, file_name)?;
+    let src = open_snapshot(store, &path)?;
+    let safety = snapshot_of(store, conn, dir, BEFORE_RESTORE)?;
     copy_into(&src, conn)?;
-    if let Err(e) = db::migrate_with(conn, db::MIGRATIONS, None) {
-        let back = open_snapshot(&safety).and_then(|s| copy_into(&s, conn));
+    if let Err(e) = db::migrate_as(conn, store.migrations(), None, store) {
+        let back = open_snapshot(store, &safety).and_then(|s| copy_into(&s, conn));
         return Err(match back {
             Ok(()) => format!("这份备份升级到新版本时出错，已还原成恢复前的数据：{e}"),
             Err(e2) => format!("恢复失败：{e}；还原也失败了：{e2}。恢复前的数据在 {}", safety.display()),
@@ -213,17 +267,27 @@ pub fn backups_list(state: State<AppState>) -> Result<Vec<BackupInfo>, String> {
     list(&state.paths.backups)
 }
 
+/// Backs up both databases (小拾 only when it opened). Returns the life-data snapshot.
 #[tauri::command]
 pub fn backup_now(state: State<AppState>) -> Result<BackupInfo, String> {
     let dir = state.paths.backups.clone();
-    info_of(&state.with_db(|c| snapshot(c, &dir, MANUAL))?)
+    let main = info_of(&state.with_db(|c| snapshot(c, &dir, MANUAL))?)?;
+    if state.picky.is_open() {
+        state.picky.with_db(|c| snapshot_of(Store::Picky, c, &dir, MANUAL))?;
+    }
+    Ok(main)
 }
 
-/// Called by the UI on window focus; no-op if today's daily snapshot exists.
+/// Called by the UI on window focus; no-op if today's daily snapshots exist. Returns the
+/// life-data snapshot if one was taken.
 #[tauri::command]
 pub fn backup_daily(state: State<AppState>) -> Result<Option<BackupInfo>, String> {
     let dir = state.paths.backups.clone();
-    state.with_db(|c| daily(c, &dir))?.map(|p| info_of(&p)).transpose()
+    let main = state.with_db(|c| daily(c, &dir))?;
+    if state.picky.is_open() {
+        state.picky.with_db(|c| daily_of(Store::Picky, c, &dir))?;
+    }
+    main.map(|p| info_of(&p)).transpose()
 }
 
 #[derive(Serialize)]
@@ -236,9 +300,15 @@ pub struct RestoreResult {
 #[tauri::command]
 pub fn backup_restore(state: State<AppState>, file_name: String) -> Result<RestoreResult, String> {
     let dir = state.paths.backups.clone();
-    let safety = state.with_db(|c| restore(c, &dir, &file_name))?;
+    let safety = match store_of(&dir, &file_name)? {
+        Store::Pomelo => {
+            let s = state.with_db(|c| restore(c, &dir, &file_name))?;
+            state.vault_lock(); // the restored vault may have another master password
+            s
+        }
+        Store::Picky => state.picky.with_db(|c| restore(c, &dir, &file_name))?,
+    };
     state.clear_history();
-    state.vault_lock(); // the restored vault may have another master password
     Ok(RestoreResult { safety: info_of(&safety)? })
 }
 
@@ -280,6 +350,38 @@ mod tests {
     }
 
     #[test]
+    fn picky_store_is_named_listed_pruned_and_restored_on_its_own() {
+        let n = parse_name("picky-20261010-090000-daily-2.db").unwrap();
+        assert_eq!((n.store, n.label.as_str(), n.n), (Store::Picky, "daily", 2));
+        assert!(parse_name("pickyx-20261010-090000-daily.db").is_none());
+
+        let dir = temp_dir("backup-two-stores");
+        for d in 1..=10 {
+            std::fs::write(dir.join(format!("pomelo-202610{d:02}-080000-daily.db")), b"x").unwrap();
+            std::fs::write(dir.join(format!("picky-202610{d:02}-080000-daily.db")), b"x").unwrap();
+        }
+        prune_daily(&dir, Store::Picky, Store::Picky.keep_daily()).unwrap();
+        let l = list(&dir).unwrap();
+        assert_eq!(l.iter().filter(|b| b.store == Store::Picky).count(), 7);
+        assert_eq!(l.iter().filter(|b| b.store == Store::Pomelo).count(), 10); // untouched
+
+        // restore a picky snapshot into a picky connection; pomelo.db is not involved
+        let b = dir.join("backups");
+        let mut c = crate::picky::store::open(&dir.join("picky.db"), &b).unwrap();
+        c.execute("INSERT INTO sessions (title) VALUES ('旧')", []).unwrap();
+        let snap = snapshot_of(Store::Picky, &c, &b, MANUAL).unwrap();
+        c.execute("DELETE FROM sessions", []).unwrap();
+        let name = snap.file_name().unwrap().to_str().unwrap();
+        assert_eq!(store_of(&b, name).unwrap(), Store::Picky);
+        let safety = restore(&mut c, &b, name).unwrap();
+        let t: String = c.query_row("SELECT title FROM sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(t, "旧");
+        assert!(safety.file_name().unwrap().to_str().unwrap().starts_with("picky-"));
+        assert!(daily_of(Store::Picky, &c, &b).unwrap().is_some());
+        assert!(daily_of(Store::Picky, &c, &b).unwrap().is_none());
+    }
+
+    #[test]
     fn list_newest_first_ignores_strangers() {
         let dir = temp_dir("backup-list");
         for f in ["pomelo-20260101-090000-daily.db", "pomelo-20260102-090000-manual.db", "pomelo-20260102-090000-manual-2.db", "notes.txt", "pomelo.db"] {
@@ -309,14 +411,14 @@ mod tests {
         }
         std::fs::write(dir.join("pomelo-20260701-090000-manual.db"), b"x").unwrap();
         std::fs::write(dir.join("pomelo-20260701-090000-before-v7.db"), b"x").unwrap();
-        let deleted = prune_daily(&dir, 30).unwrap();
+        let deleted = prune_daily(&dir, Store::Pomelo, 30).unwrap();
         let left: Vec<String> = list(&dir).unwrap().into_iter().filter(|b| b.label == DAILY).map(|b| b.created_at[..10].to_string()).collect();
         // newest 30 = Aug 30 – Sep 28 (already holds Aug's last day); July keeps only Jul 31
         assert_eq!(left.len(), 31);
         assert_eq!((left[0].as_str(), left[29].as_str(), left[30].as_str()), ("2026-09-28", "2026-08-30", "2026-07-31"));
         assert_eq!(deleted.len(), 90 - 31);
         assert_eq!(list(&dir).unwrap().len(), 33);
-        assert!(prune_daily(&dir, 30).unwrap().is_empty()); // idempotent
+        assert!(prune_daily(&dir, Store::Pomelo, 30).unwrap().is_empty()); // idempotent
     }
 
     #[test]

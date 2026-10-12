@@ -1,11 +1,12 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":10,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":11,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
 //! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
-//! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings. All older versions are read.
+//! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 小拾
+//! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db). All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
 //! in the file (finance has two: fin_out / fin_in). Overwriting existing data requires `overwrite = true` and takes a snapshot first.
@@ -23,7 +24,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +139,8 @@ impl Payload {
 
 struct Parsed {
     payloads: Vec<Payload>,
+    /// 小拾's part (picky.db).
+    picky: Option<crate::picky::transfer::PickyRecord>,
     /// (module key, kind names) for modules in `payloads` only.
     kinds: Vec<(&'static str, Vec<String>)>,
     skipped: Vec<String>,
@@ -154,8 +157,15 @@ fn parse(text: &str) -> Result<Parsed, String> {
     }
     let mut payloads = Vec::new();
     let mut skipped = Vec::new();
+    let mut picky = None;
     for (key, value) in file.modules {
         match key.as_str() {
+            crate::picky::transfer::KEY => {
+                let rec: crate::picky::transfer::PickyRecord =
+                    serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", crate::picky::transfer::LABEL))?;
+                crate::picky::transfer::validate(&rec)?;
+                picky = Some(rec);
+            }
             books::KEY => {
                 let recs: Vec<books::BookRecord> = serde_json::from_value(value)
                     .map_err(|e| format!("{}的数据格式不对：{e}", books::LABEL))?;
@@ -207,7 +217,7 @@ fn parse(text: &str) -> Result<Parsed, String> {
             _ => skipped.push(key),
         }
     }
-    if payloads.is_empty() {
+    if payloads.is_empty() && picky.is_none() {
         return Err("文件里没有这个版本的 App 能导入的数据".into());
     }
     let mut kind_lists = Vec::new();
@@ -219,7 +229,7 @@ fn parse(text: &str) -> Result<Parsed, String> {
             }
         }
     }
-    Ok(Parsed { payloads, kinds: kind_lists, skipped })
+    Ok(Parsed { payloads, picky, kinds: kind_lists, skipped })
 }
 
 #[derive(Debug, Serialize)]
@@ -264,6 +274,9 @@ pub fn preview(conn: &Connection, text: &str) -> Result<ImportSummary, String> {
 pub fn apply(conn: &mut Connection, text: &str, overwrite: bool, backups_dir: &Path) -> Result<ImportSummary, String> {
     let parsed = parse(text)?;
     let mut summary = summarize(conn, &parsed)?;
+    if parsed.payloads.is_empty() {
+        return Ok(summary);
+    }
     let occupied: Vec<&str> =
         summary.modules.iter().filter(|m| m.existing > 0).map(|m| m.label.as_str()).collect();
     if !occupied.is_empty() {
@@ -323,12 +336,21 @@ pub struct ExportSummary {
 }
 
 /// Whole database → pretty JSON text + per-module counts. One read transaction = consistent.
+#[cfg(test)]
 pub fn export(conn: &mut Connection) -> Result<(String, Vec<ModuleSummary>), String> {
+    export_with(conn, None)
+}
+
+/// With 小拾's part (read from picky.db by the caller).
+pub fn export_with(conn: &mut Connection, picky: Option<&crate::picky::transfer::PickyRecord>) -> Result<(String, Vec<ModuleSummary>), String> {
     let tx = conn.transaction().map_err(err)?;
     let payloads = export_payloads(&tx)?;
     let mut modules = Map::new();
     for p in &payloads {
         modules.insert(p.key().into(), p.to_json()?);
+    }
+    if let Some(r) = picky {
+        modules.insert(crate::picky::transfer::KEY.into(), serde_json::to_value(r).map_err(err)?);
     }
     let out = ExportOut {
         format: FORMAT,
@@ -341,10 +363,10 @@ pub fn export(conn: &mut Connection) -> Result<(String, Vec<ModuleSummary>), Str
         modules,
     };
     let text = serde_json::to_string_pretty(&out).map_err(err)?;
-    let counts = payloads
-        .iter()
-        .map(|p| ModuleSummary { key: p.key().into(), label: p.label().into(), incoming: p.len(), existing: 0 })
-        .collect();
+    let mut counts: Vec<ModuleSummary> = payloads.iter().map(|p| ModuleSummary { key: p.key().into(), label: p.label().into(), incoming: p.len(), existing: 0 }).collect();
+    if let Some(r) = picky {
+        counts.push(ModuleSummary { key: crate::picky::transfer::KEY.into(), label: crate::picky::transfer::LABEL.into(), incoming: r.len(), existing: 0 });
+    }
     Ok((text, counts))
 }
 
@@ -361,22 +383,54 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn export_to(state: State<AppState>, path: String) -> Result<ExportSummary, String> {
-    let (text, modules) = state.with_db(export)?;
+    let picky = if state.picky.is_open() { Some(state.picky.with_db(|c| crate::picky::transfer::export(c))?) } else { None };
+    let (text, modules) = state.with_db(|c| export_with(c, picky.as_ref()))?;
     write_atomic(Path::new(&path), &text)?;
     Ok(ExportSummary { path, modules })
+}
+
+/// 小拾's line in a summary (what the file has, what picky.db has).
+fn picky_summary(state: &AppState, rec: &crate::picky::transfer::PickyRecord) -> Result<ModuleSummary, String> {
+    Ok(ModuleSummary {
+        key: crate::picky::transfer::KEY.into(),
+        label: crate::picky::transfer::LABEL.into(),
+        incoming: rec.len(),
+        existing: state.picky.with_db(|c| crate::picky::transfer::count(c))?,
+    })
 }
 
 #[tauri::command]
 pub fn import_preview(state: State<AppState>, path: String) -> Result<ImportSummary, String> {
     let text = read(&path)?;
-    state.with_db(|c| preview(c, &text))
+    let mut out = state.with_db(|c| preview(c, &text))?;
+    if let Some(r) = parse(&text)?.picky {
+        out.modules.push(picky_summary(&state, &r)?);
+    }
+    Ok(out)
 }
 
 #[tauri::command]
 pub fn import_apply(state: State<AppState>, path: String, overwrite: bool) -> Result<ImportSummary, String> {
     let text = read(&path)?;
     let backups = state.paths.backups.clone();
-    let out = state.with_db(|c| apply(c, &text, overwrite, &backups))?;
+    let picky = parse(&text)?.picky;
+    if let Some(r) = &picky {
+        let line = picky_summary(&state, r)?;
+        if line.existing > 0 && !overwrite {
+            return Err(format!("{}已经有数据，需要确认覆盖后才能导入", line.label));
+        }
+    }
+    let mut out = state.with_db(|c| apply(c, &text, overwrite, &backups))?;
+    if let Some(r) = &picky {
+        let line = picky_summary(&state, r)?;
+        state.picky.with_db(|c| {
+            if line.existing > 0 {
+                crate::backup::snapshot_of(crate::backup::Store::Picky, c, &backups, "before-import")?;
+            }
+            crate::picky::transfer::replace(c, r)
+        })?;
+        out.modules.push(line);
+    }
     state.clear_history();
     Ok(out)
 }
@@ -482,7 +536,7 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 10);
+        assert_eq!(v["formatVersion"], 11);
         assert_eq!(v["modules"]["notes"]["notes"][1]["refs"][0], v["modules"]["notes"]["notes"][0]["createdAt"]);
         assert_eq!(v["modules"]["notes"]["tags"], json!([{"tag": "读书", "pinned": true, "icon": "i:book-open"}, {"tag": "读书/摘抄", "icon": "📖"}]));
         assert_eq!(v["modules"]["books"][0]["rereads"], json!([{"year": "2026", "rating": 5}]));
@@ -517,6 +571,17 @@ mod tests {
         assert_eq!(names("films"), ["电影", "剧集", "动漫"]); // films not in file → untouched
         let bad = json!({"format": FORMAT, "formatVersion": 2, "kinds": {"books": ["a", "a"]}, "modules": {"books": []}}).to_string();
         assert!(preview(&c, &bad).unwrap_err().contains("重复"));
+    }
+
+    #[test]
+    fn a_file_with_only_picky_reads_and_leaves_pomelo_alone() {
+        let mut c = memory_db();
+        let text = json!({"format": FORMAT, "formatVersion": 11, "modules": {"picky": {"globalInstructions": "用中文", "projects": [{"name": "论文"}], "memories": [{"content": "住在新加坡", "project": "论文", "notedOn": "2026-10-01"}]}}}).to_string();
+        let p = parse(&text).unwrap();
+        assert!(p.payloads.is_empty() && p.picky.as_ref().unwrap().len() == 2);
+        assert!(apply(&mut c, &text, false, &temp_dir("picky-only")).unwrap().modules.is_empty());
+        let bad = json!({"format": FORMAT, "formatVersion": 11, "modules": {"picky": {"memories": [{"content": "x", "project": "没有", "notedOn": "2026-10-01"}]}}}).to_string();
+        assert!(parse(&bad).is_err());
     }
 
     #[test]
@@ -589,7 +654,7 @@ mod tests {
     fn seed_scratch_db() {
         let Some(target) = std::env::var_os("POMELO_SEED_DB") else { return };
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/pomelo-import.json");
-        let text = std::fs::read_to_string(&path).expect("run `pnpm import:xlsx` first");
+        let text = std::fs::read_to_string(&path).expect("prototype file missing (local only)");
         let target = std::path::PathBuf::from(target);
         assert!(!target.to_string_lossy().contains("Application Support/Pomelo OS/"), "refusing real data dir");
         let mut c = crate::db::open(&target).unwrap();
@@ -608,7 +673,7 @@ mod tests {
     #[ignore]
     fn real_prototype_roundtrip() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/pomelo-import.json");
-        let text = std::fs::read_to_string(&path).expect("run `pnpm import:xlsx` first");
+        let text = std::fs::read_to_string(&path).expect("prototype file missing (local only)");
         let mut a = memory_db();
         apply(&mut a, &text, false, &temp_dir("real-rt")).unwrap();
         let (out, counts) = export(&mut a).unwrap();
@@ -618,12 +683,12 @@ mod tests {
         assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));
     }
 
-    /// Seeker's applications (`pnpm import:seeker`, gitignored) import into the default statuses.
+    /// Seeker's applications (prototype, gitignored) import into the default statuses.
     #[test]
     #[ignore]
     fn real_jobs_import() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/jobs-import.json");
-        let text = std::fs::read_to_string(&path).expect("run `pnpm import:seeker` first");
+        let text = std::fs::read_to_string(&path).expect("prototype file missing (local only)");
         let mut c = memory_db();
         apply(&mut c, &text, false, &temp_dir("real-jobs")).unwrap();
         let js = jobs::jobs(&c, "2026-10-05").unwrap();
@@ -632,12 +697,12 @@ mod tests {
         assert_eq!(jobs::statuses(&c).unwrap().len(), 7); // statuses kept
     }
 
-    /// The converted Markdown todo list (`pnpm import:todo`, gitignored) imports cleanly.
+    /// The converted Markdown todo list (prototype, gitignored) imports cleanly.
     #[test]
     #[ignore]
     fn real_todo_import() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/todo-import.json");
-        let text = std::fs::read_to_string(&path).expect("run `pnpm import:todo` first");
+        let text = std::fs::read_to_string(&path).expect("prototype file missing (local only)");
         let mut c = memory_db();
         apply(&mut c, &text, false, &temp_dir("real-todo")).unwrap();
         let gs = todo::groups(&c).unwrap();
@@ -677,7 +742,7 @@ mod tests {
     #[ignore]
     fn real_prototype_import() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/pomelo-import.json");
-        let text = std::fs::read_to_string(&path).expect("run `pnpm import:xlsx` first");
+        let text = std::fs::read_to_string(&path).expect("prototype file missing (local only)");
         let mut c = memory_db();
         apply(&mut c, &text, false, &temp_dir("real")).unwrap();
         let all = books::list(&c).unwrap();

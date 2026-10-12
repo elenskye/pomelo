@@ -688,6 +688,34 @@ pub fn spread(amount: i64, day: &str, end_day: &str) -> Vec<(String, i64)> {
     out
 }
 
+/// The part of an entry falling in [from, to] (a period counts by its days there, rounded like
+/// `spread` so whole months match it).
+pub fn share_between(amount: i64, day: &str, end_day: Option<&str>, from: &str, to: &str) -> i64 {
+    let end = end_day.unwrap_or(day);
+    let (first, last) = (common::day_number(day), common::day_number(end));
+    let (a, b) = (first.max(common::day_number(from)), last.min(common::day_number(to)));
+    if a > b {
+        return 0;
+    }
+    let days = last - first + 1;
+    let upto = |covered: i64| (2 * amount * covered + days) / (2 * days);
+    upto(b - first + 1) - upto(a - first)
+}
+
+/// Entries touching [from, to] (local dates), latest first.
+pub fn entries_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<Entry>, String> {
+    check_day(from, "开始日期")?;
+    check_day(to, "结束日期")?;
+    let mut st = conn
+        .prepare(&format!(
+            "SELECT {ENTRY_COLS} FROM fin_entries WHERE day <= ?2 AND coalesce(end_day, day) >= ?1
+             ORDER BY coalesce(end_day, day) DESC, day DESC, id DESC"
+        ))
+        .map_err(err)?;
+    let rows = st.query_map([from, to], entry_row).map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
 // ---------- 固定支出 ----------
 
 /// `monthly:<1-31>` (past a month's end → its last day) | `yearly:<MM-DD>` (02-29 → 02-28 off leap years).

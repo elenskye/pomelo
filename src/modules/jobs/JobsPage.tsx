@@ -61,7 +61,7 @@ export default function JobsPage() {
             <Plus size={14} /> 新投递
           </Button>
         </div>
-        {view === "table" ? <TableView jobs={jobs} selectedId={editing?.id ?? null} onOpen={(j) => void panel.request(j.id)} /> : <StatsView jobs={jobs} />}
+        {view === "table" ? <TableView jobs={jobs} selectedId={editing?.id ?? null} onOpen={(j) => void panel.request(j.id)} /> : <StatsView />}
       </div>
       {(panel.selection === "new" || editing) && (
         <JobPanel

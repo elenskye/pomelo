@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { HashRouter, Navigate, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -12,6 +12,8 @@ import FinancePage from "@/modules/finance/FinancePage";
 import JobsPage from "@/modules/jobs/JobsPage";
 import NotesPage from "@/modules/notes/NotesPage";
 import VaultPage from "@/modules/vault/VaultPage";
+// 小拾 brings Markdown / highlighting / formulas: loaded when first opened
+const PickyPage = lazy(() => import("@/modules/picky/PickyPage"));
 import TodoPage from "@/modules/todo/TodoPage";
 import SettingsPage from "@/settings/SettingsPage";
 import { ToastProvider } from "@/shared/feedback";
@@ -44,6 +46,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="jobs" element={<JobsPage />} />
             <Route path="notes" element={<NotesPage />} />
             <Route path="vault" element={<VaultPage />} />
+            <Route path="picky" element={<Suspense fallback={null}><PickyPage /></Suspense>} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

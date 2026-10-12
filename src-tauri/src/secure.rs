@@ -96,6 +96,16 @@ mod imp {
         let _ = delete_generic_password(&keychain_service(), account);
     }
 
+    /// Plain copy (message text, code, LaTeX).
+    #[allow(unused_unsafe)]
+    pub fn copy_plain(text: &str) {
+        unsafe {
+            let pb = NSPasteboard::generalPasteboard();
+            pb.clearContents();
+            pb.setString_forType(&NSString::from_str(text), NSPasteboardTypeString);
+        }
+    }
+
     /// Puts `text` on the pasteboard marked concealed (clipboard managers skip it); cleared after
     /// `clear_after` unless something else was copied meanwhile.
     #[allow(unused_unsafe)]
@@ -163,6 +173,10 @@ pub mod fake {
         KEYCHAIN.with_borrow_mut(|k| k.remove(account));
     }
     pub fn copy_concealed(text: &str, _clear_after: Duration) {
+        CLIPBOARD.with_borrow_mut(|c| *c = text.into());
+    }
+    #[allow(dead_code)]
+    pub fn copy_plain(text: &str) {
         CLIPBOARD.with_borrow_mut(|c| *c = text.into());
     }
 }

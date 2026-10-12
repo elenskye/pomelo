@@ -21,8 +21,8 @@ export type ExportSummary = {
   modules: { key: string; label: string; incoming: number }[];
 };
 
-/** `label`: daily | manual | before-import | before-restore | before-v<N>. `createdAt`: local "YYYY-MM-DD HH:MM:SS". */
-export type BackupInfo = { fileName: string; label: string; createdAt: string; size: number };
+/** `store`: pomelo (life data) | picky (小拾). `label`: daily | manual | before-import | before-restore | before-v<N>. `createdAt`: local "YYYY-MM-DD HH:MM:SS". */
+export type BackupInfo = { fileName: string; store: "pomelo" | "picky"; label: string; createdAt: string; size: number };
 
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),

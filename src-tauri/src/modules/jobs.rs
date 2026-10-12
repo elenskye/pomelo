@@ -8,7 +8,10 @@
 //!   statuses are never steps.
 //! - 投递日期 (`applied_on`) = the earliest checked day.
 //! - Follow-up: current stage applied and ≥ 14 days since max(its day, followed_on).
-//! - Funnel (UI): per status, checked / applications that have the step.
+//! - 统计 (`stats`, also 首页 and 小拾): 投出 = applications with a 投递日期; 本周投了 = since this
+//!   Monday; 进行中 = now 等回音 / 进行中; 拿到 = now 拿到. Funnel: 已投递 → … → the first 拿到 status
+//!   (Offer), per status checked / applications that have the step, only among applications with
+//!   any step checked. Applications per day (last 30) and per week (last 12, Monday first).
 //! 渠道 = kinds.rs module "job_channel".
 
 use super::common::{self, err, some, str_enum};
@@ -442,6 +445,81 @@ pub fn follow_up(conn: &Connection, id: i64, today: &str) -> Result<Job, String>
     job(conn, id, today)
 }
 
+// ---------- 统计 ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunnelStep {
+    pub status_id: i64,
+    pub name: String,
+    /// Applications (with any step checked) that have this step / that checked it.
+    pub have: i64,
+    pub done: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bucket {
+    pub from: String,
+    pub to: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stats {
+    pub today: String,
+    pub applied: i64,
+    pub this_week: i64,
+    pub ongoing: i64,
+    pub got: i64,
+    pub funnel: Vec<FunnelStep>,
+    /// Oldest first.
+    pub days: Vec<Bucket>,
+    pub weeks: Vec<Bucket>,
+    /// Every status in list order, `count` = applications at it now.
+    pub statuses: Vec<Status>,
+}
+
+pub const STAT_DAYS: i64 = 30;
+pub const STAT_WEEKS: i64 = 12;
+
+/// This Monday.
+pub fn week_start(today: &str) -> String {
+    common::add_days(today, 1 - common::weekday(today) as i64)
+}
+
+pub fn stats_of(js: &[Job], sts: &[Status], today: &str) -> Stats {
+    let week0 = week_start(today);
+    let applied_between = |from: &str, to: &str| js.iter().filter(|j| j.applied_on.as_deref().is_some_and(|d| d >= from && d <= to)).count() as i64;
+    let started: Vec<&Job> = js.iter().filter(|j| j.steps.iter().any(|s| s.done)).collect();
+    let first_got = sts.iter().find(|s| s.stage == Stage::Got).map(|s| s.id);
+    let funnel = sts
+        .iter()
+        .filter(|s| matches!(s.stage, Stage::Applied | Stage::Active) || Some(s.id) == first_got)
+        .map(|s| {
+            let mine: Vec<&Step> = started.iter().filter_map(|j| j.steps.iter().find(|x| x.status_id == s.id)).collect();
+            FunnelStep { status_id: s.id, name: s.name.clone(), have: mine.len() as i64, done: mine.iter().filter(|x| x.done).count() as i64 }
+        })
+        .collect();
+    let bucket = |from: String, to: String| Bucket { count: applied_between(&from, &to), from, to };
+    Stats {
+        today: today.to_string(),
+        applied: js.iter().filter(|j| j.applied_on.is_some()).count() as i64,
+        this_week: js.iter().filter(|j| j.applied_on.as_deref().is_some_and(|d| d >= week0.as_str())).count() as i64,
+        ongoing: js.iter().filter(|j| matches!(j.stage, Stage::Applied | Stage::Active)).count() as i64,
+        got: js.iter().filter(|j| j.stage == Stage::Got).count() as i64,
+        funnel,
+        days: (0..STAT_DAYS).map(|i| common::add_days(today, i - STAT_DAYS + 1)).map(|d| bucket(d.clone(), d)).collect(),
+        weeks: (0..STAT_WEEKS).map(|i| common::add_days(&week0, (i - STAT_WEEKS + 1) * 7)).map(|d| bucket(d.clone(), common::add_days(&d, 6))).collect(),
+        statuses: sts.to_vec(),
+    }
+}
+
+pub fn stats(conn: &Connection, today: &str) -> Result<Stats, String> {
+    Ok(stats_of(&jobs(conn, today)?, &statuses(conn)?, today))
+}
+
 /// Deletes the application with its steps.
 pub fn delete_job(conn: &Connection, id: i64) -> Result<(), String> {
     match conn.execute("DELETE FROM jobs WHERE id = ?1", [id]).map_err(err)? {
@@ -705,6 +783,10 @@ pub fn job_statuses_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(),
 #[tauri::command]
 pub fn jobs_list(state: State<AppState>) -> Result<Vec<Job>, String> {
     state.with_db(|c| jobs(c, &today(c)?))
+}
+#[tauri::command]
+pub fn job_stats(state: State<AppState>) -> Result<Stats, String> {
+    state.with_db(|c| stats(c, &today(c)?))
 }
 #[tauri::command]
 pub fn job_create(state: State<AppState>, patch: JobPatch) -> Result<Job, String> {

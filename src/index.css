@@ -50,6 +50,7 @@
   --module-jobs: #9c5b8f;
   --module-notes: #9a6b4a;
   --module-vault: #64748b;
+  --module-picky: #c96e28;
 
   /* Charts: categorical slots in fixed order (validated: dataviz validate_palette.js, light on #ffffff,
      dark on #292724); single-series charts use --chart-1. Text never wears these colors. */
@@ -108,6 +109,8 @@
 @theme inline {
   --font-sans: "Pomelo Hand", "Hannotate SC", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  /* 小拾's question / answer text only (long reading): PingFang instead of the hand font */
+  --font-reading: "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-sidebar: var(--sidebar);

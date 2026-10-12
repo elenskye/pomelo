@@ -1319,6 +1319,25 @@ pub fn agenda(conn: &Connection, today: &str) -> Result<Agenda, String> {
     Ok(Agenda { today: today.into(), overdue, due, done_today })
 }
 
+/// Unfinished tasks everywhere (any goal status), in place order (小拾).
+pub fn open_tasks(conn: &Connection, today: &str) -> Result<Vec<PlacedTask>, String> {
+    placed(conn, "t.done = 0", PLACE_ORDER, &[], today)
+}
+
+/// Per goal: the last local day something in it got done (a checked task or a log).
+pub fn goals_last_done(conn: &Connection) -> Result<HashMap<i64, String>, String> {
+    let mut st = conn
+        .prepare(
+            "SELECT goal_id, max(day) FROM (
+               SELECT goal_id, date(done_at, 'localtime') AS day FROM todo_tasks WHERE done = 1 AND goal_id IS NOT NULL AND done_at IS NOT NULL
+               UNION ALL SELECT t.goal_id, l.day FROM todo_logs l JOIN todo_tasks t ON t.id = l.task_id WHERE t.goal_id IS NOT NULL)
+             GROUP BY goal_id",
+        )
+        .map_err(err)?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
+}
+
 /// Something finished on a day: a checked task, or one log of a repeat / check-in / progress task.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

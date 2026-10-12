@@ -27,6 +27,9 @@ pub fn resolve_root(base: &Path, env_override: Option<PathBuf>) -> PathBuf {
 pub struct DataPaths {
     pub root: PathBuf,
     pub db: PathBuf,
+    /// 小拾 (AI): its own database + attachment folder, so pomelo.db never changes for it.
+    pub picky_db: PathBuf,
+    pub picky_files: PathBuf,
     pub backups: PathBuf,
 }
 
@@ -34,6 +37,8 @@ impl DataPaths {
     pub fn new(root: PathBuf) -> Self {
         Self {
             db: root.join("pomelo.db"),
+            picky_db: root.join("picky.db"),
+            picky_files: root.join("picky-files"),
             backups: root.join("backups"),
             root,
         }
@@ -62,5 +67,7 @@ mod tests {
         let p = DataPaths::new("/r".into());
         assert_eq!(p.db, PathBuf::from("/r/pomelo.db"));
         assert_eq!(p.backups, PathBuf::from("/r/backups"));
+        assert_eq!(p.picky_db, PathBuf::from("/r/picky.db"));
+        assert_eq!(p.picky_files, PathBuf::from("/r/picky-files"));
     }
 }

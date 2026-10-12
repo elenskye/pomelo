@@ -1,5 +1,5 @@
 // Sidebar/module registry. Add new modules here (id = route path segment).
-import { BookOpen, Briefcase, Clapperboard, Feather, Footprints, KeyRound, Luggage, Palette, Wallet, type LucideIcon } from "lucide-react";
+import { Bird, BookOpen, Briefcase, Clapperboard, Feather, Footprints, KeyRound, Luggage, Palette, Wallet, type LucideIcon } from "lucide-react";
 
 export type ModuleDef = { id: string; label: string; icon: LucideIcon; color: string };
 
@@ -13,6 +13,7 @@ export const MODULES: ModuleDef[] = [
   { id: "jobs", label: "投石问路", icon: Briefcase, color: "var(--module-jobs)" },
   { id: "notes", label: "念念不忘", icon: Feather, color: "var(--module-notes)" },
   { id: "vault", label: "芝麻开门", icon: KeyRound, color: "var(--module-vault)" },
+  { id: "picky", label: "小拾", icon: Bird, color: "var(--module-picky)" },
 ];
 
 export const moduleById = (id: string) => MODULES.find((m) => m.id === id)!;

@@ -7,18 +7,21 @@ mod db;
 mod home;
 mod modules;
 mod paths;
+mod picky;
 mod search;
 mod secure;
 mod settings;
 mod transfer;
+mod tray;
 mod undo;
 
 use paths::DataPaths;
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
+use std::path::Path;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 
 pub struct AppState {
@@ -30,10 +33,12 @@ pub struct AppState {
     vault: Mutex<modules::vault::Session>,
     /// Set when the DB could not be opened/migrated; UI shows it instead of crashing.
     startup_error: Option<String>,
+    /// 小拾 (AI): its own picky.db, model services, cloud keys (see picky/mod.rs).
+    pub(crate) picky: picky::Picky,
 }
 
 impl AppState {
-    fn init(paths: DataPaths) -> Self {
+    fn init(paths: DataPaths, home: &Path, mode: picky::Mode) -> Self {
         let existed = paths.db.exists();
         let opened = paths.ensure().and_then(|_| {
             let mut conn = db::open(&paths.db)?;
@@ -46,10 +51,13 @@ impl AppState {
             }
             Ok(conn)
         });
-        match opened {
-            Ok(conn) => Self { paths, db: Mutex::new(Some(conn)), history: Mutex::default(), vault: Mutex::default(), startup_error: None },
-            Err(e) => Self { paths, db: Mutex::new(None), history: Mutex::default(), vault: Mutex::default(), startup_error: Some(e) },
-        }
+        // after pomelo.db: ensure() made the folders; a 小拾 failure never blocks the rest
+        let picky = picky::Picky::init(&paths, home, mode);
+        let (db, startup_error) = match opened {
+            Ok(conn) => (Some(conn), None),
+            Err(e) => (None, Some(e)),
+        };
+        Self { paths, db: Mutex::new(db), history: Mutex::default(), vault: Mutex::default(), startup_error, picky }
     }
 
     pub(crate) fn with_db<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
@@ -121,6 +129,12 @@ fn daily_sweep(state: State<AppState>) -> Result<Sweep, String> {
     })
 }
 
+/// Plain copy to the pasteboard (the webview's own clipboard API is not reliable here).
+#[tauri::command]
+fn copy_text(text: String) {
+    secure::copy_plain(&text);
+}
+
 #[tauri::command]
 fn settings_get(state: State<AppState>, key: String) -> Result<Option<Value>, String> {
     state.with_db(|c| settings::get(c, &key))
@@ -137,13 +151,110 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let base = app.path().data_dir()?; // ~/Library/Application Support
-            let root = paths::resolve_root(&base, std::env::var_os(paths::DATA_DIR_ENV).map(Into::into));
-            app.manage(AppState::init(DataPaths::new(root)));
+            let overridden = std::env::var_os(paths::DATA_DIR_ENV);
+            let mode = picky::mode(overridden.is_some());
+            let root = paths::resolve_root(&base, overridden.map(Into::into));
+            let home = app.path().home_dir()?;
+            app.manage(AppState::init(DataPaths::new(root), &home, mode));
+            let handle = app.handle().clone();
+            app.state::<AppState>().picky.set_app(handle.clone());
+            tray::init(&handle)?;
+            picky::spawn_monitor(handle);
             Ok(())
+        })
+        // closing the window keeps Pomelo running in the menu bar; ⌘Q / the menu bar quits
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
             reveal_data_dir,
+            copy_text,
+            picky::picky_info,
+            picky::picky_status,
+            picky::picky_ui_get,
+            picky::picky_ui_set,
+            picky::picky_select,
+            picky::picky_model_stop,
+            picky::picky_refresh,
+            picky::picky_embedding,
+            picky::picky_issue_action,
+            picky::picky_issue_dismiss,
+            picky::picky_cloud_model_save,
+            picky::picky_cloud_model_delete,
+            picky::picky_cloud_key_save,
+            picky::picky_cloud_key_remove,
+            picky::chat::picky_sessions,
+            picky::chat::picky_messages,
+            picky::chat::picky_send,
+            picky::chat::picky_edit,
+            picky::chat::picky_regenerate,
+            picky::chat::picky_switch_version,
+            picky::chat::picky_stop,
+            picky::context::picky_context,
+            picky::context::picky_summarize,
+            picky::files::picky_import_file,
+            picky::files::picky_attachment_library,
+            picky::files::picky_open_file,
+            picky::index::picky_project_files,
+            picky::index::picky_project_file_add,
+            picky::index::picky_project_file_replace,
+            picky::index::picky_project_file_remove,
+            picky::index::picky_project_file_index,
+            picky::index::picky_index_rebuild,
+            picky::index::picky_index_stop,
+            picky::index::picky_retrieval_plan,
+            picky::index::picky_retrieve,
+            picky::storage::picky_storage,
+            picky::storage::picky_storage_delete_file,
+            picky::storage::picky_storage_delete_stray,
+            picky::storage::picky_storage_clean_empty,
+            picky::memory::picky_memories,
+            picky::memory::picky_memory_save,
+            picky::memory::picky_remember,
+            picky::memory::picky_memory_flag,
+            picky::memory::picky_memory_delete,
+            picky::memory::picky_memory_enabled,
+            picky::memory::picky_memory_enabled_set,
+            picky::memory::picky_conversation_memory,
+            picky::memory::picky_memory_plan,
+            picky::memory::picky_choose_memories,
+            picky::templates::picky_templates,
+            picky::templates::picky_template_save,
+            picky::templates::picky_template_pin,
+            picky::templates::picky_template_delete,
+            picky::data::picky_data_cloud,
+            picky::data::picky_data_cloud_set,
+            picky::templates::picky_template_used,
+            picky::instructions::picky_instructions,
+            picky::instructions::picky_session_instructions_save,
+            picky::instructions::picky_global_instructions,
+            picky::instructions::picky_global_instructions_save,
+            picky::instructions::picky_presets,
+            picky::instructions::picky_preset_save,
+            picky::instructions::picky_preset_delete,
+            picky::library::picky_library,
+            picky::library::picky_rename,
+            picky::library::picky_pin,
+            picky::library::picky_archive,
+            picky::library::picky_move,
+            picky::library::picky_delete,
+            picky::library::picky_project_create,
+            picky::library::picky_project_update,
+            picky::library::picky_project_delete,
+            picky::library::picky_projects_reorder,
+            picky::library::picky_drop,
+            picky::find::picky_search,
+            picky::find::picky_search_models,
+            picky::find::picky_reveal,
+            picky::export::picky_copy_conversation,
+            picky::export::picky_export_markdown,
+            picky::export::picky_export_package,
             open_link,
             daily_sweep,
             settings_get,
@@ -215,6 +326,7 @@ pub fn run() {
             modules::jobs::job_status_delete,
             modules::jobs::job_statuses_reorder,
             modules::jobs::jobs_list,
+            modules::jobs::job_stats,
             modules::jobs::job_create,
             modules::jobs::job_update,
             modules::jobs::job_follow_up,
@@ -281,6 +393,12 @@ pub fn run() {
             modules::todo::todo_goals_reorder,
             modules::todo::todo_tasks_reorder,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            // Dock icon clicked while the window is hidden
+            RunEvent::Reopen { .. } => tray::show_main(app),
+            RunEvent::Exit => picky::chat::shutdown(app),
+            _ => {}
+        });
 }
