@@ -13,7 +13,7 @@
 // send without, retry or cancel. A reply that reads material in segments shows its progress and notes.
 // Phase 6: memories are chosen in the same step (记忆 menu: this question / this conversation; a draft
 // keeps its own conversation switch); 「/记住 …」 opens a confirmation card instead of sending.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bird, PanelLeftClose, PanelLeftOpen, Pin, Plus, SquarePen } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
@@ -41,14 +41,7 @@ import {
   type ChatMessage,
   type FileInfo,
   type MessageFile,
-  type Note,
-  type Passage,
-  type Query,
-  type ReadingProgress,
   type SessionSetting,
-  type Sent,
-  type StreamEvent,
-  type UsedMemory,
 } from "./api";
 import { ChatSearch } from "./ChatSearch";
 import { Composer, toolClass, type ComposerHandle } from "./Composer";
@@ -60,31 +53,12 @@ import { MemoryButton, RememberDialog } from "./Memory";
 import { summary } from "./slots";
 import { IssueNotice, ModelMenu } from "./ModelMenu";
 import { Transcript, type TranscriptHandle } from "./Transcript";
-
-type Live = {
-  /** send: a new question (shown at once); version: an edit / regenerate (shown once the path has it). */
-  kind: "send" | "version";
-  prompt: string;
-  sessionId: number | null;
-  messageId: number | null;
-  runId: number | null;
-  content: string;
-  reasoning: string;
-  reasoningStart: number | null;
-  reasoningMs: number | null;
-  done: boolean;
-  /** A new question's files (shown at once with it). */
-  files: MessageFile[];
-  reading: ReadingProgress | null;
-  notes: Note[];
-  /** Lookups in Pomelo so far. */
-  queries: Query[];
-};
+import { PrepNotices, messagesKey, useLiveReply, usePrepare } from "./useChat";
 
 const asMessageFile = (f: FileInfo, label: string | null = null, fileId: number | null = null): MessageFile => ({ ...f, fileId, version: null, label });
 const EMPTY_QUESTION = "请总结这些附件。";
 
-const MESSAGES = (id: number | null) => ["picky", "messages", id];
+const MESSAGES = messagesKey;
 const LAST = "ui.session";
 const COLLAPSED = "ui.list_collapsed";
 
@@ -99,9 +73,6 @@ export default function PickyPage() {
   const [searching, setSearching] = useState(false);
   const [reveal, setReveal] = useState<{ id: number; query: string; key: number } | null>(null);
   const [collapsed, setCollapsed] = usePickyUi(COLLAPSED, false, isBool);
-  const [live, setLive] = useState<Live | null>(null);
-  const liveRef = useRef<Live | null>(null);
-  const paintTimer = useRef(0);
   const transcript = useRef<TranscriptHandle>(null);
   const composer = useRef<ComposerHandle>(null);
   const templates = useTemplates().data ?? [];
@@ -121,15 +92,11 @@ export default function PickyPage() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   /** The project whose files are being managed. */
   const [filesFor, setFilesFor] = useState<number | null>(null);
-  /** Choosing memories / retrieving passages before a question is saved (what it says). */
-  const [preparing, setPreparing] = useState<string | null>(null);
-  const [prepFail, setPrepFail] = useState<{ title: string; withoutLabel: string; message: string; without: () => void; retry: () => void } | null>(null);
   /** 「本条使用记忆」 (back on after each question and in another conversation); drafts' own 「本会话关闭记忆」. */
   const [nextMemoryOn, setNextMemoryOn] = useState(true);
   const [draftMemoryOff, setDraftMemoryOff] = useState<Record<string, boolean>>({});
   /** /记住 waiting for confirmation. */
   const [capture, setCapture] = useState<{ entries: string[]; remainder: string; projectId: number | null } | null>(null);
-  const skipRetrieval = useRef(false);
   const [dropping, setDropping] = useState(false);
   const { choose, importPaths } = useImport();
 
@@ -153,6 +120,7 @@ export default function PickyPage() {
     if (id != null) pickyApi.uiSet(LAST, id).catch(() => {});
   };
   const generating = !!status?.generating;
+  const { live, run, shownWith } = useLiveReply({ current, status, onSent: open, onStart: () => transcript.current?.toBottom() });
   const messages = useQuery({
     queryKey: MESSAGES(current),
     queryFn: () => (current == null ? Promise.resolve([] as ChatMessage[]) : pickyApi.messages(current)),
@@ -160,84 +128,6 @@ export default function PickyPage() {
     // reloaded while a reply is being written: follow the saved checkpoints
     refetchInterval: generating && !live ? 1000 : false,
   });
-
-  // at most ~25 repaints a second while text streams in (a timer: animation frames pause when hidden)
-  const paint = useCallback(() => {
-    if (paintTimer.current) return;
-    paintTimer.current = window.setTimeout(() => {
-      paintTimer.current = 0;
-      setLive(liveRef.current && { ...liveRef.current });
-    }, 40);
-  }, []);
-  useEffect(() => () => clearTimeout(paintTimer.current), []);
-
-  const finishLive = useCallback(
-    async (l: Live) => {
-      if (l.sessionId != null) await qc.invalidateQueries({ queryKey: MESSAGES(l.sessionId) });
-      void qc.invalidateQueries({ queryKey: LIBRARY_KEY });
-      void qc.invalidateQueries({ queryKey: STATUS_KEY });
-      if (liveRef.current === l) {
-        liveRef.current = null;
-        setLive(null);
-      }
-    },
-    [qc],
-  );
-
-  const onEvent = useCallback(
-    (e: StreamEvent) => {
-      const l = liveRef.current;
-      if (!l) return;
-      if (e.kind === "reasoning") {
-        l.reasoningStart ??= Date.now();
-        l.reasoning += e.text;
-      } else if (e.kind === "content") {
-        if (l.reasoningStart != null && l.reasoningMs == null) l.reasoningMs = Date.now() - l.reasoningStart;
-        l.content += e.text;
-      } else if (e.kind === "reading") {
-        l.reading = e.total > 0 ? { current: e.current, total: e.total, label: e.label } : null;
-      } else if (e.kind === "note") {
-        const i = l.notes.findIndex((n) => n.label === e.label);
-        if (i >= 0) l.notes[i] = { label: e.label, content: e.content };
-        else l.notes.push({ label: e.label, content: e.content });
-      } else if (e.kind === "query") {
-        const { kind: _, ...q } = e;
-        l.queries.push(q);
-      } else {
-        l.done = true;
-        l.reasoningMs = e.reasoningMs ?? l.reasoningMs;
-        if (l.messageId != null) void finishLive(l); // else: run() finishes once it knows the ids
-      }
-      paint();
-    },
-    [finishLive, paint],
-  );
-
-  /** Starts a reply (send / edit / regenerate) and lays it over the path as it streams. */
-  const run = async (kind: Live["kind"], prompt: string, call: (on: (e: StreamEvent) => void) => Promise<Sent>, files: MessageFile[] = []): Promise<Sent | null> => {
-    if (liveRef.current || generating) return null;
-    const l: Live = { kind, prompt, sessionId: current, messageId: null, runId: null, content: "", reasoning: "", reasoningStart: null, reasoningMs: null, done: false, files, reading: null, notes: [], queries: [] };
-    liveRef.current = l;
-    setLive({ ...l });
-    transcript.current?.toBottom();
-    try {
-      const sent = await call(onEvent);
-      Object.assign(l, { sessionId: sent.sessionId, messageId: sent.messageId, runId: sent.runId });
-      setLive({ ...l }); // the ids now, before the saved path (which has these messages) comes back
-      open(sent.sessionId);
-      await qc.invalidateQueries({ queryKey: MESSAGES(sent.sessionId) });
-      void qc.invalidateQueries({ queryKey: LIBRARY_KEY });
-      void qc.invalidateQueries({ queryKey: STATUS_KEY });
-      if (l.done) void finishLive(l);
-      else paint();
-      return sent;
-    } catch (err) {
-      toast(errorText(err), "error");
-      liveRef.current = null;
-      setLive(null);
-      return null;
-    }
-  };
 
   const stop = () => {
     const runId = live?.runId ?? summary_?.run ?? status?.activeRun;
@@ -284,37 +174,9 @@ export default function PickyPage() {
 
   // the saved path, with the reply being written laid over it (a new question shows at once)
   const saved = messages.data ?? [];
-  let shown: ChatMessage[] = saved;
-  if (live && live.sessionId === current) {
-    const overlay = (m: ChatMessage): ChatMessage => ({
-      ...m,
-      content: live.content,
-      reasoning: live.reasoning,
-      reasoningMs: live.reasoningMs,
-      state: live.done ? m.state : "streaming",
-      reading: live.done ? null : live.reading,
-      notes: live.notes.length ? live.notes : m.notes,
-      queries: live.queries.length ? [...live.queries] : m.queries,
-    });
-    if (live.messageId != null && saved.some((m) => m.id === live.messageId)) shown = saved.map((m) => (m.id === live.messageId ? overlay(m) : m));
-    else if (live.kind === "send") {
-      const base = { createdAt: "", model: null, error: null, reasoning: "", reasoningMs: null, versionIndex: 1, versionCount: 1, notes: [], memories: [], queries: [] };
-      shown = [
-        ...saved,
-        { ...base, id: -1, role: "user", content: live.prompt, state: "complete", files: live.files },
-        overlay({ ...base, id: -2, role: "assistant", content: "", state: "streaming", files: [] }),
-      ];
-    }
-  }
-
-  // the stream was lost (the page reloaded meanwhile): the reading progress comes from the status
-  if ((!live || live.sessionId !== current) && current != null && status?.activeSession === current && status.activeReading) {
-    const r = status.activeReading;
-    shown = shown.map((m) => (m.role === "assistant" && m.state === "streaming" ? { ...m, reading: r } : m));
-  }
+  const shown = shownWith(saved);
 
   const summarizingHere = (summary_ != null && summary_.session === current) || (status?.activeKind === "summary" && status.activeSession === current && current != null);
-  const busy = generating || !!live || summary_ != null || preparing != null;
   const draftKey = current == null ? `new:${draftProject ?? ""}` : `s${current}`;
   const draftSetting = draftSettings[draftKey] ?? NO_SETTING;
 
@@ -374,42 +236,9 @@ export default function PickyPage() {
     queryFn: () => pickyApi.memoryPlan(current, current == null ? draftProject : null, draftOff, !nextMemoryOn),
   });
 
-  type Prepared = { passages: Passage[]; memories: UsedMemory[] } | { error: string; memory: boolean; retrieval: boolean };
-  /** Memories and passages for a question (through 8081 when there are any); an error = 8081 couldn't be used. */
-  const prepareFor = async (question: string, exclude: number[], nextOff: boolean): Promise<Prepared> => {
-    if (skipRetrieval.current) {
-      skipRetrieval.current = false;
-      return { passages: [], memories: [] };
-    }
-    const proj = current == null ? draftProject : null;
-    let memory = false;
-    let retrieval = false;
-    try {
-      const [mp, rp] = await Promise.all([
-        pickyApi.memoryPlan(current, proj, draftOff, nextOff),
-        projectId != null ? pickyApi.retrievalPlan(current, proj, exclude) : Promise.resolve(null),
-      ]);
-      memory = mp.off == null && mp.count > 0;
-      retrieval = !!rp?.readyNames.length;
-      if (!memory && !retrieval) return { passages: [], memories: [] };
-      setPreparing(memory && retrieval ? "正在挑选记忆并检索资料…" : retrieval ? "正在检索项目资料…" : "正在挑选相关记忆…");
-      const memories = memory ? await pickyApi.chooseMemories(current, proj, draftOff, nextOff, question) : [];
-      const passages = retrieval ? await pickyApi.retrieve(current, proj, question, exclude) : [];
-      return { passages, memories };
-    } catch (e) {
-      return { error: errorText(e), memory, retrieval };
-    } finally {
-      setPreparing(null);
-    }
-  };
-  const failCard = (f: { error: string; memory: boolean; retrieval: boolean }, without: () => void, retry: () => void) =>
-    setPrepFail({
-      title: f.memory && f.retrieval ? "无法挑选记忆和检索资料" : f.retrieval ? "无法检索项目资料" : "无法挑选记忆",
-      withoutLabel: f.memory && f.retrieval ? "不用记忆和检索发送" : f.retrieval ? "不检索直接发送" : "不用记忆发送",
-      message: f.error,
-      without,
-      retry,
-    });
+  const prep = usePrepare({ current, draftProject, draftOff, projectId });
+  const { prepareFor, failCard, preparing } = prep;
+  const busy = generating || !!live || summary_ != null || preparing != null;
 
   // how full the conversation is with the draft as the next question (debounced; stale answers dropped)
   const prev = useRef<Assessment | null>(null);
@@ -477,17 +306,10 @@ export default function PickyPage() {
     }
     const key = draftKey;
     const files = sel;
-    setPrepFail(null);
+    prep.clearFail();
     const got = await prepareFor(text || EMPTY_QUESTION, files, !nextMemoryOn);
     if ("error" in got) {
-      failCard(
-        got,
-        () => {
-          skipRetrieval.current = true;
-          composer.current?.send();
-        },
-        () => composer.current?.send(),
-      );
+      failCard(got, () => composer.current?.send());
       return false;
     }
     const shownFiles = [...atts.map((a) => asMessageFile(a)), ...selFiles.flatMap((f) => (currentFile(f) ? [asMessageFile(currentFile(f)!, "资料", f.id)] : []))];
@@ -495,7 +317,7 @@ export default function PickyPage() {
     const sent = await run(
       "send",
       text || EMPTY_QUESTION,
-      (on) => pickyApi.send(current, current == null ? draftProject : null, current == null ? draftSetting : null, draftOff, text, extras, on),
+      (on) => pickyApi.send(current, current == null ? draftProject : null, current == null ? draftSetting : null, draftOff, text, extras, null, on),
       shownFiles,
     );
     if (!sent) return false;
@@ -524,18 +346,11 @@ export default function PickyPage() {
   const versionRun = async (m: ChatMessage, text: string | null) => {
     const q = text != null ? m : saved[saved.findIndex((x) => x.id === m.id) - 1];
     const exclude = (q?.files ?? []).flatMap((f) => (f.fileId != null ? [f.fileId] : []));
-    setPrepFail(null);
+    prep.clearFail();
     // regenerate / retry use memories whenever the conversation allows; an edit follows 「本条使用记忆」
     const got = await prepareFor(text ?? q?.content ?? "", exclude, text != null && !nextMemoryOn);
     if ("error" in got) {
-      failCard(
-        got,
-        () => {
-          skipRetrieval.current = true;
-          void versionRun(m, text);
-        },
-        () => void versionRun(m, text),
-      );
+      failCard(got, () => void versionRun(m, text));
       return;
     }
     if (text != null) setNextMemoryOn(true);
@@ -602,13 +417,13 @@ export default function PickyPage() {
                           key={t.id}
                           type="button"
                           onClick={() => composer.current?.insert(t)}
-                          className="flex h-[70px] w-60 flex-col items-start gap-1 rounded-card border bg-card px-3 py-2.5 text-left outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+                          className="flex min-h-[70px] w-60 flex-col items-start gap-1 rounded-card border bg-card px-3 py-2.5 text-left outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <span className="flex w-full items-center gap-1.5 font-bold">
                             <Pin size={13} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
                             <span className="truncate">{t.title}</span>
                           </span>
-                          <span className="line-clamp-2 text-xs text-muted-foreground">{summary(t)}</span>
+                          <span className="line-clamp-2 text-xs leading-normal text-muted-foreground">{summary(t)}</span>
                         </button>
                       ))}
                     </div>
@@ -645,36 +460,7 @@ export default function PickyPage() {
                     </div>
                   )
                 )}
-                {prepFail && (
-                  <div className="rounded-card border bg-card px-3 py-2 text-sm">
-                    <p className="font-bold text-destructive">{prepFail.title}</p>
-                    <p className="mt-0.5 text-muted-foreground">{prepFail.message}</p>
-                    <div className="mt-2 flex gap-2">
-                      <Button
-                        className="py-1"
-                        onClick={() => {
-                          setPrepFail(null);
-                          prepFail.without();
-                        }}
-                      >
-                        {prepFail.withoutLabel}
-                      </Button>
-                      <Button
-                        className="py-1"
-                        onClick={() => {
-                          setPrepFail(null);
-                          prepFail.retry();
-                        }}
-                      >
-                        重试
-                      </Button>
-                      <Button variant="ghost" className="py-1" onClick={() => setPrepFail(null)}>
-                        取消
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                {preparing && <p className="animate-pulse px-1 text-xs text-muted-foreground">{preparing}</p>}
+                <PrepNotices prep={prep} />
                 {current == null && draftProject != null && (
                   <p className="px-1 text-xs text-muted-foreground">项目：{lib?.projects.find((p) => p.id === draftProject)?.name}</p>
                 )}

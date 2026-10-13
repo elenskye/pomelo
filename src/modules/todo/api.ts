@@ -102,6 +102,8 @@ const api = {
   updateTask: (v: { id: number; patch: TaskPatch }) => invoke<Task>("todo_task_update", v),
   setDone: (v: { id: number; done: boolean }) => invoke<void>("todo_task_set_done", v),
   deleteTask: (id: number) => invoke<void>("todo_task_delete", { id }),
+  /** Several subtasks at once (小拾's 拆成子任务), one undo step. */
+  addSubtasks: (v: { parentId: number; titles: string[] }) => invoke<Task[]>("todo_subtasks_create", v),
   agenda: (today: string) => invoke<Agenda>("todo_agenda", { today }),
   doneBetween: (from: string, to: string) => invoke<DoneItem[]>("todo_done_between", { from, to }),
   month: (from: string, to: string) => invoke<CalItem[]>("todo_month", { from, to }),
@@ -145,6 +147,7 @@ export function useTodoMutations() {
     quickUpdateTask: useMutation({ mutationFn: api.updateTask, onSuccess, onError }),
     setDone: useMutation({ mutationFn: api.setDone, onSuccess, onError }),
     deleteTask: useMutation({ mutationFn: api.deleteTask, onSuccess, onError }),
+    addSubtasks: useMutation({ mutationFn: api.addSubtasks, onSuccess, onError }),
     skip: useMutation({ mutationFn: api.skip, onSuccess, onError }),
     log: useMutation({ mutationFn: api.log, onSuccess, onError }),
     deleteLog: useMutation({ mutationFn: api.deleteLog, onSuccess, onError }),

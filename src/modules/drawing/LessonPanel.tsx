@@ -7,6 +7,7 @@ import { SidePanel } from "@/shared/panel";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
 import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { DRAWING_STATUS, useDrawingMutations, type Lesson, type LessonPatch } from "./api";
+import { Polish } from "@/modules/picky/Assist";
 
 type Draft = {
   title: string;
@@ -142,7 +143,9 @@ export function LessonPanel(props: {
         <MonthInput value={d.finishedMonth} onChange={(v) => set("finishedMonth", v)} />
       </Field>
       <Field label="备注">
-        <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
+        <Polish module="drawing" value={d.note} onChange={(v) => set("note", v)}>
+          <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
+        </Polish>
       </Field>
     </SidePanel>
   );

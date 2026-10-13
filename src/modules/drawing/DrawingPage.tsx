@@ -12,6 +12,7 @@ import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } fr
 import { DRAWING_KEY, DRAWING_STATUS, useCourses, useDrawingMutations, useLessons, type Course, type Lesson } from "./api";
 import { CourseDialog } from "./CourseDialog";
 import { LessonPanel } from "./LessonPanel";
+import { usePageContext } from "@/app/pageContext";
 
 type Filter = "all" | StatusCode;
 type KindFilter = "all" | "none" | number;
@@ -179,6 +180,16 @@ export default function DrawingPage() {
   );
   const next = lessons.find((l) => l.status !== "done");
   const selectedLesson = typeof sel === "number" ? (lessons.find((l) => l.id === sel) ?? null) : null;
+  usePageContext({
+    module: "drawing",
+    page: current?.name ?? null,
+    filter: [filter === "all" ? null : DRAWING_STATUS[filter], kindFilter === "all" ? null : kindFilter === "none" ? "未分类" : (kindName.get(kindFilter) ?? null)].filter(Boolean).join(" · ") || null,
+    record: selectedLesson
+      ? { kind: "lesson", id: selectedLesson.id, label: `课节：${selectedLesson.code ? `${selectedLesson.code} ` : ""}${selectedLesson.title}` }
+      : current
+        ? { kind: "course", id: current.id, label: `课程：${current.name}` }
+        : null,
+  });
 
   const selectCourse = async (id: number) => {
     if (id === current?.id) return;

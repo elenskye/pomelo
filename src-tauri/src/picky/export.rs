@@ -9,7 +9,8 @@
 //!   used (deleted ones are noted), linked from the Markdown; the JSON keeps passages and memories
 //!   per run (memories stay out of the Markdown).
 //! - Lookups in Pomelo (v0.3.5): replies show 「查了：…」 and fold what each lookup returned, in every
-//!   Markdown form (复制 only the line); the JSON keeps them per message (with their records).
+//!   Markdown form (复制 only the line); the JSON keeps them per message (with their records). A question
+//!   asked in the 小窗 shows 「带着：…」 (the page it went with) the same way.
 
 use super::chat;
 use super::files::{self, MessageFile};
@@ -44,6 +45,7 @@ struct Node {
     files: Vec<MessageFile>,
     notes: Vec<NoteRecord>,
     queries: Vec<super::data::Query>,
+    page: Option<super::data::Query>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,6 +121,7 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
                 files: vec![],
                 notes: vec![],
                 queries: vec![],
+                page: None,
             })
         })
         .map_err(err)?
@@ -133,9 +136,12 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
     for n in nodes.iter_mut() {
         if n.role == "user" {
             n.files = files::message_files(conn, n.id)?;
+            if let Some(run) = n.run_id {
+                n.page = super::data::page_of(conn, run)?;
+            }
         } else if let Some(run) = n.run_id {
             n.notes = reading::notes_of(conn, run)?.into_iter().map(|(label, content)| NoteRecord { label, content }).collect();
-            n.queries = super::data::queries_of(conn, run)?;
+            n.queries = super::data::lookups_of(conn, run)?;
         }
     }
     Ok(nodes)
@@ -173,6 +179,9 @@ pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
             lines.push(format!("状态：{s}"));
         }
         lines.extend(m.files.iter().map(|f| format!("{}：{}", if f.file_id.is_some() { "资料" } else { "附件" }, f.file.name.replace('\n', " "))));
+        if let Some(p) = &m.page {
+            lines.push(format!("带着：{}", p.label));
+        }
         if !m.queries.is_empty() {
             lines.push(looked_line(&m.queries));
         }
@@ -211,6 +220,9 @@ fn document(heading: &str, msgs: &[Node], all: bool, sums: &[SummaryRecord], lin
                 (false, Some(l)) => format!("{kind}：[{name}](<{l}>)\n\n"),
                 (false, None) => format!("{kind}：{name}\n\n"),
             };
+        }
+        if let Some(p) = &m.page {
+            out += &format!("带着：{}\n\n<details>\n<summary>页面内容</summary>\n\n```text\n{}\n```\n\n</details>\n\n", p.label, p.result.replace("```", "ʼʼʼ"));
         }
         if !m.queries.is_empty() {
             out += &looked_line(&m.queries);

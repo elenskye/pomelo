@@ -1,5 +1,5 @@
 // 投递: 该跟进 reminders on top, then the table (filter by current status, search company / 岗位 / 地点).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BellRing } from "lucide-react";
 import { useKinds } from "@/shared/kinds/api";
 import { Button, SearchInput, Segmented } from "@/shared/ui";
@@ -25,7 +25,8 @@ function When({ j }: { j: Job }) {
   );
 }
 
-export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpen: (j: Job) => void }) {
+/** `onFilter`: the filters as shown (for the 小窗), null = none. */
+export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpen: (j: Job) => void; onFilter?: (text: string | null) => void }) {
   const { data: statuses = [] } = useStatuses();
   const { data: channels = [] } = useKinds(CHANNELS);
   const m = useJobMutations();
@@ -38,6 +39,9 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
   const needle = q.trim().toLowerCase();
   const shown = props.jobs.filter((j) => inFilter(j, filter) && (!needle || [j.company, j.position, j.location].some((s) => s?.toLowerCase().includes(needle))));
   const filters: { value: Filter; label: string }[] = [{ value: "all", label: "全部" }, ...statuses.map((s) => ({ value: `s${s.id}`, label: s.name }))];
+  const filterText = [filter === "all" ? null : `状态：${filters.find((f) => f.value === filter)?.label ?? ""}`, needle ? `搜「${q.trim()}」` : null].filter(Boolean).join(" · ") || null;
+  const onFilter = props.onFilter;
+  useEffect(() => onFilter?.(filterText), [filterText, onFilter]);
 
   return (
     <div className="-m-1 min-h-0 flex-1 space-y-4 overflow-y-auto p-1 pb-4">

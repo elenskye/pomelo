@@ -1,7 +1,7 @@
 // App sidebar: 首页 (fixed on top), the modules not hidden in 设置 (drag a row to reorder; order kept in settings) + 设置.
 // Collapses to an icon strip (names show on hover); the state is kept in settings too.
 import { NavLink } from "react-router";
-import { House, PanelLeftClose, PanelLeftOpen, Search, Settings, type LucideIcon } from "lucide-react";
+import { Bird, House, PanelLeftClose, PanelLeftOpen, Search, Settings, type LucideIcon } from "lucide-react";
 import { isBoolean, isStringArray, useSetting } from "@/shared/settings";
 import { useSortable } from "@/shared/sortable";
 import { useHiddenModules } from "./hidden";
@@ -44,7 +44,7 @@ function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: s
   );
 }
 
-export function Sidebar(props: { isDev?: boolean; onSearch?: () => void }) {
+export function Sidebar(props: { isDev?: boolean; onSearch?: () => void; onChat?: () => void; chatOpen?: boolean }) {
   const [collapsed, setCollapsed] = useSetting(COLLAPSED, false, isBoolean);
   const [order, setOrder] = useSetting<string[]>(ORDER, [], isStringArray);
   const [hidden] = useHiddenModules();
@@ -75,6 +75,18 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void }) {
       <Search size={16} strokeWidth={1.5} />
     </button>
   );
+  const chat = props.onChat && (
+    <button
+      type="button"
+      aria-label={props.chatOpen ? "收起小拾" : "问小拾"}
+      title={props.chatOpen ? "收起小拾" : "问小拾"}
+      aria-pressed={props.chatOpen}
+      onClick={props.onChat}
+      className={`rounded-control p-1.5 transition-colors duration-150 outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/5 ${props.chatOpen ? "text-[var(--module-picky)]" : "text-muted-foreground hover:text-foreground"}`}
+    >
+      <Bird size={16} strokeWidth={1.5} />
+    </button>
+  );
   return (
     <aside
       className={`flex shrink-0 flex-col border-r bg-sidebar pb-3 transition-[width] duration-150 ${collapsed ? "w-[96px] px-3" : "w-[220px] px-3"}`}
@@ -84,12 +96,14 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void }) {
         <div className="mb-3 flex flex-col items-center gap-1">
           {toggle}
           {search}
+          {chat}
         </div>
       ) : (
         <div data-tauri-drag-region className="mb-3 flex items-center justify-between pl-2.5">
           <span className="pointer-events-none text-base font-bold">柚儿园</span>
           <span className="flex items-center">
             {search}
+            {chat}
             {toggle}
           </span>
         </div>

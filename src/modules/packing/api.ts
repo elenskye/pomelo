@@ -63,6 +63,8 @@ const api = {
   updateItem: (v: { list: ListKind; id: number; patch: ItemPatch }) =>
     invoke<PackItem>(`packing_${v.list}_item_update`, { id: v.id, patch: v.patch }),
   deleteItem: (v: { list: ListKind; id: number }) => invoke<void>(`packing_${v.list}_item_delete`, { id: v.id }),
+  /** Several items at the end of a trip (小拾's ideas), one undo step. */
+  addTripItems: (v: { tripId: number; items: ItemPatch[] }) => invoke<PackItem[]>("packing_trip_items_create", v),
   reorderTemplates: (ids: number[]) => invoke<void>("packing_templates_reorder", { ids }),
   reorderItems: (v: { list: ListKind; parentId: number; ids: number[] }) => invoke<void>("packing_items_reorder", v),
 };
@@ -97,6 +99,7 @@ export function usePackingMutations() {
     /** Fire-and-forget (checkbox toggles, row deletes): errors surface as toasts. */
     quickUpdateItem: useMutation({ mutationFn: api.updateItem, onSuccess, onError }),
     quickDeleteItem: useMutation({ mutationFn: api.deleteItem, onSuccess, onError }),
+    addTripItems: useMutation({ mutationFn: api.addTripItems, onSuccess, onError }),
     reorderTemplates: useMutation({ mutationFn: api.reorderTemplates, onSuccess, onError }),
     reorderItems: useMutation({ mutationFn: api.reorderItems, onSuccess, onError }),
   };

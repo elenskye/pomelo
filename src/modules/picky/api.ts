@@ -82,6 +82,8 @@ export type ChatMessage = {
   memories: UsedMemory[];
   /** Replies: what their run looked up in Pomelo. */
   queries: Query[];
+  /** Questions asked in the 小窗: the page they went with. */
+  page: Query | null;
   /** Page only: a reply reading material right now. */
   reading?: ReadingProgress | null;
 };
@@ -90,6 +92,8 @@ export type ChatMessage = {
 export type QueryRecord = { module: string; kind: string; id: number; title: string; parent?: number | null; day?: string | null };
 /** One lookup in Pomelo (picky/data.rs): the 「查了」 line and what the model got. */
 export type Query = { module: string | null; label: string; state: "ok" | "blocked" | "failed" | "unsupported"; result: string; records: QueryRecord[] };
+/** What a page tells the 小窗 (ids only; Rust fetches the content under its rules). */
+export type PageContextPayload = { module: string; page: string | null; filter: string | null; record: { kind: string; id: number } | null; selected: { kind: string; id: number }[] };
 /** 设置 → 小拾: which modules may go to cloud models. */
 export type CloudData = { module: string; label: string; allowed: boolean };
 export type FileInfo = { id: number; name: string; format: "PDF" | "Markdown" | "文本"; pageCount: number | null; byteCount: number; deleted: boolean };
@@ -180,8 +184,9 @@ export const pickyApi = {
   /** `projectId`: where a new conversation (sessionId null) goes. */
   /** `instructions`: a draft's own choice (saved with the new conversation). */
   /** `memoryOff`: a draft's 「本会话关闭记忆」 (saved with the new conversation). */
-  send: (sessionId: number | null, projectId: number | null, instructions: SessionSetting | null, memoryOff: boolean, text: string, extras: Extras, onEvent: (e: StreamEvent) => void) =>
-    invoke<Sent>("picky_send", { sessionId, projectId, instructions, memoryOff, text, ...extras, onEvent: channel(onEvent) }),
+  /** `page`: the page it is asked on (the 小窗). */
+  send: (sessionId: number | null, projectId: number | null, instructions: SessionSetting | null, memoryOff: boolean, text: string, extras: Extras, page: PageContextPayload | null, onEvent: (e: StreamEvent) => void) =>
+    invoke<Sent>("picky_send", { sessionId, projectId, instructions, memoryOff, text, ...extras, page, onEvent: channel(onEvent) }),
   /** A new version of a question (edited) and its reply (its files come along). */
   edit: (messageId: number, text: string, passages: Passage[], memories: UsedMemory[], onEvent: (e: StreamEvent) => void) =>
     invoke<Sent>("picky_edit", { messageId, text, passages, memories, onEvent: channel(onEvent) }),

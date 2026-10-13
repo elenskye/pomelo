@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { usePageContext } from "@/app/pageContext";
 import { Dropdown } from "@/shared/Dropdown";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { KindManager } from "@/shared/kinds/KindManager";
@@ -71,6 +72,19 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
   const countries = useMemo(() => distinct(items.map((it) => it.country)), [items]);
   const sel = panel.selection;
   const selected = typeof sel === "number" ? (items.find((it) => it.id === sel) ?? null) : null;
+
+  usePageContext({
+    module: config.moduleId,
+    filter:
+      [
+        filter === "all" ? null : labels[filter],
+        kindFilter === "all" ? null : kindFilter === "none" ? UNCATEGORIZED : (kinds.find((k) => k.id === kindFilter)?.name ?? null),
+        query.trim() ? `搜「${query.trim()}」` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || null,
+    record: selected ? { kind: config.moduleId === "books" ? "book" : "film", id: selected.id, label: `${config.moduleId === "books" ? "书" : "影视"}：${selected.title}` } : null,
+  });
 
   useOpenRequest((h) => void panel.request(h.id));
   usePageKeys({

@@ -21,6 +21,20 @@ fn gone(what: &str) -> String {
     format!("找不到这个{what}，可能已经被删除了")
 }
 
+/// Several new items at the end of a list, as one step (小拾's ideas the user picked).
+pub fn create_items(conn: &Connection, list: List, parent_id: i64, patches: Vec<ItemPatch>) -> Result<Vec<Item>, String> {
+    if patches.is_empty() || patches.len() > 50 {
+        return Err("一次加 1～50 件".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    let mut out = Vec::with_capacity(patches.len());
+    for p in patches {
+        out.push(create_item(&tx, list, parent_id, p)?);
+    }
+    tx.commit()?;
+    Ok(out)
+}
+
 /// What this trip may have forgotten: (name, 类别, how many other lists have it, in its own template).
 pub fn maybe_missing(conn: &Connection, trip_id: i64) -> Result<Vec<(String, Option<i64>, i64, bool)>, String> {
     let t = trip(conn, trip_id)?;
@@ -733,6 +747,10 @@ pub fn packing_trip_items(state: State<AppState>, trip_id: i64) -> Result<Vec<It
 #[tauri::command]
 pub fn packing_trip_item_create(state: State<AppState>, trip_id: i64, patch: ItemPatch) -> Result<Item, String> {
     state.with_undo("添加物品", |c| create_item(c, List::Trip, trip_id, patch))
+}
+#[tauri::command]
+pub fn packing_trip_items_create(state: State<AppState>, trip_id: i64, items: Vec<ItemPatch>) -> Result<Vec<Item>, String> {
+    state.with_undo("加上物品", |c| create_items(c, List::Trip, trip_id, items))
 }
 #[tauri::command]
 pub fn packing_trip_item_update(state: State<AppState>, id: i64, patch: ItemPatch) -> Result<Item, String> {

@@ -6,6 +6,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { DateInput } from "@/shared/DateInput";
 import { Button, Field, TextArea, TextInput } from "@/shared/ui";
 import { usePackingMutations, type Template, type Trip } from "./api";
+import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
 
 export function TripDialog(props: {
   trip: Trip | null; // null = create
@@ -36,8 +37,20 @@ export function TripDialog(props: {
   const [confirm, confirmDialog] = useConfirm();
 
   const pickSource = (v: string) => {
+    filled.clear("source");
     setSource(v);
     if (!nameTouched) setName(sourceName(v));
+  };
+  // 一句话填好 (new trips): 名称、出发日期 and the template that fits best
+  const filled = useFilled<"name" | "departOn" | "source">();
+  const assistOn = useAssistOn();
+  const quick = !trip && assistOn;
+  const fill = (f: QuickFillResult) => {
+    const keys: ("name" | "departOn" | "source")[] = [];
+    if (f.templateId != null && templates.some((t) => t.id === f.templateId)) setSource(`t:${f.templateId}`), keys.push("source");
+    if (f.name) setName(f.name), setNameTouched(true), keys.push("name");
+    if (f.departOn) setDepartOn(f.departOn), keys.push("departOn");
+    filled.mark(keys);
   };
 
   const save = async (e: FormEvent) => {
@@ -90,9 +103,10 @@ export function TripDialog(props: {
     >
       <form onSubmit={save} className="space-y-4">
         <p className="text-base font-bold">{trip ? "编辑出行" : "新出行"}</p>
+        {quick && <QuickFill module="packing" onFill={fill} autoFocus />}
         {!trip && (
           <Field label="清单从哪来">
-            <div>
+            <div className={filled.halo("source")}>
               <Dropdown
                 ariaLabel="清单从哪来"
                 value={source}
@@ -109,21 +123,33 @@ export function TripDialog(props: {
         )}
         <Field label="名称">
           <TextInput
-            autoFocus
+            autoFocus={!quick}
             value={name}
             onChange={(e) => {
+              filled.clear("name");
               setName(e.target.value);
               setNameTouched(true);
             }}
+            className={filled.cls("name")}
           />
         </Field>
         <Field label="出发日期">
-          <div>
-            <DateInput clearable ariaLabel="出发日期" value={departOn} onChange={setDepartOn} />
+          <div className={filled.halo("departOn")}>
+            <DateInput
+              clearable
+              ariaLabel="出发日期"
+              value={departOn}
+              onChange={(v) => {
+                filled.clear("departOn");
+                setDepartOn(v);
+              }}
+            />
           </div>
         </Field>
         <Field label="备注">
-          <TextArea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+          <Polish module="packing" value={note} onChange={setNote}>
+            <TextArea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+          </Polish>
         </Field>
         {trip?.templateName && <p className="text-xs text-muted-foreground">清单来自模板「{trip.templateName}」</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}

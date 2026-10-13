@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, Sparkles, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
@@ -8,6 +8,8 @@ import { SidePanel } from "@/shared/panel";
 import { StarRating } from "@/shared/StarRating";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
 import { Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
+import { usePickyStatus } from "@/modules/picky/api";
 import { useItemMutations } from "./api";
 import type { CollectionApi, CollectionConfig, Item, ItemPatch, Reread } from "./types";
 
@@ -82,7 +84,49 @@ export function CollectionPanel(props: {
     props.onDirtyChange(dirty);
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const filled = useFilled<keyof Draft>();
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    filled.clear(k);
+    setD((x) => ({ ...x, [k]: v }));
+  };
+  // 小拾 补全: 作者 / 导演、国家、类型 from the name (its own knowledge) into the empty fields
+  const assistOn = useAssistOn();
+  const status = usePickyStatus().data;
+  const [filling, setFilling] = useState(false);
+  const fillIn = async () => {
+    setFilling(true);
+    try {
+      const f = await assistApi.fillWork(config.moduleId as "books" | "films", d.title);
+      const next = { ...d };
+      const keys: (keyof Draft)[] = [];
+      if (f.creator && !d.creator.trim()) (next.creator = f.creator), keys.push("creator");
+      if (f.country && !d.country.trim()) (next.country = f.country), keys.push("country");
+      // a new item's kind is still the default until picked
+      if (f.kindId != null && (d.kindId === null || (isNew && d.kindId === defaultKindId))) (next.kindId = f.kindId), keys.push("kindId");
+      setD(next);
+      filled.mark(keys);
+      if (!keys.length) toast("没有能补的");
+    } catch (err) {
+      toast(errorText(err), "error");
+    } finally {
+      setFilling(false);
+    }
+  };
+  // 一句话填好 (new items): 名称、作者 / 导演、国家、类型、状态、星级、完成时间
+  const quick = isNew && assistOn;
+  const quickFill = (f: QuickFillResult) => {
+    const next = { ...d };
+    const keys: (keyof Draft)[] = [];
+    if (f.title) (next.title = f.title), keys.push("title");
+    if (f.creator) (next.creator = f.creator), keys.push("creator");
+    if (f.country) (next.country = f.country), keys.push("country");
+    if (f.kindId != null) (next.kindId = f.kindId), keys.push("kindId");
+    if (f.status) (next.status = f.status), keys.push("status");
+    if (f.rating != null) (next.rating = f.rating), keys.push("rating");
+    if (f.finishedYear) (next.finishedYear = f.finishedYear), keys.push("finishedYear");
+    setD(next);
+    filled.mark(keys);
+  };
   const setStatus = (status: StatusCode) =>
     setD((x) => ({
       ...x,
@@ -145,18 +189,27 @@ export function CollectionPanel(props: {
         </>
       }
     >
+      {quick && <QuickFill module={config.moduleId as "books" | "films"} onFill={quickFill} autoFocus />}
       <Field label={config.titleLabel}>
-        <TextInput autoFocus value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" />
+        <div className="flex items-center gap-1.5">
+          <TextInput autoFocus={!quick} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" className={`min-w-0 flex-1 ${filled.cls("title")}`} />
+          {assistOn && d.title.trim() && (
+            <IconButton label={filling ? assistBusyText(status, "正在补全…") : "补全"} disabled={filling} onClick={() => void fillIn()}>
+              <Sparkles size={15} strokeWidth={1.75} className={filling ? "animate-pulse" : ""} />
+            </IconButton>
+          )}
+        </div>
       </Field>
       <Field label={config.creatorLabel}>
         <TextInput
           list={listId("creators")}
           value={d.creator}
           onChange={(e) => set("creator", e.target.value)}
+          className={filled.cls("creator")}
         />
       </Field>
       <Field label="类型">
-        <div>
+        <div className={filled.halo("kindId")}>
           <Dropdown
             ariaLabel="类型"
             value={d.kindId}
@@ -167,21 +220,27 @@ export function CollectionPanel(props: {
         </div>
       </Field>
       <Field label="国家">
-        <TextInput list={listId("countries")} value={d.country} onChange={(e) => set("country", e.target.value)} />
+        <TextInput list={listId("countries")} value={d.country} onChange={(e) => set("country", e.target.value)} className={filled.cls("country")} />
       </Field>
       <Field label="状态">
-        <Segmented
-          ariaLabel="状态"
-          value={d.status}
-          options={STATUS_ORDER.map((s) => ({ value: s, label: config.statusLabels[s] }))}
-          onChange={setStatus}
-        />
+        <div className={filled.halo("status")}>
+          <Segmented
+            ariaLabel="状态"
+            value={d.status}
+            options={STATUS_ORDER.map((s) => ({ value: s, label: config.statusLabels[s] }))}
+            onChange={(v) => (filled.clear("status"), setStatus(v))}
+          />
+        </div>
       </Field>
       <Field label="尝尝咸淡">
-        <StarRating size={20} value={d.rating} onChange={(v) => set("rating", v)} />
+        <div className={filled.halo("rating")}>
+          <StarRating size={20} value={d.rating} onChange={(v) => set("rating", v)} />
+        </div>
       </Field>
       <Field label="完成时间">
-        <YearInput value={d.finishedYear} onChange={(v) => set("finishedYear", v)} />
+        <div className={filled.halo("finishedYear")}>
+          <YearInput value={d.finishedYear} onChange={(v) => set("finishedYear", v)} />
+        </div>
       </Field>
       {(d.status === "done" || d.rereads.length > 0) && (
         <Field label={config.rereadLabel}>
@@ -210,7 +269,9 @@ export function CollectionPanel(props: {
         </Field>
       )}
       <Field label="备注">
-        <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
+        <Polish module={config.moduleId} value={d.note} onChange={(v) => set("note", v)}>
+          <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
+        </Polish>
       </Field>
     </SidePanel>
   );

@@ -2,7 +2,9 @@
 // off on the timeline below — checking fills today's date, which stays editable. Rust derives the
 // current status (last checked; none = 想投) and 投递日期 (first checked day).
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, ExternalLink, FolderOpen, Settings2 } from "lucide-react";
+import { Check, ExternalLink, FolderOpen, Settings2, Sparkles } from "lucide-react";
+import { Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/picky/Assist";
+import { usePickyStatus } from "@/modules/picky/api";
 import { homeDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { DateInput } from "@/shared/DateInput";
@@ -12,7 +14,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { SidePanel } from "@/shared/panel";
-import { Field, IconButton, TextArea, TextInput } from "@/shared/ui";
+import { Button, Field, IconButton, TextArea, TextInput } from "@/shared/ui";
 import { CHANNELS, jobLabel, useJobMutations, useStatuses, type Job, type Status } from "./api";
 
 type DraftStep = { statusId: number; done: boolean; doneOn: string };
@@ -119,6 +121,47 @@ function Steps(props: { statuses: Status[]; value: DraftStep[]; onChange: (v: Dr
   );
 }
 
+/** 「贴 JD」: 小拾 finds 公司、岗位、地点 in it; the panel fills the empty ones and keeps the JD in 备注. */
+function JdFill(props: { onFill: (f: JobFill, jd: string) => void }) {
+  const status = usePickyStatus().data;
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [jd, setJd] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!useAssistOn()) return null;
+  if (!open)
+    return (
+      <Button variant="ghost" className="-my-1 -ml-2 self-start" onClick={() => setOpen(true)}>
+        <Sparkles size={14} strokeWidth={1.75} /> 贴 JD
+      </Button>
+    );
+  const run = async () => {
+    setBusy(true);
+    try {
+      props.onFill(await assistApi.fillJob(jd), jd);
+      setOpen(false);
+      setJd("");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2 rounded-card border bg-card p-2.5 shadow-sm">
+      <TextArea aria-label="JD" rows={6} autoFocus value={jd} onChange={(e) => setJd(e.target.value)} maxLength={20000} />
+      <div className="flex gap-2">
+        <Button variant="primary" disabled={!jd.trim() || busy} onClick={() => void run()}>
+          {busy ? assistBusyText(status, "正在读 JD…") : "补全"}
+        </Button>
+        <Button variant="ghost" onClick={() => setOpen(false)}>
+          取消
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function JobPanel(props: {
   job: Job | null;
   onClose: () => void;
@@ -161,7 +204,47 @@ export function JobPanel(props: {
   useEffect(() => {
     props.onDirtyChange(dirty);
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const filled = useFilled<keyof Draft>();
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    filled.clear(k);
+    setD((x) => ({ ...x, [k]: v }));
+  };
+  /** 小拾 read a JD: empty fields get what it found, the JD itself goes into 备注. */
+  const fromJd = (f: JobFill, jd: string) => {
+    const next = { ...d };
+    const keys: (keyof Draft)[] = ["note"];
+    for (const k of ["company", "position", "location"] as const) {
+      const v = f[k];
+      if (v && !d[k].trim()) {
+        next[k] = v;
+        keys.push(k);
+      }
+    }
+    next.note = d.note.trim() ? `${d.note.trimEnd()}\n\n${jd.trim()}` : jd.trim();
+    setD(next);
+    filled.mark(keys);
+  };
+  // 一句话填好 (new applications): 公司、岗位、地点、渠道, and the step it reached (checked on its day)
+  const assistOn = useAssistOn();
+  const quick = !j && assistOn;
+  const fill = (f: QuickFillResult) => {
+    const next = { ...d };
+    const keys: (keyof Draft)[] = [];
+    for (const k of ["company", "position", "location"] as const) {
+      const v = f[k];
+      if (v) (next[k] = v), keys.push(k);
+    }
+    if (f.kindId != null) (next.kindId = f.kindId), keys.push("kindId");
+    if (f.statusId != null) {
+      const step = { statusId: f.statusId, done: true, doneOn: f.day ?? localToday() };
+      const order = (id: number) => statuses.findIndex((x) => x.id === id);
+      const steps = d.steps.some((x) => x.statusId === f.statusId) ? d.steps.map((x) => (x.statusId === f.statusId ? step : x)) : [...d.steps, step];
+      next.steps = steps.sort((a, b) => order(a.statusId) - order(b.statusId));
+      keys.push("steps");
+    }
+    setD(next);
+    filled.mark(keys);
+  };
   const [error, setError] = useState<string | null>(null);
   const m = useJobMutations();
   const toast = useToast();
@@ -214,19 +297,21 @@ export function JobPanel(props: {
       meta={j?.followedOn ? `${j.followedOn.split("-").join(" / ")} 跟进过` : undefined}
       extra={confirmDialog}
     >
+      {quick && <QuickFill module="jobs" onFill={fill} autoFocus />}
+      <JdFill onFill={fromJd} />
       <Field label="公司">
-        <TextInput autoFocus value={d.company} onChange={(e) => set("company", e.target.value)} placeholder="必填" maxLength={100} />
+        <TextInput autoFocus={!quick} value={d.company} onChange={(e) => set("company", e.target.value)} placeholder="必填" maxLength={100} className={filled.cls("company")} />
       </Field>
       <div className="grid grid-cols-[1fr_8rem] gap-3">
         <Field label="岗位">
-          <TextInput value={d.position} onChange={(e) => set("position", e.target.value)} maxLength={100} />
+          <TextInput value={d.position} onChange={(e) => set("position", e.target.value)} maxLength={100} className={filled.cls("position")} />
         </Field>
         <Field label="地点">
-          <TextInput value={d.location} onChange={(e) => set("location", e.target.value)} maxLength={50} />
+          <TextInput value={d.location} onChange={(e) => set("location", e.target.value)} maxLength={50} className={filled.cls("location")} />
         </Field>
       </div>
       <Field label="渠道">
-        <div>
+        <div className={filled.halo("kindId")}>
           <Dropdown
             ariaLabel="渠道"
             value={d.kindId}
@@ -238,13 +323,17 @@ export function JobPanel(props: {
       </Field>
       <Field label="状态">
         <div>
-          <Steps statuses={statuses} value={d.steps} onChange={(v) => set("steps", v)} onManage={props.onManageStatuses} />
+          <div className={filled.halo("steps")}>
+            <Steps statuses={statuses} value={d.steps} onChange={(v) => set("steps", v)} onManage={props.onManageStatuses} />
+          </div>
         </div>
       </Field>
       <OpenableInput label="JD 链接" value={d.link} onChange={(v) => set("link", v)} />
       <OpenableInput label="简历" file value={d.resume} onChange={(v) => set("resume", v)} />
       <Field label="备注">
-        <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
+        <Polish module="jobs" value={d.note} onChange={(v) => set("note", v)}>
+          <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} className={filled.cls("note")} />
+        </Polish>
       </Field>
     </SidePanel>
   );

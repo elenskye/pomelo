@@ -8,33 +8,43 @@ import { Field, fieldClass, Segmented, TextInput } from "@/shared/ui";
 import { useFinMutations, useFixed, type Entry, type Fixed, type Flow } from "./api";
 import { AmountInput, CurrencyPicker, FLOW_OPTIONS, KindPicker } from "./fields";
 import { money, moneyInput, nextOnOrAfter, parseMoney, type Currency } from "./money";
+import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
 
 type Money = { flow: Flow; amount: string; currency: Currency; kindId: number | null; note: string };
 
 /** Flow · 金额 + 币种 · 分类 — the part entries and 固定支出 share. */
-function MoneyFields<D extends Money>(props: { d: D; set: <K extends keyof D>(k: K, v: D[K]) => void; onManageKinds: () => void; autoFocus?: boolean }) {
+type Filled = ReturnType<typeof useFilled<string>>;
+
+function MoneyFields<D extends Money>(props: { d: D; set: <K extends keyof D>(k: K, v: D[K]) => void; onManageKinds: () => void; autoFocus?: boolean; filled?: Filled }) {
   const { d, set } = props;
+  const halo = (k: string) => props.filled?.halo(k) ?? "";
   return (
     <>
       <Field label="类型">
-        <Segmented
-          ariaLabel="支出还是收入"
-          value={d.flow}
-          onChange={(v) => {
-            set("flow", v as D["flow"]);
-            set("kindId", null as D["kindId"]);
-          }}
-          options={FLOW_OPTIONS}
-        />
+        <div className={halo("flow")}>
+          <Segmented
+            ariaLabel="支出还是收入"
+            value={d.flow}
+            onChange={(v) => {
+              set("flow", v as D["flow"]);
+              set("kindId", null as D["kindId"]);
+            }}
+            options={FLOW_OPTIONS}
+          />
+        </div>
       </Field>
       <Field label="金额">
         <div className="flex items-center gap-2">
-          <AmountInput autoFocus={props.autoFocus} value={d.amount} onChange={(v) => set("amount", v as D["amount"])} className="w-36" />
-          <CurrencyPicker value={d.currency} onChange={(c) => set("currency", c as D["currency"])} />
+          <AmountInput autoFocus={props.autoFocus} value={d.amount} onChange={(v) => set("amount", v as D["amount"])} className={`w-36 ${props.filled?.cls("amount") ?? ""}`} />
+          <div className={halo("currency")}>
+            <CurrencyPicker value={d.currency} onChange={(c) => set("currency", c as D["currency"])} />
+          </div>
         </div>
       </Field>
       <Field label="分类">
-        <KindPicker flow={d.flow} value={d.kindId} onChange={(v) => set("kindId", v as D["kindId"])} onManage={props.onManageKinds} />
+        <div className={halo("kindId")}>
+          <KindPicker flow={d.flow} value={d.kindId} onChange={(v) => set("kindId", v as D["kindId"])} onManage={props.onManageKinds} />
+        </div>
       </Field>
     </>
   );
@@ -47,7 +57,7 @@ function useDraft<D>(initial: D, onDirtyChange: (dirty: boolean) => void) {
     onDirtyChange(dirty);
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = <K extends keyof D>(k: K, v: D[K]) => setD((x) => ({ ...x, [k]: v }));
-  return [d, set, dirty] as const;
+  return [d, set, dirty, setD] as const;
 }
 
 export function EntryPanel(props: {
@@ -72,7 +82,27 @@ export function EntryPanel(props: {
     }),
     [e, props.defaultDay, props.defaultCurrency],
   );
-  const [d, set, dirty] = useDraft(initial, props.onDirtyChange);
+  const [d, setRaw, dirty, setD] = useDraft(initial, props.onDirtyChange);
+  // 一句话填好 (new entries): filled fields show until edited by hand
+  const assistOn = useAssistOn();
+  const quick = !e && assistOn;
+  const filled = useFilled<string>();
+  const set = <K extends keyof typeof d>(k: K, v: (typeof d)[K]) => {
+    filled.clear(k);
+    setRaw(k, v);
+  };
+  const fill = (f: QuickFillResult) => {
+    const next = { ...d };
+    const keys: string[] = [];
+    if (f.flow && f.flow !== d.flow) (next.flow = f.flow), (next.kindId = null), keys.push("flow");
+    if (f.amount != null) (next.amount = moneyInput(f.amount)), keys.push("amount");
+    if (f.currency) (next.currency = f.currency), keys.push("currency");
+    if (f.day) (next.day = f.day), keys.push("day");
+    if (f.kindId != null) (next.kindId = f.kindId), keys.push("kindId");
+    if (f.note) (next.note = f.note), keys.push("note");
+    setD(next);
+    filled.mark(keys);
+  };
   const [error, setError] = useState<string | null>(null);
   const m = useFinMutations();
   const toast = useToast();
@@ -119,7 +149,8 @@ export function EntryPanel(props: {
       meta={from ? `由固定支出「${from.name}」自动记上` : undefined}
       extra={confirmDialog}
     >
-      <MoneyFields d={d} set={set} onManageKinds={() => props.onManageKinds(d.flow)} autoFocus />
+      {quick && <QuickFill module="finance" onFill={fill} autoFocus />}
+      <MoneyFields d={d} set={set} onManageKinds={() => props.onManageKinds(d.flow)} autoFocus={!quick} filled={filled} />
       {initial.endDay ? (
         <Field label="时间段">
           <div className="flex items-center gap-2">
@@ -130,13 +161,15 @@ export function EntryPanel(props: {
         </Field>
       ) : (
         <Field label="日期">
-          <div>
+          <div className={filled.halo("day")}>
             <DateInput ariaLabel="日期" value={d.day} onChange={(v) => set("day", v)} />
           </div>
         </Field>
       )}
       <Field label="备注">
-        <TextInput value={d.note} onChange={(ev) => set("note", ev.target.value)} maxLength={1000} />
+        <Polish module="finance" value={d.note} onChange={(v) => set("note", v)}>
+          <TextInput value={d.note} onChange={(ev) => set("note", ev.target.value)} maxLength={1000} className={`pr-8 ${filled.cls("note")}`} />
+        </Polish>
       </Field>
     </SidePanel>
   );

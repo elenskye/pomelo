@@ -10,6 +10,7 @@ import type { Hit } from "@/shared/open";
 import { ACCOUNT_KINDS, useAccounts, useAssets, useFinMutations, useHoldings, type Account } from "./api";
 import { AccountPanel, BalanceDialog, HoldingsDialog } from "./AssetDialogs";
 import { CURRENCIES, CURRENCY_NAME, dayTick, dayTitle, money, moneyShort } from "./money";
+import { usePageContext } from "@/app/pageContext";
 
 export function AssetsView(props: { focus?: Hit | null }) {
   const { data: accounts = [] } = useAccounts();
@@ -35,6 +36,7 @@ export function AssetsView(props: { focus?: Hit | null }) {
   const latestRates = CURRENCIES.map((c) => assets?.rates.filter((r) => r.currency === c).pop()).filter((r) => r !== undefined);
   const editing = panel.selection === "new" ? null : accounts.find((a) => `a${a.id}` === panel.selection);
   const brokers = accounts.filter((a) => a.kind === "broker" && !a.closed);
+  usePageContext({ module: "finance", page: "资产", record: editing ? { kind: "account", id: editing.id, label: `账户：${editing.name}` } : null });
 
   return (
     <>

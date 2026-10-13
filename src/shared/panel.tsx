@@ -17,7 +17,7 @@ export function SidePanel(props: {
   cancelLabel?: string;
 }) {
   return (
-    <aside className="absolute inset-y-0 right-0 z-10 flex w-[400px] animate-slide-in flex-col border-l bg-card shadow-2xl">
+    <aside className="absolute inset-y-0 right-[var(--chat-float,0px)] z-10 flex w-[400px] animate-slide-in flex-col border-l bg-card shadow-2xl">
       <form onSubmit={props.onSubmit} className="flex min-h-0 flex-1 flex-col">
         <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between px-6 pb-3">
           <h2 className="pointer-events-none text-base font-bold">{props.title}</h2>

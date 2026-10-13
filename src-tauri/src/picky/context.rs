@@ -148,9 +148,17 @@ pub struct Request {
     pub sources: Vec<super::reading::Source>,
     /// Earlier lookups: (history index of the question, what its reply looked up).
     pub looked: Vec<(usize, Vec<super::data::Query>)>,
+    /// The page the question was asked on (the 小窗), added to it by `with_page`.
+    pub page: Option<super::data::Query>,
 }
 
 impl Request {
+    /// The question gets its page: in full when `full` says this model may see it, else only where.
+    pub fn with_page(&mut self, full: impl Fn(&super::data::Query) -> bool) {
+        if let Some(q) = self.page.take() {
+            self.prompt = format!("{}\n\n{}", self.prompt, super::data::page_block(&q, q.state == "ok" && full(&q)));
+        }
+    }
     /// Adds the earlier lookups `allowed` lets through to their questions (the last LOOKED_TURNS).
     pub fn with_lookups(&mut self, allowed: impl Fn(&super::data::Query) -> bool) {
         let looked = std::mem::take(&mut self.looked);
@@ -219,7 +227,7 @@ pub fn request(conn: &Connection, session_id: i64, turns: &[Turn], prompt: &str)
         }
         history.push(Msg::new(&t.role, &t.content));
     }
-    Ok(Request { system, memory: String::new(), data: String::new(), summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)), history, prompt: prompt.to_string(), sources: vec![], looked })
+    Ok(Request { system, memory: String::new(), data: String::new(), summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)), history, prompt: prompt.to_string(), sources: vec![], looked, page: None })
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -546,7 +554,11 @@ pub async fn picky_context(app: AppHandle, session_id: i64, prompt: String) -> R
     let Ok(route) = st.picky.measure_route() else { return Ok(None) };
     let (req, summarizable) = st.picky.with_db(|c| {
         let shown = chat::path(c, session_id)?;
-        let turns: Vec<Turn> = shown.iter().map(|m| Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries: m.queries.clone() }).collect();
+        let mut turns = vec![];
+        for m in &shown {
+            let queries = if m.role == "assistant" { super::data::queries_of_message(c, m.id)? } else { vec![] };
+            turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries });
+        }
         let summarizable = shown.iter().any(|m| m.role == "assistant" && m.state == "complete" && !m.content.trim().is_empty());
         Ok((request(c, session_id, &turns, prompt.trim())?, summarizable))
     })?;
@@ -623,7 +635,7 @@ mod tests {
         assert!(fit(&req, &sizes(7000, &[]), 8192).unwrap_err().starts_with("这条消息太长"));
         let big = Sizes { system: Some(7000), ..sizes(10, &[]) };
         assert!(fit(&req, &big, 8192).unwrap_err().starts_with("指令或摘要太长"));
-        let req = Request { system: "s".into(), memory: "m".into(), data: String::new(), summary: Some("摘要".into()), history: vec![Msg::new("user", "旧"), Msg::new("assistant", "答")], prompt: "q".into(), sources: vec![], looked: vec![] };
+        let req = Request { system: "s".into(), memory: "m".into(), data: String::new(), summary: Some("摘要".into()), history: vec![Msg::new("user", "旧"), Msg::new("assistant", "答")], prompt: "q".into(), sources: vec![], looked: vec![], page: None };
         let (msgs, _) = fit(&req, &Sizes { system: Some(1), summary: Some(1), history: vec![7000, 10], prompt: 1 }, 8192).unwrap();
         assert_eq!(msgs.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["s\n\nm", "摘要", "答", "q"]);
     }

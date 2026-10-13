@@ -486,8 +486,13 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
             return Ok(());
         }
     }
-    let reply: String = if tools && last_msg.is_some_and(|m| m.role == "tool") {
+    let reply: String = if system.starts_with(super::assist::MARK) {
+        super::assist::mock_reply(system, last)
+    } else if tools && last_msg.is_some_and(|m| m.role == "tool") {
         super::data::mock_answer(messages)
+    } else if let Some(page) = last.split("【我正在看的页面】\n").nth(1).filter(|_| last_msg.is_some_and(|m| m.role == "user")) {
+        // a question from the 小窗: say what page came with it
+        format!("这是开发版的**模拟回答**。我看到你正在看：\n\n> {}\n", page.trim().replace('\n', "\n> "))
     } else if system.ends_with(super::reading::EXTRACTION) {
         let piece = flat.split("】：").nth(1).unwrap_or("").chars().take(12).collect::<String>();
         format!("模拟要点：这一段约 {} 字，讲到「{piece}」。", last.chars().count())

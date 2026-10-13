@@ -11,6 +11,7 @@
 //! - Selection ("local" | "cloud:<id>", preference `model.selection`) is shared by the page and the
 //!   menu bar; it can't change while a reply is being written.
 
+pub mod assist;
 pub mod catalog;
 pub mod chat;
 pub mod cloud;
@@ -316,6 +317,7 @@ pub fn select(app: &AppHandle, choice: &str) -> Result<(), String> {
     }
     if let Some(key) = choice.strip_prefix("local:") {
         p.set_selection(&Selection::Local)?;
+        let _ = p.with_db(|c| Ok(assist::remember_local(c, key)));
         let running = p.runtime.local_status().active.is_some_and(|m| m.key == key);
         if !running {
             let key = key.to_string();

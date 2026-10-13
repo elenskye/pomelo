@@ -2,11 +2,12 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { usePageContext } from "@/app/pageContext";
 import { KindManager } from "@/shared/kinds/KindManager";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { Button, PageHeader, Segmented } from "@/shared/ui";
-import { CHANNELS, JOBS_KEY, useJobs } from "./api";
+import { CHANNELS, JOBS_KEY, jobLabel, useJobs } from "./api";
 import { JobPanel } from "./JobPanel";
 import { StatsView } from "./StatsView";
 import { StatusManager } from "./StatusManager";
@@ -27,6 +28,13 @@ export default function JobsPage() {
   usePageKeys({ onNew: () => void panel.request("new"), onEscape: panel.selection !== null ? () => void panel.request(null) : undefined });
   const editing = typeof panel.selection === "number" ? jobs.find((j) => j.id === panel.selection) : undefined;
   const following = jobs.filter((j) => j.followUp).length;
+  const [filter, setFilter] = useState<string | null>(null);
+  usePageContext({
+    module: "jobs",
+    page: view === "table" ? "投递" : "统计",
+    filter: view === "table" ? filter : null,
+    record: editing ? { kind: "job", id: editing.id, label: `投递：${jobLabel(editing)}` } : null,
+  });
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -61,7 +69,7 @@ export default function JobsPage() {
             <Plus size={14} /> 新投递
           </Button>
         </div>
-        {view === "table" ? <TableView jobs={jobs} selectedId={editing?.id ?? null} onOpen={(j) => void panel.request(j.id)} /> : <StatsView />}
+        {view === "table" ? <TableView jobs={jobs} selectedId={editing?.id ?? null} onOpen={(j) => void panel.request(j.id)} onFilter={setFilter} /> : <StatsView />}
       </div>
       {(panel.selection === "new" || editing) && (
         <JobPanel

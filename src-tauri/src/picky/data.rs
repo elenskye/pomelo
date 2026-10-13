@@ -146,7 +146,8 @@ pub fn instructions(today: &str, access: &Access) -> String {
          - 用户没说时间时，自己选合适的时间段，并在回答里写明看的是哪段时间。\n\
          - 查到的内容里没有的，就说没有记录，不要编造。提到具体的记录时写出它的完整名称。\n\
          - 要推荐书、电影或剧时，先用 view taste 看用户的口味，再推荐用户单子里还没有的新作品（用你自己的知识，不联网，说明可能不准）；不要只把用户读过看过的列一遍。\n\
-         - 出行清单可能漏了什么，除了查到的，也可以按目的地和天数用常识补充。"
+         - 出行清单可能漏了什么，除了查到的，也可以按目的地和天数用常识补充。\n\
+         - 问题后面附了【我正在看的页面】时，「这条」「这个」「这些」指那里打开或选中的记录：先用它回答，不够再查。"
     );
     let refused: Vec<&str> = access.refused().iter().map(|m| m.label).collect();
     if !refused.is_empty() {
@@ -1642,6 +1643,342 @@ pub fn picky_data_cloud_set(state: State<AppState>, module: String, allowed: boo
     state.picky.with_db(|c| set_cloud(c, &module, allowed))
 }
 
+// ---------- the page a question was asked on (v0.3.5 小窗) ----------
+// The page says where it is and which records are open / picked (ids only); Rust fetches the content
+// under the same rules: 芝麻开门 (and unknown pages) never; a hidden module, or one this cloud model may
+// not get, only says where. Stored as a run_queries row (call_id "page", position -1) with the run.
+
+pub const PAGE_CALL: &str = "page";
+const MAX_PICKED: usize = 20;
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageRef {
+    pub kind: String,
+    pub id: i64,
+}
+
+/// What a page tells the 小窗 (ids only).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageContext {
+    /// Route id: a module, "home" or "settings".
+    pub module: String,
+    /// The view inside it (收支, 统计…).
+    #[serde(default)]
+    pub page: Option<String>,
+    /// Filters as shown (2026 年 9 月 · 餐饮).
+    #[serde(default)]
+    pub filter: Option<String>,
+    /// The record whose editor is open.
+    #[serde(default)]
+    pub record: Option<PageRef>,
+    /// Records picked in 多选.
+    #[serde(default)]
+    pub selected: Vec<PageRef>,
+}
+
+fn short(s: &Option<String>, n: usize) -> Option<String> {
+    s.as_deref().map(|x| clip(x, n)).filter(|x| !x.is_empty())
+}
+
+/// Which module a record kind lives in.
+fn kind_module(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "task" | "goal" | "group" => "todo",
+        "book" => "books",
+        "film" => "films",
+        "course" | "lesson" => "drawing",
+        "trip" | "template" => "packing",
+        "entry" | "account" | "fixed" => "finance",
+        "job" => "jobs",
+        "note" => "notes",
+        _ => return None,
+    })
+}
+
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "task" => "任务",
+        "goal" => "目标",
+        "group" => "分组",
+        "book" => "书",
+        "film" => "影视",
+        "course" => "课程",
+        "lesson" => "课节",
+        "trip" => "出行",
+        "template" => "模板",
+        "entry" => "收支",
+        "account" => "账户",
+        "fixed" => "固定支出",
+        "job" => "投递",
+        "note" => "笔记",
+        _ => "记录",
+    }
+}
+
+/// One record in full: (title, text, record).
+fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result<(String, String, Rec), String> {
+    let module = kind_module(&r.kind).ok_or("不认识这种记录")?;
+    let line = |k: &str, v: Option<String>| v.filter(|v| !v.trim().is_empty()).map(|v| format!("{k}：{v}"));
+    let (title, lines, mut rc): (String, Vec<Option<String>>, Rec) = match r.kind.as_str() {
+        "task" => {
+            let t = todo::task_view(conn, r.id)?;
+            let group = todo::group(conn, t.group_id)?.name;
+            let goal = t.goal_id.and_then(|g| todo::goal(conn, g).ok()).map(|g| g.name);
+            let parent = t.parent_id.and_then(|p| todo::task(conn, p).ok()).map(|p| plain(&p.title));
+            let kind = match t.task_type {
+                todo::TaskType::Normal => "普通".to_string(),
+                todo::TaskType::Repeat => format!("重复（{}，已做 {} 次）", rule_text(t.repeat_rule.as_deref().unwrap_or("")), t.count),
+                todo::TaskType::Checkin => format!("打卡（{}，连续 {} 天）", rule_text(t.repeat_rule.as_deref().unwrap_or("")), t.streak),
+                todo::TaskType::Progress => format!("进度条（{} / {}{}）", t.count, t.target.unwrap_or(0), t.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default()),
+            };
+            let subs: Vec<String> = todo::tasks(conn, Some(t.group_id), t.goal_id)?.into_iter().filter(|x| x.parent_id == Some(t.id)).map(|x| format!("{}{}", plain(&x.title), if x.done { "（已完成）" } else { "" })).collect();
+            let title = plain(&t.title);
+            (
+                title.clone(),
+                vec![
+                    line("任务", Some(title.clone())),
+                    line("在", Some([Some(group), goal, parent].into_iter().flatten().collect::<Vec<_>>().join(" / "))),
+                    line("类型", Some(kind)),
+                    line("时间", match (&t.start_date, &t.due_date) {
+                        (Some(s), Some(d)) => Some(format!("{s} 至 {d}")),
+                        (None, Some(d)) => Some(format!("截止 {d}")),
+                        _ => None,
+                    }),
+                    line("状态", Some(if t.done { format!("已完成{}", t.done_at.as_deref().map(|d| format!("（{}）", local_day(conn, d))).unwrap_or_default()) } else { "没完成".into() })),
+                    line("内容", t.note.as_deref().map(plain)),
+                    line("链接", t.link.clone()),
+                    line("子任务", (!subs.is_empty()).then(|| subs.join("、"))),
+                ],
+                Rec { parent: Some(t.goal_id.map_or(t.group_id, |g| -g)), day: t.due_date.clone(), ..rec(module, "task", t.id, &title) },
+            )
+        }
+        "goal" => {
+            let g = todo::goal(conn, r.id)?;
+            let tasks: Vec<String> = todo::tasks(conn, None, Some(g.id))?.into_iter().filter(|x| x.parent_id.is_none()).map(|x| format!("{}{}", plain(&x.title), if x.done { "（已完成）" } else { "" })).collect();
+            (
+                g.name.clone(),
+                vec![
+                    line("目标", Some(g.name.clone())),
+                    line("分组", todo::group(conn, g.group_id).ok().map(|x| x.name)),
+                    line("状态", Some(match g.status { todo::GoalStatus::Active => "进行中", todo::GoalStatus::Done => "已完成", _ => "暂停" }.to_string())),
+                    line("时间", match (&g.start_date, &g.end_date) {
+                        (Some(s), Some(e)) => Some(format!("{s} 至 {e}")),
+                        (None, Some(e)) => Some(format!("到 {e}")),
+                        (Some(s), None) => Some(format!("从 {s}")),
+                        _ => None,
+                    }),
+                    line("进度", Some(format!("{} / {}", g.done, g.total))),
+                    line("备注", g.note.clone()),
+                    line("复盘", g.review.clone()),
+                    line("任务", (!tasks.is_empty()).then(|| tasks.join("、"))),
+                ],
+                Rec { parent: Some(g.group_id), ..rec(module, "goal", g.id, &g.name) },
+            )
+        }
+        "group" => {
+            let g = todo::group(conn, r.id)?;
+            (g.name.clone(), vec![line("分组", Some(g.name.clone())), line("没完成的任务", Some(format!("{} 件", g.open)))], rec(module, "group", g.id, &g.name))
+        }
+        "book" | "film" => {
+            let (w, kind) = if r.kind == "book" {
+                let names = kinds::name_map(conn, "books")?;
+                let b = books::get(conn, r.id)?;
+                (Work { id: b.id, kind: b.kind_id.and_then(|k| names.get(&k).cloned()).unwrap_or_else(|| "未分类".into()), title: b.title, by: b.author, country: b.country, status: b.status, rating: b.rating, year: b.finished_year, note: b.note, rereads: b.rereads }, "book")
+            } else {
+                let names = kinds::name_map(conn, "films")?;
+                let f = films::get(conn, r.id)?;
+                (Work { id: f.id, kind: f.kind_id.and_then(|k| names.get(&k).cloned()).unwrap_or_else(|| "未分类".into()), title: f.title, by: f.director, country: f.country, status: f.status, rating: f.rating, year: f.finished_year, note: f.note, rereads: f.rereads }, "film")
+            };
+            let (verb, by) = if kind == "book" { ("读", "作者") } else { ("看", "导演") };
+            let text = work_line(&w, verb, by).trim_start_matches("- ").to_string();
+            (w.title.clone(), vec![Some(text), line("备注（全文）", w.note.clone())], rec(module, kind, w.id, &w.title))
+        }
+        "course" => {
+            let c = drawing::course(conn, r.id)?;
+            let lessons = drawing::lessons(conn, c.id)?;
+            let next = lessons.iter().find(|l| l.status == Mark::Doing).or_else(|| lessons.iter().find(|l| l.status != Mark::Done));
+            (
+                c.name.clone(),
+                vec![
+                    line("课程", Some(c.name.clone())),
+                    line("进度", Some(format!("完成 {} / {} 节，{}", c.done, c.total, pace_text(&drawing::pace(&lessons, today))))),
+                    line("下一节", next.map(lesson_title)),
+                    line("备注", c.note.clone()),
+                ],
+                rec(module, "course", c.id, &c.name),
+            )
+        }
+        "lesson" => {
+            let l = drawing::lesson(conn, r.id)?;
+            let c = drawing::course(conn, l.course_id)?;
+            let names = kinds::name_map(conn, "drawing")?;
+            let title = lesson_title(&l);
+            (
+                title.clone(),
+                vec![
+                    line("课节", Some(title.clone())),
+                    line("课程", Some(c.name)),
+                    line("类型", l.kind_id.and_then(|k| names.get(&k).cloned())),
+                    line("状态", Some(lesson_status(l.status).into())),
+                    line("完成时间", l.finished_month.clone()),
+                    line("备注", l.note.clone()),
+                ],
+                Rec { parent: Some(l.course_id), ..rec(module, "lesson", l.id, &title) },
+            )
+        }
+        "trip" | "template" => {
+            let names = kinds::name_map(conn, "packing")?;
+            if r.kind == "trip" {
+                let t = packing::trip(conn, r.id)?;
+                let items = items_by_kind(&packing::items(conn, packing::List::Trip, t.id)?, &names).into_iter().map(|x| x.text).collect::<Vec<_>>().join("\n");
+                (
+                    t.name.clone(),
+                    vec![line("出行", Some(t.name.clone())), line("出发", t.depart_on.clone()), line("模板", t.template_name.clone()), line("进度", Some(format!("{} 件，已装好 {} 件（✓ 是装好的）", t.total, t.packed))), line("备注", t.note.clone()), line("清单", Some(format!("\n{items}")))],
+                    rec(module, "trip", t.id, &t.name),
+                )
+            } else {
+                let t = packing::template(conn, r.id)?;
+                let items = items_by_kind(&packing::items(conn, packing::List::Template, t.id)?, &names).into_iter().map(|x| x.text).collect::<Vec<_>>().join("\n");
+                (t.name.clone(), vec![line("模板", Some(t.name.clone())), line("备注", t.note.clone()), line("物品", Some(format!("\n{items}")))], rec(module, "template", t.id, &t.name))
+            }
+        }
+        "entry" => {
+            let e = finance::entry(conn, r.id)?;
+            let kinds = kinds::name_map(conn, if e.flow == Flow::Out { finance::OUT_KINDS } else { finance::IN_KINDS })?;
+            let kind = e.kind_id.and_then(|k| kinds.get(&k).cloned()).unwrap_or_else(|| "未分类".into());
+            let title = e.note.clone().unwrap_or_else(|| kind.clone());
+            (
+                title.clone(),
+                vec![
+                    line(flow_text(e.flow), Some(money(e.amount, e.currency))),
+                    line("日期", Some(match &e.end_day { Some(end) => format!("{} 至 {end}（记小额）", e.day), None => e.day.clone() })),
+                    line("分类", Some(kind)),
+                    line("备注", e.note.clone()),
+                    e.fixed_id.map(|_| "由固定支出自动记的".to_string()),
+                ],
+                Rec { day: Some(e.day.clone()), ..rec(module, "entry", e.id, &title) },
+            )
+        }
+        "account" => {
+            let a = finance::account(conn, r.id)?;
+            let recent: Vec<String> = finance::assets(conn)?.balances.into_iter().filter(|b| b.account_id == a.id).rev().take(6).map(|b| format!("{} {}", b.day, money(b.amount, a.currency))).collect();
+            (
+                a.name.clone(),
+                vec![
+                    line("账户", Some(a.name.clone())),
+                    line("类型", Some(format!("{} · {}{}", account_kind(a.kind), currency_name(a.currency), if a.closed { " · 已停用" } else { "" }))),
+                    line("最近的余额", (!recent.is_empty()).then(|| recent.join("、"))),
+                    line("备注", a.note.clone()),
+                ],
+                rec(module, "account", a.id, &a.name),
+            )
+        }
+        "fixed" => {
+            let f = finance::fixed(conn, r.id)?;
+            (f.name.clone(), vec![line("固定支出", Some(f.name.clone())), line(flow_text(f.flow), Some(money(f.amount, f.currency))), line("周期", Some(f.rule.clone())), line("下次", Some(f.next_day.clone())), line("状态", Some(if f.stopped { "已停用" } else { "在用" }.into())), line("备注", f.note.clone())], rec(module, "fixed", f.id, &f.name))
+        }
+        "job" => {
+            let j = jobs::job(conn, r.id, today)?;
+            let sts = jobs::statuses(conn)?;
+            let name = |id: i64| sts.iter().find(|s| s.id == id).map_or("?".to_string(), |s| s.name.clone());
+            let channels = kinds::name_map(conn, jobs::CHANNELS)?;
+            let timeline = j.steps.iter().map(|s| format!("{} {}", name(s.status_id), if s.done { s.done_on.clone().unwrap_or_else(|| "✓".into()) } else { "—".into() })).collect::<Vec<_>>().join(" → ");
+            let title = job_title(&j);
+            (
+                title.clone(),
+                vec![
+                    line("投递", Some(title.clone())),
+                    line("地点", j.location.clone()),
+                    line("渠道", j.kind_id.and_then(|k| channels.get(&k).cloned())),
+                    line("现在", Some(j.status_id.map(name).unwrap_or_else(|| "想投".into()))),
+                    line("投递日期", j.applied_on.clone()),
+                    line("跟进", j.waiting_days.map(|w| format!("等了 {w} 天{}{}", if j.follow_up { "，该跟进了（满 14 天）" } else { "" }, j.followed_on.as_deref().map(|d| format!("；{d} 跟进过")).unwrap_or_default()))),
+                    line("时间线", (!timeline.is_empty()).then_some(timeline)),
+                    line("JD", j.link.clone()),
+                    line("简历", j.resume.clone()),
+                    line("备注", j.note.clone()),
+                ],
+                rec(module, "job", j.id, &title),
+            )
+        }
+        "note" => {
+            let n = notes::get(conn, r.id)?;
+            let title = notes::excerpt(&n.content);
+            (title.clone(), vec![line("记于", Some(local_minute(conn, &n.created_at))), line("正文", Some(format!("\n{}", n.content.trim())))], rec(module, "note", n.id, &title))
+        }
+        _ => return Err("不认识这种记录".into()),
+    };
+    rc.title = title.clone();
+    Ok((title, lines.into_iter().flatten().collect::<Vec<_>>().join("\n"), rc))
+}
+
+/// What a question sends about its page; None = nothing at all (芝麻开门, 小拾, unknown pages).
+pub fn page_query(conn: &Connection, access: &Access, today: &str, ctx: &PageContext) -> Option<Query> {
+    let (m, label) = match ctx.module.as_str() {
+        "home" => (None, "首页"),
+        "settings" => (None, "设置"),
+        key => match module(key) {
+            Some(m) => (Some(m), m.label),
+            None => return None,
+        },
+    };
+    let place = match short(&ctx.page, 20) {
+        Some(p) => format!("{label} · {p}"),
+        None => label.to_string(),
+    };
+    let only_where = |why: &str| Query { module: m.map(|m| m.key.to_string()), label: format!("{place}{why}"), state: "ok".into(), result: format!("页面：{place}"), records: vec![] };
+    let Some(m) = m else { return Some(only_where("")) };
+    match access.check(m) {
+        Err(Blocked::Hidden) => return Some(Query { state: "blocked".into(), ..only_where("（隐藏的模块，只带了在哪一页）") }),
+        Err(Blocked::Cloud) => return Some(Query { state: "blocked".into(), ..only_where("（不发给云端，只带了在哪一页）") }),
+        Ok(()) => {}
+    }
+    let mut lines = vec![format!("页面：{place}")];
+    let filter = short(&ctx.filter, 60);
+    if let Some(f) = &filter {
+        lines.push(format!("筛选：{f}"));
+    }
+    let mut records = vec![];
+    let mut title_line = None;
+    let mine = |r: &&PageRef| kind_module(&r.kind) == Some(m.key);
+    if let Some(r) = ctx.record.as_ref().filter(mine) {
+        if let Ok((title, text, rc)) = record_text(conn, today, r) {
+            title_line = Some(format!("{}：{title}", kind_label(&r.kind)));
+            lines.push(format!("打开的{}：\n{text}", kind_label(&r.kind)));
+            records.push(rc);
+        }
+    }
+    let picked: Vec<&PageRef> = ctx.selected.iter().filter(mine).take(MAX_PICKED).collect();
+    if !picked.is_empty() {
+        let parts: Vec<String> = picked
+            .iter()
+            .filter_map(|r| record_text(conn, today, r).ok())
+            .map(|(_, text, rc)| {
+                records.push(rc);
+                format!("- {}", text.replace('\n', "；"))
+            })
+            .collect();
+        if title_line.is_none() {
+            title_line = Some(format!("{label} · 选中的 {} 条", parts.len()));
+        }
+        lines.push(format!("选中的 {} 条{}：\n{}", parts.len(), kind_label(&picked[0].kind), parts.join("\n")));
+    }
+    let label = title_line.unwrap_or_else(|| [Some(place.clone()), filter].into_iter().flatten().collect::<Vec<_>>().join(" · "));
+    Some(Query { module: Some(m.key.into()), label, state: "ok".into(), result: lines.join("\n"), records })
+}
+
+/// The page part of a question as sent: everything when `full`, else only where it was.
+pub fn page_block(q: &Query, full: bool) -> String {
+    let text = match (full, &q.module) {
+        (true, _) => q.result.clone(),
+        (false, Some(_)) => format!("{}（这一页的内容这次不能给你，只说在哪一页；别替用户查这个模块）", q.result.lines().next().unwrap_or("")),
+        (false, None) => q.result.lines().next().unwrap_or("").to_string(),
+    };
+    format!("【我正在看的页面】\n{text}")
+}
+
 // ---------- picky.db: what a reply looked up (run_queries) ----------
 
 /// One lookup as stored and shown (「查了：…」, expanded: the result).
@@ -1675,20 +2012,55 @@ pub fn save_query(conn: &Connection, run_id: i64, position: usize, round: usize,
     .map_err(common::err)
 }
 
-pub fn queries_of_message(conn: &Connection, message_id: i64) -> Result<Vec<Query>, String> {
-    let run: Option<i64> = conn.query_row("SELECT run_id FROM messages WHERE id = ?1", [message_id], |r| r.get(0)).map_err(common::err)?;
-    run.map_or(Ok(vec![]), |r| queries_of(conn, r))
+/// The page a question was asked on, kept with its run (`arguments` = the page's own report).
+pub fn save_page(conn: &Connection, run_id: i64, arguments: &str, q: &Query) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO run_queries (run_id, position, round, call_id, tool, arguments, module, label, state, result, records) VALUES (?1, -1, 0, ?2, '', ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![run_id, PAGE_CALL, arguments, q.module, q.label, q.state, q.result, serde_json::to_string(&q.records).unwrap_or_else(|_| "[]".into())],
+    )
+    .map(|_| ())
+    .map_err(common::err)
 }
 
-pub fn queries_of(conn: &Connection, run_id: i64) -> Result<Vec<Query>, String> {
-    let mut st = conn.prepare("SELECT module, label, state, result, records FROM run_queries WHERE run_id = ?1 ORDER BY position").map_err(common::err)?;
+/// Copies a run's page to another run (a new version of the same question).
+pub fn copy_page(conn: &Connection, from_run: i64, to_run: i64) -> Result<Option<Query>, String> {
+    conn.execute(
+        "INSERT INTO run_queries (run_id, position, round, call_id, tool, arguments, module, label, state, result, records)
+         SELECT ?2, position, round, call_id, tool, arguments, module, label, state, result, records FROM run_queries WHERE run_id = ?1 AND call_id = ?3",
+        rusqlite::params![from_run, to_run, PAGE_CALL],
+    )
+    .map_err(common::err)?;
+    page_of(conn, to_run)
+}
+
+fn select_queries(conn: &Connection, run_id: i64, which: &str) -> Result<Vec<Query>, String> {
+    let mut st = conn.prepare(&format!("SELECT module, label, state, result, records FROM run_queries WHERE run_id = ?1 AND {which} ORDER BY position")).map_err(common::err)?;
     let rows = st
-        .query_map([run_id], |r| {
+        .query_map(rusqlite::params![run_id, PAGE_CALL], |r| {
             let records: String = r.get(4)?;
             Ok(Query { module: r.get(0)?, label: r.get(1)?, state: r.get(2)?, result: r.get(3)?, records: serde_json::from_str(&records).unwrap_or_default() })
         })
         .map_err(common::err)?;
     rows.collect::<Result<_, _>>().map_err(common::err)
+}
+
+/// What a run looked up (shown above the reply), without the page.
+pub fn lookups_of(conn: &Connection, run_id: i64) -> Result<Vec<Query>, String> {
+    select_queries(conn, run_id, "call_id <> ?2")
+}
+
+pub fn page_of(conn: &Connection, run_id: i64) -> Result<Option<Query>, String> {
+    Ok(select_queries(conn, run_id, "call_id = ?2")?.pop())
+}
+
+pub fn queries_of_message(conn: &Connection, message_id: i64) -> Result<Vec<Query>, String> {
+    let run: Option<i64> = conn.query_row("SELECT run_id FROM messages WHERE id = ?1", [message_id], |r| r.get(0)).map_err(common::err)?;
+    run.map_or(Ok(vec![]), |r| queries_of(conn, r))
+}
+
+/// Everything a run looked at (its page first): what follow-ups get.
+pub fn queries_of(conn: &Connection, run_id: i64) -> Result<Vec<Query>, String> {
+    select_queries(conn, run_id, "?2 = ?2")
 }
 
 #[cfg(test)]
@@ -2096,6 +2468,89 @@ pub mod tests {
         assert!(md.contains("查了：投石问路 · 该跟进的投递（1 份，本周还有 1 份）\n\n<details>\n<summary>查到的内容</summary>"), "{md}");
         assert!(md.contains("```text\n今天 2026-10-12。"), "{md}");
         assert!(crate::picky::export::copy_markdown(&p, b.session_id).unwrap().contains("查了：投石问路"));
+    }
+
+    fn page(module: &str, page: Option<&str>, record: Option<(&str, i64)>, selected: &[(&str, i64)]) -> PageContext {
+        PageContext {
+            module: module.into(),
+            page: page.map(String::from),
+            filter: None,
+            record: record.map(|(kind, id)| PageRef { kind: kind.into(), id }),
+            selected: selected.iter().map(|(kind, id)| PageRef { kind: (*kind).into(), id: *id }).collect(),
+        }
+    }
+
+    #[test]
+    fn the_page_a_question_is_asked_on() {
+        let c = memory_db();
+        let [a, ..] = seed_jobs(&c);
+        seed_finance(&c);
+        let q = page_query(&c, &all(), TODAY, &page("jobs", Some("投递"), Some(("job", a)), &[])).unwrap();
+        assert_eq!((q.label.as_str(), q.state.as_str()), ("投递：甲公司 · 产品经理", "ok"));
+        assert!(q.result.starts_with("页面：投石问路 · 投递\n打开的投递：\n投递：甲公司 · 产品经理\n"), "{}", q.result);
+        assert!(q.result.contains("跟进：等了 22 天，该跟进了（满 14 天）") && q.result.contains("时间线：已投递 2026-09-20"), "{}", q.result);
+        assert_eq!(q.records.iter().map(|r| r.id).collect::<Vec<_>>(), [a]);
+        // a record from another module is ignored; filters show in the label
+        let mut ctx = page("jobs", Some("投递"), Some(("entry", 1)), &[]);
+        ctx.filter = Some("状态：面试".into());
+        assert_eq!(page_query(&c, &all(), TODAY, &ctx).unwrap().label, "投石问路 · 投递 · 状态：面试");
+        // 多选
+        let ids: Vec<i64> = finance::entries_between(&c, "2026-09-01", "2026-09-30").unwrap().iter().map(|e| e.id).take(2).collect();
+        let picked: Vec<(&str, i64)> = ids.iter().map(|id| ("entry", *id)).collect();
+        let q = page_query(&c, &all(), TODAY, &page("finance", Some("收支"), None, &picked)).unwrap();
+        assert_eq!(q.label, "钱来钱往 · 选中的 2 条");
+        assert!(q.result.contains("选中的 2 条收支：\n- "), "{}", q.result);
+        // a cloud model that may not get 钱来钱往: only where; hidden: the same
+        let cloud = Access { cloud: true, cloud_allowed: vec!["jobs".into()], ..all() };
+        let q = page_query(&c, &cloud, TODAY, &page("finance", Some("收支"), None, &picked)).unwrap();
+        assert_eq!((q.state.as_str(), q.result.as_str(), q.records.len()), ("blocked", "页面：钱来钱往 · 收支", 0));
+        assert_eq!(q.label, "钱来钱往 · 收支（不发给云端，只带了在哪一页）");
+        let hidden = Access { hidden: vec!["jobs".into()], ..all() };
+        assert_eq!(page_query(&c, &hidden, TODAY, &page("jobs", None, Some(("job", a)), &[])).unwrap().result, "页面：投石问路");
+        // 芝麻开门 and 小拾: nothing; 首页: where
+        assert!(page_query(&c, &all(), TODAY, &page("vault", None, Some(("job", a)), &[])).is_none());
+        assert!(page_query(&c, &all(), TODAY, &page("picky", None, None, &[])).is_none());
+        assert_eq!(page_query(&c, &all(), TODAY, &page("home", None, None, &[])).unwrap().result, "页面：首页");
+        // every kind a page may send reads
+        let b = books::create(&c, from(json!({ "title": "沙丘", "note": "很长的备注" }))).unwrap().id;
+        let n = notes::create(&c, from(json!({ "content": "一条 #想法" }))).unwrap().id;
+        let g = todo::create_group(&c, "学习").unwrap().id;
+        let t = todo::create_task_on(&c, from(json!({ "groupId": g, "title": "写论文", "note": "第一章" })), TODAY).unwrap().id;
+        for (module, kind, id) in [("books", "book", b), ("notes", "note", n), ("todo", "task", t), ("todo", "group", g)] {
+            let q = page_query(&c, &all(), TODAY, &page(module, None, Some((kind, id)), &[])).unwrap();
+            assert_eq!(q.records.len(), 1, "{kind}: {}", q.result);
+        }
+    }
+
+    #[test]
+    fn a_question_keeps_its_page_and_the_model_gets_what_it_may() {
+        let p = crate::picky::store::tests::memory_db();
+        let c = memory_db();
+        let [a, ..] = seed_jobs(&c);
+        let q = page_query(&c, &all(), TODAY, &page("jobs", Some("投递"), Some(("job", a)), &[])).unwrap();
+        let extras = crate::picky::chat::Extras { page: Some((q.clone(), "{}".into())), ..Default::default() };
+        let b = crate::picky::chat::begin_run_in(&p, None, &Default::default(), "这条投递该怎么跟进", "local:x", "X", &extras).unwrap();
+        let mut r = b.request.clone();
+        r.with_page(|_| true);
+        assert!(r.prompt.starts_with("这条投递该怎么跟进\n\n【我正在看的页面】\n页面：投石问路 · 投递\n打开的投递："), "{}", r.prompt);
+        let mut only = b.request.clone();
+        only.with_page(|_| false);
+        assert_eq!(only.prompt, "这条投递该怎么跟进\n\n【我正在看的页面】\n页面：投石问路 · 投递（这一页的内容这次不能给你，只说在哪一页；别替用户查这个模块）");
+        let shown = crate::picky::chat::path(&p, b.session_id).unwrap();
+        assert_eq!(shown[0].page.as_ref().map(|x| x.label.as_str()), Some("投递：甲公司 · 产品经理"));
+        assert!(shown[1].queries.is_empty()); // the page isn't a lookup
+        crate::picky::chat::finish(&p, b.run_id, b.reply_id, &crate::picky::chat::Outcome { content: "发邮件问问。".into(), state: "completed", ..Default::default() }).unwrap();
+        // a new version of the reply sends the page again
+        let v = crate::picky::chat::begin_version(&p, b.reply_id, None, "local:x", "X", &[], &[]).unwrap();
+        assert_eq!(v.request.page.as_ref().map(|x| x.label.as_str()), Some("投递：甲公司 · 产品经理"));
+        crate::picky::chat::finish(&p, v.run_id, v.reply_id, &crate::picky::chat::Outcome { content: "再发一封。".into(), state: "completed", ..Default::default() }).unwrap();
+        // a follow-up still knows the page (as an earlier lookup)
+        let mut next = crate::picky::chat::begin_run(&p, Some(b.session_id), None, "邮件怎么写", "local:x", "X").unwrap().request;
+        next.with_lookups(|x| all().may_send(x));
+        assert!(next.history[0].content.contains("### 投递：甲公司 · 产品经理"), "{}", next.history[0].content);
+        assert!(next.page.is_none());
+        let md = crate::picky::export::markdown(&p, b.session_id).unwrap();
+        assert!(md.contains("带着：投递：甲公司 · 产品经理"), "{md}");
     }
 
     #[test]

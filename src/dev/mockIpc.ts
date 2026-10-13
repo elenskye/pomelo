@@ -1566,6 +1566,8 @@ const pky = {
   // ---- v0.3.5: lookups in Pomelo (data.rs) ----
   queries: new Map<number, PQuery[]>(),
   dataCloud: new Map<string, boolean>(),
+  /** question → the page it went with (the 小窗) */
+  pages: new Map<number, PQuery>(),
   // ---- phase 7: space (storage.rs) ----
   strays: [{ name: "a3f9c2-导入失败留下的.pdf", bytes: 245000 }],
 };
@@ -1686,6 +1688,11 @@ const P_MODULES: [string, string, boolean][] = [
   ["todo", "一步一步", true], ["books", "摸鱼读读", true], ["films", "好奇看看", true], ["drawing", "随意画画", true],
   ["packing", "出门走走", true], ["finance", "钱来钱往", false], ["jobs", "投石问路", true], ["notes", "念念不忘", true],
 ];
+/** assist.rs mentions: two characters in a row of the name (emoji, spaces left out). */
+const mentions = (sentence: string, name: string) => {
+  const core = [...name].filter((c) => /[\p{L}\p{N}]/u.test(c));
+  return core.length === 1 ? sentence.includes(core[0]) : core.slice(1).some((c, i) => sentence.includes(core[i] + c));
+};
 const pDataCloud = () => P_MODULES.map(([module, label, def]) => ({ module, label, allowed: pky.dataCloud.get(module) ?? def }));
 const pMoney = (cents: number, cur: Cur = "CNY") => {
   const sym = { CNY: "¥", SGD: "S$", HKD: "HK$", USD: "US$" }[cur];
@@ -1754,6 +1761,37 @@ const pLookup = (module: string, args: Record<string, string>): PQuery => {
     return q(`${pSpan(from, today)}支出（${es.length} 笔）`, [`${pSpan(from, today)}（${from} 至 ${today}）支出 ${es.length} 笔。`, ...es.map((e) => `- ${e.day} 支出 ${name(e)} ${pMoney(e.amount, e.currency)}${e.note ? ` · ${e.note}` : ""}`)], es.map((e) => ({ module: "finance", kind: "entry", id: e.id, title: e.note ?? name(e), day: e.day })));
   }
   return q("模拟查询", [`（浏览器模拟没有实现${label}的这个查询：${JSON.stringify(args)}）`]);
+};
+/** data.rs page_query, roughly: 投递 in full, other records by id, the rest where only. */
+type PPage = { module: string; page: string | null; filter: string | null; record: { kind: string; id: number } | null; selected: { kind: string; id: number }[] };
+const pPage = (c: PPage | null | undefined): PQuery | null => {
+  if (!c || c.module === "vault" || c.module === "picky") return null;
+  const label = c.module === "home" ? "首页" : c.module === "settings" ? "设置" : (P_MODULES.find((m) => m[0] === c.module)?.[1] ?? null);
+  if (!label) return null;
+  const place = c.page ? `${label} · ${c.page}` : label;
+  const blocked = P_MODULES.some((m) => m[0] === c.module) && pky.selection.startsWith("cloud:") && !pDataCloud().find((m) => m.module === c.module)!.allowed;
+  if (blocked) return { module: c.module, label: `${place}（不发给云端，只带了在哪一页）`, state: "blocked", result: `页面：${place}`, records: [] };
+  const lines = [`页面：${place}`, ...(c.filter ? [`筛选：${c.filter}`] : [])];
+  let title: string | null = null;
+  const records: PQuery["records"] = [];
+  if (c.record?.kind === "job") {
+    const j = (jobHandlers.jobs_list({}) as ReturnType<typeof jobOut>[]).find((x) => x.id === c.record!.id);
+    if (j) {
+      const t = j.position ? `${j.company} · ${j.position}` : j.company;
+      title = `投递：${t}`;
+      const tl = j.steps.map((x) => `${jStatus(x.statusId).name} ${x.done ? (x.doneOn ?? "✓") : "—"}`).join(" → ");
+      lines.push(`打开的投递：\n投递：${t}\n现在：${j.statusId !== null ? jStatus(j.statusId).name : "想投"}\n时间线：${tl}${j.waitingDays !== null ? `\n跟进：等了 ${j.waitingDays} 天${j.followUp ? "，该跟进了（满 14 天）" : ""}` : ""}`);
+      records.push({ module: "jobs", kind: "job", id: j.id, title: t });
+    }
+  } else if (c.record) {
+    title = `${c.record.kind} #${c.record.id}`;
+    lines.push(`打开的记录：（浏览器模拟只写编号）${c.record.kind} #${c.record.id}`);
+  }
+  if (c.selected.length) {
+    title ??= `${label} · 选中的 ${c.selected.length} 条`;
+    lines.push(`选中的 ${c.selected.length} 条：${c.selected.map((x) => `#${x.id}`).join("、")}`);
+  }
+  return { module: c.module, label: title ?? [place, c.filter].filter(Boolean).join(" · "), state: "ok", result: lines.join("\n"), records };
 };
 const pAnswer = (qs: PQuery[]) => {
   const starts = qs.map((x) => x.result.split("请在回答开头写明「")[1]?.split("」")[0]).filter(Boolean).map((x) => `${x}。`);
@@ -2059,7 +2097,12 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
       pky.run.timer = window.setTimeout(next, 350);
     };
     pky.run.timer = window.setTimeout(next, 450);
-  } else pky.run.timer = pStream(msg, thinking, prompt, emit, done);
+  } else {
+    // a question from the 小窗: the mock says what page it saw
+    const page = pky.pages.get(user.id);
+    const seen = page && `这是开发版的**模拟回答**。我看到你正在看：${page.label}\n\n> ${page.result.split("\n").join("\n> ")}\n`;
+    pky.run.timer = pStream(msg, thinking, prompt, emit, done, seen);
+  }
   return { sessionId: s.id, runId, userMessageId: user.id, messageId: msg.id };
 };
 
@@ -2151,7 +2194,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     return pPath(s).map((m) => {
       const sib = pSiblings(s, m);
       const { parent: _p, activeChild: _c, ...rest } = m;
-      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [] };
+      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [], page: pky.pages.get(m.id) ?? null };
     });
   },
   picky_send: (a) => {
@@ -2173,6 +2216,8 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     const fit = pFitError(pRequest(s, path, prompt));
     const leaf = path[path.length - 1] ?? null;
     const user = pAdd(s, "user", prompt, leaf?.id ?? null, null);
+    const page = pPage(a.page as PPage | null);
+    if (page) pky.pages.set(user.id, page);
     const used: PUsed = {
       attachments,
       files: ((a.files as number[] | undefined) ?? []).map((id) => {
@@ -2558,6 +2603,71 @@ const handlers: Record<string, (a: Args) => unknown> = {
     startupError: null,
   }),
   reveal_data_dir: () => null,
+  // ---- v0.3.5 阶段 4: 小拾 helps in panels (assist.rs mock_reply) and the picked ones added in one step ----
+  picky_polish: async (a) => {
+    await new Promise((r) => setTimeout(r, 700));
+    const label = P_MODULES.find((m) => m[0] === a.module)?.[1];
+    if (pky.selection.startsWith("cloud:") && label && !pDataCloud().find((m) => m.module === a.module)!.allowed) throw `选了云端模型：${label}不发给云端。换成本地模型再用。`;
+    if (!String(a.text).trim()) throw "没有可以润色的文字";
+    return `${String(a.text).trim().replace(/很/g, "非常")}（模拟润色）`;
+  },
+  picky_fill_work: async (a) => {
+    await new Promise((r) => setTimeout(r, 600));
+    return { creator: "模拟作者", country: "美国", kindId: kinds.find((k) => k.module === a.module)?.id ?? null };
+  },
+  picky_fill_job: async () => {
+    await new Promise((r) => setTimeout(r, 600));
+    return { company: "模拟公司", position: "产品经理", location: "上海" };
+  },
+  picky_split_task: async () => {
+    await new Promise((r) => setTimeout(r, 600));
+    return ["列出要做的步骤", "先做第一步", "检查一遍"];
+  },
+  picky_trip_missing: async () => {
+    await new Promise((r) => setTimeout(r, 600));
+    const k = kinds.find((x) => x.module === "packing")?.id ?? null;
+    return ["充电宝", "雨伞", "常用药"].map((name) => ({ name, kindId: k }));
+  },
+  /** assist.rs 一句话填好 with its mock rules (a 分组 only when named, as `mentions`; a number is the amount, 下周X a date, names matched). */
+  picky_quick_fill: async (a) => {
+    await new Promise((r) => setTimeout(r, 700));
+    const t = String(a.sentence).trim();
+    if (!t) throw "先写一句话";
+    const module = String(a.module);
+    const label = P_MODULES.find((m) => m[0] === module)?.[1];
+    if (pky.selection.startsWith("cloud:") && label && !pDataCloud().find((m) => m.module === module)!.allowed) throw `选了云端模型：${label}不发给云端。换成本地模型再用。`;
+    const today = mockToday();
+    const monday = addDays(today, 1 - isoWeekday(today));
+    const wd = "一二三四五六日".split("").findIndex((d) => t.includes(`下周${d}`));
+    const nextWeek = wd >= 0 ? addDays(monday, 7 + wd) : null;
+    const num = t.match(/\d+(\.\d+)?/)?.[0];
+    const empty = { flow: null, amount: null, currency: null, day: null, kindId: null, note: null, title: null, startDate: null, dueDate: null, groupId: null, goalId: null, company: null, position: null, location: null, statusId: null, creator: null, country: null, status: null, rating: null, finishedYear: null, name: null, departOn: null, templateId: null };
+    if (module === "finance")
+      return {
+        ...empty,
+        flow: "out",
+        amount: num ? Math.round(Number(num) * 100) : null,
+        currency: t.includes("新币") ? "SGD" : t.includes("港币") ? "HKD" : t.includes("美元") ? "USD" : t.includes("人民币") || t.includes("块") ? "CNY" : null,
+        day: t.includes("昨天") ? addDays(today, -1) : today,
+        kindId: kinds.find((k) => k.module === "fin_out")?.id ?? null,
+        note: t.split(/[\d\s]/)[0] || null,
+      };
+    if (module === "todo") return { ...empty, title: t.replace(/^(下周.前?|明天|今天)/, "").trim(), dueDate: nextWeek ?? (t.includes("明天") ? addDays(today, 1) : null), groupId: tGroups.find((g) => mentions(t, g.name))?.id ?? null };
+    if (module === "jobs") {
+      const [head = "", location = null, channel = ""] = t.replace(/^投了/, "").split(/[，,]/);
+      const [company, position = null] = head.split("的");
+      return { ...empty, company, position, location, kindId: kinds.find((k) => k.module === "job_channel" && k.name === channel.trim())?.id ?? null, statusId: jStatusNamed("已投递").id, day: today };
+    }
+    if (module === "packing") return { ...empty, name: t.replace(/^(下周.)?去/, "").trim(), departOn: nextWeek, templateId: [...tpls].sort((x, y) => x.sortOrder - y.sortOrder)[0]?.id ?? null };
+    const done = t.includes("完");
+    return { ...empty, title: t.split(/[，,]/)[0].replace(/^(看完了|读完了|想读|想看)/, ""), status: done ? "done" : t.startsWith("想") ? "todo" : null, rating: { 五星: 5, 四星: 4, 三星: 3, 两星: 2, 一星: 1 }[t.match(/[一两三四五]星/)?.[0] ?? ""] ?? null, finishedYear: done ? today.slice(0, 4) : null };
+  },
+  todo_subtasks_create: undoable("加上子任务", (a) =>
+    (a.titles as string[]).map((title) => (todoHandlers.todo_task_create as (x: Args) => unknown)({ patch: { parentId: a.parentId, title } })),
+  ),
+  packing_trip_items_create: undoable("加上物品", (a) =>
+    (a.items as { name: string; kindId: number | null }[]).map((patch) => (pItemHandlers("trip").packing_trip_item_create as (x: Args) => unknown)({ tripId: a.tripId, patch })),
+  ),
   ...todoHandlers,
   ...finHandlers,
   ...jobHandlers,

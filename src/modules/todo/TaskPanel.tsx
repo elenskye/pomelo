@@ -2,9 +2,12 @@
 // Root tasks can move between groups and goals; subtasks stay under their parent. Dates per type:
 // 普通 / 打卡 / 进度条 = 时间: 不设 or a 时间段; 重复 = none to enter (Rust derives each occurrence
 // from the rule and the counts), only 完成后 takes a start date. For saved tasks the type's records
-// (skip / check-in calendar / amounts) act immediately.
+// (skip / check-in calendar / amounts) act immediately. 小拾: 润色 on 内容; a saved 普通 task can be split
+// into subtasks to pick from (「加上」 adds them as one undo step).
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
+import { IdeaList, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
+import { usePickyStatus } from "@/modules/picky/api";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";
 import { addDays, formatDay, localToday, mondayOf, parseYmd, slashDate, toYmd } from "@/shared/dates";
@@ -304,6 +307,51 @@ function ProgressLog(props: { task: Task }) {
   );
 }
 
+/** 小拾 splits a saved 普通 task: suggestions to pick, 「加上」 adds them under it. */
+function SplitTask(props: { taskId: number }) {
+  const status = usePickyStatus().data;
+  const m = useTodoMutations();
+  const toast = useToast();
+  const [ideas, setIdeas] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!useAssistOn()) return null;
+  const split = async () => {
+    setBusy(true);
+    try {
+      setIdeas(await assistApi.splitTask(props.taskId));
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (ideas)
+    return (
+      <IdeaList
+        items={ideas}
+        label={(t) => t}
+        busy={m.addSubtasks.isPending}
+        onAdd={(titles) =>
+          m.addSubtasks.mutate(
+            { parentId: props.taskId, titles },
+            {
+              onSuccess: () => {
+                setIdeas(null);
+                toast(`加上了 ${titles.length} 个子任务`);
+              },
+            },
+          )
+        }
+        onCancel={() => setIdeas(null)}
+      />
+    );
+  return (
+    <Button variant="ghost" className="-ml-2 self-start" disabled={busy} onClick={() => void split()}>
+      <Sparkles size={14} strokeWidth={1.75} /> {busy ? assistBusyText(status, "正在拆…") : "拆成子任务"}
+    </Button>
+  );
+}
+
 export function TaskPanel(props: {
   task: Task | null; // null = create
   create?: NewTask;
@@ -363,7 +411,26 @@ export function TaskPanel(props: {
     props.onDirtyChange(dirty);
   }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const filled = useFilled<keyof Draft>();
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    filled.clear(k);
+    setD((x) => ({ ...x, [k]: v }));
+  };
+  // 一句话填好 (new tasks): 标题, the day or 时间段, and (not for a subtask) the group / goal
+  const assistOn = useAssistOn();
+  const quick = !task && assistOn;
+  const fill = (f: QuickFillResult) => {
+    const next = { ...d };
+    const keys: (keyof Draft)[] = [];
+    if (f.title) (next.title = f.title), keys.push("title");
+    if (f.dueDate) (next.ranged = true), (next.dueDate = f.dueDate), (next.startDate = f.startDate ?? ""), keys.push("dueDate");
+    if (props.create?.parentId === undefined && (f.goalId != null || f.groupId != null)) {
+      const where = f.goalId != null ? `o:${f.goalId}` : `g:${f.groupId}`;
+      if (whereOptions.some((o) => o.value === where)) (next.where = where), keys.push("where");
+    }
+    setD(next);
+    filled.mark(keys);
+  };
   /** 完成后 starts from a date: today unless one is set. */
   const withStart = (x: Draft): Draft => (x.taskType === "repeat" && !counted(x.rule) && !x.planDate ? { ...x, planDate: today } : x);
   const setType = (v: TaskType) =>
@@ -426,7 +493,11 @@ export function TaskPanel(props: {
             { value: "range", label: "时间段" },
           ]}
         />
-        {d.ranged && <RangeInput start={d.startDate} end={d.dueDate} onStart={(v) => set("startDate", v)} onEnd={(v) => set("dueDate", v)} />}
+        {d.ranged && (
+          <div className={filled.halo("dueDate")}>
+            <RangeInput start={d.startDate} end={d.dueDate} onStart={(v) => set("startDate", v)} onEnd={(v) => set("dueDate", v)} />
+          </div>
+        )}
       </div>
     </Field>
   );
@@ -443,11 +514,15 @@ export function TaskPanel(props: {
           : undefined
       }
     >
+      {quick && <QuickFill module="todo" onFill={fill} autoFocus />}
       <Field label="标题">
-        <TextInput autoFocus value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" maxLength={500} />
+        <TextInput autoFocus={!quick} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" maxLength={500} className={filled.cls("title")} />
       </Field>
       <Field label="内容">
-        <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
+        <Polish module="todo" value={d.note} onChange={(v) => set("note", v)}>
+          <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
+        </Polish>
+        {task && task.taskType === "normal" && d.taskType === "normal" && <SplitTask taskId={task.id} />}
       </Field>
       <Field label="类型">
         {props.hasChildren ? (
@@ -460,7 +535,7 @@ export function TaskPanel(props: {
         {isSub ? (
           <p className="text-sm text-muted-foreground">在「{(props.parentTitle ?? props.create?.parentTitle ?? "").replace(/\*\*/g, "")}」下面</p>
         ) : (
-          <div>
+          <div className={filled.halo("where")}>
             <Dropdown ariaLabel="位置" value={d.where} onChange={(v) => set("where", v)} options={whereOptions} placeholder="选择分组或目标" />
           </div>
         )}

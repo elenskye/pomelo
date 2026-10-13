@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, Circle, Pencil, Plus, Tags, X } from "lucide-react";
+import { CheckCircle2, Circle, Pencil, Plus, Sparkles, Tags, X } from "lucide-react";
 import { moduleById } from "@/app/modules";
-import { useToast } from "@/shared/feedback";
+import { errorText, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED, type Kind } from "@/shared/kinds/api";
 import { KindManager } from "@/shared/kinds/KindManager";
 import { NameDialog } from "@/shared/NameDialog";
@@ -23,6 +23,9 @@ import {
 } from "./api";
 import { ItemPanel } from "./ItemPanel";
 import { TripDialog } from "./TripDialog";
+import { usePageContext } from "@/app/pageContext";
+import { IdeaList, assistApi, assistBusyText, useAssistOn, type ItemIdea } from "@/modules/picky/Assist";
+import { usePickyStatus } from "@/modules/picky/api";
 
 type Tab = "trips" | "templates";
 
@@ -151,6 +154,15 @@ export default function PackingPage() {
   const panel = usePanelSelection<number | "new">();
   const sel = panel.selection;
   const selectedItem = typeof sel === "number" ? (items.find((i) => i.id === sel) ?? null) : null;
+  usePageContext({
+    module: "packing",
+    page: tab === "trips" ? "出行" : "模板",
+    filter: tab === "trips" && onlyUnpacked ? "只看没装的" : null,
+    record:
+      tab === "trips"
+        ? trip && { kind: "trip", id: trip.id, label: `出行：${trip.name}` }
+        : template && { kind: "template", id: template.id, label: `模板：${template.name}` },
+  });
   const mut = usePackingMutations();
   const toast = useToast();
 
@@ -259,6 +271,23 @@ export default function PackingPage() {
       />
     );
 
+  // 小拾: what this trip may have forgotten (picked ones are added in one undoable step)
+  const assistOn = useAssistOn();
+  const pickyStatus = usePickyStatus().data;
+  const [ideas, setIdeas] = useState<{ tripId: number; items: ItemIdea[] } | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const kindLabel = (id: number | null) => kinds.find((k) => k.id === id)?.name ?? null;
+  const findMissing = async (t: Trip) => {
+    setThinking(true);
+    try {
+      setIdeas({ tripId: t.id, items: await assistApi.tripMissing(t.id) });
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setThinking(false);
+    }
+  };
+
   const tripView = (t: Trip) => (
     <section className="flex min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-start justify-between gap-4 pb-3">
@@ -275,10 +304,43 @@ export default function PackingPage() {
               .join(" · ")}
           </p>
         </div>
-        <Button variant="primary" onClick={() => void panel.request("new")}>
-          <Plus size={14} /> 添加物品
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          {assistOn && (
+            <Button variant="ghost" disabled={thinking} onClick={() => void findMissing(t)}>
+              <Sparkles size={14} strokeWidth={1.75} /> {thinking ? assistBusyText(pickyStatus, "正在想…") : "可能漏了什么"}
+            </Button>
+          )}
+          <Button variant="primary" onClick={() => void panel.request("new")}>
+            <Plus size={14} /> 添加物品
+          </Button>
+        </div>
       </div>
+      {ideas?.tripId === t.id && (
+        <div className="shrink-0 pb-3">
+          <IdeaList
+            items={ideas.items}
+            label={(it) => (
+              <>
+                {it.name}
+                {kindLabel(it.kindId) && <span className="text-muted-foreground"> · {kindLabel(it.kindId)}</span>}
+              </>
+            )}
+            busy={mut.addTripItems.isPending}
+            onAdd={(picked) =>
+              mut.addTripItems.mutate(
+                { tripId: t.id, items: picked.map((it) => ({ name: it.name, kindId: it.kindId })) },
+                {
+                  onSuccess: () => {
+                    setIdeas(null);
+                    toast(`加上了 ${picked.length} 件`);
+                  },
+                },
+              )
+            }
+            onCancel={() => setIdeas(null)}
+          />
+        </div>
+      )}
       {items.length > 0 && (
         <div className="flex shrink-0 items-center gap-3 pb-3">
           <Segmented

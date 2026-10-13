@@ -1313,6 +1313,20 @@ pub fn agenda(conn: &Connection, today: &str) -> Result<Agenda, String> {
     Ok(Agenda { today: today.into(), overdue, due, done_today })
 }
 
+/// Several new subtasks under `parent_id`, in order, as one step (小拾's 拆成子任务 the user picked).
+pub fn create_subtasks(conn: &Connection, parent_id: i64, titles: &[String], today: &str) -> Result<Vec<Task>, String> {
+    if titles.is_empty() || titles.len() > 20 {
+        return Err("一次加 1～20 个子任务".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    let mut out = Vec::with_capacity(titles.len());
+    for t in titles {
+        out.push(create_task_on(&tx, TaskPatch { parent_id: Some(parent_id), title: Some(t.clone()), ..Default::default() }, today)?);
+    }
+    tx.commit()?;
+    Ok(out)
+}
+
 /// Unfinished tasks everywhere (any goal status), in place order (小拾).
 pub fn open_tasks(conn: &Connection, today: &str) -> Result<Vec<PlacedTask>, String> {
     placed(conn, "t.done = 0", PLACE_ORDER, &[], today)
@@ -1882,6 +1896,10 @@ pub fn todo_tasks(state: State<AppState>, group_id: Option<i64>, goal_id: Option
 #[tauri::command]
 pub fn todo_task_create(state: State<AppState>, patch: TaskPatch) -> Result<Task, String> {
     state.with_undo("添加任务", |c| create_task(c, patch))
+}
+#[tauri::command]
+pub fn todo_subtasks_create(state: State<AppState>, parent_id: i64, titles: Vec<String>) -> Result<Vec<Task>, String> {
+    state.with_undo("加上子任务", |c| create_subtasks(c, parent_id, &titles, &today(c)?))
 }
 #[tauri::command]
 pub fn todo_task_update(state: State<AppState>, id: i64, patch: TaskPatch) -> Result<Task, String> {

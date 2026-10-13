@@ -32,6 +32,7 @@ import { MonthView } from "./MonthView";
 import { ReviewView } from "./ReviewView";
 import { PlacedList, TaskTree } from "./TaskList";
 import { TaskPanel, type NewTask } from "./TaskPanel";
+import { usePageContext } from "@/app/pageContext";
 
 type View = { kind: "today" } | { kind: "month" } | { kind: "review" } | { kind: "group"; id: number } | { kind: "goal"; id: number };
 
@@ -508,6 +509,19 @@ export default function TodoPage() {
   const panelOpen =
     panel.selection !== null &&
     ((editing !== null && panel.selection === `t${editing.id}`) || (creating !== null && panel.selection === `new${JSON.stringify(creating)}`));
+  // the 小窗: where we are, and the task being edited (else the goal / group shown)
+  usePageContext({
+    module: "todo",
+    page: { today: "今天", month: "月历", review: "回看", group: group?.name ?? "分组", goal: goal?.name ?? "目标" }[view.kind],
+    record:
+      panelOpen && editing
+        ? { kind: "task", id: editing.id, label: `任务：${editing.title.replace(/\*\*/g, "")}` }
+        : goal
+          ? { kind: "goal", id: goal.id, label: `目标：${goal.name}` }
+          : group
+            ? { kind: "group", id: group.id, label: `分组：${group.name}` }
+            : null,
+  });
   // The panel shows live counters (check-ins, amounts): take the latest copy of the task we have.
   const fresh =
     editing &&

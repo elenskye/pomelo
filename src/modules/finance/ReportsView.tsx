@@ -15,6 +15,7 @@ import { AssetTrends } from "./AssetTrends";
 import { OUT_KINDS, useAccounts, useAssets, useBudgets, useFinMutations, useHoldings, useTotals, type Total } from "./api";
 import { AmountInput, CurrencyPicker } from "./fields";
 import { CURRENCIES, money, moneyInput, moneyShort, monthTitle, parseMoney, shiftMonth, thisMonth, type Currency } from "./money";
+import { usePageContext } from "@/app/pageContext";
 
 type Mode = "month" | "year" | "assets";
 const SLOTS = ["var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
@@ -107,6 +108,11 @@ export function ReportsView() {
   const fallback: Currency = mode !== "assets" && busiest && busiest[1] > 0 ? busiest[0] : (used[0] ?? "CNY");
   const currency: Currency = picked && (used.length === 0 || used.includes(picked)) ? picked : fallback;
   const rows = periodRows.filter((t) => t.currency === currency);
+  usePageContext({
+    module: "finance",
+    page: "报表",
+    filter: [mode === "assets" ? "资产" : mode === "month" ? `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月` : `${year} 年`, currency].join(" · "),
+  });
   const sum = (flow: "out" | "in", rs = rows) => rs.filter((t) => t.flow === flow).reduce((s, t) => s + t.amount, 0);
   const fmt = (n: number) => money(n, currency);
   const kindName = new Map(kinds.map((k) => [k.id, k.name]));

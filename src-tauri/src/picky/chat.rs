@@ -104,6 +104,8 @@ pub struct Message {
     pub memories: Vec<UsedMemory>,
     /// Replies: what their run looked up in Pomelo.
     pub queries: Vec<Query>,
+    /// Questions asked in the 小窗: the page they went with.
+    pub page: Option<Query>,
     #[serde(skip)]
     active_child: Option<i64>,
     #[serde(skip)]
@@ -142,6 +144,7 @@ fn message_row(r: &rusqlite::Row) -> rusqlite::Result<Message> {
         notes: vec![],
         memories: vec![],
         queries: vec![],
+        page: None,
     })
 }
 
@@ -188,10 +191,13 @@ pub fn path(conn: &Connection, session_id: i64) -> Result<Vec<Message>, String> 
         m.version_index = list.iter().position(|x| *x == m.id).map_or(1, |i| i as i64 + 1);
         if m.role == "user" {
             m.files = files::message_files(conn, m.id)?;
+            if let Some(run) = m.run_id {
+                m.page = data::page_of(conn, run)?;
+            }
         } else if let Some(run) = m.run_id {
             m.notes = reading::notes_of(conn, run)?.into_iter().map(|(label, content)| Note { label, content }).collect();
             m.memories = memory::used_of(conn, run)?;
-            m.queries = data::queries_of(conn, run)?;
+            m.queries = data::lookups_of(conn, run)?;
         }
     }
     Ok(out)
@@ -218,6 +224,8 @@ pub struct Extras {
     pub passages: Vec<Passage>,
     /// Memories chosen for it (memory.rs).
     pub memories: Vec<UsedMemory>,
+    /// The page it was asked on (the 小窗), and the page's own report.
+    pub page: Option<(Query, String)>,
 }
 
 /// Where a new session goes and the draft's own instructions.
@@ -256,7 +264,11 @@ pub fn begin_run_in(conn: &Connection, session: Option<i64>, new: &NewSession, p
         }
     };
     let shown = path(&tx, session_id)?;
-    let turns: Vec<Turn> = shown.iter().map(|m| Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries: m.queries.clone() }).collect();
+    let mut turns = vec![];
+    for m in &shown {
+        let queries = if m.role == "assistant" { data::queries_of_message(&tx, m.id)? } else { vec![] };
+        turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries });
+    }
     let mut request = context::request(&tx, session_id, &turns, prompt)?;
     let leaf = shown.last().map(|m| m.id);
     let project: Option<i64> = tx.query_row("SELECT project_id FROM sessions WHERE id = ?1", [session_id], |r| r.get(0)).map_err(err)?;
@@ -274,6 +286,10 @@ pub fn begin_run_in(conn: &Connection, session: Option<i64>, new: &NewSession, p
     files::record_used(&tx, user_id, &used)?;
     reading::record_passages(&tx, run_id, &extras.passages)?;
     memory::record_used(&tx, run_id, &extras.memories)?;
+    if let Some((q, report)) = &extras.page {
+        data::save_page(&tx, run_id, report, q)?;
+        request.page = Some(q.clone());
+    }
     tx.execute("INSERT INTO messages (session_id, run_id, parent_id, role, state) VALUES (?1, ?2, ?3, 'assistant', 'streaming')", params![session_id, run_id, user_id]).map_err(err)?;
     let reply_id = tx.last_insert_rowid();
     tx.execute("UPDATE messages SET active_child_id = ?1 WHERE id = ?2", [reply_id, user_id]).map_err(err)?;
@@ -428,6 +444,11 @@ pub fn begin_version(conn: &Connection, source: i64, edited: Option<&str>, model
     };
     reading::record_passages(&tx, run_id, passages)?;
     memory::record_used(&tx, run_id, memories)?;
+    // the question keeps the page it was asked on (an edit's copy shows on the new question)
+    let asked_run: Option<i64> = tx.query_row("SELECT run_id FROM messages WHERE id = ?1", [asked], |r| r.get(0)).map_err(err)?;
+    if let Some(from) = asked_run.filter(|r| *r != run_id) {
+        request.page = data::copy_page(&tx, from, run_id)?;
+    }
     tx.execute("INSERT INTO messages (session_id, run_id, parent_id, role, state) VALUES (?1, ?2, ?3, 'assistant', 'streaming')", params![session_id, run_id, user_id]).map_err(err)?;
     let reply_id = tx.last_insert_rowid();
     show_path(&tx, reply_id)?;
@@ -899,10 +920,12 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     let mut lookup = match access_for(&app, &route) {
         Some((access, today)) => {
             request.with_lookups(|q| access.may_send(q));
+            request.with_page(|q| access.may_send(q));
             lookup_plan(access, today, &counter).await
         }
         None => {
             request.looked.clear();
+            request.with_page(|_| false);
             None
         }
     };
@@ -1001,6 +1024,7 @@ pub async fn picky_send(
     files: Vec<i64>,
     passages: Vec<Passage>,
     memories: Vec<UsedMemory>,
+    page: Option<data::PageContext>,
     on_event: Channel<StreamEvent>,
 ) -> Result<Sent, String> {
     let prompt = match text.trim() {
@@ -1010,7 +1034,13 @@ pub async fn picky_send(
     };
     let route = prepare(&app)?;
     let new = NewSession { project: project_id, setting: instructions.unwrap_or_default(), memory_off };
-    let extras = Extras { attachments, files, passages, memories };
+    // the page it was asked on (the 小窗): Rust fetches what it may, under this model's rules
+    let page = page.and_then(|ctx| {
+        let (access, today) = access_for(&app, &route)?;
+        let q = app.state::<AppState>().with_db(|c| Ok(data::page_query(c, &access, &today, &ctx))).ok().flatten()?;
+        Some((q, serde_json::to_string(&ctx).unwrap_or_default()))
+    });
+    let extras = Extras { attachments, files, passages, memories, page };
     let b = app.state::<AppState>().picky.with_db(|c| begin_run_in(c, session_id, &new, prompt, &route.model, &route.name, &extras))?;
     Ok(start(&app, b, route, on_event))
 }
@@ -1240,7 +1270,7 @@ mod tests {
         let v1 = add(&c, &dir, "提纲.md", b"outline v1");
         let f = files::add_project_file(&c, p, v1).unwrap();
         let passage = Passage { file_id: 99, artifact_id: 98, segment_ordinal: 0, label: "别的.md · 第 1 段".into(), content: "检索到的".into() };
-        let extras = Extras { attachments: vec![att], files: vec![f], passages: vec![passage.clone()], memories: vec![] };
+        let extras = Extras { attachments: vec![att], files: vec![f], passages: vec![passage.clone()], memories: vec![], page: None };
         let b = begin_run_in(&c, None, &NewSession { project: Some(p), ..Default::default() }, "看看", "local:x", "X", &extras).unwrap();
         let kinds: Vec<_> = b.request.sources.iter().map(|s| s.kind).collect();
         assert_eq!(kinds, [reading::Kind::Attachment, reading::Kind::ProjectFile, reading::Kind::Passage]);
@@ -1352,6 +1382,14 @@ mod tests {
         let mut request = Request { data: data::instructions(data::tests::TODAY, &host.access), prompt: question.into(), ..before };
         let access = host.access.clone();
         request.with_lookups(|q| access.may_send(q));
+        // POMELO_PAGE='jobs:job:甲公司' (module:kind:title words): asked in the 小窗 on that record
+        if let Some(spec) = std::env::var("POMELO_PAGE").ok().filter(|_| request.history.is_empty()) {
+            let parts: Vec<&str> = spec.splitn(3, ':').collect();
+            let id: i64 = host.pomelo.query_row("SELECT id FROM jobs WHERE company LIKE '%' || ?1 || '%' LIMIT 1", [parts.get(2).copied().unwrap_or("")], |r| r.get(0)).unwrap_or(0);
+            let ctx = data::PageContext { module: parts[0].into(), page: Some("投递".into()), record: Some(data::PageRef { kind: parts.get(1).copied().unwrap_or("job").into(), id }), ..Default::default() };
+            request.page = data::page_query(&host.pomelo, &host.access, data::tests::TODAY, &ctx);
+            request.with_page(|q| access.may_send(q));
+        }
         let messages = request.messages_with(0, question);
         let est = |s: &str| context::estimate(s);
         let cost = est(&serde_json::to_string(&tools).unwrap()) + TOOLS_OVERHEAD;

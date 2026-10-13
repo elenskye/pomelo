@@ -15,6 +15,7 @@ import { EntryPanel, FixedPanel } from "./EntryPanel";
 import { CURRENCIES, CURRENCY_NAME, money, monthTitle, ruleText, shiftMonth, thisMonth, type Currency } from "./money";
 import { SmallDialog } from "./SmallDialog";
 import type { Hit } from "@/shared/open";
+import { usePageContext } from "@/app/pageContext";
 
 type Tab = "list" | "fixed";
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
@@ -82,6 +83,20 @@ export function EntriesView(props: { focus?: Hit | null }) {
   const editingFixed = panel.selection?.startsWith("f") ? fixed.find((f) => `f${f.id}` === panel.selection) : undefined;
   const isCurrent = month === thisMonth();
   const defaultDay = isCurrent ? localToday() : `${month}-01`;
+  usePageContext({
+    module: "finance",
+    page: tab === "list" ? "收支" : "固定支出",
+    filter:
+      tab === "list"
+        ? [`${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`, flow === "all" ? null : flow === "out" ? "支出" : "收入", kindFilter === "all" ? null : kindFilter === null ? "未分类" : (kindName.get(kindFilter) ?? null)].filter(Boolean).join(" · ")
+        : null,
+    record: editing
+      ? { kind: "entry", id: editing.id, label: `收支：${editing.day.slice(5).replace("-", "/")} ${kindName.get(editing.kindId ?? -1) ?? "未分类"}${editing.note ? ` · ${editing.note}` : ""}` }
+      : editingFixed
+        ? { kind: "fixed", id: editingFixed.id, label: `固定支出：${editingFixed.name}` }
+        : null,
+    selected: selecting && chosen.length ? { kind: "entry", ids: chosen.map((e) => e.id), label: `收支：选中的 ${chosen.length} 笔` } : null,
+  });
 
   const stopSelecting = () => {
     setSelecting(false);

@@ -15,6 +15,7 @@ import { Editor, type EditorHandle } from "./Editor";
 import { excerpt } from "./NoteBody";
 import { BriefRow, NoteCard } from "./NoteCard";
 import { TagTree } from "./TagTree";
+import { usePageContext } from "@/app/pageContext";
 
 type Filters = { tag: string | null; day: string | null; id: number | null };
 const NONE: Filters = { tag: null, day: null, id: null };
@@ -105,6 +106,12 @@ export default function NotesPage() {
   const tagNames = useMemo(() => (overview?.tags ?? []).map((t) => t.tag), [overview]);
   const dayCounts = useMemo(() => new Map((overview?.days ?? []).map((d) => [d.day, d.count])), [overview]);
   const filtered = f.tag !== null || f.day !== null || f.id !== null || q !== "";
+  const one = f.id !== null ? notes.find((n) => n.id === f.id) : undefined;
+  usePageContext({
+    module: "notes",
+    filter: [f.tag ? `#${f.tag}` : null, f.day, q ? `搜「${q}」` : null].filter(Boolean).join(" · ") || null,
+    record: one ? { kind: "note", id: one.id, label: `笔记：${one.content.replace(/\s+/g, " ").slice(0, 24)}` } : null,
+  });
 
   // new filter → back to the top, first page
   useEffect(() => {

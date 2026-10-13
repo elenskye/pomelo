@@ -6,13 +6,15 @@
 // - "已切换到 X" above a question answered by another model than the one before.
 // - 「查了：…」 above a reply that looked things up in Pomelo; unfolds to what each lookup returned. Records
 //   the lookups returned are linked where the finished reply names them; a click opens them like 全局搜索.
+// - A question asked in the 小窗 shows 「带着：…」 (the page it went with), unfolding to what was sent.
+// - `compact`: the 小窗's narrow column.
 // - Follows new text only while the reader is at the bottom (scrolling up stops it; ↓ comes back).
 // - Links open in the browser (Rust); code blocks copy; right-click a formula → 复制 LaTeX; a selection
 //   spanning messages or formulas copies as plain text with formulas as written.
 // - ⌘F finds in the page with the CSS Custom Highlight API (no DOM changes).
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { useNavigate } from "react-router";
-import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Pencil, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, MapPin, Pencil, RotateCcw, X } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
@@ -212,6 +214,19 @@ function Queries(props: { queries: Query[] }) {
   );
 }
 
+/** Above a question from the 小窗: the page it went with. */
+function PageChip(props: { page: Query }) {
+  return (
+    <details className="picky-think group/page mb-1 flex max-w-[85%] flex-col items-end" data-find-skip>
+      <summary className="flex max-w-full cursor-default list-none items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <MapPin size={12} strokeWidth={1.75} className="shrink-0" />
+        <span className="truncate">带着：{props.page.label}</span>
+      </summary>
+      {props.page.result && <p className="selectable mt-1 border-r-2 pr-3 text-right font-reading text-[12.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">{props.page.result}</p>}
+    </details>
+  );
+}
+
 type ItemProps = {
   m: ChatMessage;
   divider: string | null;
@@ -244,6 +259,7 @@ function Item(p: ItemProps) {
       <>
         {divider}
         <div className="group flex flex-col items-end" data-msg={m.id}>
+          {m.page && <PageChip page={m.page} />}
           <MessageFiles files={m.files ?? []} onOpen={p.onOpenFile} />
           {p.editing ? (
             <EditBox initial={m.content} onCancel={p.onCancelEdit} onSubmit={p.onSubmitEdit} />
@@ -429,6 +445,8 @@ export function Transcript(props: {
   onStop?: () => void;
   /** Jump to a message (a search hit): scroll there, flash it, mark the words for a few seconds. */
   reveal?: { id: number; query: string; key: number } | null;
+  /** The 小窗's narrow column. */
+  compact?: boolean;
 }) {
   const { messages, busy } = props;
   const toast = useToast();
@@ -654,7 +672,7 @@ export function Transcript(props: {
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center pb-16 text-lg">{props.empty}</div>
         ) : (
-          <div ref={column} className="relative mx-auto max-w-3xl space-y-6 px-8 pt-2 pb-6">
+          <div ref={column} className={`relative mx-auto max-w-3xl space-y-6 pt-2 pb-6 ${props.compact ? "px-4" : "px-8"}`}>
             {messages.map((m) => (
               <Item
                 key={m.id}
