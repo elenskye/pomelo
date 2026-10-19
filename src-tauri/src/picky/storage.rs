@@ -1,9 +1,9 @@
 //! 小拾's space (设置 → 小拾 → 空间管理, from Picky's StorageMaintenance):
 //! - What it takes: picky.db (with its -wal) and the copies in picky-files/ (backups are in the
 //!   backup list).
-//! - Every stored copy with its size and what uses it (questions, project files). Deleting one
-//!   (confirmed on the page) removes the file and marks it 「文件已删除」: messages keep its name, a
-//!   project file using it can't be read any more, its index goes. Files in picky-files/ that no
+//! - Every stored copy with its size and what uses it (questions, project files, 知识库 web pages).
+//!   Deleting one (confirmed on the page) removes the file and marks it 「文件已删除」: messages keep
+//!   its name, a project file using it can't be read any more, its index goes (a 知识库 page's too). Files in picky-files/ that no
 //!   record knows can be removed too. Neither is undoable.
 //! - Conversations without any message, untouched for 30 days, can be cleaned (undoable).
 
@@ -23,6 +23,8 @@ pub struct FileRow {
     pub bytes: u64,
     pub messages: i64,
     pub project_files: i64,
+    /// 知识库 web pages it is the copy of.
+    pub knowledge: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -54,18 +56,19 @@ pub fn usage(conn: &Connection, db: &Path, dir: &Path) -> Result<Usage, String> 
         .prepare(
             "SELECT a.id, a.file_name,
                     (SELECT count(*) FROM message_attachments m WHERE m.artifact_id = a.id) + (SELECT count(*) FROM message_project_files m WHERE m.artifact_id = a.id),
-                    (SELECT count(*) FROM project_file_versions v WHERE v.artifact_id = a.id)
+                    (SELECT count(*) FROM project_file_versions v WHERE v.artifact_id = a.id),
+                    (SELECT count(*) FROM kb_sources k WHERE k.artifact_id = a.id)
              FROM artifacts a",
         )
         .map_err(err)?;
-    let all: Vec<(i64, String, i64, i64)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let all: Vec<(i64, String, i64, i64, i64)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
     let mut files = vec![];
-    for (id, file_name, messages, project_files) in &all {
+    for (id, file_name, messages, project_files, knowledge) in &all {
         let Some(info) = super::files::info(conn, *id)? else { continue };
         if info.deleted {
             continue;
         }
-        files.push(FileRow { bytes: size(&dir.join(file_name)), file: info, messages: *messages, project_files: *project_files });
+        files.push(FileRow { bytes: size(&dir.join(file_name)), file: info, messages: *messages, project_files: *project_files, knowledge: *knowledge });
     }
     files.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.file.id.cmp(&b.file.id)));
     let known: Vec<&String> = all.iter().map(|x| &x.1).collect();
@@ -87,7 +90,7 @@ pub fn usage(conn: &Connection, db: &Path, dir: &Path) -> Result<Usage, String> 
     Ok(Usage { db_bytes, files_bytes, files, strays, empty_sessions })
 }
 
-/// Removes a stored copy; the record stays, marked deleted (its index goes).
+/// Removes a stored copy; the record stays, marked deleted (the search indexer drops its index).
 pub fn delete_file(conn: &Connection, dir: &Path, id: i64) -> Result<(), String> {
     let name: String = conn.query_row("SELECT file_name FROM artifacts WHERE id = ?1 AND deleted_at IS NULL", [id], |r| r.get(0)).map_err(|_| "这个文件已经删掉了".to_string())?;
     if name.contains('/') || name.contains("..") {
@@ -95,7 +98,6 @@ pub fn delete_file(conn: &Connection, dir: &Path, id: i64) -> Result<(), String>
     }
     let tx = Tx::begin(conn)?;
     tx.execute("UPDATE artifacts SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1", [id]).map_err(err)?;
-    tx.execute("DELETE FROM artifact_indexes WHERE artifact_id = ?1", [id]).map_err(err)?;
     let p = dir.join(&name);
     if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_file()) {
         std::fs::remove_file(&p).map_err(|e| format!("没能删除文件：{e}"))?;

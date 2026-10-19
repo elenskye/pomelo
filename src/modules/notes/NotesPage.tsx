@@ -1,21 +1,41 @@
 // 念念不忘 (after Flomo): left column = counts · heatmap · 全部笔记 · pinned tags · tag tree; right = the box for a
 // new note, then the stream (newest first; pinned on top when unfiltered). Filters (tag incl. sub-tags,
-// day, words, one note) combine; clicking a #tag in a note or a day in the heatmap sets them.
+// day, words, one note) combine; clicking a #tag in a note or a day in the heatmap sets them. While
+// searching, 意思相近 follows the word results (v0.4: by meaning, within the tag / day filters).
+// 转成待办 opens 一步一步's new-task panel right here (title = the first line, 内容 = the whole note).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Notebook, Quote, Send, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useGoals, useGroups } from "@/modules/todo/api";
+import { TaskPanel } from "@/modules/todo/TaskPanel";
+import { Notebook, Quote, Send, Sparkles, X } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import type { FileInfo } from "@/shared/attachments/api";
+import { AttachButton, AttachmentStrip, withFiles } from "@/shared/attachments/Attachments";
+import { useAttachTarget } from "@/shared/attachments/target";
 import { Heatmap } from "@/shared/charts";
 import { localToday, slashDate } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { useOpenRequest } from "@/shared/open";
-import { usePageKeys } from "@/shared/panel";
+import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { Button, PageHeader, SearchInput } from "@/shared/ui";
-import { useNoteMutations, useNotes, useOverview, type Brief, type Note, type NoteFilter } from "./api";
+import { NOTES_KEY, useNoteMutations, useNotes, useOverview, useSimilarNotes, type Brief, type Note, type NoteFilter } from "./api";
 import { Editor, type EditorHandle } from "./Editor";
 import { excerpt } from "./NoteBody";
 import { BriefRow, NoteCard } from "./NoteCard";
 import { TagTree } from "./TagTree";
 import { usePageContext } from "@/app/pageContext";
+
+/** A task title from a note: its first line, without list marks, bold / highlight marks and #tags. */
+export function todoTitle(content: string): string {
+  const line = content.split("\n").map((l) => l.trim()).find((l) => l.replace(/#[^\s#]+/g, "").trim()) ?? "";
+  const t = line
+    .replace(/^(-|\d+\.)\s+/, "")
+    .replace(/\*\*|==|\+\+/g, "")
+    .replace(/(^|\s)#[^\s#]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return [...t].slice(0, 100).join("");
+}
 
 type Filters = { tag: string | null; day: string | null; id: number | null };
 const NONE: Filters = { tag: null, day: null, id: null };
@@ -36,6 +56,9 @@ function Composer(props: { tags: string[]; activeTag: string | null; quoting: Br
   const m = useNoteMutations();
   const toast = useToast();
   const [draft, setDraft] = useState("");
+  const [files, setFiles] = useState<FileInfo[]>([]);
+  const box = useRef<HTMLDivElement>(null);
+  const dropping = useAttachTarget(box, (fs) => setFiles((have) => withFiles(have, fs)), (e) => toast(errorText(e), "error"));
   const prefill = useRef("");
   // In a tag view a fresh note starts with that tag (an untouched prefill follows the view).
   useEffect(() => {
@@ -47,10 +70,11 @@ function Composer(props: { tags: string[]; activeTag: string | null; quoting: Br
   const submit = () => {
     if (empty || m.create.isPending) return;
     m.create.mutate(
-      { content: draft, refs: props.quoting.map((b) => b.id) },
+      { content: draft, refs: props.quoting.map((b) => b.id), attachments: files.map((f) => f.id) },
       {
         onSuccess: () => {
           setDraft(prefill.current);
+          setFiles([]);
           props.setQuoting([]);
         },
         onError: (e) => toast(errorText(e), "error"),
@@ -58,14 +82,16 @@ function Composer(props: { tags: string[]; activeTag: string | null; quoting: Br
     );
   };
   return (
-    <div className="rounded-card border bg-card px-4 pt-3 pb-2 focus-within:ring-2 focus-within:ring-ring">
+    <div ref={box} className={`rounded-card border bg-card px-4 pt-3 pb-2 focus-within:ring-2 focus-within:ring-ring ${dropping ? "ring-2 ring-primary" : ""}`}>
       <Editor ref={props.editor} value={draft} onChange={setDraft} onSubmit={submit} tags={props.tags} placeholder="现在的想法是……" />
+      <AttachmentStrip files={files} onRemove={(id) => setFiles(files.filter((f) => f.id !== id))} className="pt-2" />
       <div className="flex items-end gap-3 pt-1">
         <div className="min-w-0 flex-1 space-y-0.5">
           {props.quoting.map((b) => (
             <BriefRow key={b.id} brief={b} icon={<Quote size={12} />} onOpen={props.onOpen} onRemove={() => props.setQuoting(props.quoting.filter((x) => x.id !== b.id))} />
           ))}
         </div>
+        <AttachButton onFiles={(fs) => setFiles((have) => withFiles(have, fs))} />
         <Button variant="primary" disabled={empty || m.create.isPending} onClick={submit} aria-label="记下">
           <Send size={14} /> 记下
         </Button>
@@ -102,7 +128,15 @@ export default function NotesPage() {
   }, [f, q]);
   const notesQ = useNotes(filter);
   const notes = notesQ.data ?? [];
+  const similar = useSimilarNotes(filter, q !== "" && f.id === null);
+  const near = q && f.id === null ? (similar.data ?? []).filter((n) => !notes.some((x) => x.id === n.id)) : [];
+  const nearShown = q !== "" && f.id === null && (near.length > 0 || similar.isFetching || similar.isError);
   const overview = useOverview().data;
+  const qc = useQueryClient();
+  const { data: groups = [] } = useGroups();
+  const { data: goals = [] } = useGoals();
+  const toTodo = usePanelSelection<number>();
+  const converting = toTodo.selection !== null ? (notes.find((x) => x.id === toTodo.selection) ?? null) : null;
   const tagNames = useMemo(() => (overview?.tags ?? []).map((t) => t.tag), [overview]);
   const dayCounts = useMemo(() => new Map((overview?.days ?? []).map((d) => [d.day, d.count])), [overview]);
   const filtered = f.tag !== null || f.day !== null || f.id !== null || q !== "";
@@ -143,7 +177,7 @@ export default function NotesPage() {
   usePageKeys({
     onNew: () => editor.current?.focus(),
     onFind: () => searchRef.current?.focus(),
-    onEscape: f.id !== null ? () => setF(NONE) : undefined,
+    onEscape: toTodo.selection !== null ? () => void toTodo.request(null) : f.id !== null ? () => setF(NONE) : undefined,
   });
 
   const stat = (n: number | undefined, label: string) => (
@@ -216,15 +250,47 @@ export default function NotesPage() {
                 onTag={(tag) => go({ tag })}
                 onOpen={openNote}
                 onQuote={quote}
+                onToTodo={(x) => void toTodo.request(x.id)}
               />
             ))}
             {shown < notes.length && <div ref={sentinel} className="h-8" />}
-            {notesQ.data && notes.length === 0 && (
+            {notesQ.data && notes.length === 0 && !(near.length > 0 || similar.isFetching) && (
               <p className="py-12 text-center text-muted-foreground">{overview?.total === 0 && !filtered ? "念念不忘，必有回响" : "没有找到"}</p>
+            )}
+            {nearShown && shown >= notes.length && (
+              <>
+                <p className="flex items-center gap-1.5 pt-3 text-sm text-muted-foreground">
+                  <Sparkles size={14} strokeWidth={1.75} />
+                  意思相近
+                  {similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
+                  {similar.isError && <span className="truncate">· {errorText(similar.error)}</span>}
+                </p>
+                {near.map((n) => (
+                  <NoteCard key={`near-${n.id}`} note={n} tags={tagNames} focused={false} onTag={(tag) => go({ tag })} onOpen={openNote} onQuote={quote} onToTodo={(x) => void toTodo.request(x.id)} />
+                ))}
+              </>
             )}
           </div>
         </section>
       </div>
+      {converting && (
+        <TaskPanel
+          key={converting.id}
+          task={null}
+          create={{ where: groups[0] ? `g:${groups[0].id}` : "", title: todoTitle(converting.content), note: converting.content.trim(), fromNote: converting.id }}
+          parentTitle={null}
+          hasChildren={false}
+          groups={groups}
+          goals={goals}
+          onClose={() => void toTodo.request(null)}
+          onDone={() => {
+            toTodo.done();
+            void qc.invalidateQueries({ queryKey: NOTES_KEY });
+          }}
+          onDirtyChange={toTodo.setDirty}
+        />
+      )}
+      {toTodo.confirmDialog}
     </div>
   );
 }

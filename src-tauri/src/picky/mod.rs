@@ -1,9 +1,10 @@
 //! 小拾 · Picky (v0.3): the old Picky app rewritten into Pomelo — Pomelo's LLM service.
 //! Rules (requirements.md「小拾」):
 //! - Data: picky.db (store.rs), never pomelo.db. Only Rust reads/writes it.
-//! - Models: local chat models via ~/Documents/LLM scripts (runtime.rs, one at a time on 8080),
-//!   the embedding service on 8081, and three cloud services (cloud.rs, provider.rs). The model
-//!   files, manifest and scripts are never modified.
+//! - Models: local models via ~/Documents/LLM/scripts/llmctl.sh and config/models.json
+//!   (runtime.rs, catalog.rs): chat one at a time on 8080, the embedding (8081) and rerank (8082)
+//!   services Pomelo starts on demand and stops when idle; and three cloud services (cloud.rs,
+//!   provider.rs). Pomelo never modifies the LLM folder.
 //! - Mode: `Real` only for the installed app on the real data dir (or POMELO_REAL_MODELS=1);
 //!   dev builds, tests and scratch data dirs are `Mock`: built-in catalog, simulated operations,
 //!   canned replies, keys in memory — no script, no network, no keychain.
@@ -11,9 +12,13 @@
 //! - Selection ("local" | "cloud:<id>", preference `model.selection`) is shared by the page and the
 //!   menu bar; it can't change while a reply is being written.
 
+pub mod act;
 pub mod assist;
+pub mod assistants;
+pub mod brief;
 pub mod catalog;
 pub mod chat;
+pub mod cite;
 pub mod cloud;
 pub mod data;
 pub mod context;
@@ -23,16 +28,24 @@ pub mod files;
 pub mod find;
 pub mod index;
 pub mod instructions;
+pub mod knowledge;
 pub mod library;
 pub mod memory;
+pub mod office;
 pub mod pdf;
 pub mod provider;
 pub mod reading;
+pub mod rerank;
+pub mod schedule;
+pub mod skills;
 pub mod runtime;
 pub mod storage;
 pub mod store;
 pub mod templates;
 pub mod transfer;
+pub mod word;
+pub mod work;
+pub mod yearly;
 
 use crate::backup;
 use crate::paths::DataPaths;
@@ -40,7 +53,7 @@ use crate::AppState;
 use cloud::{CloudModel, KeyStore, Service};
 use provider::Target;
 use rusqlite::Connection;
-use runtime::{Action, EmbStatus, IssueKind, LocalStatus, Runtime};
+use runtime::{Action, IssueKind, LocalStatus, Runtime, ServiceStatus, Svc};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -50,6 +63,10 @@ use tauri_plugin_opener::OpenerExt;
 
 pub const REAL_ENV: &str = "POMELO_REAL_MODELS";
 const SELECTION_KEY: &str = "model.selection";
+/// The embedding / rerank model chosen in settings (a manifest key).
+fn service_key(svc: Svc) -> String {
+    format!("model.{}", svc.arg())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -104,6 +121,10 @@ pub struct Picky {
     pub keys: KeyStore,
     pub runs: chat::Runs,
     pub index_jobs: index::Jobs,
+    /// 知识库 scans and builds (knowledge.rs).
+    pub kb: knowledge::Jobs,
+    /// 助手 at work (assistants/).
+    pub assistants: assistants::State,
     app: OnceLock<AppHandle>,
 }
 
@@ -122,16 +143,22 @@ impl Picky {
             Ok(c) => (Some(c), None),
             Err(e) => (None, Some(e)),
         };
+        let runtime = Runtime::new(mode, runtime::LlmPaths::new(home));
+        for svc in Svc::ALL {
+            runtime.choose(svc, conn.as_ref().and_then(|c| store::pref_get::<String>(c, &service_key(svc)).ok().flatten()));
+        }
         Picky {
             mode,
             conn: Mutex::new(conn),
             error,
             db_path: paths.picky_db.clone(),
             files_dir: paths.picky_files.clone(),
-            runtime: Runtime::new(mode, runtime::LlmPaths::new(home)),
+            runtime,
             keys: if mode == Mode::Real { KeyStore::keychain() } else { KeyStore::memory() },
             runs: chat::Runs::default(),
             index_jobs: index::Jobs::default(),
+            kb: knowledge::Jobs::default(),
+            assistants: assistants::State::default(),
             app: OnceLock::new(),
         }
     }
@@ -182,15 +209,14 @@ impl Picky {
             mode: self.mode,
             error: self.error.clone(),
             local: self.runtime.local_status(),
-            embedding: self.runtime.emb_status(),
+            embedding: self.runtime.service_status(Svc::Embedding),
+            rerank: self.runtime.service_status(Svc::Rerank),
             selection: selection.code(),
-            keys: Service::ALL.iter().map(|s| KeyInfo { service: *s, name: s.name().into(), saved: self.keys.has(*s) }).collect(),
+            keys: Service::ALL.iter().map(|s| KeyInfo { service: *s, name: s.name().into(), saved: self.keys.has(s.code()) }).collect(),
             cloud,
             generating: self.runs.busy(),
-            active_run: self.runs.active_run(),
-            active_session: self.runs.active_session(),
-            active_kind: self.runs.active_kind(),
-            active_reading: self.runs.active_reading(),
+            active: self.runs.list(),
+            unseen: self.with_db(|c| Ok(schedule::unseen(c))).unwrap_or(0),
         }
     }
 
@@ -206,20 +232,25 @@ impl Picky {
     }
 
     fn route(&self, with_key: bool) -> Result<Route, String> {
-        match self.selection() {
+        self.route_with(&self.selection(), with_key)
+    }
+
+    /// Where work for `selection` goes (a 定时任务 has its own model); local = the running model.
+    fn route_with(&self, selection: &Selection, with_key: bool) -> Result<Route, String> {
+        match selection.clone() {
             Selection::Local => {
                 let Some((m, served)) = self.runtime.ready_model() else {
                     let s = self.runtime.local_status();
                     return Err(if s.working || s.readiness == runtime::Readiness::Loading { "模型还在加载，等它就绪再发送。".into() } else { "本地模型还没有运行。".into() });
                 };
                 let (target, window) = if self.mode == Mode::Mock { (Target::Mock { thinking: m.thinking }, context::MOCK_WINDOW) } else { (Target::Local { model: served }, m.context) };
-                Ok(Route { target, model: format!("local:{}", m.key), name: m.name, window })
+                Ok(Route { target, model: format!("local:{}", m.key), name: m.name, window, think: cloud::Think::local(m.thinking) })
             }
             Selection::Cloud(id) => {
                 let m = self.with_db(|c| cloud::model(c, &id))?.ok_or("这个云端模型已经被删除了，请重新选择。")?;
-                let key = if with_key { self.keys.read(m.service)? } else { String::new() };
-                let (target, window) = if self.mode == Mode::Mock { (Target::Mock { thinking: false }, context::MOCK_WINDOW) } else { (Target::Cloud { model: m.clone(), key }, m.context_window) };
-                Ok(Route { target, model: format!("cloud:{}", m.id), name: m.name, window })
+                let key = if with_key { self.keys.read(m.service.code()).map_err(|_| "尚未保存这个云端接口的 API Key。".to_string())? } else { String::new() };
+                let (target, window) = if self.mode == Mode::Mock { (Target::Mock { thinking: m.thinking != cloud::Think::Never }, context::MOCK_WINDOW) } else { (Target::Cloud { model: m.clone(), key }, m.context_window) };
+                Ok(Route { target, model: format!("cloud:{}", m.id), name: m.name, window, think: m.thinking })
             }
         }
     }
@@ -232,6 +263,15 @@ pub struct Route {
     pub model: String,
     pub name: String,
     pub window: i64,
+    /// What the model can do about thinking.
+    pub think: cloud::Think,
+}
+
+impl Route {
+    /// The reply cap with room for reasoning when this work thinks.
+    pub fn with_thinking(&self, max: i64, thinking: bool) -> i64 {
+        if self.think.thinks(thinking) { max + context::think_room(self.window) } else { max }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -250,25 +290,27 @@ pub struct Status {
     /// picky.db could not be opened.
     pub error: Option<String>,
     pub local: LocalStatus,
-    pub embedding: EmbStatus,
+    pub embedding: ServiceStatus,
+    pub rerank: ServiceStatus,
     /// "local" | "cloud:<id>"
     pub selection: String,
     pub cloud: Vec<CloudModel>,
     pub keys: Vec<KeyInfo>,
+    /// Anything being written.
     pub generating: bool,
-    /// The reply being written (to stop it after the page was reloaded), and its conversation.
-    pub active_run: Option<i64>,
-    pub active_session: Option<i64>,
-    /// reply | summary
-    pub active_kind: Option<&'static str>,
-    /// The reply reading material in segments: where it is.
-    pub active_reading: Option<chat::Reading>,
+    /// What is being written, one per conversation (to show and stop it after the page reloaded).
+    pub active: Vec<chat::ActiveRun>,
+    /// Conversations from 定时任务 not opened yet (the dot on 小拾 in the sidebar).
+    pub unseen: i64,
 }
 
-/// Polls model status (local API every 3 s, every second during an operation; embedding every
-/// 5 s) and keeps the menu bar current. Mock mode only refreshes the menu bar.
+/// Polls model status (local API every 3 s, every second during an operation; the embedding and
+/// rerank services every 5 s), stops the services Pomelo started once idle (checked every 30 s)
+/// and keeps the menu bar current. Mock mode only refreshes the menu bar and the idle stops.
 /// Every 5 minutes it also takes the day's backups if missing: Pomelo may stay hidden in the menu
-/// bar for days, so launch / window focus alone can no longer be relied on.
+/// bar for days, so launch / window focus alone can no longer be relied on. Every 30 s (first 5 s
+/// after launch) it runs the 定时任务 that are due (schedule.rs), and every 10 minutes it compares the
+/// 知识库 folders with their index (knowledge.rs).
 pub fn spawn_monitor(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut tick: u64 = 0;
@@ -278,7 +320,21 @@ pub fn spawn_monitor(app: AppHandle) {
                 st.picky.runtime.refresh(false).await;
             }
             if tick % 5 == 0 {
-                st.picky.runtime.emb_refresh(false).await;
+                for svc in Svc::ALL {
+                    st.picky.runtime.service_refresh(svc, false).await;
+                }
+            }
+            if tick % 30 == 29 {
+                for svc in st.picky.runtime.idle_services(std::time::Instant::now()) {
+                    spawn_op(&app, move |app| async move { app.state::<AppState>().picky.runtime.service_control(svc, "stop").await });
+                }
+            }
+            if tick % 30 == 5 {
+                tauri::async_runtime::spawn(schedule::check(app.clone()));
+            }
+            if tick % knowledge::SCAN_EVERY == knowledge::SCAN_EVERY - 1 && st.picky.is_open() {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { knowledge::scan(&app).await });
             }
             crate::tray::refresh(&app);
             if tick % 300 == 299 {
@@ -306,19 +362,20 @@ where
     });
 }
 
-const BUSY: &str = "正在生成回复，等它写完再切换。";
+const LOCAL_BUSY: &str = "本地模型正在回答，等它答完再换。";
 
 /// "local:<key>" switches to (starting if needed) that local model; "cloud:<id>" picks a cloud model.
+/// Any time (replies being written keep their model), except changing the local model while it answers.
 pub fn select(app: &AppHandle, choice: &str) -> Result<(), String> {
     let st = app.state::<AppState>();
     let p = &st.picky;
-    if p.runs.busy() {
-        return Err(BUSY.into());
-    }
     if let Some(key) = choice.strip_prefix("local:") {
+        let running = p.runtime.local_status().active.is_some_and(|m| m.key == key);
+        if !running && p.runs.using("local") {
+            return Err(LOCAL_BUSY.into());
+        }
         p.set_selection(&Selection::Local)?;
         let _ = p.with_db(|c| Ok(assist::remember_local(c, key)));
-        let running = p.runtime.local_status().active.is_some_and(|m| m.key == key);
         if !running {
             let key = key.to_string();
             spawn_op(app, move |app| async move { app.state::<AppState>().picky.runtime.activate(&key).await });
@@ -334,19 +391,20 @@ pub fn select(app: &AppHandle, choice: &str) -> Result<(), String> {
 }
 
 pub fn stop_model(app: &AppHandle) -> Result<(), String> {
-    if app.state::<AppState>().picky.runs.busy() {
-        return Err("正在生成回复，等它写完再停止模型。".into());
+    if app.state::<AppState>().picky.runs.using("local") {
+        return Err("本地模型正在回答，等它答完再停止。".into());
     }
     spawn_op(app, |app| async move { app.state::<AppState>().picky.runtime.stop().await });
     Ok(())
 }
 
-pub fn embedding(app: &AppHandle, action: &str) -> Result<(), String> {
+/// Starts or stops the embedding / rerank service (from settings or the menu bar).
+pub fn service(app: &AppHandle, svc: Svc, action: &str) -> Result<(), String> {
     if !["start", "stop"].contains(&action) {
         return Err(format!("不认识的操作：{action}"));
     }
     let action = action.to_string();
-    spawn_op(app, move |app| async move { app.state::<AppState>().picky.runtime.emb_control(&action).await });
+    spawn_op(app, move |app| async move { app.state::<AppState>().picky.runtime.service_control(svc, &action).await });
     Ok(())
 }
 
@@ -410,13 +468,33 @@ pub fn picky_refresh(app: AppHandle) {
     spawn_op(&app, |app| async move {
         let st = app.state::<AppState>();
         st.picky.runtime.refresh(true).await;
-        st.picky.runtime.emb_refresh(true).await;
+        for svc in Svc::ALL {
+            st.picky.runtime.service_refresh(svc, true).await;
+        }
     });
 }
 
 #[tauri::command]
-pub fn picky_embedding(app: AppHandle, action: String) -> Result<(), String> {
-    embedding(&app, &action)
+pub fn picky_service(app: AppHandle, service: Svc, action: String) -> Result<(), String> {
+    self::service(&app, service, &action)
+}
+
+/// Chooses the embedding / rerank model (a manifest key). A running service of Pomelo's switches
+/// to it; another embedding model makes the search indexer rebuild the vectors.
+#[tauri::command]
+pub fn picky_service_model(app: AppHandle, service: Svc, key: String) -> Result<(), String> {
+    let p = &app.state::<AppState>().picky;
+    let s = p.runtime.service_status(service);
+    if !s.models.iter().any(|m| m.key == key) {
+        return Err("模型清单里没有这个模型".into());
+    }
+    p.with_db(|c| store::pref_set(c, &service_key(service), &key))?;
+    p.runtime.choose(service, Some(key.clone()));
+    if s.state != runtime::ServiceState::Stopped && s.ours && s.model.is_some_and(|m| m.key != key) {
+        spawn_op(&app, move |app| async move { app.state::<AppState>().picky.runtime.service_control(service, "switch").await });
+    }
+    p.changed();
+    Ok(())
 }
 
 #[tauri::command]
@@ -440,7 +518,10 @@ pub fn picky_issue_action(app: AppHandle, action: Action) -> Result<(), String> 
         }
         Action::OpenServerLog => open(&p.runtime.llm.server_log),
         Action::OpenCatalog => open(&p.runtime.llm.manifest),
-        Action::OpenEmbeddingLog => open(&p.runtime.llm.embedding_log),
+        Action::OpenServiceLog { service } => match p.runtime.service_log(service) {
+            Some(path) => open(&path),
+            None => Err("模型清单里没有这个服务的模型".into()),
+        },
     }
 }
 
@@ -458,9 +539,16 @@ pub fn picky_cloud_model_save(state: State<AppState>, model: CloudModel) -> Resu
 }
 
 #[tauri::command]
+pub fn picky_cloud_models_reorder(state: State<AppState>, ids: Vec<String>) -> Result<(), String> {
+    state.picky.with_db(|c| cloud::reorder_models(c, &ids))?;
+    state.picky.changed();
+    Ok(())
+}
+
+#[tauri::command]
 pub fn picky_cloud_model_delete(state: State<AppState>, id: String) -> Result<(), String> {
     let p = &state.picky;
-    if p.runs.busy() && p.selection() == Selection::Cloud(id.clone()) {
+    if p.runs.using(&format!("cloud:{id}")) {
         return Err("这个模型正在写回复，等它写完再删除。".into());
     }
     p.with_db(|c| cloud::delete_model(c, &id))?;
@@ -473,12 +561,12 @@ pub fn picky_cloud_model_delete(state: State<AppState>, id: String) -> Result<()
 
 #[tauri::command]
 pub fn picky_cloud_key_save(state: State<AppState>, service: Service, key: String) -> Result<(), String> {
-    state.picky.keys.save(service, &key)
+    state.picky.keys.save(service.code(), &key, &format!("Pomelo 小拾 · {}", service.name()))
 }
 
 #[tauri::command]
 pub fn picky_cloud_key_remove(state: State<AppState>, service: Service) -> Result<(), String> {
-    state.picky.keys.remove(service)
+    state.picky.keys.remove(service.code())
 }
 
 #[cfg(test)]
@@ -512,7 +600,7 @@ mod tests {
         p.set_selection(&Selection::Cloud("deepseek-flash".into())).unwrap();
         assert!(p.target().err().unwrap().contains("尚未保存"));
         assert_eq!(p.measure_route().unwrap().model, "cloud:deepseek-flash"); // measuring never needs the key
-        p.keys.save(Service::DeepSeek, "sk-test").unwrap();
+        p.keys.save(Service::DeepSeek.code(), "sk-test", "t").unwrap();
         let r = p.target().unwrap();
         assert_eq!((r.model.as_str(), r.name.as_str()), ("cloud:deepseek-flash", "DeepSeek Flash"));
 

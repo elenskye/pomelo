@@ -35,7 +35,9 @@ export type CoursePatch = { name?: string; note?: string | null };
 /** Omitted key = unchanged; null = clear. Rust auto-fills finishedMonth on → done only if omitted. */
 export type LessonPatch = Partial<Pick<Lesson, "code" | "kindId" | "title" | "status" | "finishedMonth" | "note">>;
 
-export const DRAWING_STATUS: StatusLabels = { unmarked: "待标记", todo: "未开始", doing: "进行中", done: "已完成" };
+export const DRAWING_STATUS: StatusLabels = { unmarked: "未开始", todo: "未开始", doing: "进行中", done: "已完成" };
+/** No 待标记 in 随意画画. */
+export const DRAWING_ORDER: StatusCode[] = ["todo", "doing", "done"];
 
 const api = {
   courses: () => invoke<Course[]>("drawing_courses"),

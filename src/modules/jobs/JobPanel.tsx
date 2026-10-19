@@ -2,8 +2,8 @@
 // off on the timeline below — checking fills today's date, which stays editable. Rust derives the
 // current status (last checked; none = 想投) and 投递日期 (first checked day).
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, ExternalLink, FolderOpen, Settings2, Sparkles } from "lucide-react";
-import { Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/picky/Assist";
+import { Check, ExternalLink, FolderOpen, Settings2 } from "lucide-react";
+import { AssistAction, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/picky/Assist";
 import { usePickyStatus } from "@/modules/picky/api";
 import { homeDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -121,26 +121,18 @@ function Steps(props: { statuses: Status[]; value: DraftStep[]; onChange: (v: Dr
   );
 }
 
-/** 「贴 JD」: 小拾 finds 公司、岗位、地点 in it; the panel fills the empty ones and keeps the JD in 备注. */
-function JdFill(props: { onFill: (f: JobFill, jd: string) => void }) {
+/** 「贴 JD」 (opened from the 公司 label row): 小拾 finds 公司、岗位、地点 in it; the panel fills the empty
+ * ones and keeps the JD in 备注. */
+function JdFill(props: { onFill: (f: JobFill, jd: string) => void; onClose: () => void }) {
   const status = usePickyStatus().data;
   const toast = useToast();
-  const [open, setOpen] = useState(false);
   const [jd, setJd] = useState("");
   const [busy, setBusy] = useState(false);
-  if (!useAssistOn()) return null;
-  if (!open)
-    return (
-      <Button variant="ghost" className="-my-1 -ml-2 self-start" onClick={() => setOpen(true)}>
-        <Sparkles size={14} strokeWidth={1.75} /> 贴 JD
-      </Button>
-    );
   const run = async () => {
     setBusy(true);
     try {
       props.onFill(await assistApi.fillJob(jd), jd);
-      setOpen(false);
-      setJd("");
+      props.onClose();
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
@@ -154,7 +146,7 @@ function JdFill(props: { onFill: (f: JobFill, jd: string) => void }) {
         <Button variant="primary" disabled={!jd.trim() || busy} onClick={() => void run()}>
           {busy ? assistBusyText(status, "正在读 JD…") : "补全"}
         </Button>
-        <Button variant="ghost" onClick={() => setOpen(false)}>
+        <Button variant="ghost" onClick={props.onClose}>
           取消
         </Button>
       </div>
@@ -227,6 +219,7 @@ export function JobPanel(props: {
   // 一句话填好 (new applications): 公司、岗位、地点、渠道, and the step it reached (checked on its day)
   const assistOn = useAssistOn();
   const quick = !j && assistOn;
+  const [jdOpen, setJdOpen] = useState(false);
   const fill = (f: QuickFillResult) => {
     const next = { ...d };
     const keys: (keyof Draft)[] = [];
@@ -298,8 +291,8 @@ export function JobPanel(props: {
       extra={confirmDialog}
     >
       {quick && <QuickFill module="jobs" onFill={fill} autoFocus />}
-      <JdFill onFill={fromJd} />
-      <Field label="公司">
+      <Field label="公司" action={assistOn && !jdOpen && <AssistAction onClick={() => setJdOpen(true)}>贴 JD</AssistAction>}>
+        {jdOpen && <JdFill onFill={fromJd} onClose={() => setJdOpen(false)} />}
         <TextInput autoFocus={!quick} value={d.company} onChange={(e) => set("company", e.target.value)} placeholder="必填" maxLength={100} className={filled.cls("company")} />
       </Field>
       <div className="grid grid-cols-[1fr_8rem] gap-3">

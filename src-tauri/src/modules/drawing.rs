@@ -1,5 +1,6 @@
 //! 随意画画 (drawing courses → lessons, progress). 类型 = kinds.rs (module "drawing").
 //! New lessons append to the end of their course; order comes from import / creation.
+//! Status: 未开始 / 进行中 / 已完成 (no 待标记: one given — an old data file — becomes 未开始).
 //! Pace (小拾 「照现在的速度什么时候画完」): lessons finished in the last `PACE_MONTHS` months (this
 //! month included) ÷ `PACE_MONTHS` = per month; remaining ÷ that, rounded up = months left.
 
@@ -212,7 +213,7 @@ impl Fields {
             code: common::clean(self.code),
             kind_id: self.kind_id,
             title: common::require(&self.title, "课名", 200)?,
-            status: self.status,
+            status: if self.status == Status::Unmarked { Status::Todo } else { self.status },
             finished_month: common::clean(self.finished_month),
             note: common::clean(self.note),
         };
@@ -259,10 +260,21 @@ pub struct Pace {
 
 /// `lessons`: one course's (or several); `today`: YYYY-MM-DD.
 pub fn pace(lessons: &[Lesson], today: &str) -> Pace {
+    pace_of(lessons.iter().map(|l| (l.status, l.finished_month.as_deref())), today)
+}
+
+/// The same over (status, finished month) pairs (循序渐进 too).
+pub fn pace_of<'a>(lessons: impl IntoIterator<Item = (Status, Option<&'a str>)>, today: &str) -> Pace {
     let this = format!("{}-01", &today[..7]);
     let since = common::add_months(&this, 1 - PACE_MONTHS)[..7].to_string();
-    let recent = lessons.iter().filter(|l| l.status == Status::Done && l.finished_month.as_deref().is_some_and(|m| m >= since.as_str() && m <= &today[..7])).count() as i64;
-    let remaining = lessons.iter().filter(|l| l.status != Status::Done).count() as i64;
+    let (mut recent, mut remaining) = (0i64, 0i64);
+    for (status, month) in lessons {
+        if status != Status::Done {
+            remaining += 1;
+        } else if month.is_some_and(|m| m >= since.as_str() && m <= &today[..7]) {
+            recent += 1;
+        }
+    }
     let rate = recent as f64 / PACE_MONTHS as f64;
     let months_left = if remaining == 0 { Some(0) } else if recent == 0 { None } else { Some((remaining as f64 / rate).ceil() as i64) };
     Pace { recent, remaining, rate, months_left, finish: months_left.map(|m| common::add_months(&this, m)[..7].to_string()) }
@@ -545,7 +557,7 @@ mod tests {
         assert_eq!((l1.sort_order, l2.sort_order, l2.code.clone()), (1, 2, None));
         assert_eq!(l2.status, Status::Todo); // new lessons start as 未开始
         let l3 = create_lesson(&c, course_id, lp(json!({"title": "待定", "status": "unmarked"}))).unwrap();
-        assert_eq!(l3.status, Status::Unmarked);
+        assert_eq!(l3.status, Status::Todo); // no 待标记 in 随意画画
         delete_lesson(&c, l3.id).unwrap();
         assert!(create_lesson(&c, course_id, lp(json!({"title": "x", "kindId": kind_id(&c, "books", "虚构")}))).is_err());
         assert!(create_lesson(&c, 999, lp(json!({"title": "x"}))).is_err());

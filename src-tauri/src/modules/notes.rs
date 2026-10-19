@@ -9,9 +9,12 @@
 //! - Tag settings (`note_tag_meta`, by full path): pinned (first-level tags only; listed above the tag
 //!   tree with their sub-tags, in pin order) and an icon (an emoji, or `i:<name>` for one of the UI's
 //!   line icons). They outlive a tag's last note (it comes back with them) and move on rename.
+//! - Attachments (attachments.rs): images and files, ordered; saved with the note (one ⌘Z step), a
+//!   change counts as an edit; they go with the note.
 //! Formatting is the UI's business: **bold**, ==highlight==, ++underline++, `- ` / `1. ` lists
 //! (2 spaces per level), bare URLs.
 
+use super::attachments::{self, AttachmentRecord, FileInfo, Owner};
 use super::common::{self, err};
 use crate::AppState;
 use rusqlite::types::Value;
@@ -221,6 +224,32 @@ pub struct Note {
     pub refs: Vec<Brief>,
     /// Notes quoting this one, oldest first.
     pub backrefs: Vec<Brief>,
+    pub attachments: Vec<FileInfo>,
+    /// Tasks made from it (转成待办 / 拆成待办), oldest first.
+    pub tasks: Vec<NoteTask>,
+}
+
+/// A task made from a note (一步一步 opens it by group / goal).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteTask {
+    pub id: i64,
+    pub title: String,
+    pub done: bool,
+    pub group_id: i64,
+    pub goal_id: Option<i64>,
+}
+
+/// Tasks made from notes, by note.
+fn tasks_from(conn: &Connection) -> Result<HashMap<i64, Vec<NoteTask>>, String> {
+    let mut st = conn.prepare("SELECT from_note, id, title, done, group_id, goal_id FROM todo_tasks WHERE from_note IS NOT NULL ORDER BY id").map_err(err)?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, NoteTask { id: r.get(1)?, title: r.get(2)?, done: r.get(3)?, group_id: r.get(4)?, goal_id: r.get(5)? }))).map_err(err)?;
+    let mut out: HashMap<i64, Vec<NoteTask>> = HashMap::new();
+    for x in rows {
+        let (n, t) = x.map_err(err)?;
+        out.entry(n).or_default().push(t);
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -254,6 +283,9 @@ pub struct NotePatch {
     /// Ids of quoted notes, in order (replaces the list).
     #[serde(default)]
     pub refs: Option<Vec<i64>>,
+    /// Attachment file ids, in order (replaces the list).
+    #[serde(default)]
+    pub attachments: Option<Vec<i64>>,
 }
 
 type Links = HashMap<i64, Vec<Brief>>;
@@ -322,6 +354,8 @@ pub fn list(conn: &Connection, f: &Filter) -> Result<Vec<Note>, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
     let (mut refs, mut backrefs) = links(conn)?;
+    let mut files = attachments::all_of(conn, Owner::Note)?;
+    let mut tasks = tasks_from(conn)?;
     Ok(rows
         .into_iter()
         .map(|(id, content, pinned, created_at, updated_at)| Note {
@@ -333,6 +367,8 @@ pub fn list(conn: &Connection, f: &Filter) -> Result<Vec<Note>, String> {
             updated_at,
             refs: refs.remove(&id).unwrap_or_default(),
             backrefs: backrefs.remove(&id).unwrap_or_default(),
+            attachments: files.remove(&id).unwrap_or_default(),
+            tasks: tasks.remove(&id).unwrap_or_default(),
         })
         .collect())
 }
@@ -398,6 +434,7 @@ fn sync_tags(conn: &Connection, id: i64, content: &str) -> Result<(), String> {
 pub fn create(conn: &Connection, p: NotePatch) -> Result<Note, String> {
     let content = clean_content(p.content.as_deref().unwrap_or(""))?;
     let refs = clean_refs(conn, None, &p.refs.unwrap_or_default())?;
+    let files = attachments::clean_ids(conn, &p.attachments.unwrap_or_default())?;
     let stamp = fresh_stamp(conn)?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
@@ -408,6 +445,7 @@ pub fn create(conn: &Connection, p: NotePatch) -> Result<Note, String> {
     let id = tx.last_insert_rowid();
     sync_tags(&tx, id, &content)?;
     set_refs(&tx, id, &refs)?;
+    attachments::set(&tx, Owner::Note, id, &files)?;
     tx.commit()?;
     get(conn, id)
 }
@@ -424,8 +462,13 @@ pub fn update(conn: &Connection, id: i64, p: NotePatch) -> Result<Note, String> 
         Some(r) => clean_refs(conn, Some(id), r)?,
         None => old_refs.clone(),
     };
+    let old_files: Vec<i64> = old.attachments.iter().map(|f| f.id).collect();
+    let files = match &p.attachments {
+        Some(a) => attachments::clean_ids(conn, a)?,
+        None => old_files.clone(),
+    };
     let pinned = p.pinned.unwrap_or(old.pinned);
-    let edited = content != old.content || refs != old_refs;
+    let edited = content != old.content || refs != old_refs || files != old_files;
     if !edited && pinned == old.pinned {
         return Ok(old);
     }
@@ -435,6 +478,7 @@ pub fn update(conn: &Connection, id: i64, p: NotePatch) -> Result<Note, String> 
             .map_err(err)?;
         sync_tags(&tx, id, &content)?;
         set_refs(&tx, id, &refs)?;
+        attachments::set(&tx, Owner::Note, id, &files)?;
     } else {
         tx.execute("UPDATE notes SET pinned = ?1 WHERE id = ?2", params![pinned, id]).map_err(err)?;
     }
@@ -447,7 +491,7 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
     if conn.execute("DELETE FROM notes WHERE id = ?1", [id]).map_err(err)? == 0 {
         return Err(gone());
     }
-    Ok(())
+    attachments::prune(conn)
 }
 
 /// Moves `from` (and its sub-tags) to `to` in every note using it; returns how many changed.
@@ -638,7 +682,8 @@ pub fn overview(conn: &Connection) -> Result<Overview, String> {
     Ok(Overview { total, days, tags, pinned })
 }
 
-// ---------- import / export: { notes: [{ content, pinned?, refs?: [createdAt], createdAt, updatedAt }],
+// ---------- import / export: { notes: [{ content, pinned?, refs?: [createdAt], attachments?: [{ name, sha256 }],
+//            createdAt, updatedAt }],
 //            tags?: [{ tag, pinned?, icon? }] (pinned ones in pin order) } ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -650,6 +695,9 @@ pub struct NoteRecord {
     /// createdAt of the quoted notes, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refs: Vec<String>,
+    /// v13 and older: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRecord>,
     /// Missing = now (then nothing can quote it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
@@ -688,6 +736,7 @@ pub fn validate_records(rec: &NotesRecord) -> Result<(), String> {
     for (i, n) in rec.notes.iter().enumerate() {
         let ctx = |e: String| format!("{LABEL}第 {} 条：{e}", i + 1);
         clean_content(&n.content).map_err(ctx)?;
+        attachments::check_records(&n.attachments).map_err(ctx)?;
         if let Some(s) = &n.created_at {
             check_stamp(s).map_err(ctx)?;
             if let Some(j) = stamps.insert(s, i) {
@@ -727,7 +776,14 @@ pub fn count(conn: &Connection) -> Result<i64, String> {
 /// Replaces all notes. Caller owns the transaction.
 pub fn replace_all(conn: &Connection, rec: &NotesRecord) -> Result<usize, String> {
     validate_records(rec)?;
+    // tasks made from notes find theirs again by createdAt (others are unlinked)
+    let made_from: Vec<(i64, String)> = {
+        let mut st = conn.prepare("SELECT t.id, n.created_at FROM todo_tasks t JOIN notes n ON n.id = t.from_note").map_err(err)?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)?
+    };
     conn.execute("DELETE FROM notes", []).map_err(err)?;
+    attachments::prune(conn)?;
     let mut ids: HashMap<&str, i64> = HashMap::new();
     let mut made = Vec::with_capacity(rec.notes.len());
     for n in &rec.notes {
@@ -743,6 +799,8 @@ pub fn replace_all(conn: &Connection, rec: &NotesRecord) -> Result<usize, String
         .map_err(|e| format!("{LABEL}：{e}"))?;
         let id = conn.last_insert_rowid();
         sync_tags(conn, id, &content)?;
+        let files = attachments::import_records(conn, &n.attachments)?;
+        attachments::set(conn, Owner::Note, id, &files)?;
         if let Some(s) = &n.created_at {
             ids.insert(s, id);
         }
@@ -758,6 +816,9 @@ pub fn replace_all(conn: &Connection, rec: &NotesRecord) -> Result<usize, String
         // v10 files may pin a sub-tag: dropped, as migration 22 did
         put_meta(conn, &tag, ((t.pinned && !tag.contains('/')).then_some(i as i64 + 1), clean_icon(t.icon.clone())?))?;
     }
+    for (task, at) in made_from {
+        conn.execute("UPDATE todo_tasks SET from_note = (SELECT id FROM notes WHERE created_at = ?2) WHERE id = ?1", params![task, at]).map_err(err)?;
+    }
     Ok(rec.len())
 }
 
@@ -770,16 +831,20 @@ pub fn export(conn: &Connection) -> Result<NotesRecord, String> {
         .collect::<Result<_, _>>()
         .map_err(err)?;
     let (refs, _) = links(conn)?;
+    let files = attachments::all_of(conn, Owner::Note)?;
     let notes = rows
         .into_iter()
-        .map(|(id, content, pinned, created_at, updated_at)| NoteRecord {
-            content,
-            pinned,
-            refs: refs.get(&id).map(|bs| bs.iter().map(|b| b.created_at.clone()).collect()).unwrap_or_default(),
-            created_at: Some(created_at),
-            updated_at: Some(updated_at),
+        .map(|(id, content, pinned, created_at, updated_at)| {
+            Ok(NoteRecord {
+                content,
+                pinned,
+                refs: refs.get(&id).map(|bs| bs.iter().map(|b| b.created_at.clone()).collect()).unwrap_or_default(),
+                attachments: attachments::records_of(files.get(&id).map(Vec::as_slice).unwrap_or_default(), conn)?,
+                created_at: Some(created_at),
+                updated_at: Some(updated_at),
+            })
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY pin_order IS NULL, pin_order, tag").map_err(err)?;
     let tags = st
         .query_map([], |r| Ok(TagRecord { tag: r.get(0)?, pinned: r.get::<_, Option<i64>>(1)?.is_some(), icon: r.get(2)? }))

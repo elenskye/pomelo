@@ -1,11 +1,20 @@
 // Modal for editing a module's 类型 list: rename inline, reorder ↑↓, delete (items → 未分类), add.
+// KindEditor is the dialog itself; 芝麻开门 feeds it its own (encrypted) categories.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
-import { useKindMutations, useKinds, type Kind } from "./api";
+import { useKindMutations, useKinds } from "./api";
 
-function KindName(props: { kind: Kind; onSave: (name: string) => Promise<boolean> }) {
+type EditableKind = { id: number; name: string; count: number };
+export type KindOps = {
+  create: (name: string) => Promise<unknown>;
+  rename: (v: { id: number; name: string }) => Promise<unknown>;
+  remove: (id: number) => Promise<unknown>;
+  reorder: (ids: number[]) => Promise<unknown>;
+};
+
+function KindName(props: { kind: EditableKind; noun: string; onSave: (name: string) => Promise<boolean> }) {
   const [v, setV] = useState(props.kind.name);
   useEffect(() => setV(props.kind.name), [props.kind.name]);
   const commit = async () => {
@@ -16,7 +25,7 @@ function KindName(props: { kind: Kind; onSave: (name: string) => Promise<boolean
   return (
     <input
       value={v}
-      aria-label={`类型名称：${props.kind.name}`}
+      aria-label={`${props.noun}名称：${props.kind.name}`}
       spellCheck={false}
       onChange={(e) => setV(e.target.value)}
       onBlur={() => void commit()}
@@ -43,14 +52,20 @@ export function KindManager(props: {
   onClose: () => void;
   noun?: string; // 类型 (default) | 类别
 }) {
+  const { data: kinds = [] } = useKinds(props.module);
+  const m = useKindMutations(props.module, props.itemsKey);
+  const ops: KindOps = { create: m.create.mutateAsync, rename: m.rename.mutateAsync, remove: m.remove.mutateAsync, reorder: m.reorder.mutateAsync };
+  return <KindEditor kinds={kinds} ops={ops} moduleLabel={props.moduleLabel} unit={props.unit} onClose={props.onClose} noun={props.noun} />;
+}
+
+export function KindEditor(props: { kinds: EditableKind[]; ops: KindOps; moduleLabel: string; unit: string; onClose: () => void; noun?: string }) {
+  const { kinds, ops } = props;
   const noun = props.noun ?? "类型";
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
   }, []);
-  const { data: kinds = [] } = useKinds(props.module);
-  const m = useKindMutations(props.module, props.itemsKey);
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
   const [newName, setNewName] = useState("");
@@ -67,9 +82,9 @@ export function KindManager(props: {
   const move = (i: number, d: -1 | 1) => {
     const ids = kinds.map((k) => k.id);
     [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
-    void run(m.reorder.mutateAsync(ids));
+    void run(ops.reorder(ids));
   };
-  const remove = async (k: Kind) => {
+  const remove = async (k: EditableKind) => {
     const ok =
       k.count === 0 ||
       (await confirm({
@@ -78,11 +93,11 @@ export function KindManager(props: {
         confirmLabel: "删除",
         danger: true,
       }));
-    if (ok) void run(m.remove.mutateAsync(k.id));
+    if (ok) void run(ops.remove(k.id));
   };
   const add = async (e: FormEvent) => {
     e.preventDefault();
-    if (newName.trim() && (await run(m.create.mutateAsync(newName)))) setNewName("");
+    if (newName.trim() && (await run(ops.create(newName)))) setNewName("");
   };
 
   return (
@@ -102,7 +117,7 @@ export function KindManager(props: {
       <ul className="-mx-1 mt-3 max-h-80 space-y-0.5 overflow-y-auto p-1">
         {kinds.map((k, i) => (
           <li key={k.id} className="flex items-center gap-1 rounded-control pr-1 hover:bg-muted/60">
-            <KindName kind={k} onSave={(name) => run(m.rename.mutateAsync({ id: k.id, name }))} />
+            <KindName kind={k} noun={noun} onSave={(name) => run(ops.rename({ id: k.id, name }))} />
             <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
               {k.count} {props.unit}
             </span>

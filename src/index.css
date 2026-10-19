@@ -41,6 +41,24 @@
   --status-done-bg: #e2f0d6;
   --status-done-fg: #3f6d27;
 
+  /* option / 类型 tags (五花八门 单选多选, 循序渐进 类型): by position, blue orange green yellow pink purple teal gray */
+  --tag-1-bg: #e3edf8;
+  --tag-1-fg: #33628f;
+  --tag-2-bg: #fce8dc;
+  --tag-2-fg: #a4471a;
+  --tag-3-bg: #e2f0d6;
+  --tag-3-fg: #3f6d27;
+  --tag-4-bg: #fbefc8;
+  --tag-4-fg: #855c00;
+  --tag-5-bg: #fbe4ee;
+  --tag-5-fg: #a3375f;
+  --tag-6-bg: #ece6f7;
+  --tag-6-fg: #6a4fa8;
+  --tag-7-bg: #dcf0ec;
+  --tag-7-fg: #22706a;
+  --tag-8-bg: #efece6;
+  --tag-8-fg: #6f685f;
+
   --module-books: #3a7fba;
   --module-films: #8466c4;
   --module-drawing: #cc5540;
@@ -49,6 +67,9 @@
   --module-finance: #2e8b80;
   --module-jobs: #9c5b8f;
   --module-notes: #9a6b4a;
+  --module-days: #c2547a;
+  --module-list: #4e5fb0;
+  --module-progress: #7d7a2a;
   --module-vault: #64748b;
   --module-picky: #c96e28;
 
@@ -93,6 +114,23 @@
     --status-doing-fg: #e8c063;
     --status-done-bg: #25341e;
     --status-done-fg: #93c77a;
+
+    --tag-1-bg: #22303f;
+    --tag-1-fg: #8db8e6;
+    --tag-2-bg: #3d2a1f;
+    --tag-2-fg: #f0a37a;
+    --tag-3-bg: #25341e;
+    --tag-3-fg: #93c77a;
+    --tag-4-bg: #3a3120;
+    --tag-4-fg: #e8c063;
+    --tag-5-bg: #3d2430;
+    --tag-5-fg: #ec96b8;
+    --tag-6-bg: #2e2740;
+    --tag-6-fg: #b9a3ec;
+    --tag-7-bg: #1e3532;
+    --tag-7-fg: #7ccdc2;
+    --tag-8-bg: #34322f;
+    --tag-8-fg: #b3aca2;
 
     --chart-1: #3987e5;
     --chart-2: #d95926;

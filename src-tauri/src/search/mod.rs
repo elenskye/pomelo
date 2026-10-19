@@ -1,8 +1,21 @@
+//! Search (v0.4): search.db and its indexer keep a word index and vectors of every record
+//! (store.rs, sources.rs, text.rs, vectors.rs, indexer.rs); query.rs is the one entry for
+//! searching by words, by meaning or both. Until v0.4 phase 3 moves ⌘K onto it, ⌘K is below.
+//!
 //! 全局搜索 (⌘K): one box over every module except 芝麻开门 (never searched). A record matches when
 //! each word of the query appears somewhere in its text (case-insensitive substring). Per source at
 //! most `PER_SOURCE` hits; titles that start with the first word come first, then the newest.
 //! A hit carries what the UI needs to open it: module + kind + id (and parent / day where a page
 //! needs them). 小拾's conversations come from picky.db (picky/find.rs), after the rest.
+
+pub mod indexer;
+pub mod query;
+pub mod sources;
+pub mod store;
+pub mod text;
+pub mod vectors;
+
+pub use indexer::Search;
 
 use crate::modules::common::err;
 use crate::modules::notes;
@@ -17,8 +30,8 @@ const MAX_WORDS: usize = 8;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hit {
-    /// Module id (route), e.g. "books".
-    pub module: &'static str,
+    /// Module id (route), e.g. "books" or a made module's "list/3".
+    pub module: String,
     /// What it is inside the module, e.g. "lesson" (see SOURCES).
     pub kind: &'static str,
     pub id: i64,
@@ -36,7 +49,8 @@ pub struct Hit {
 }
 
 /// One searchable source: its SELECT yields, by position, id, title, detail, parent, day, amount,
-/// currency, flow, hay (the text the words are looked for in) and ord (bigger = listed first on ties).
+/// currency, flow, hay (the text the words are looked for in) and ord (bigger = listed first on ties);
+/// a source of made modules (module ending in "/") adds the row's module key.
 struct Source {
     module: &'static str,
     kind: &'static str,
@@ -135,6 +149,33 @@ const SOURCES: &[Source] = &[
         kind: "note",
         sql: "SELECT id, content, NULL, NULL, date(created_at, 'localtime'), NULL, NULL, NULL, content, created_at FROM notes",
     },
+    Source {
+        module: "days",
+        kind: "day",
+        sql: "SELECT id, name, CASE kind WHEN 'birthday' THEN '生日' WHEN 'document' THEN '证件' ELSE '纪念日' END, NULL, NULL, NULL, NULL, NULL,
+                name || ' ' || coalesce(note, '') || ' ' || coalesce(ideas, ''), id FROM days",
+    },
+    // 五花八门 / 循序渐进 (search/sources.rs has the same text)
+    Source {
+        module: "list/",
+        kind: "list_item",
+        sql: "SELECT i.id, i.name, NULL, NULL, NULL, NULL, NULL, NULL,
+                i.name || ' ' || coalesce((SELECT group_concat(CASE f.type WHEN 'multi' THEN (SELECT group_concat(x.value, ' ') FROM json_each(j.value) x) ELSE j.value END, ' ')
+                  FROM json_each(i.data) j JOIN list_fields f ON f.id = CAST(j.key AS INTEGER) WHERE f.type IN ('text', 'longtext', 'select', 'multi', 'link')), ''),
+                i.id, 'list/' || i.module_id FROM list_items i",
+    },
+    Source {
+        module: "progress/",
+        kind: "progress_course",
+        sql: "SELECT id, name, NULL, NULL, NULL, NULL, NULL, NULL, name || ' ' || coalesce(note, ''), id, 'progress/' || module_id FROM progress_courses",
+    },
+    Source {
+        module: "progress/",
+        kind: "progress_lesson",
+        sql: "SELECT l.id, coalesce(l.code || ' ', '') || l.title, c.name, l.course_id, NULL, NULL, NULL, NULL,
+                coalesce(l.code, '') || ' ' || l.title || ' ' || coalesce(l.note, ''), l.id, 'progress/' || c.module_id
+              FROM progress_lessons l JOIN progress_courses c ON c.id = l.course_id",
+    },
 ];
 
 /// Hits for `q`, grouped by source in SOURCES order.
@@ -146,9 +187,11 @@ pub fn search(conn: &Connection, q: &str) -> Result<Vec<Hit>, String> {
     let cond = (1..=words.len()).map(|i| format!("instr(lower(hay), ?{i}) > 0")).collect::<Vec<_>>().join(" AND ");
     let mut out = Vec::new();
     for s in SOURCES {
+        let dynamic = s.module.ends_with('/');
+        let (key_col, key_sel) = if dynamic { (", module", "module") } else { ("", "NULL") };
         let sql = format!(
-            "WITH src(id, title, detail, parent, day, amount, currency, flow, hay, ord) AS ({})
-             SELECT id, title, detail, parent, day, amount, currency, flow FROM src WHERE {cond}
+            "WITH src(id, title, detail, parent, day, amount, currency, flow, hay, ord{key_col}) AS ({})
+             SELECT id, title, detail, parent, day, amount, currency, flow, {key_sel} FROM src WHERE {cond}
              ORDER BY instr(lower(title), ?1) = 1 DESC, ord DESC LIMIT {PER_SOURCE}",
             s.sql
         );
@@ -156,7 +199,7 @@ pub fn search(conn: &Connection, q: &str) -> Result<Vec<Hit>, String> {
         let rows = st
             .query_map(params_from_iter(words.iter()), |r| {
                 Ok(Hit {
-                    module: s.module,
+                    module: if dynamic { r.get(8)? } else { s.module.to_string() },
                     kind: s.kind,
                     id: r.get(0)?,
                     title: r.get(1)?,
@@ -226,6 +269,15 @@ mod tests {
         let entry = hits.iter().find(|h| h.kind == "entry").unwrap();
         assert_eq!((entry.day.as_deref(), entry.amount, entry.currency.as_deref()), (Some("2026-10-01"), Some(1250), Some("SGD")));
         assert_eq!(titles(&hits, "note"), ["关于时间的想法"]);
+        // a made module's item: found by a 单选 value, opened by its own key
+        c.execute_batch(
+            "INSERT INTO custom_modules (template, name, icon) VALUES ('list', '游戏', 'shapes');
+             INSERT INTO list_fields (module_id, name, type, options, sort_order) VALUES (1, '平台', 'select', '[\"时间机器\"]', 1);
+             INSERT INTO list_items (module_id, name, data, sort_order) VALUES (1, '塞尔达', '{\"1\":\"时间机器\"}', 1);",
+        )
+        .unwrap();
+        let item = search(&c, "时间").unwrap().into_iter().find(|h| h.kind == "list_item").unwrap();
+        assert_eq!((item.module.as_str(), item.title.as_str()), ("list/1", "塞尔达"));
         for k in ["film", "trip_item", "job"] {
             assert_eq!(titles(&hits, k).len(), 1, "{k}");
         }

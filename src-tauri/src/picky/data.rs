@@ -1,5 +1,5 @@
 //! 小拾查数据 (v0.3.5 「问我的数据」): read-only lookups the model asks for while answering (tool calls).
-//! Rules (requirements.md「小拾懂 Pomelo」, architecture.md「小拾」):
+//! Rules (requirements.md「小拾 · 懂 Pomelo」, architecture.md「小拾」):
 //! - One tool per module (`pomelo_todo` …). Each view runs the module's own read functions, so totals
 //!   and derived numbers are the pages' (jobs::stats, finance::assets / totals, todo::agenda …); only
 //!   the wording for the model is here. Results are compact Chinese text cut to the room left in the
@@ -7,6 +7,8 @@
 //! - Never read: 芝麻开门 (no tool exists) and modules hidden in 设置 → 侧栏 (no tool offered; a call
 //!   anyway is refused). For a cloud model, modules not allowed to go to the cloud (设置 → 小拾,
 //!   `data.cloud`; default 钱来钱往 local only) are refused with the sentence the answer starts with.
+//! - 五花八门 / 循序渐进: one tool each (`pomelo_lists`, `pomelo_progress`) for every module made from
+//!   it; each made module is hidden / allowed for the cloud on its own (key "list/3"), like a module.
 //! - Tool definitions carry no user data (no names, categories, amounts).
 //! - Nothing here writes Pomelo data.
 
@@ -15,7 +17,8 @@ use super::store::{pref_get, pref_set};
 use crate::modules::common::{self, Status as Mark};
 use crate::modules::finance::{self, AccountKind, Currency, Flow};
 use crate::modules::jobs::{self, Stage};
-use crate::modules::{books, drawing, films, kinds, notes, packing, todo};
+use crate::modules::custom::{self, Template};
+use crate::modules::{books, days, drawing, films, kinds, lists, notes, packing, progress, todo};
 use crate::AppState;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -46,7 +49,11 @@ pub const MODULES: &[Module] = &[
     Module { key: "finance", label: "钱来钱往", tool: "pomelo_finance", cloud: false },
     Module { key: "jobs", label: "投石问路", tool: "pomelo_jobs", cloud: true },
     Module { key: "notes", label: "念念不忘", tool: "pomelo_notes", cloud: true },
+    Module { key: "days", label: "来日方长", tool: "pomelo_days", cloud: true },
 ];
+
+/// The `module` of what a skill (skills/) brought from the web.
+pub const WEB: &str = "web";
 
 fn module(key: &str) -> Option<&'static Module> {
     MODULES.iter().find(|m| m.key == key)
@@ -57,19 +64,24 @@ fn module(key: &str) -> Option<&'static Module> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudSetting {
-    pub module: &'static str,
-    pub label: &'static str,
+    pub module: String,
+    pub label: String,
     pub allowed: bool,
 }
 
-/// Per module (picky.db preferences); unset ones keep their default.
-pub fn cloud_settings(conn: &Connection) -> Result<Vec<CloudSetting>, String> {
+/// Per module (picky.db preferences), then the made ones (allowed unless turned off); unset ones keep
+/// their default.
+pub fn cloud_settings(conn: &Connection, made: &[Made]) -> Result<Vec<CloudSetting>, String> {
     let saved: HashMap<String, bool> = pref_get(conn, CLOUD_KEY).ok().flatten().unwrap_or_default();
-    Ok(MODULES.iter().map(|m| CloudSetting { module: m.key, label: m.label, allowed: saved.get(m.key).copied().unwrap_or(m.cloud) }).collect())
+    let fixed = MODULES.iter().map(|m| CloudSetting { module: m.key.into(), label: m.label.into(), allowed: saved.get(m.key).copied().unwrap_or(m.cloud) });
+    let made = made.iter().map(|m| CloudSetting { module: m.key.clone(), label: m.name.clone(), allowed: saved.get(&m.key).copied().unwrap_or(true) });
+    Ok(fixed.chain(made).collect())
 }
 
-pub fn set_cloud(conn: &Connection, key: &str, allowed: bool) -> Result<(), String> {
-    module(key).ok_or_else(|| format!("没有这个模块：{key}"))?;
+pub fn set_cloud(conn: &Connection, key: &str, allowed: bool, made: &[Made]) -> Result<(), String> {
+    if module(key).is_none() && !made.iter().any(|m| m.key == key) {
+        return Err(format!("没有这个模块：{key}"));
+    }
     let mut saved: HashMap<String, bool> = pref_get(conn, CLOUD_KEY).ok().flatten().unwrap_or_default();
     saved.insert(key.to_string(), allowed);
     pref_set(conn, CLOUD_KEY, &saved)
@@ -83,8 +95,27 @@ pub struct Access {
     pub hidden: Vec<String>,
     /// The answer comes from a cloud model.
     pub cloud: bool,
-    /// Modules that may go to cloud models.
+    /// Modules that may go to cloud models (made ones by key).
     pub cloud_allowed: Vec<String>,
+    /// The modules made from 五花八门 / 循序渐进.
+    pub made: Vec<Made>,
+}
+
+/// A module made from 五花八门 / 循序渐进, as 小拾 sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Made {
+    pub key: String,
+    pub name: String,
+    pub template: Template,
+}
+
+/// The made modules (pomelo.db).
+pub fn made(pomelo: &Connection) -> Vec<Made> {
+    custom::all(pomelo).map(|v| v.into_iter().map(|m| Made { key: m.key, name: m.name, template: m.template }).collect()).unwrap_or_default()
+}
+
+pub fn custom_keys(pomelo: &Connection) -> Vec<String> {
+    made(pomelo).into_iter().map(|m| m.key).collect()
 }
 
 pub enum Blocked {
@@ -97,9 +128,10 @@ pub fn hidden(pomelo: &Connection) -> Vec<String> {
     crate::settings::get(pomelo, HIDDEN_KEY).ok().flatten().and_then(|v| serde_json::from_value::<Vec<String>>(v).ok()).unwrap_or_default()
 }
 
-/// Modules allowed to go to cloud models (picky.db).
-pub fn cloud_allowed(picky: &Connection) -> Vec<String> {
-    cloud_settings(picky).unwrap_or_default().into_iter().filter(|s| s.allowed).map(|s| s.module.to_string()).collect()
+/// Modules allowed to go to cloud models (picky.db), with the made ones among `customs` (keys).
+pub fn cloud_allowed(picky: &Connection, customs: &[String]) -> Vec<String> {
+    let made: Vec<Made> = customs.iter().map(|k| Made { key: k.clone(), name: String::new(), template: Template::List }).collect();
+    cloud_settings(picky, &made).unwrap_or_default().into_iter().filter(|s| s.allowed).map(|s| s.module).collect()
 }
 
 impl Access {
@@ -112,16 +144,46 @@ impl Access {
             Ok(())
         }
     }
+    /// A made module (by key): hidden, or not for this cloud model.
+    fn check_made(&self, key: &str) -> Result<(), Blocked> {
+        if self.hidden.iter().any(|h| h == key) {
+            Err(Blocked::Hidden)
+        } else if self.cloud && !self.cloud_allowed.iter().any(|a| a == key) {
+            Err(Blocked::Cloud)
+        } else {
+            Ok(())
+        }
+    }
+    /// This answer may read `module` (小拾's own conversations always).
+    pub fn allows(&self, module: &str) -> bool {
+        module == "picky" || self.check_key(module)
+    }
+    fn check_key(&self, key: &str) -> bool {
+        match (custom::parse_key(key), Template::parse(key)) {
+            (Some(_), _) => self.check_made(key).is_ok(),
+            // a result about several made modules: all of them must be readable
+            (None, Some(t)) => self.made.iter().filter(|m| m.template == t).all(|m| self.check_made(&m.key).is_ok()),
+            _ => MODULES.iter().find(|m| m.key == key).is_some_and(|m| self.check(m).is_ok()),
+        }
+    }
     /// An earlier result may go to this model (its module is readable and allowed here).
     pub fn may_send(&self, q: &Query) -> bool {
-        q.module.as_deref().and_then(module).is_some_and(|m| self.check(m).is_ok())
+        // what a skill found on the web is no one's private data: it always goes along
+        q.module.as_deref() == Some(WEB) || q.module.as_deref().is_some_and(|m| self.check_key(m))
+    }
+    /// Made modules of `t` with a tool this time (hidden ones don't count).
+    pub(crate) fn made_offered(&self, t: Template) -> Vec<&Made> {
+        self.made.iter().filter(|m| m.template == t && !self.hidden.contains(&m.key)).collect()
     }
     /// Modules that have a tool this time (hidden ones don't; cloud-refused ones do, to say so).
     pub fn offered(&self) -> Vec<&'static Module> {
         MODULES.iter().filter(|m| !self.hidden.iter().any(|h| h == m.key)).collect()
     }
-    fn refused(&self) -> Vec<&'static Module> {
-        self.offered().into_iter().filter(|m| matches!(self.check(m), Err(Blocked::Cloud))).collect()
+    /// Labels of the modules this cloud model may not get (made ones by name).
+    fn refused(&self) -> Vec<String> {
+        let fixed = self.offered().into_iter().filter(|m| matches!(self.check(m), Err(Blocked::Cloud))).map(|m| m.label.to_string());
+        let made = self.made.iter().filter(|m| matches!(self.check_made(&m.key), Err(Blocked::Cloud))).map(|m| m.name.clone());
+        fixed.chain(made).collect()
     }
 }
 
@@ -133,7 +195,8 @@ fn cloud_sentence(labels: &[&str]) -> String {
 const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 
 /// The part of the system message about looking things up.
-pub fn instructions(today: &str, access: &Access) -> String {
+/// `verify`: 书单 / 影单检索 are offered (recommendations get checked).
+pub fn instructions(today: &str, access: &Access, verify: bool) -> String {
     let wd = WEEKDAYS[(common::weekday(today) as usize + 6) % 7];
     let monday = jobs::week_start(today);
     let (last_mon, last_sun) = (common::add_days(&monday, -7), common::add_days(&monday, -1));
@@ -145,13 +208,15 @@ pub fn instructions(today: &str, access: &Access) -> String {
          - 合计、平均、占比、变化、天数、预计完成这类数字以查到的为准，直接引用，不要自己重新加总或推算。\n\
          - 用户没说时间时，自己选合适的时间段，并在回答里写明看的是哪段时间。\n\
          - 查到的内容里没有的，就说没有记录，不要编造。提到具体的记录时写出它的完整名称。\n\
-         - 要推荐书、电影或剧时，先用 view taste 看用户的口味，再推荐用户单子里还没有的新作品（用你自己的知识，不联网，说明可能不准）；不要只把用户读过看过的列一遍。\n\
+         - 要推荐书、电影或剧时，先用 view taste 看用户的口味，再推荐用户单子里还没有的新作品（{}）；不要只把用户读过看过的列一遍。\n\
          - 出行清单可能漏了什么，除了查到的，也可以按目的地和天数用常识补充。\n\
-         - 问题后面附了【我正在看的页面】时，「这条」「这个」「这些」指那里打开或选中的记录：先用它回答，不够再查。"
+         - 问题后面附了【我正在看的页面】时，「这条」「这个」「这些」指那里打开或选中的记录：先用它回答，不够再查。\n{}",
+        if verify { "推荐的每一部先用书单检索 / 影单检索核对，再写进回答" } else { "用你自己的知识，不联网，说明可能不准" },
+        super::cite::INSTRUCTIONS
     );
-    let refused: Vec<&str> = access.refused().iter().map(|m| m.label).collect();
+    let refused = access.refused();
     if !refused.is_empty() {
-        let sentence = cloud_sentence(&refused);
+        let sentence = cloud_sentence(&refused.iter().map(String::as_str).collect::<Vec<_>>());
         s.push_str(&format!("\n- 这些模块的数据不能发给现在用的云端模型：{}。问题涉及它们时不要查，在回答开头写明「{sentence}」，并提醒可以换本地模型再问。", refused.join("、")));
     }
     s
@@ -229,12 +294,50 @@ fn definition(m: &Module) -> Value {
             &["search", "recent", "tags"],
             json!({ "keyword": text("search：几个相关的词，空格隔开（比如找读书相关的写「读书 书 阅读 摘抄」）"), "tag": text("只看这个标签（含下一级）"), "from": date_param("开始日期"), "to": date_param("结束日期") }),
         ),
+        "days" => tool(
+            m.tool,
+            "来日方长（重要的日子：纪念日和倒数日、亲友的生日、证件到期）。天数、第几周年、几岁都已算好。view：soon 快到的（到了提前提醒的天数的、过期的证件）和接下来 60 天里的；list 全部日子（日期、下一次、还有 / 已经几天、重复、提醒、备注；生日还有礼物点子和送过的礼物；可按类型、关键词筛选）。",
+            &["soon", "list"],
+            json!({ "kind": { "type": "string", "enum": ["day", "birthday", "document"], "description": "list：day 纪念日和倒数日，birthday 生日，document 证件" }, "keyword": text("list：名称、备注或礼物里的字") }),
+        ),
         _ => Value::Null,
     }
 }
 
+pub const LISTS_TOOL: &str = "pomelo_lists";
+pub const PROGRESS_TOOL: &str = "pomelo_progress";
+
+fn made_definition(t: Template) -> Value {
+    let text = |d: &str| json!({ "type": "string", "description": d });
+    match t {
+        Template::List => tool(
+            LISTS_TOOL,
+            "五花八门（用户自己建的清单，比如游戏、想去的地方；每个清单有自己的字段）。view：lists 全部清单（名称、字段和类型、条数）；items 某个清单的全部条目和每个字段的值（list 填清单名里的字；keyword 只看名称或文字里含这些字的）。",
+            &["lists", "items"],
+            json!({ "list": text("items：清单名里的字"), "keyword": text("items：名称或文字里的字") }),
+        ),
+        Template::Progress => tool(
+            PROGRESS_TOOL,
+            "循序渐进（用户自己建的进度，分两层，比如课程 → 课节、季 → 集，每个进度叫法不同）。view：overview 全部进度：每一项完成了几节、进行中的、下一节、最近 6 个月的速度和照这个速度哪个月完成；lessons 某一项里的每一节（name 填那一项的名字里的字，可以在前面加上进度的名字；可按状态筛选）。",
+            &["overview", "lessons"],
+            json!({ "name": text("lessons：那一项的名字里的字"), "status": { "type": "string", "enum": ["todo", "doing", "done"], "description": "todo 未开始，doing 进行中，done 已完成" } }),
+        ),
+    }
+}
+
+/// The modules' views, then searching across them and reading a result (cite.rs).
 pub fn tools(access: &Access) -> Vec<Value> {
-    access.offered().into_iter().map(definition).collect()
+    let mut out: Vec<Value> = access.offered().into_iter().map(definition).collect();
+    for t in [Template::List, Template::Progress] {
+        if !access.made_offered(t).is_empty() {
+            out.push(made_definition(t));
+        }
+    }
+    if !out.is_empty() {
+        out.extend(super::cite::tools(access));
+        out.extend(super::act::tools(access));
+    }
+    out
 }
 
 // ---------- running a call ----------
@@ -260,7 +363,7 @@ fn rec(module: &str, kind: &str, id: i64, title: &str) -> Rec {
 /// What a call produced. state: ok | blocked | failed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Answer {
-    pub module: Option<&'static str>,
+    pub module: Option<String>,
     pub label: String,
     pub state: &'static str,
     /// What the model gets.
@@ -334,17 +437,20 @@ impl Found {
 
 /// Runs one call for the model. `budget`: tokens the result may take.
 pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, today: &str, budget: i64) -> Answer {
+    if name == LISTS_TOOL || name == PROGRESS_TOOL {
+        return made_run(conn, access, if name == LISTS_TOOL { Template::List } else { Template::Progress }, arguments, today, budget);
+    }
     let Some(m) = MODULES.iter().find(|m| m.tool == name) else {
         return Answer { module: None, label: format!("没有这个查询：{}", clip(name, 40)), state: "failed", text: format!("没有叫 {name} 的工具，只能用给出的这些。"), records: vec![] };
     };
     match access.check(m) {
         Err(Blocked::Hidden) => {
-            return Answer { module: Some(m.key), label: format!("{} · 已隐藏，没看", m.label), state: "blocked", text: format!("没有查：{}在侧栏里隐藏了，小拾不读它的数据。", m.label), records: vec![] }
+            return Answer { module: Some(m.key.into()), label: format!("{} · 已隐藏，没看", m.label), state: "blocked", text: format!("没有查：{}在侧栏里隐藏了，小拾不读它的数据。", m.label), records: vec![] }
         }
         Err(Blocked::Cloud) => {
             let sentence = cloud_sentence(&[m.label]);
             return Answer {
-                module: Some(m.key),
+                module: Some(m.key.into()),
                 label: format!("{} · 不发给云端，没看", m.label),
                 state: "blocked",
                 text: format!("没有查：{}的数据不发给云端模型。请在回答开头写明「{sentence}」，并提醒可以换本地模型再问。", m.label),
@@ -366,20 +472,21 @@ pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, toda
         "drawing" => drawing_view(conn, &args, today),
         "packing" => packing_view(conn, &args, today),
         "notes" => notes_view(conn, &args, today),
+        "days" => days_view(conn, &args, today),
         _ => Err("没有这个模块".into()),
     };
     match found {
         Ok(f) => {
             let label = format!("{} · {}", m.label, f.label);
             let (text, records) = f.render(budget.min(MAX_RESULT));
-            Answer { module: Some(m.key), label, state: "ok", text, records }
+            Answer { module: Some(m.key.into()), label, state: "ok", text, records }
         }
         Err(e) => failed(m, e),
     }
 }
 
 fn failed(m: &Module, e: String) -> Answer {
-    Answer { module: Some(m.key), label: format!("{} · 没查成", m.label), state: "failed", text: format!("没查成：{e}"), records: vec![] }
+    Answer { module: Some(m.key.into()), label: format!("{} · 没查成", m.label), state: "failed", text: format!("没查成：{e}"), records: vec![] }
 }
 
 struct Args(Value);
@@ -1320,10 +1427,15 @@ fn films_view(conn: &Connection, a: &Args) -> Result<Found, String> {
 // ---------- 随意画画 ----------
 
 fn pace_text(p: &drawing::Pace) -> String {
+    pace_words(p, "节", "画完")
+}
+
+/// `unit`: what a lesson is called; `verb`: 画完 / 完成.
+fn pace_words(p: &drawing::Pace, unit: &str, verb: &str) -> String {
     match (p.months_left, &p.finish) {
-        (Some(0), _) => "全部画完了".into(),
-        (Some(m), Some(f)) => format!("还剩 {} 节，最近 {} 个月画完 {} 节（每月约 {:.1} 节），照这个速度还要约 {m} 个月，{}前后画完", p.remaining, drawing::PACE_MONTHS, p.recent, p.rate, month_text(f)),
-        _ => format!("还剩 {} 节，最近 {} 个月没有画完的，没法估计什么时候画完", p.remaining, drawing::PACE_MONTHS),
+        (Some(0), _) => format!("全部{verb}了"),
+        (Some(m), Some(f)) => format!("还剩 {} {unit}，最近 {} 个月{verb} {} {unit}（每月约 {:.1} {unit}），照这个速度还要约 {m} 个月，{}前后{verb}", p.remaining, drawing::PACE_MONTHS, p.recent, p.rate, month_text(f)),
+        _ => format!("还剩 {} {unit}，最近 {} 个月没有{verb}的，没法估计什么时候{verb}", p.remaining, drawing::PACE_MONTHS),
     }
 }
 
@@ -1559,6 +1671,267 @@ fn notes_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String>
     }
 }
 
+// ---------- 来日方长 ----------
+
+fn day_when(d: &days::Day) -> String {
+    match d.days {
+        0 => "就是今天".into(),
+        n if n > 0 => format!("还有 {n} 天"),
+        n if d.kind == days::Kind::Document => format!("已过期 {} 天", -n),
+        n => format!("已经 {} 天", -n),
+    }
+}
+
+fn remind_text(r: &[i64]) -> String {
+    if r.is_empty() {
+        return String::new();
+    }
+    let leads: Vec<String> = r.iter().map(|n| if *n == 0 { "当天".into() } else { format!("提前 {n} 天") }).collect();
+    format!("{}提醒", leads.join("、"))
+}
+
+/// One day, on one line. 证件: name and expiry only (its note never goes to 小拾).
+fn day_bits(d: &days::Day) -> Vec<String> {
+    let date = match (d.kind, d.date.strip_prefix("--")) {
+        (_, Some(m)) => format!("每年 {}（不知道哪年）", md(&format!("0000-{m}"))),
+        (days::Kind::Document, None) => format!("{} 到期", d.date),
+        (days::Kind::Birthday, None) => format!("{} 出生", d.date),
+        _ => d.date.clone(),
+    };
+    let repeat = match (d.kind, d.repeat) {
+        (days::Kind::Day, days::Repeat::Year) => "每年",
+        (days::Kind::Day, days::Repeat::Month) => "每月",
+        (days::Kind::Day, days::Repeat::Week) => "每周",
+        _ => "",
+    };
+    let next = if d.next != d.date { format!("下一次 {}", d.next) } else { String::new() };
+    let nth = match (d.kind, d.nth) {
+        (days::Kind::Birthday, Some(n)) => format!("满 {n} 岁"),
+        (_, Some(n)) => format!("第 {n} 周年"),
+        _ => String::new(),
+    };
+    let mut bits = vec![d.kind.label().to_string(), date, repeat.into(), next, day_when(d), nth, remind_text(&d.remind), if d.pinned { "置顶".into() } else { String::new() }];
+    if d.kind != days::Kind::Document {
+        bits.push(d.note.as_deref().map(|n| format!("备注：{}", clip(n, 200))).unwrap_or_default());
+    }
+    if d.kind == days::Kind::Birthday {
+        bits.push(d.ideas.as_deref().map(|n| format!("礼物点子：{}", clip(n, 200))).unwrap_or_default());
+        bits.push(if d.gifts.is_empty() { String::new() } else { format!("送过：{}", d.gifts.iter().take(10).map(|g| format!("{} {}", g.year, clip(&g.gift, 30))).collect::<Vec<_>>().join("、")) });
+    }
+    bits
+}
+
+fn day_row(d: &days::Day) -> Row {
+    Row { text: format!("- {}：{}", d.name, join_bits(day_bits(d))), rec: Some(rec("days", "day", d.id, &d.name)) }
+}
+
+fn days_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> {
+    let all = days::list(conn, today)?;
+    match a.view(&["soon", "list"])? {
+        "soon" => {
+            let until = 60;
+            let (now, later): (Vec<&days::Day>, Vec<&days::Day>) = all.iter().filter(|d| d.soon || (0..=until).contains(&d.days)).partition(|d| d.soon);
+            let head = vec![format!("今天 {today}。「快到的」是已经到了提前提醒天数的（首页也在提醒）和过期的证件。")];
+            Ok(Found::new(format!("快到的日子（{} 个）", now.len()), head)
+                .section("快到的", now.into_iter().map(day_row).collect())
+                .section(&format!("接下来 {until} 天里的其他日子"), later.into_iter().map(day_row).collect()))
+        }
+        _ => {
+            let kind = a.str("kind").map(|k| days::Kind::parse(&k).ok_or("kind 只能是 day / birthday / document")).transpose()?;
+            let word = a.str("keyword").map(|w| w.to_lowercase());
+            let hit = |d: &days::Day| {
+                let Some(w) = &word else { return true };
+                let mut hay = vec![d.name.clone()];
+                if d.kind != days::Kind::Document {
+                    hay.extend(d.note.clone());
+                    hay.extend(d.ideas.clone());
+                    hay.extend(d.gifts.iter().map(|g| g.gift.clone()));
+                }
+                hay.join("\n").to_lowercase().contains(w.as_str())
+            };
+            let list: Vec<&days::Day> = all.iter().filter(|d| kind.is_none_or(|k| d.kind == k) && hit(d)).collect();
+            let what = kind.map_or("日子", |k| k.label());
+            let head = vec![format!("今天 {today}。{what} {} 个：过期的证件在前，再按还有几天，已经过去的放最后。", list.len())];
+            Ok(Found::new(format!("{what}（{} 个）", list.len()), head).rows(list.into_iter().map(day_row).collect()))
+        }
+    }
+}
+
+// ---------- 五花八门 · 循序渐进 ----------
+
+/// One tool over every made module of `t`: hidden ones aren't there, ones this cloud model may not
+/// get are named (the answer starts with the sentence).
+fn made_run(conn: &Connection, access: &Access, t: Template, arguments: &str, today: &str, budget: i64) -> Answer {
+    let label = t.label();
+    let mine = access.made_offered(t);
+    let refused: Vec<&str> = mine.iter().filter(|m| access.check_made(&m.key).is_err()).map(|m| m.name.as_str()).collect();
+    let readable: Vec<&Made> = mine.iter().copied().filter(|m| access.check_made(&m.key).is_ok()).collect();
+    let answer = |state: &'static str, l: String, text: String| Answer { module: Some(t.as_str().into()), label: l, state, text, records: vec![] };
+    if mine.is_empty() {
+        return answer("blocked", format!("{label} · 没有能读的"), format!("没有查：还没有用{label}建的模块，或者都在侧栏里隐藏了。"));
+    }
+    let sentence = cloud_sentence(&refused);
+    if readable.is_empty() {
+        return answer("blocked", format!("{label} · 不发给云端，没看"), format!("没有查：这些数据不发给云端模型。请在回答开头写明「{sentence}」，并提醒可以换本地模型再问。"));
+    }
+    let found = Args::parse(arguments).and_then(|a| match t {
+        Template::List => lists_view(conn, &a, &readable),
+        Template::Progress => progress_view(conn, &a, &readable, today),
+    });
+    match found {
+        Ok((mut f, key)) => {
+            if !refused.is_empty() {
+                f.head.insert(0, format!("{}的数据不发给云端模型，没有查。请在回答开头写明「{sentence}」。", refused.join("、")));
+            }
+            let l = format!("{label} · {}", f.label);
+            let (text, records) = f.render(budget.min(MAX_RESULT));
+            Answer { module: Some(key.unwrap_or_else(|| t.as_str().into())), label: l, state: "ok", text, records }
+        }
+        Err(e) => answer("failed", format!("{label} · 没查成"), format!("没查成：{e}")),
+    }
+}
+
+/// The made module whose name contains `word` (the only one when there's no word).
+fn pick_made<'a>(readable: &[&'a Made], word: Option<String>, what: &str) -> Result<&'a Made, String> {
+    let names = readable.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join("、");
+    match word.map(|w| w.to_lowercase()) {
+        Some(w) => readable.iter().find(|m| m.name.to_lowercase().contains(&w) || w.contains(&m.name.to_lowercase())).copied().ok_or_else(|| format!("没有名字含「{w}」的{what}（有：{names}）")),
+        None if readable.len() == 1 => Ok(readable[0]),
+        None => Err(format!("要说是哪个{what}（有：{names}）")),
+    }
+}
+
+fn field_text(f: &lists::Field) -> String {
+    match f.kind {
+        lists::FieldType::Select | lists::FieldType::Multi if !f.options.is_empty() => format!("{}（{}：{}）", f.name, f.kind.label(), f.options.join("、")),
+        _ => format!("{}（{}）", f.name, f.kind.label()),
+    }
+}
+
+fn item_line(it: &lists::Item, fs: &[lists::Field]) -> String {
+    let bits: Vec<String> = fs
+        .iter()
+        .filter_map(|f| it.values.get(&f.id.to_string()).map(|v| {
+            let text = lists::value_text(f, v);
+            format!("{} {}", f.name, if f.kind == lists::FieldType::LongText { clip(&text, 300) } else { text })
+        }))
+        .collect();
+    if bits.is_empty() { format!("- {}", it.name) } else { format!("- {}：{}", it.name, bits.join(" · ")) }
+}
+
+fn lists_view(conn: &Connection, a: &Args, readable: &[&Made]) -> Result<(Found, Option<String>), String> {
+    match a.view(&["lists", "items"])? {
+        "lists" => {
+            let mut rows = vec![];
+            for m in readable {
+                let id = custom::parse_key(&m.key).map_or(0, |k| k.1);
+                let fs = lists::fields(conn, id)?;
+                let n = lists::items(conn, id)?.len();
+                let fields = if fs.is_empty() { "只有名称".to_string() } else { format!("名称、{}", fs.iter().map(field_text).collect::<Vec<_>>().join("、")) };
+                rows.push(row(format!("- {}（{n} 条）：字段 {fields}", m.name)));
+            }
+            Ok((Found::new(format!("清单（{} 个）", readable.len()), vec!["要看某个清单的条目用 view items。".into()]).rows(rows), None))
+        }
+        _ => {
+            let m = pick_made(readable, a.str("list"), "清单")?;
+            let id = custom::parse_key(&m.key).map_or(0, |k| k.1);
+            let fs = lists::fields(conn, id)?;
+            let word = a.str("keyword").map(|w| w.to_lowercase());
+            let all = lists::items(conn, id)?;
+            let hit = |it: &lists::Item| {
+                word.as_ref().is_none_or(|w| {
+                    let mut hay = it.name.to_lowercase();
+                    for f in &fs {
+                        if let Some(v) = it.values.get(&f.id.to_string()) {
+                            hay.push('\n');
+                            hay.push_str(&lists::value_text(f, v).to_lowercase());
+                        }
+                    }
+                    hay.contains(w.as_str())
+                })
+            };
+            let list: Vec<&lists::Item> = all.iter().filter(|it| hit(it)).collect();
+            let rows = list.iter().map(|it| Row { text: item_line(it, &fs), rec: Some(rec(&m.key, "list_item", it.id, &it.name)) }).collect();
+            let head = vec![format!(
+                "{}：{} 条{}，按清单里的顺序。字段：{}。没写的字段是没填。",
+                m.name,
+                list.len(),
+                word.as_ref().map(|w| format!("含「{w}」")).unwrap_or_default(),
+                if fs.is_empty() { "只有名称".to_string() } else { fs.iter().map(field_text).collect::<Vec<_>>().join("、") }
+            )];
+            Ok((Found::new(format!("{}（{} 条）", m.name, list.len()), head).rows(rows), Some(m.key.clone())))
+        }
+    }
+}
+
+fn progress_status(s: Mark) -> &'static str {
+    match s {
+        Mark::Done => "已完成",
+        Mark::Doing => "进行中",
+        _ => "未开始",
+    }
+}
+
+fn plesson_title(l: &progress::Lesson) -> String {
+    format!("{}{}", l.code.as_deref().map(|c| format!("{c} ")).unwrap_or_default(), l.title)
+}
+
+fn progress_view(conn: &Connection, a: &Args, readable: &[&Made], today: &str) -> Result<(Found, Option<String>), String> {
+    let words_of = |m: &Made| custom::get(conn, custom::parse_key(&m.key).map_or(0, |k| k.1)).map(|c| (c.course_word, c.lesson_word));
+    match a.view(&["overview", "lessons"])? {
+        "overview" => {
+            let mut sections = vec![];
+            for m in readable {
+                let (cw, lw) = words_of(m)?;
+                let mut rows = vec![];
+                for c in progress::courses(conn, custom::parse_key(&m.key).map_or(0, |k| k.1))? {
+                    let ls = progress::lessons(conn, c.id)?;
+                    let next = progress::next(&ls).map(|l| format!("；下一{lw} {}", plesson_title(l))).unwrap_or_default();
+                    let doing = if c.doing > 0 { format!("，进行中 {}", c.doing) } else { String::new() };
+                    let pace = pace_words(&progress::pace(&ls, today), &lw, "完成");
+                    rows.push(Row { text: format!("- {}：完成 {} / {} {lw}{doing}{next}；{pace}", c.name, c.done, c.total), rec: Some(rec(&m.key, "progress_course", c.id, &c.name)) });
+                }
+                sections.push((format!("{}（{cw} → {lw}）", m.name), rows));
+            }
+            let mut f = Found::new(format!("进度（{} 个）", readable.len()), vec![format!("今天 {today}。")]);
+            for (title, rows) in sections {
+                f = f.section(&title, rows);
+            }
+            Ok((f, None))
+        }
+        _ => {
+            let w = a.str("name").map(|w| w.to_lowercase()).ok_or("lessons 要填 name")?;
+            let status = a.str("status").map(|s| Mark::parse(&s).filter(|s| *s != Mark::Unmarked).ok_or("status 只能是 todo / doing / done")).transpose()?;
+            let mut all = vec![];
+            for m in readable {
+                for c in progress::courses(conn, custom::parse_key(&m.key).map_or(0, |k| k.1))? {
+                    all.push((*m, c));
+                }
+            }
+            let (m, c) = all
+                .iter()
+                .find(|(_, c)| c.name.to_lowercase().contains(&w))
+                .or_else(|| all.iter().find(|(m, c)| format!("{} {}", m.name, c.name).to_lowercase().contains(&w) || w.contains(&c.name.to_lowercase())))
+                .ok_or_else(|| format!("没有名字含「{w}」的一项（有：{}）", all.iter().map(|(m, c)| format!("{} · {}", m.name, c.name)).collect::<Vec<_>>().join("、")))?;
+            let (_, lw) = words_of(m)?;
+            let ls = progress::lessons(conn, c.id)?;
+            let kind_names = kinds::name_map(conn, &m.key)?;
+            let shown: Vec<&progress::Lesson> = ls.iter().filter(|l| status.is_none_or(|s| l.status == s)).collect();
+            let rows = shown
+                .iter()
+                .map(|l| {
+                    let done = l.finished_month.as_deref().filter(|_| l.status == Mark::Done).map(|mo| format!("（{mo}）")).unwrap_or_default();
+                    let note = l.note.as_deref().map(|n| format!(" · 备注：{}", clip(n, 80))).unwrap_or_default();
+                    let kind = l.kind_id.and_then(|k| kind_names.get(&k)).map(|k| format!("（{k}）")).unwrap_or_default();
+                    Row { text: format!("- {}{kind}：{}{done}{note}", plesson_title(l), progress_status(l.status)), rec: Some(Rec { parent: Some(c.id), ..rec(&m.key, "progress_lesson", l.id, &plesson_title(l)) }) }
+                })
+                .collect();
+            let head = vec![format!("{} · {}：完成 {} / {} {lw}，按顺序列出{}。", m.name, c.name, c.done, c.total, status.map(|s| format!("{}的", progress_status(s))).unwrap_or_default())];
+            Ok((Found::new(format!("{} · {}（{} {lw}）", m.name, c.name, shown.len()), head).rows(rows), Some(m.key.clone())))
+        }
+    }
+}
+
 // ---------- mock model (dev builds, tests, mockIpc.ts mirrors it) ----------
 
 /// Which lookups the mock model makes for a question (only among `offered` tools).
@@ -1566,7 +1939,21 @@ pub fn mock_calls(question: &str, system: &str, offered: &[&str]) -> Vec<ToolCal
     let today = system.split("今天是 ").nth(1).map(|s| s.chars().take(10).collect::<String>()).filter(|d| common::check_date(&Some(d.clone()), "").is_ok());
     let Some(today) = today else { return vec![] };
     let has = |words: &[&str]| words.iter().any(|w| question.contains(w));
-    let mut want: Vec<(&str, Value)> = vec![];
+    // a skill the question asks for, or 「查一下《X》」 (skills/)
+    let skilled: Vec<(&str, Value)> = super::skills::mock_calls(question, system).into_iter().filter(|(n, _)| offered.contains(n)).collect();
+    if !skilled.is_empty() {
+        return skilled.into_iter().enumerate().map(|(i, (name, args))| ToolCall { id: format!("mock{i}"), name: name.into(), arguments: args.to_string() }).collect();
+    }
+    let mut want: Vec<(&str, Value)> = super::act::mock_calls(question, system, &today);
+    if !want.is_empty() {
+        // something to write: only that (nothing when its module isn't offered)
+        return want
+            .into_iter()
+            .filter(|(n, _)| offered.contains(n))
+            .enumerate()
+            .map(|(i, (name, args))| ToolCall { id: format!("mock{i}"), name: name.into(), arguments: args.to_string() })
+            .collect();
+    }
     if has(&["跟进"]) {
         want.push(("pomelo_jobs", json!({ "view": "follow_up" })));
     } else if has(&["进展"]) {
@@ -1594,10 +1981,28 @@ pub fn mock_calls(question: &str, system: &str, offered: &[&str]) -> Vec<ToolCal
     if has(&["画"]) {
         want.push(("pomelo_drawing", json!({ "view": "courses" })));
     }
+    if has(&["生日", "礼物"]) {
+        want.push(("pomelo_days", json!({ "view": "list", "kind": "birthday" })));
+    } else if has(&["纪念日", "证件", "到期", "日子"]) {
+        want.push(("pomelo_days", json!({ "view": "soon" })));
+    }
     if has(&["出门", "行李", "漏带"]) {
         want.push(("pomelo_packing", json!({ "view": "trip" })));
     }
-    if has(&["笔记"]) {
+    if has(&["清单"]) {
+        want.push((LISTS_TOOL, json!({ "view": "lists" })));
+    }
+    if has(&["表格", "哪几行", "第几行"]) {
+        want.push((super::office::TABLE_TOOL, json!({ "view": "rows", "from": 1, "to": 5 })));
+    }
+    if has(&["进度"]) {
+        want.push((PROGRESS_TOOL, json!({ "view": "overview" })));
+    }
+    if has(&["记过", "关于", "提到过"]) {
+        // 「我关于租房记过什么」: search across modules for what follows 关于 (else the question)
+        let topic = question.split("关于").nth(1).map(|s| s.split(['记', '的', '？', '?']).next().unwrap_or("").trim().to_string()).filter(|s| !s.is_empty());
+        want.push((super::cite::SEARCH, json!({ "query": topic.unwrap_or_else(|| question.trim().to_string()) })));
+    } else if has(&["笔记"]) {
         want.push(("pomelo_notes", json!({ "view": "recent" })));
     }
     want.into_iter()
@@ -1618,9 +2023,26 @@ pub fn mock_answer(messages: &[Msg]) -> String {
     if !starts.is_empty() {
         out.push_str("\n\n");
     }
-    let read: Vec<&&str> = results.iter().filter(|r| !r.starts_with("没有查")).collect();
+    let carded = results.iter().filter(|r| r.starts_with("已放进确认卡片")).count();
+    let failed: Vec<&str> = results.iter().filter_map(|r| r.strip_prefix("没放进卡片：")).collect();
+    if carded + failed.len() > 0 {
+        if carded > 0 {
+            out.push_str(&format!("这是开发版的**模拟回答**：{carded} 条已放进下面的确认卡片，看一下没问题就点「确认」。"));
+        }
+        for f in failed {
+            out.push_str(&format!("\n\n有一条没放进去：{f}"));
+        }
+        return out;
+    }
+    let read: Vec<&&str> = results.iter().filter(|r| !r.starts_with("没有查") && !r.starts_with("没有提议")).collect();
     if read.is_empty() {
         out.push_str("这是开发版的**模拟回答**。");
+        return out;
+    }
+    // search results: cite the first two like a real answer would
+    let numbers: Vec<String> = read.iter().flat_map(|r| r.lines()).filter_map(|l| l.strip_prefix('[').and_then(|x| x.split_once(']')).map(|(n, _)| n.to_string())).filter(|n| n.chars().all(|c| c.is_ascii_digit())).take(2).collect();
+    if !numbers.is_empty() {
+        out.push_str(&format!("这是开发版的**模拟回答**：搜到的记录里，最相关的是这几条{}。\n", numbers.iter().map(|n| format!("[{n}]")).collect::<String>()));
         return out;
     }
     out.push_str("这是开发版的**模拟回答**，下面是查到的内容的开头：\n");
@@ -1635,12 +2057,14 @@ pub fn mock_answer(messages: &[Msg]) -> String {
 
 #[tauri::command]
 pub fn picky_data_cloud(state: State<AppState>) -> Result<Vec<CloudSetting>, String> {
-    state.picky.with_db(|c| cloud_settings(c))
+    let made = state.with_db(|c| Ok(made(c)))?;
+    state.picky.with_db(|c| cloud_settings(c, &made))
 }
 
 #[tauri::command]
 pub fn picky_data_cloud_set(state: State<AppState>, module: String, allowed: bool) -> Result<(), String> {
-    state.picky.with_db(|c| set_cloud(c, &module, allowed))
+    let made = state.with_db(|c| Ok(made(c)))?;
+    state.picky.with_db(|c| set_cloud(c, &module, allowed, &made))
 }
 
 // ---------- the page a question was asked on (v0.3.5 小窗) ----------
@@ -1690,6 +2114,7 @@ fn kind_module(kind: &str) -> Option<&'static str> {
         "film" => "films",
         "course" | "lesson" => "drawing",
         "trip" | "template" => "packing",
+        "day" => "days",
         "entry" | "account" | "fixed" => "finance",
         "job" => "jobs",
         "note" => "notes",
@@ -1697,7 +2122,7 @@ fn kind_module(kind: &str) -> Option<&'static str> {
     })
 }
 
-fn kind_label(kind: &str) -> &'static str {
+pub(crate) fn kind_label(kind: &str) -> &'static str {
     match kind {
         "task" => "任务",
         "goal" => "目标",
@@ -1713,12 +2138,59 @@ fn kind_label(kind: &str) -> &'static str {
         "fixed" => "固定支出",
         "job" => "投递",
         "note" => "笔记",
+        "day" => "日子",
+        "list_item" => "条目",
+        "progress_course" => "一项进度",
+        "progress_lesson" => "一节",
         _ => "记录",
     }
 }
 
+/// A made module's record in full (五花八门 条目, 循序渐进 一项 / 一节); None for other kinds.
+fn made_record(conn: &Connection, today: &str, r: &PageRef) -> Option<Result<(String, String, Rec), String>> {
+    let item = || -> Result<(String, String, Rec), String> {
+        let it = lists::item(conn, r.id)?;
+        let m = custom::get(conn, it.module_id)?;
+        let fs = lists::fields(conn, it.module_id)?;
+        let mut lines = vec![format!("清单：{}", m.name), format!("名称：{}", it.name)];
+        lines.extend(fs.iter().filter_map(|f| it.values.get(&f.id.to_string()).map(|v| format!("{}：{}", f.name, lists::value_text(f, v)))));
+        Ok((it.name.clone(), lines.join("\n"), rec(&m.key, "list_item", it.id, &it.name)))
+    };
+    let course = || -> Result<(String, String, Rec), String> {
+        let c = progress::course(conn, r.id)?;
+        let m = custom::get(conn, c.module_id)?;
+        let ls = progress::lessons(conn, c.id)?;
+        let lw = &m.lesson_word;
+        let list = ls.iter().map(|l| format!("{}（{}）", plesson_title(l), progress_status(l.status))).collect::<Vec<_>>().join("、");
+        let mut lines = vec![format!("{}：{}", m.name, c.name), format!("进度：完成 {} / {} {lw}，{}", c.done, c.total, pace_words(&progress::pace(&ls, today), lw, "完成"))];
+        lines.extend(progress::next(&ls).map(|l| format!("下一{lw}：{}", plesson_title(l))));
+        lines.extend(c.note.as_ref().map(|n| format!("备注：{n}")));
+        lines.extend((!list.is_empty()).then(|| format!("全部：{list}")));
+        Ok((c.name.clone(), lines.join("\n"), rec(&m.key, "progress_course", c.id, &c.name)))
+    };
+    let lesson = || -> Result<(String, String, Rec), String> {
+        let l = progress::lesson(conn, r.id)?;
+        let c = progress::course(conn, l.course_id)?;
+        let m = custom::get(conn, c.module_id)?;
+        let title = plesson_title(&l);
+        let mut lines = vec![format!("{} · {}：{title}", m.name, c.name), format!("状态：{}", progress_status(l.status))];
+        lines.extend(l.finished_month.as_ref().filter(|_| l.status == Mark::Done).map(|mo| format!("完成时间：{mo}")));
+        lines.extend(l.note.as_ref().map(|n| format!("备注：{n}")));
+        Ok((title.clone(), lines.join("\n"), Rec { parent: Some(c.id), ..rec(&m.key, "progress_lesson", l.id, &title) }))
+    };
+    match r.kind.as_str() {
+        "list_item" => Some(item()),
+        "progress_course" => Some(course()),
+        "progress_lesson" => Some(lesson()),
+        _ => None,
+    }
+}
+
 /// One record in full: (title, text, record).
-fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result<(String, String, Rec), String> {
+pub(crate) fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result<(String, String, Rec), String> {
+    if let Some(x) = made_record(conn, today, r) {
+        return x;
+    }
     let module = kind_module(&r.kind).ok_or("不认识这种记录")?;
     let line = |k: &str, v: Option<String>| v.filter(|v| !v.trim().is_empty()).map(|v| format!("{k}：{v}"));
     let (title, lines, mut rc): (String, Vec<Option<String>>, Rec) = match r.kind.as_str() {
@@ -1749,6 +2221,7 @@ fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result<(String, S
                     line("状态", Some(if t.done { format!("已完成{}", t.done_at.as_deref().map(|d| format!("（{}）", local_day(conn, d))).unwrap_or_default()) } else { "没完成".into() })),
                     line("内容", t.note.as_deref().map(plain)),
                     line("链接", t.link.clone()),
+                    line("来自笔记", t.from_note.and_then(|n| notes::get(conn, n).ok()).map(|n| notes::excerpt(&n.content))),
                     line("子任务", (!subs.is_empty()).then(|| subs.join("、"))),
                 ],
                 Rec { parent: Some(t.goal_id.map_or(t.group_id, |g| -g)), day: t.due_date.clone(), ..rec(module, "task", t.id, &title) },
@@ -1908,6 +2381,10 @@ fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result<(String, S
             let title = notes::excerpt(&n.content);
             (title.clone(), vec![line("记于", Some(local_minute(conn, &n.created_at))), line("正文", Some(format!("\n{}", n.content.trim())))], rec(module, "note", n.id, &title))
         }
+        "day" => {
+            let d = days::get(conn, today, r.id)?;
+            (d.name.clone(), vec![line("日子", Some(d.name.clone())), Some(join_bits(day_bits(&d)))], rec(module, "day", d.id, &d.name))
+        }
         _ => return Err("不认识这种记录".into()),
     };
     rc.title = title.clone();
@@ -1916,6 +2393,9 @@ fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result<(String, S
 
 /// What a question sends about its page; None = nothing at all (芝麻开门, 小拾, unknown pages).
 pub fn page_query(conn: &Connection, access: &Access, today: &str, ctx: &PageContext) -> Option<Query> {
+    if let Some(m) = custom::by_key(conn, &ctx.module) {
+        return Some(made_page(conn, access, today, ctx, &m));
+    }
     let (m, label) = match ctx.module.as_str() {
         "home" => (None, "首页"),
         "settings" => (None, "设置"),
@@ -1969,6 +2449,41 @@ pub fn page_query(conn: &Connection, access: &Access, today: &str, ctx: &PageCon
     Some(Query { module: Some(m.key.into()), label, state: "ok".into(), result: lines.join("\n"), records })
 }
 
+/// page_query for a made module: its records are this module's 条目 / 一项 / 一节.
+fn made_page(conn: &Connection, access: &Access, today: &str, ctx: &PageContext, m: &custom::Custom) -> Query {
+    let place = match short(&ctx.page, 20) {
+        Some(p) => format!("{} · {p}", m.name),
+        None => m.name.clone(),
+    };
+    let only_where = |why: &str| Query { module: Some(m.key.clone()), label: format!("{place}{why}"), state: "blocked".into(), result: format!("页面：{place}"), records: vec![] };
+    match access.check_made(&m.key) {
+        Err(Blocked::Hidden) => return only_where("（隐藏的模块，只带了在哪一页）"),
+        Err(Blocked::Cloud) => return only_where("（不发给云端，只带了在哪一页）"),
+        Ok(()) => {}
+    }
+    let mut lines = vec![format!("页面：{place}（{}）", m.template.label())];
+    let filter = short(&ctx.filter, 60);
+    if let Some(f) = &filter {
+        lines.push(format!("筛选：{f}"));
+    }
+    let read = |r: &PageRef| made_record(conn, today, r).and_then(Result::ok).filter(|(_, _, rc)| rc.module == m.key);
+    let mut records = vec![];
+    let mut title_line = None;
+    if let Some((title, text, rc)) = ctx.record.as_ref().and_then(read) {
+        title_line = Some(format!("{}：{title}", m.name));
+        lines.push(format!("打开的{}：\n{text}", kind_label(&rc.kind)));
+        records.push(rc);
+    }
+    let picked: Vec<(String, String, Rec)> = ctx.selected.iter().take(MAX_PICKED).filter_map(read).collect();
+    if !picked.is_empty() {
+        title_line.get_or_insert(format!("{} · 选中的 {} 条", m.name, picked.len()));
+        lines.push(format!("选中的 {} 条：\n{}", picked.len(), picked.iter().map(|(_, t, _)| format!("- {}", t.replace('\n', "；"))).collect::<Vec<_>>().join("\n")));
+        records.extend(picked.into_iter().map(|x| x.2));
+    }
+    let label = title_line.unwrap_or_else(|| [Some(place.clone()), filter].into_iter().flatten().collect::<Vec<_>>().join(" · "));
+    Query { module: Some(m.key.clone()), label, state: "ok".into(), result: lines.join("\n"), records }
+}
+
 /// The page part of a question as sent: everything when `full`, else only where it was.
 pub fn page_block(q: &Query, full: bool) -> String {
     let text = match (full, &q.module) {
@@ -1995,7 +2510,7 @@ pub struct Query {
 
 impl Query {
     pub fn of(a: &Answer) -> Query {
-        Query { module: a.module.map(String::from), label: a.label.clone(), state: a.state.into(), result: a.text.clone(), records: a.records.clone() }
+        Query { module: a.module.clone(), label: a.label.clone(), state: a.state.into(), result: a.text.clone(), records: a.records.clone() }
     }
     /// The service refused tools: the reply went on without looking anything up.
     pub fn unsupported() -> Query {
@@ -2063,6 +2578,401 @@ pub fn queries_of(conn: &Connection, run_id: i64) -> Result<Vec<Query>, String> 
     select_queries(conn, run_id, "?2 = ?2")
 }
 
+// ---------- 今日简报 and 年度总结 (brief.rs, yearly.rs): what they read ----------
+
+/// A part of what a brief / summary reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Part {
+    pub title: String,
+    pub text: String,
+}
+
+/// Modules among `keys` this model may not read: hidden ones quietly, cloud-refused ones named (shown
+/// as 没看). Returns (readable, left out).
+fn readable(access: &Access, keys: &[&str]) -> (Vec<&'static Module>, Vec<&'static str>) {
+    let (mut ok, mut left) = (vec![], vec![]);
+    for m in keys.iter().filter_map(|k| module(k)) {
+        match access.check(m) {
+            Ok(()) => ok.push(m),
+            Err(Blocked::Cloud) => left.push(m.label),
+            Err(Blocked::Hidden) => {}
+        }
+    }
+    (ok, left)
+}
+
+/// 今日简报: 今天的待办、快到期的和过期的; 今天该提醒的日子 (a lead day or the day); 该跟进的投递、在笔试
+/// 面试的; 最近两周的笔记 (no part for 日子 / 笔记 when there are none). Each part within `budget` tokens. Also the modules left out (not sent to this
+/// cloud model).
+pub fn brief_parts(conn: &Connection, access: &Access, today: &str, budget: i64) -> Result<(Vec<Part>, Vec<&'static str>), String> {
+    let (ok, left) = readable(access, &["todo", "days", "jobs", "notes"]);
+    let ask = |tool: &str, args: Value| run(conn, access, tool, &args.to_string(), today, budget).text;
+    let mut parts = vec![];
+    for m in ok {
+        let text = match m.key {
+            "todo" => {
+                let soon_until = common::add_days(today, 3);
+                let soon: Vec<String> = todo::open_tasks(conn, today)?
+                    .iter()
+                    .filter(|p| p.task.due_date.as_deref().is_some_and(|d| d > today && d <= soon_until.as_str()))
+                    .map(|p| task_line(p, today))
+                    .collect();
+                let soon = if soon.is_empty() { "接下来 3 天没有快到期的。".into() } else { format!("接下来 3 天到期的：\n{}", soon.join("\n")) };
+                format!("{}\n\n{soon}", ask(m.tool, json!({ "view": "today" })))
+            }
+            "jobs" => {
+                let statuses = jobs::statuses(conn)?;
+                let active: Vec<String> = jobs::jobs(conn, today)?
+                    .iter()
+                    .filter(|j| j.stage == Stage::Active)
+                    .map(|j| {
+                        let status = statuses.iter().find(|s| Some(s.id) == j.status_id).map_or("进行中", |s| s.name.as_str());
+                        let since = j.steps.iter().rev().find(|s| s.done).and_then(|s| s.done_on.clone()).map(|d| format!("，{d} 起")).unwrap_or_default();
+                        format!("- {}：{status}{since}", job_title(j))
+                    })
+                    .collect();
+                let active = if active.is_empty() { "现在没有在笔试、面试的。".into() } else { format!("正在笔试、面试这一步的：\n{}", active.join("\n")) };
+                format!("{}\n\n{active}", ask(m.tool, json!({ "view": "follow_up" })))
+            }
+            "days" => {
+                let due: Vec<String> = days::list(conn, today)?.iter().filter(|d| d.today).map(|d| day_row(d).text).collect();
+                if due.is_empty() {
+                    continue;
+                }
+                format!("今天 {today}，到了提前提醒的那天或者就是今天的日子：\n{}", due.join("\n"))
+            }
+            _ => {
+                // none in two weeks: nothing to say about them
+                let from = common::add_days(today, -13);
+                if notes::list(conn, &notes::Filter { from: Some(from.clone()), to: Some(today.to_string()), ..Default::default() })?.is_empty() {
+                    continue;
+                }
+                ask(m.tool, json!({ "view": "recent", "from": from, "to": today }))
+            }
+        };
+        parts.push(Part { title: m.label.into(), text });
+    }
+    Ok((parts, left))
+}
+
+/// What 年度总结 reads (笔记; 做完的事、目标和打卡; 画完的课; 投递的进展; 出行; 读完看完的书影; never
+/// 钱来钱往 or 芝麻开门), and the ones left out this time.
+pub fn year_left_out(access: &Access) -> Vec<&'static str> {
+    readable(access, &["notes", "todo", "drawing", "jobs", "packing", "books", "films"]).1
+}
+
+fn shown(access: &Access, key: &str) -> bool {
+    module(key).is_some_and(|m| access.check(m).is_ok())
+}
+
+/// Done tasks listed per month (more are only counted).
+const DONE_LINES: usize = 30;
+
+fn rows<T>(conn: &Connection, sql: &str, args: impl rusqlite::Params, f: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>) -> Result<Vec<T>, String> {
+    let mut st = conn.prepare(sql).map_err(common::err)?;
+    let out = st.query_map(args, f).map_err(common::err)?.collect::<Result<_, _>>().map_err(common::err);
+    out
+}
+
+/// One month (YYYY-MM) of 年度总结, all of it: notes in full (oldest first), goals done (their end
+/// date in it), tasks done, lessons finished in it, steps of applications taken in it. Empty =
+/// nothing that month.
+pub fn month_part(conn: &Connection, access: &Access, month: &str) -> Result<String, String> {
+    let (y, m) = (month[..4].parse::<i64>().map_err(|_| "月份不对")?, month[5..7].parse::<u32>().map_err(|_| "月份不对")?);
+    let (from, to) = (format!("{month}-01"), format!("{month}-{:02}", common::days_in_month(y, m)));
+    let mut out = vec![];
+    if shown(access, "notes") {
+        let mut list = notes::list(conn, &notes::Filter { from: Some(from.clone()), to: Some(to.clone()), ..Default::default() })?;
+        list.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        if !list.is_empty() {
+            let lines: Vec<String> = list.iter().map(|n| format!("- {}：{}", &local_minute(conn, &n.created_at)[5..], n.content.trim().replace('\n', "\n  "))).collect();
+            out.push(format!("【笔记 {} 条】\n{}", list.len(), lines.join("\n")));
+        }
+    }
+    if shown(access, "todo") {
+        let goals = rows(
+            conn,
+            "SELECT g.name, gr.name, g.start_date, g.end_date, g.review FROM todo_goals g JOIN todo_groups gr ON gr.id = g.group_id WHERE g.status = 'done' AND g.end_date BETWEEN ?1 AND ?2 ORDER BY g.end_date, g.id",
+            [&from, &to],
+            |r| {
+                let (name, group, start, end, review): (String, String, Option<String>, Option<String>, Option<String>) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?);
+                Ok(format!("- {name}（{group}，{}～{}）{}", start.unwrap_or_default(), end.unwrap_or_default(), review.filter(|x| !x.trim().is_empty()).map(|x| format!("复盘：{}", x.trim())).unwrap_or_default()))
+            },
+        )?;
+        if !goals.is_empty() {
+            out.push(format!("【做完的目标】\n{}", goals.join("\n")));
+        }
+        // as the 做完的 view counts: each repeat, check-in and progress log is one; a task done
+        // several times is one line
+        let done = todo::done_between(conn, &from, &to)?;
+        if !done.is_empty() {
+            let mut by_task: Vec<(&todo::DoneItem, usize)> = vec![];
+            for d in &done {
+                match by_task.iter_mut().find(|(x, _)| x.task.task.id == d.task.task.id) {
+                    Some((_, n)) => *n += 1,
+                    None => by_task.push((d, 1)),
+                }
+            }
+            let mut lines: Vec<String> = by_task
+                .iter()
+                .take(DONE_LINES)
+                .map(|(d, n)| match n {
+                    1 => format!("- {} {}{}（{}）", &d.day[5..], plain(&d.task.task.title), d.detail.as_deref().map(|x| format!(" · {x}")).unwrap_or_default(), place(&d.task)),
+                    n => format!("- {} ×{n}（{}）", plain(&d.task.task.title), place(&d.task)),
+                })
+                .collect();
+            if by_task.len() > DONE_LINES {
+                lines.push(format!("……还有 {} 项没列出", by_task.len() - DONE_LINES));
+            }
+            out.push(format!("【做完的事 {} 件】（每次重复、打卡、进度记录各算一件）\n{}", done.len(), lines.join("\n")));
+        }
+    }
+    if shown(access, "drawing") {
+        let lessons = rows(
+            conn,
+            "SELECT c.name, l.code, l.title FROM drawing_lessons l JOIN drawing_courses c ON c.id = l.course_id WHERE l.status = 'done' AND l.finished_month = ?1 ORDER BY c.sort_order, c.id, l.sort_order, l.id",
+            [month],
+            |r| Ok(format!("- {} · {}{}", r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.map(|c| format!("{c} ")).unwrap_or_default(), r.get::<_, String>(2)?)),
+        )?;
+        if !lessons.is_empty() {
+            out.push(format!("【画完的课节 {} 节】\n{}", lessons.len(), lessons.join("\n")));
+        }
+    }
+    if shown(access, "jobs") {
+        let statuses = jobs::statuses(conn)?;
+        let mut moves: Vec<String> = vec![];
+        for j in jobs::jobs(conn, &to)? {
+            for step in j.steps.iter().filter(|s| s.done) {
+                if let Some(d) = step.done_on.as_deref().filter(|d| *d >= from.as_str() && *d <= to.as_str()) {
+                    let name = statuses.iter().find(|s| s.id == step.status_id).map_or("", |s| s.name.as_str());
+                    moves.push(format!("- {d} {}：{name}", job_title(&j)));
+                }
+            }
+        }
+        moves.sort();
+        if !moves.is_empty() {
+            out.push(format!("【求职进展 {} 步】\n{}", moves.len(), moves.join("\n")));
+        }
+    }
+    Ok(out.join("\n\n"))
+}
+
+/// Books / films finished in `year` (rereads too; they keep only the year).
+fn year_works(conn: &Connection, key: &str, year: &str) -> Result<Vec<String>, String> {
+    let (table, rereads, fk, who) = if key == "books" { ("books", "book_rereads", "book_id", "author") } else { ("films", "film_rereads", "film_id", "director") };
+    let sql = format!(
+        "SELECT x.title, x.{who}, x.country, x.rating, EXISTS (SELECT 1 FROM {rereads} r WHERE r.{fk} = x.id AND r.year = ?1) AND coalesce(x.finished_year, '') <> ?1, x.note
+         FROM {table} x WHERE (x.status = 'done' AND x.finished_year = ?1) OR EXISTS (SELECT 1 FROM {rereads} r WHERE r.{fk} = x.id AND r.year = ?1)
+         ORDER BY x.id"
+    );
+    rows(conn, &sql, [year], |r| {
+        let (title, by, country, rating, again, note): (String, Option<String>, Option<String>, Option<i64>, bool, Option<String>) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?);
+        let bits: Vec<String> = [by, country, rating.map(|n| format!("{n} 星")), again.then(|| "重温".to_string()), note.filter(|n| !n.trim().is_empty()).map(|n| clip(n.trim(), 80))].into_iter().flatten().collect();
+        Ok(format!("- 《{title}》{}", if bits.is_empty() { String::new() } else { format!("（{}）", bits.join("，")) }))
+    })
+}
+
+/// Applications with a step taken in [from, to].
+fn moved_jobs(conn: &Connection, from: &str, to: &str) -> Result<Vec<jobs::Job>, String> {
+    Ok(jobs::jobs(conn, to)?.into_iter().filter(|j| j.steps.iter().any(|s| s.done && s.done_on.as_deref().is_some_and(|d| d >= from && d <= to))).collect())
+}
+
+fn trips_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<(String, String, Option<String>)>, String> {
+    rows(conn, "SELECT name, depart_on, note FROM trips WHERE depart_on BETWEEN ?1 AND ?2 ORDER BY depart_on, id", [from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+}
+
+/// The year as a whole for 年度总结: books / films finished in it, each course's lessons finished
+/// this year, the year's applications (how far they got), check-ins and trips.
+pub fn year_part(conn: &Connection, access: &Access, year: &str) -> Result<String, String> {
+    let (from, to) = (format!("{year}-01-01"), format!("{year}-12-31"));
+    let mut out = vec![];
+    for (key, label) in [("books", "读完的书"), ("films", "看完的电影和剧")] {
+        if shown(access, key) {
+            let rows = year_works(conn, key, year)?;
+            out.push(if rows.is_empty() { format!("【{label}】没有") } else { format!("【{label} {} 部】\n{}", rows.len(), rows.join("\n")) });
+        }
+    }
+    if shown(access, "drawing") {
+        let rows = rows(
+            conn,
+            "SELECT c.name, sum(l.status = 'done' AND substr(l.finished_month, 1, 4) = ?1), sum(l.status = 'done'), count(l.id) FROM drawing_courses c
+             JOIN drawing_lessons l ON l.course_id = c.id GROUP BY c.id HAVING sum(l.status = 'done' AND substr(l.finished_month, 1, 4) = ?1) > 0 ORDER BY c.sort_order, c.id",
+            [year],
+            |r| Ok(format!("- {}：这一年画完 {} 节，一共画完 {} / {} 节", r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)),
+        )?;
+        out.push(if rows.is_empty() { "【画画】这一年没有画完的课节".into() } else { format!("【画画】\n{}", rows.join("\n")) });
+    }
+    if shown(access, "jobs") {
+        let statuses = jobs::statuses(conn)?;
+        let mine = moved_jobs(conn, &from, &to)?;
+        if mine.is_empty() {
+            out.push("【求职】这一年没有投递的进展".into());
+        } else {
+            let lines: Vec<String> = mine
+                .iter()
+                .map(|j| {
+                    let now = j.status_id.and_then(|id| statuses.iter().find(|s| s.id == id)).map_or("想投", |s| s.name.as_str());
+                    format!("- {}：{}{now}", job_title(j), j.applied_on.as_deref().map(|d| format!("{d} 投出，现在 ")).unwrap_or_default())
+                })
+                .collect();
+            let got = mine.iter().filter(|j| j.stage == Stage::Got).count();
+            out.push(format!("【求职】这一年有进展的投递 {} 份，拿到 {got} 份\n{}", mine.len(), lines.join("\n")));
+        }
+    }
+    if shown(access, "todo") {
+        let c = todo::checkins_between(conn, &from, &to)?;
+        if !c.is_empty() {
+            out.push(format!("【打卡】\n{}", c.iter().map(|c| format!("- {}：这一年打卡 {} 天，最长连续打了 {} 次", c.title, c.days, c.longest)).collect::<Vec<_>>().join("\n")));
+        }
+    }
+    if shown(access, "packing") {
+        let trips = trips_between(conn, &from, &to)?;
+        out.push(if trips.is_empty() {
+            "【出行】这一年没有出行".into()
+        } else {
+            let lines: Vec<String> =
+                trips.iter().map(|(name, on, note)| format!("- {} 出发：{name}{}", md(on), note.as_deref().filter(|n| !n.trim().is_empty()).map(|n| format!("（{}）", clip(n, 80))).unwrap_or_default())).collect();
+            format!("【出行 {} 次】\n{}", trips.len(), lines.join("\n"))
+        });
+    }
+    Ok(out.join("\n\n"))
+}
+
+/// A number 年度总结 states (Rust counts, the model only copies).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Count {
+    pub label: &'static str,
+    pub unit: &'static str,
+    pub n: i64,
+}
+
+/// The year's numbers over [from, to] (a whole year, or up to today for one not over yet).
+pub fn year_counts(conn: &Connection, access: &Access, from: &str, to: &str) -> Result<Vec<Count>, String> {
+    let c = |label, unit, n| Count { label, unit, n };
+    let mut out = vec![];
+    if shown(access, "notes") {
+        let (n, chars, days): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT count(*), coalesce(sum(length(content)), 0), count(DISTINCT date(created_at, 'localtime')) FROM notes WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2",
+                [from, to],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(common::err)?;
+        out.extend([c("笔记", "条", n), c("笔记的字数", "字", chars), c("写了笔记的日子", "天", days)]);
+    }
+    if shown(access, "todo") {
+        let done = todo::done_between(conn, from, to)?.len() as i64;
+        let goals: i64 = conn.query_row("SELECT count(*) FROM todo_goals WHERE status = 'done' AND end_date BETWEEN ?1 AND ?2", [from, to], |r| r.get(0)).map_err(common::err)?;
+        let checkins: i64 = todo::checkins_between(conn, from, to)?.iter().map(|c| c.days).sum();
+        out.extend([c("做完的事", "件", done), c("做完的目标", "个", goals), c("打卡", "天", checkins)]);
+    }
+    let year = &from[..4];
+    // books / films keep only the year they were finished in
+    for (key, label, unit) in [("books", "读完的书", "本"), ("films", "看完的电影和剧", "部")] {
+        if shown(access, key) {
+            out.push(c(label, unit, year_works(conn, key, year)?.len() as i64));
+        }
+    }
+    if shown(access, "drawing") {
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM drawing_lessons WHERE status = 'done' AND finished_month BETWEEN ?1 AND ?2", [&from[..7], &to[..7]], |r| r.get(0))
+            .map_err(common::err)?;
+        out.push(c("画完的课节", "节", n));
+    }
+    if shown(access, "jobs") {
+        let moved = moved_jobs(conn, from, to)?;
+        out.extend([c("有进展的投递", "份", moved.len() as i64), c("拿到的工作", "份", moved.iter().filter(|j| j.stage == Stage::Got).count() as i64)]);
+    }
+    if shown(access, "packing") {
+        out.push(c("出行", "次", trips_between(conn, from, to)?.len() as i64));
+    }
+    Ok(out)
+}
+
+/// 12,345
+fn grouped(n: i64) -> String {
+    let s = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    if n < 0 { format!("-{out}") } else { out }
+}
+
+/// The year's 之最 Rust can tell: the month with most notes, the most used tags, tasks done each
+/// month.
+pub fn year_extras(conn: &Connection, access: &Access, from: &str, to: &str) -> Result<Vec<String>, String> {
+    let mut out = vec![];
+    if shown(access, "notes") {
+        let busiest = rows(
+            conn,
+            "SELECT strftime('%Y-%m', created_at, 'localtime') AS m, count(*) AS c FROM notes WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2 GROUP BY m ORDER BY c DESC, m LIMIT 1",
+            [from, to],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )?;
+        if let Some((m, n)) = busiest.first() {
+            out.push(format!("写笔记最多的月份：{}（{n} 条）", month_label(m)));
+        }
+        let tags = rows(
+            conn,
+            "SELECT t.tag, count(DISTINCT t.note_id) AS c FROM note_tags t JOIN notes n ON n.id = t.note_id WHERE date(n.created_at, 'localtime') BETWEEN ?1 AND ?2 GROUP BY t.tag ORDER BY c DESC, t.tag LIMIT 5",
+            [from, to],
+            |r| Ok(format!("#{}（{} 条）", r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )?;
+        if !tags.is_empty() {
+            out.push(format!("最常用的标签：{}", tags.join("、")));
+        }
+    }
+    if shown(access, "todo") {
+        let mut months = vec![];
+        let mut m = from[..7].to_string();
+        while m.as_str() <= &to[..7] {
+            let (y, mo) = (m[..4].parse::<i64>().unwrap_or(2000), m[5..7].parse::<u32>().unwrap_or(1));
+            let end = format!("{m}-{:02}", common::days_in_month(y, mo)).min(to.to_string());
+            let n = todo::done_between(conn, &format!("{m}-01").max(from.to_string()), &end)?.len();
+            months.push(format!("{} {n} 件", month_label(&m)));
+            m = if mo == 12 { format!("{}-01", y + 1) } else { format!("{y}-{:02}", mo + 1) };
+        }
+        if months.iter().any(|x| !x.ends_with(" 0 件")) {
+            out.push(format!("每月做完的事：{}", months.join(" · ")));
+        }
+    }
+    Ok(out)
+}
+
+/// 「3 月」
+pub fn month_label(month: &str) -> String {
+    format!("{} 月", month[5..7].trim_start_matches('0'))
+}
+
+/// 【这一年的数字】: the counts that aren't zero, then the 之最.
+pub fn numbers_text(counts: &[Count], extras: &[String]) -> String {
+    counts.iter().filter(|c| c.n != 0).map(|c| format!("- {}：{} {}", c.label, grouped(c.n), c.unit)).chain(extras.iter().map(|e| format!("- {e}"))).collect::<Vec<_>>().join("\n")
+}
+
+/// 【和去年比】 (None: nothing to compare with last year): each number both years, and the difference.
+pub fn compare_text(this: &[Count], last: &[Count]) -> Option<String> {
+    if last.iter().all(|c| c.n == 0) {
+        return None;
+    }
+    let lines: Vec<String> = this
+        .iter()
+        .filter_map(|c| {
+            let before = last.iter().find(|l| l.label == c.label).map_or(0, |l| l.n);
+            if c.n == 0 && before == 0 {
+                return None;
+            }
+            let d = c.n - before;
+            let diff = if d > 0 { format!("多 {} {}", grouped(d), c.unit) } else if d < 0 { format!("少 {} {}", grouped(-d), c.unit) } else { "一样多".into() };
+            Some(format!("- {}：今年 {} {u}，去年 {} {u}，{diff}", c.label, grouped(c.n), grouped(before), u = c.unit))
+        })
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -2126,8 +3036,10 @@ pub mod tests {
     fn tools_follow_hidden_modules_and_cloud_rules() {
         let c = memory_db();
         let names = |a: &Access| tools(a).iter().map(|t| t["function"]["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-        assert_eq!(names(&all()).len(), 8);
+        assert_eq!(names(&all()).len(), 25); // 9 modules + search + read (cite.rs) + 14 writes (act.rs)
+        assert!(names(&all()).contains(&super::super::cite::SEARCH.to_string()));
         assert!(!names(&all()).iter().any(|n| n.contains("vault")));
+        assert!(names(&Access { hidden: MODULES.iter().map(|m| m.key.to_string()).collect(), ..all() }).is_empty()); // nothing to read: no search either
         let hidden = Access { hidden: vec!["jobs".into()], ..all() };
         assert!(!names(&hidden).contains(&"pomelo_jobs".to_string()));
         let a = ask(&c, &hidden, "pomelo_jobs", json!({ "view": "stats" }));
@@ -2135,13 +3047,14 @@ pub mod tests {
 
         // a cloud model: 钱来钱往 is offered (to say so) but refused, with the sentence to start with
         let cloud = Access { cloud: true, cloud_allowed: MODULES.iter().filter(|m| m.key != "finance").map(|m| m.key.to_string()).collect(), ..all() };
-        assert_eq!(names(&cloud).len(), 8);
+        assert_eq!(names(&cloud).len(), 25); // refused writes are offered too, to say so
+        assert!(cloud.allows("notes") && cloud.allows("picky") && !cloud.allows("finance") && !hidden.allows("jobs"));
         let a = ask(&c, &cloud, "pomelo_finance", json!({ "view": "assets" }));
         assert_eq!((a.state, a.label.as_str()), ("blocked", "钱来钱往 · 不发给云端，没看"));
         assert!(a.text.contains("请在回答开头写明「钱来钱往不发给云端，这部分没看」"));
-        assert!(instructions(TODAY, &cloud).contains("「钱来钱往不发给云端，这部分没看」"));
-        assert!(instructions(TODAY, &cloud).contains("今天是 2026-10-12（周一）"));
-        assert!(!instructions(TODAY, &all()).contains("云端"));
+        assert!(instructions(TODAY, &cloud, false).contains("「钱来钱往不发给云端，这部分没看」"));
+        assert!(instructions(TODAY, &cloud, false).contains("今天是 2026-10-12（周一）"));
+        assert!(!instructions(TODAY, &all(), false).contains("云端"));
         assert_eq!(ask(&c, &cloud, "pomelo_jobs", json!({ "view": "stats" })).state, "ok");
         assert_eq!(ask(&c, &Access { cloud: false, ..cloud.clone() }, "pomelo_finance", json!({ "view": "assets" })).state, "ok");
 
@@ -2155,12 +3068,15 @@ pub mod tests {
     #[test]
     fn cloud_settings_default_to_finance_local_only() {
         let p = crate::picky::store::tests::memory_db();
-        let allowed = |p: &Connection| cloud_settings(p).unwrap().into_iter().filter(|s| s.allowed).map(|s| s.module).collect::<Vec<_>>();
-        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", "jobs", "notes"]);
-        set_cloud(&p, "finance", true).unwrap();
-        set_cloud(&p, "notes", false).unwrap();
-        assert_eq!(cloud_allowed(&p), ["todo", "books", "films", "drawing", "packing", "finance", "jobs"]);
-        assert!(set_cloud(&p, "vault", true).is_err());
+        let made = [Made { key: "list/3".into(), name: "游戏".into(), template: Template::List }, Made { key: "progress/4".into(), name: "日语".into(), template: Template::Progress }];
+        let allowed = |p: &Connection| cloud_settings(p, &made).unwrap().into_iter().filter(|s| s.allowed).map(|s| s.module).collect::<Vec<_>>();
+        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", "jobs", "notes", "days", "list/3", "progress/4"]);
+        set_cloud(&p, "finance", true, &made).unwrap();
+        set_cloud(&p, "notes", false, &made).unwrap();
+        set_cloud(&p, "list/3", false, &made).unwrap();
+        assert_eq!(cloud_allowed(&p, &["list/3".into(), "progress/4".into(), "list/9".into()]), ["todo", "books", "films", "drawing", "packing", "finance", "jobs", "days", "progress/4", "list/9"]);
+        assert_eq!(cloud_settings(&p, &made).unwrap().last().unwrap().label, "日语");
+        assert!(set_cloud(&p, "vault", true, &made).is_err() && set_cloud(&p, "list/9", true, &made).is_err());
     }
 
     #[test]
@@ -2279,7 +3195,7 @@ pub mod tests {
                 seed_finance(&c);
                 notes::create(&c, from(json!({ "content": "今天读完了 #读书 一本书" }))).unwrap();
             }
-            for t in tools(&all()) {
+            for t in tools(&all()).into_iter().filter(|t| t["function"]["parameters"]["properties"]["view"].is_object()) {
                 let name = t["function"]["name"].as_str().unwrap();
                 for view in t["function"]["parameters"]["properties"]["view"]["enum"].as_array().unwrap() {
                     let a = ask(&c, &all(), name, json!({ "view": view, "keyword": "读" }));
@@ -2304,7 +3220,7 @@ pub mod tests {
             }
         }
         let today = crate::modules::todo::today(&c).unwrap();
-        for t in tools(&all()) {
+        for t in tools(&all()).into_iter().filter(|t| t["function"]["parameters"]["properties"]["view"].is_object()) {
             let name = t["function"]["name"].as_str().unwrap();
             for view in t["function"]["parameters"]["properties"]["view"]["enum"].as_array().unwrap() {
                 let a = run(&c, &all(), name, &json!({ "view": view, "keyword": "的" }).to_string(), &today, MAX_RESULT);
@@ -2374,6 +3290,81 @@ pub mod tests {
         let r = ask(&c, &all(), "pomelo_notes", json!({ "view": "recent" }));
         assert!(r.label.ends_with("的笔记（3 条）"), "{}", r.label);
         assert!(r.text.contains("这段时间用得最多的标签：#读书 2、#运动 1。"), "{}", r.text);
+    }
+
+    #[test]
+    fn days_soon_list_brief_and_documents_without_notes() {
+        let c = memory_db();
+        let add = |v: Value| days::create(&c, from(v), TODAY).unwrap().id;
+        let mom = add(json!({ "kind": "birthday", "name": "妈妈", "date": "1965-10-19", "remind": [7], "ideas": "围巾", "gifts": [{ "year": "2025", "gift": "保温杯" }] }));
+        let passport = add(json!({ "kind": "document", "name": "护照", "date": "2026-11-11", "remind": [30, 7], "note": "号码 E123" }));
+        add(json!({ "kind": "day", "name": "在一起", "date": "2020-12-01", "repeat": "year" }));
+        add(json!({ "kind": "day", "name": "搬家", "date": "2026-03-01" }));
+        let r = ask(&c, &all(), "pomelo_days", json!({ "view": "soon" }));
+        assert_eq!(r.label, "来日方长 · 快到的日子（2 个）");
+        assert!(r.text.contains("- 妈妈：生日 · 1965-10-19 出生 · 下一次 2026-10-19 · 还有 7 天 · 满 61 岁 · 提前 7 天提醒 · 礼物点子：围巾 · 送过：2025 保温杯"), "{}", r.text);
+        assert!(r.text.contains("- 护照：证件 · 2026-11-11 到期 · 还有 30 天 · 提前 30 天、提前 7 天提醒\n"), "{}", r.text);
+        assert!(r.text.contains("其他日子：\n- 在一起：纪念日 · 2020-12-01 · 每年 · 下一次 2026-12-01 · 还有 50 天 · 第 6 周年"), "{}", r.text);
+        assert!(!r.text.contains("E123") && !r.text.contains("搬家"));
+        assert_eq!(r.records.iter().map(|x| x.id).collect::<Vec<_>>()[..2], [mom, passport]);
+        let r = ask(&c, &all(), "pomelo_days", json!({ "view": "list" }));
+        assert!(r.text.contains("- 搬家：纪念日 · 2026-03-01 · 已经 225 天"), "{}", r.text);
+        assert_eq!(ask(&c, &all(), "pomelo_days", json!({ "view": "list", "kind": "birthday" })).records.len(), 1);
+        assert_eq!(ask(&c, &all(), "pomelo_days", json!({ "view": "list", "keyword": "保温杯" })).records[0].id, mom);
+        assert!(ask(&c, &all(), "pomelo_days", json!({ "view": "list", "keyword": "E123" })).records.is_empty());
+        let (_, text, _) = record_text(&c, TODAY, &PageRef { kind: "day".into(), id: passport }).unwrap();
+        assert!(!text.contains("E123"), "{text}");
+        // 今日简报: a lead day or the day itself
+        let (parts, _) = brief_parts(&c, &all(), TODAY, 1200).unwrap();
+        let p = parts.iter().find(|p| p.title == "来日方长").unwrap();
+        assert!(p.text.contains("妈妈") && p.text.contains("护照") && !p.text.contains("在一起"), "{}", p.text);
+        let (parts, _) = brief_parts(&c, &all(), "2026-10-13", 1200).unwrap();
+        assert!(parts.iter().all(|p| p.title != "来日方长"));
+    }
+
+    #[test]
+    fn made_lists_and_progress() {
+        let c = memory_db();
+        let (games, [plat, _, rate, _, _]) = lists::tests::seed(&c);
+        let zelda = lists::create_item(&c, games, from(json!({ "name": "塞尔达", "values": { plat.to_string(): "Switch", rate.to_string(): 5 } }))).unwrap().id;
+        lists::create_item(&c, games, from(json!({ "name": "星露谷" }))).unwrap();
+        progress::tests::seed(&c);
+        let access = Access { made: made(&c), ..all() };
+        let names: Vec<String> = tools(&access).iter().map(|t| t["function"]["name"].as_str().unwrap().to_string()).collect();
+        assert!(names.contains(&LISTS_TOOL.to_string()) && names.contains(&PROGRESS_TOOL.to_string()));
+        let hidden = Access { hidden: vec!["list/1".into()], ..access.clone() };
+        assert!(!tools(&hidden).iter().any(|t| t["function"]["name"] == LISTS_TOOL));
+
+        let r = ask(&c, &access, LISTS_TOOL, json!({ "view": "lists" }));
+        assert!(r.text.contains("- 游戏（2 条）：字段 名称、平台（单选：Switch、PC）、标签（多选：解谜、冒险、独立）、评分（评分）"), "{}", r.text);
+        let r = ask(&c, &access, LISTS_TOOL, json!({ "view": "items", "keyword": "switch" }));
+        assert_eq!((r.label.as_str(), r.module.as_deref()), ("五花八门 · 游戏（1 条）", Some("list/1")));
+        assert!(r.text.contains("- 塞尔达：平台 Switch · 评分 ★★★★★"), "{}", r.text);
+        assert_eq!((r.records[0].module.as_str(), r.records[0].kind.as_str(), r.records[0].id), ("list/1", "list_item", zelda));
+
+        let r = ask(&c, &access, PROGRESS_TOOL, json!({ "view": "overview" }));
+        assert!(r.text.contains("动画（季 → 集）：\n- 第一季：完成 1 / 3 集，进行中 1；下一集 2 相遇；还剩 2 集，最近 6 个月完成 1 集（每月约 0.2 集），照这个速度还要约 12 个月，2027 年 10 月前后完成"), "{}", r.text);
+        let r = ask(&c, &access, PROGRESS_TOOL, json!({ "view": "lessons", "name": "动画 第一季", "status": "done" }));
+        assert!(r.text.contains("- 1 出发（正篇）：已完成（2026-09）") && !r.text.contains("相遇"), "{}", r.text);
+        assert!(ask(&c, &access, PROGRESS_TOOL, json!({ "view": "lessons", "name": "第二季" })).text.contains("有：动画 · 第一季"));
+
+        // a cloud model without 游戏: named, 动画 still read
+        let cloud = Access { cloud: true, cloud_allowed: vec!["progress/2".into()], ..access.clone() };
+        let r = ask(&c, &cloud, LISTS_TOOL, json!({ "view": "lists" }));
+        assert_eq!(r.state, "blocked");
+        assert!(r.text.contains("「游戏不发给云端，这部分没看」"));
+        assert_eq!(ask(&c, &cloud, PROGRESS_TOOL, json!({ "view": "overview" })).state, "ok");
+        assert!(instructions(TODAY, &cloud, false).contains("游戏"));
+        assert!(!cloud.allows("list/1") && cloud.allows("progress/2") && !cloud.allows("list"));
+
+        // the page and a record in full
+        let ctx = PageContext { module: "list/1".into(), record: Some(PageRef { kind: "list_item".into(), id: zelda }), ..Default::default() };
+        let q = page_query(&c, &access, TODAY, &ctx).unwrap();
+        assert_eq!(q.label, "游戏：塞尔达");
+        assert!(q.result.contains("平台：Switch") && q.result.contains("评分：★★★★★"), "{}", q.result);
+        assert_eq!(page_query(&c, &cloud, TODAY, &ctx).unwrap().state, "blocked");
+        let (_, text, rc) = record_text(&c, TODAY, &PageRef { kind: "progress_lesson".into(), id: 1 }).unwrap();
+        assert!(text.contains("动画 · 第一季：1 出发") && rc.parent.is_some(), "{text}");
     }
 
     #[test]
@@ -2555,7 +3546,7 @@ pub mod tests {
 
     #[test]
     fn mock_model_looks_up_and_answers() {
-        let system = instructions(TODAY, &all());
+        let system = instructions(TODAY, &all(), false);
         let offered: Vec<&str> = MODULES.iter().map(|m| m.tool).collect();
         let calls = mock_calls("这周该跟进哪些投递", &system, &offered);
         assert_eq!(calls.iter().map(|c| (c.name.as_str(), c.arguments.as_str())).collect::<Vec<_>>(), [("pomelo_jobs", r#"{"view":"follow_up"}"#)]);

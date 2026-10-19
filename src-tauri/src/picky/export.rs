@@ -11,6 +11,10 @@
 //! - Lookups in Pomelo (v0.3.5): replies show 「查了：…」 and fold what each lookup returned, in every
 //!   Markdown form (复制 only the line); the JSON keeps them per message (with their records). A question
 //!   asked in the 小窗 shows 「带着：…」 (the page it went with) the same way.
+//! - Citations (v0.4): a reply is followed by 「来源」, the sources its text cites ([n] …), in every
+//!   Markdown form; the JSON keeps every numbered source per run.
+//! - Cards (v0.4): a reply that proposed writes shows its card (state, each item, what got written)
+//!   in every Markdown form; the JSON keeps the card with its fields.
 
 use super::chat;
 use super::files::{self, MessageFile};
@@ -45,7 +49,12 @@ struct Node {
     files: Vec<MessageFile>,
     notes: Vec<NoteRecord>,
     queries: Vec<super::data::Query>,
+    sources: Vec<super::cite::Source>,
     page: Option<super::data::Query>,
+    card: Option<super::act::Card>,
+    /// 改文件: the question's file, the reply's proposed changes.
+    edit_file: Option<super::work::Target>,
+    edit: Option<super::work::FileEdit>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +78,7 @@ struct RunRecord {
     ended_at: Option<String>,
     passages: Vec<Passage>,
     memories: Vec<super::memory::UsedMemory>,
+    sources: Vec<super::cite::Source>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,7 +131,11 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
                 files: vec![],
                 notes: vec![],
                 queries: vec![],
+                sources: vec![],
                 page: None,
+                card: None,
+                edit_file: None,
+                edit: None,
             })
         })
         .map_err(err)?
@@ -136,12 +150,16 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
     for n in nodes.iter_mut() {
         if n.role == "user" {
             n.files = files::message_files(conn, n.id)?;
+            n.edit_file = super::work::target_of(conn, n.id)?;
             if let Some(run) = n.run_id {
                 n.page = super::data::page_of(conn, run)?;
             }
         } else if let Some(run) = n.run_id {
             n.notes = reading::notes_of(conn, run)?.into_iter().map(|(label, content)| NoteRecord { label, content }).collect();
             n.queries = super::data::lookups_of(conn, run)?;
+            n.sources = super::cite::of_run(conn, run)?;
+            n.card = super::act::card_of(conn, run)?;
+            n.edit = super::work::edit_of(conn, run)?;
         }
     }
     Ok(nodes)
@@ -165,6 +183,69 @@ fn role_label(role: &str, model: Option<&str>) -> String {
     }
 }
 
+/// 来源：the sources `text` cites, in number order (empty when it cites none).
+fn cited_block(text: &str, sources: &[super::cite::Source]) -> String {
+    let mut ns = super::cite::cited(text, sources);
+    if ns.is_empty() {
+        return String::new();
+    }
+    ns.sort();
+    let lines: Vec<String> = ns
+        .iter()
+        .filter_map(|n| sources.iter().find(|s| s.n == *n))
+        .map(|s| format!("- [{}] {}{}", s.n, s.detail.as_deref().map(|d| format!("{d}：")).unwrap_or_default(), s.title.replace('\n', " ")))
+        .collect();
+    format!("来源：\n\n{}", lines.join("\n"))
+}
+
+/// 确认卡片（已确认）：each item, and whether it got written.
+/// 改文件: each changed paragraph before → after, and whether it was written.
+fn edit_block(e: &super::work::FileEdit) -> String {
+    if e.kind == super::work::NEW_WORD {
+        let state = match e.state.as_str() {
+            "written" => format!("已保存：{}", e.path),
+            "cancelled" => "已取消".into(),
+            _ => "还没保存".into(),
+        };
+        return format!("新建 Word「{}」（{state}）：\n\n{}", e.name, e.items.first().map(|i| i.after.as_str()).unwrap_or(""));
+    }
+    let state = match e.state.as_str() {
+        "written" => "已写入",
+        "cancelled" => "已取消",
+        _ => "还没写入",
+    };
+    let items: Vec<String> = e
+        .items
+        .iter()
+        .map(|i| {
+            let mark = if e.state == "written" && !i.checked { "（没勾，没写）" } else { "" };
+            format!("- 第 {} 段{mark}：{} → {}", i.paragraph, i.before.replace('\n', " "), i.after.replace('\n', " "))
+        })
+        .collect();
+    format!("改「{}」（{state}）：\n\n{}", e.name, items.join("\n"))
+}
+
+fn card_block(card: &super::act::Card) -> String {
+    let state = match card.state.as_str() {
+        "confirmed" => "已确认",
+        "cancelled" => "已取消",
+        _ => "还没确认",
+    };
+    let lines: Vec<String> = card
+        .items
+        .iter()
+        .map(|i| {
+            let mark = match (card.state.as_str(), i.written.is_some()) {
+                ("confirmed", true) => "：记下了",
+                ("confirmed", false) => "：没勾，没记",
+                _ => "",
+            };
+            format!("- {}：{}{mark}", i.label, i.title.replace('\n', " "))
+        })
+        .collect();
+    format!("确认卡片（{state}）：\n\n{}", lines.join("\n"))
+}
+
 /// 查了：投石问路 · 该跟进的投递（2 份）；…
 fn looked_line(queries: &[super::data::Query]) -> String {
     format!("查了：{}", queries.iter().map(|q| q.label.as_str()).collect::<Vec<_>>().join("；"))
@@ -179,6 +260,9 @@ pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
             lines.push(format!("状态：{s}"));
         }
         lines.extend(m.files.iter().map(|f| format!("{}：{}", if f.file_id.is_some() { "资料" } else { "附件" }, f.file.name.replace('\n', " "))));
+        if let Some(t) = &m.edit_file {
+            lines.push(format!("改文件：{}", t.name));
+        }
         if let Some(p) = &m.page {
             lines.push(format!("带着：{}", p.label));
         }
@@ -187,6 +271,16 @@ pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
         }
         if !m.content.is_empty() {
             lines.push(m.content.clone());
+        }
+        if let Some(card) = &m.card {
+            lines.push(card_block(card));
+        }
+        if let Some(e) = &m.edit {
+            lines.push(edit_block(e));
+        }
+        let cites = cited_block(&m.content, &m.sources);
+        if !cites.is_empty() {
+            lines.push(cites);
         }
         parts.push(lines.join("\n\n"));
     }
@@ -221,6 +315,9 @@ fn document(heading: &str, msgs: &[Node], all: bool, sums: &[SummaryRecord], lin
                 (false, None) => format!("{kind}：{name}\n\n"),
             };
         }
+        if let Some(t) = &m.edit_file {
+            out += &format!("改文件：{}\n\n", t.name);
+        }
         if let Some(p) = &m.page {
             out += &format!("带着：{}\n\n<details>\n<summary>页面内容</summary>\n\n```text\n{}\n```\n\n</details>\n\n", p.label, p.result.replace("```", "ʼʼʼ"));
         }
@@ -237,6 +334,19 @@ fn document(heading: &str, msgs: &[Node], all: bool, sums: &[SummaryRecord], lin
         }
         out += &m.content;
         out += "\n\n";
+        if let Some(card) = &m.card {
+            out += &card_block(card);
+            out += "\n\n";
+        }
+        if let Some(e) = &m.edit {
+            out += &edit_block(e);
+            out += "\n\n";
+        }
+        let cites = cited_block(&m.content, &m.sources);
+        if !cites.is_empty() {
+            out += &cites;
+            out += "\n\n";
+        }
         if !m.reasoning.is_empty() {
             out += &format!("<details>\n<summary>思考过程</summary>\n\n{}\n\n</details>\n\n", m.reasoning);
         }
@@ -323,6 +433,7 @@ pub fn export_package(conn: &Connection, id: i64, dest: &Path, files_dir: &Path)
                 ended_at: r.get(9)?,
                 passages: vec![],
                 memories: vec![],
+                sources: vec![],
             })
         })
         .map_err(err)?
@@ -332,6 +443,7 @@ pub fn export_package(conn: &Connection, id: i64, dest: &Path, files_dir: &Path)
     for r in runs.iter_mut() {
         r.passages = reading::passages_of(conn, r.id)?;
         r.memories = super::memory::used_of(conn, r.id)?;
+        r.sources = super::cite::of_run(conn, r.id)?;
     }
     // every file the conversation used, once, with its copy's path in the package
     let mut copies: Vec<(PathBuf, String)> = vec![];
@@ -422,6 +534,12 @@ mod tests {
         let md = markdown(&c, b.session_id).unwrap();
         assert!(md.contains("## 2. 小拾 · DeepSeek Flash · 版本 2/2") && !md.contains("一组数。"), "{md}");
         assert!(!md.contains("上下文摘要")); // its message isn't on the shown path
+        // a reply's card
+        let choice = crate::picky::act::Choice { title: "10/12 午饭 ¥35".into(), fields: vec![], op: crate::picky::act::Op::AddEntry { patch: serde_json::json!({}) } };
+        let p = crate::picky::act::Proposal { tool: crate::picky::act::ADD_ENTRY.into(), module: "finance".into(), label: "记一笔收支".into(), choices: vec![choice], more: 0, note: None };
+        crate::picky::act::add(&c, v.run_id, &p).unwrap();
+        assert!(markdown(&c, b.session_id).unwrap().contains("有方向的量。\n\n确认卡片（还没确认）：\n\n- 记一笔收支：10/12 午饭 ¥35\n"));
+        assert!(copy_markdown(&c, b.session_id).unwrap().contains("确认卡片（还没确认）"));
 
         let dir = crate::db::tests::temp_dir("picky-export");
         let dest = dir.join("向量");
@@ -435,6 +553,7 @@ mod tests {
         assert_eq!(json["activeMessageIds"].as_array().unwrap().len(), 2);
         assert_eq!(json["runs"].as_array().unwrap().len(), 3);
         assert_eq!(json["summaries"][0]["content"], "聊了向量");
+        assert!(json["messages"].as_array().unwrap().iter().any(|m| m["card"]["items"][0]["title"] == "10/12 午饭 ¥35"));
         // never merged into an existing folder; no staging folder left behind
         assert!(export_package(&c, b.session_id, &dest, &dir.join("files")).is_err());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);

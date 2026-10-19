@@ -61,6 +61,8 @@ export type Task = {
   totalAmount: number; // progress
   loggedToday: boolean;
   streak: number; // checkin
+  /** The note it was made from (念念不忘 转成待办 / 拆成待办). */
+  fromNote: number | null;
 };
 
 export type Log = { id: number; taskId: number; day: string; amount: number; createdAt: string };
@@ -82,8 +84,12 @@ export type TaskPatch = Partial<
   parentId?: number;
   /** Repeat: occurrences done so far. */
   doneCount?: number;
+  /** Attachment file ids, in order (replaces the list). */
+  attachments?: number[];
+  /** Create only: the note it is made from. */
+  fromNote?: number;
 };
-export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "status" | "startDate" | "endDate" | "note" | "review">>;
+export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "status" | "startDate" | "endDate" | "note" | "review">> & { attachments?: number[] };
 
 /** Which place a task list shows. */
 export type Place = { groupId: number; goalId?: undefined } | { goalId: number; groupId?: undefined };
@@ -104,6 +110,8 @@ const api = {
   deleteTask: (id: number) => invoke<void>("todo_task_delete", { id }),
   /** Several subtasks at once (小拾's 拆成子任务), one undo step. */
   addSubtasks: (v: { parentId: number; titles: string[] }) => invoke<Task[]>("todo_subtasks_create", v),
+  /** Root tasks from a note (小拾's 拆成待办), one undo step. */
+  fromNote: (v: { noteId: number; groupId: number | null; goalId: number | null; titles: string[] }) => invoke<Task[]>("todo_tasks_from_note", v),
   agenda: (today: string) => invoke<Agenda>("todo_agenda", { today }),
   doneBetween: (from: string, to: string) => invoke<DoneItem[]>("todo_done_between", { from, to }),
   month: (from: string, to: string) => invoke<CalItem[]>("todo_month", { from, to }),
@@ -148,6 +156,7 @@ export function useTodoMutations() {
     setDone: useMutation({ mutationFn: api.setDone, onSuccess, onError }),
     deleteTask: useMutation({ mutationFn: api.deleteTask, onSuccess, onError }),
     addSubtasks: useMutation({ mutationFn: api.addSubtasks, onSuccess, onError }),
+    fromNote: useMutation({ mutationFn: api.fromNote, onSuccess, onError }),
     skip: useMutation({ mutationFn: api.skip, onSuccess, onError }),
     log: useMutation({ mutationFn: api.log, onSuccess, onError }),
     deleteLog: useMutation({ mutationFn: api.deleteLog, onSuccess, onError }),

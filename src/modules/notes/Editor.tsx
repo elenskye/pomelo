@@ -1,33 +1,159 @@
 // Note text box (new note + editing in place): grows with the text; ⌘↩ saves, Esc cancels;
 // ⌘B / ⌘U / ⌘⇧H wrap the selection in ** / ++ / ==; ↩ continues a list, Tab / ⇧Tab indent it;
 // typing `#…` suggests existing tags. Never acts while an IME is composing.
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+// Looks like the card while typing: a plaintext-only editable box drawn one block per line, with
+// NoteBody's spacing (paragraphs 0.75em apart, list items 4px, a blank line 0.9em) and its marks
+// (`**` `==` `++` and list markers kept, dimmed). The text is the model: the browser types and
+// deletes inside a line, everything else (Enter, paste, drop, shortcuts) edits the text here; after
+// each change the lines are drawn again and the caret put back by its offset in the text. While an
+// IME composes nothing is redrawn. The box keeps its own ⌘Z / ⌘⇧Z (the page's ⌘Z skips editables).
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { atoms, pairMarks, type Mark } from "./NoteBody";
 
 export type EditorHandle = { focus: () => void };
 
 const LIST = /^( *)(?:([-*])|(\d+)([.)])) (.*)$/;
+const MARK = "text-muted-foreground/45";
 
-/** Replace [start, end) with text, keeping the textarea's own undo where WebKit allows. */
-function replace(el: HTMLTextAreaElement, start: number, end: number, text: string, caret?: [number, number]) {
-  el.focus();
-  el.setSelectionRange(start, end);
-  // WebKit: an empty insertText leaves the caret before a preceding newline; delete doesn't
-  const ok = text === "" ? start === end || document.execCommand("delete") : document.execCommand("insertText", false, text);
-  if (!ok) {
-    el.setRangeText(text, start, end, "end");
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+// ---------- drawing ----------
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const span = (cls: string, text: string) => (cls ? `<span class="${cls}">${esc(text)}</span>` : `<span>${esc(text)}</span>`);
+
+/** One line's inside: every character of it, marks dimmed, styled like NoteBody's Inline. */
+function lineHtml(line: string): string {
+  const li = LIST.exec(line);
+  const head = li ? line.slice(0, line.length - li[5].length) : "";
+  const text = line.slice(head.length);
+  const spans = atoms(text);
+  const marks = pairMarks(text, spans);
+  const on: Record<Mark, boolean> = { "**": false, "==": false, "++": false };
+  let out = head ? span(MARK, head) : "";
+  const styled = (s: string, cls = "") =>
+    span([cls, on["**"] && "font-bold", on["=="] && "rounded-[3px] bg-[var(--status-doing-bg)] px-0.5 text-foreground", on["++"] && "underline decoration-1 underline-offset-[3px]"].filter(Boolean).join(" "), s);
+  let buf = "";
+  const flush = () => {
+    if (buf) out += styled(buf);
+    buf = "";
+  };
+  for (let i = 0; i < text.length; ) {
+    const mark = marks.get(i);
+    if (mark) {
+      flush();
+      out += span(MARK, mark);
+      on[mark] = !on[mark];
+      i += 2;
+      continue;
+    }
+    const a = spans.find((s) => s.start === i);
+    if (a) {
+      flush();
+      out += styled(text.slice(a.start, a.end), a.kind === "tag" ? "text-primary" : "text-primary underline underline-offset-2");
+      i = a.end;
+      continue;
+    }
+    buf += text[i];
+    i++;
   }
-  if (caret) el.setSelectionRange(caret[0], caret[1]);
+  flush();
+  return out;
 }
 
-function wrap(el: HTMLTextAreaElement, mark: string) {
-  const { selectionStart: s, selectionEnd: e, value } = el;
-  const n = mark.length;
-  if (value.slice(s - n, s) === mark && value.slice(e, e + n) === mark) {
-    replace(el, s - n, e + n, value.slice(s, e), [s - n, e - n]); // already wrapped → unwrap
-  } else {
-    replace(el, s, e, mark + value.slice(s, e) + mark, [s + n, e + n]);
+/** NoteBody's gaps: a blank line is a 0.9em spacer; a line after text sits 0.75em below it, a list
+ * item after a list item 4px. */
+function lineClass(lines: string[], i: number): string {
+  if (!lines[i].trim()) return lines.length > 1 ? "h-[0.9em] leading-[0.9em]" : "";
+  if (i === 0 || !lines[i - 1].trim()) return "";
+  return LIST.test(lines[i]) && LIST.test(lines[i - 1]) ? "mt-1" : "mt-[0.75em]";
+}
+
+function docHtml(text: string): string {
+  const lines = text.split("\n");
+  return lines.map((l, i) => `<div class="${lineClass(lines, i)}">${l ? lineHtml(l) : "<br>"}</div>`).join("");
+}
+
+// ---------- text ⇄ DOM ----------
+
+/** The text of a box (or a cloned piece of it): blocks are lines; a `<br>` ending a block is only
+ * its placeholder. */
+function serialize(root: Node): string {
+  const lines: string[] = [];
+  let cur: string | null = null;
+  const inline = (n: Node): string => {
+    if (n.nodeType === Node.TEXT_NODE) return n.textContent ?? "";
+    if (n.nodeName === "BR") return n.nextSibling ? "\n" : "";
+    return Array.from(n.childNodes).map(inline).join("");
+  };
+  for (const n of Array.from(root.childNodes)) {
+    if (n.nodeName === "DIV" || n.nodeName === "P") {
+      if (cur !== null) lines.push(cur);
+      cur = null;
+      lines.push(inline(n));
+    } else {
+      cur = (cur ?? "") + inline(n);
+    }
   }
+  if (cur !== null) lines.push(cur);
+  return lines.join("\n");
+}
+
+/** Offset in the text of a DOM position inside `root`. */
+function offsetOf(root: HTMLElement, node: Node, offset: number): number {
+  if (node === root) {
+    const kids = Array.from(root.childNodes);
+    if (offset >= kids.length) return serialize(root).length;
+    const before = document.createDocumentFragment();
+    kids.slice(0, offset).forEach((k) => before.appendChild(k.cloneNode(true)));
+    return offset === 0 ? 0 : serialize(before).length + 1;
+  }
+  const r = document.createRange();
+  r.setStart(root, 0);
+  r.setEnd(node, offset);
+  return serialize(r.cloneContents()).length;
+}
+
+function selectionIn(root: HTMLElement): [number, number] | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !root.contains(sel.anchorNode) || !root.contains(sel.focusNode)) return null;
+  const a = offsetOf(root, sel.anchorNode!, sel.anchorOffset);
+  const f = offsetOf(root, sel.focusNode!, sel.focusOffset);
+  return [Math.min(a, f), Math.max(a, f)];
+}
+
+/** The DOM position of a text offset (in a box drawn by docHtml). */
+function pointAt(root: HTMLElement, pos: number): [Node, number] {
+  const lines = Array.from(root.children);
+  let p = pos;
+  for (const line of lines) {
+    const len = serialize(wrapOne(line)).length;
+    if (p <= len) {
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      let t: Node | null;
+      let last: Node | null = null;
+      while ((t = walker.nextNode())) {
+        const n = t.textContent?.length ?? 0;
+        if (p <= n) return [t, p];
+        p -= n;
+        last = t;
+      }
+      return last ? [last, last.textContent?.length ?? 0] : [line, 0];
+    }
+    p -= len + 1;
+  }
+  return [root, root.childNodes.length];
+}
+const wrapOne = (n: Node) => {
+  const f = document.createDocumentFragment();
+  f.appendChild(n.cloneNode(true));
+  return f;
+};
+
+function select(root: HTMLElement, start: number, end = start) {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const [an, ao] = pointAt(root, start);
+  const [fn, fo] = pointAt(root, end);
+  sel.setBaseAndExtent(an, ao, fn, fo);
 }
 
 const lineStart = (v: string, i: number) => v.lastIndexOf("\n", i - 1) + 1;
@@ -38,6 +164,9 @@ function typingTag(value: string, caret: number): { start: number; text: string 
   if (!m) return null;
   return { start: caret - m[1].length - 1, text: m[1] };
 }
+
+type Snap = { text: string; sel: [number, number] };
+const HISTORY = 200;
 
 export const Editor = forwardRef<
   EditorHandle,
@@ -52,31 +181,119 @@ export const Editor = forwardRef<
     minRows?: number;
   }
 >(function Editor(props, handle) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  // what the box shows, its selection, and its own undo / redo
+  const doc = useRef<Snap>({ text: props.value, sel: [props.value.length, props.value.length] });
+  const past = useRef<Snap[]>([]);
+  const future = useRef<Snap[]>([]);
+  const typed = useRef<{ at: number; kind: "insert" | "delete" | null }>({ at: 0, kind: null });
+  const composing = useRef(false);
   const [caret, setCaret] = useState(0);
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null); // caret where Esc closed the list
 
-  useImperativeHandle(handle, () => ({ focus: () => ref.current?.focus() }), []);
-
-  // grow with the text (capped by CSS max-height)
-  useLayoutEffect(() => {
+  const draw = (sel?: [number, number]) => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + 2}px`;
-  }, [props.value]);
+    el.innerHTML = docHtml(doc.current.text);
+    if (sel && document.activeElement === el) select(el, sel[0], sel[1]);
+  };
+
+  /** A new text: remembered for ⌘Z (typing, or deleting, in a row is one step), drawn, reported. */
+  const commit = (text: string, sel: [number, number], typing = false) => {
+    const now = Date.now();
+    const kind = !typing ? null : text.length >= doc.current.text.length ? "insert" : "delete";
+    if (text !== doc.current.text) {
+      if (!(kind && kind === typed.current.kind && now - typed.current.at < 1000)) {
+        past.current.push(doc.current);
+        if (past.current.length > HISTORY) past.current.shift();
+      }
+      future.current = [];
+    }
+    typed.current = { at: kind ? now : 0, kind };
+    doc.current = { text, sel };
+    draw(sel);
+    setCaret(sel[0]);
+    setActive(0);
+    props.onChange(text);
+  };
+
+  /** Replace [start, end) with `text`; the caret after it unless given. */
+  const replace = (start: number, end: number, text: string, sel?: [number, number]) => {
+    const v = doc.current.text;
+    const at = start + text.length;
+    commit(v.slice(0, start) + text + v.slice(end), sel ?? [at, at]);
+  };
+
+  const travel = (back: boolean) => {
+    const from = back ? past.current : future.current;
+    const to = back ? future.current : past.current;
+    const snap = from.pop();
+    if (!snap) return;
+    to.push(doc.current);
+    doc.current = snap;
+    typed.current = { at: 0, kind: null };
+    draw(snap.sel);
+    setCaret(snap.sel[0]);
+    props.onChange(snap.text);
+  };
+
+  // the browser typed or deleted: read the text back
+  const sync = () => {
+    const el = ref.current;
+    if (!el || composing.current) return;
+    const text = serialize(el);
+    const sel = selectionIn(el) ?? [text.length, text.length];
+    commit(text, sel, true);
+  };
+
+  // first draw; a value set from outside (cleared after 记下, another note) starts afresh
+  useLayoutEffect(() => {
+    if (props.value === doc.current.text && ref.current?.childNodes.length) return;
+    doc.current = { text: props.value, sel: [props.value.length, props.value.length] };
+    past.current = [];
+    future.current = [];
+    draw(doc.current.sel);
+  }, [props.value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useImperativeHandle(
+    handle,
+    () => ({
+      focus: () => {
+        const el = ref.current;
+        if (!el) return;
+        el.focus();
+        if (!selectionIn(el)) select(el, doc.current.text.length);
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const el = ref.current;
     if (props.autoFocus && el) {
       el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
+      select(el, doc.current.text.length);
     }
   }, [props.autoFocus]);
 
-  const typing = focused ? typingTag(props.value, caret) : null;
+  // the caret, for the tag list
+  useEffect(() => {
+    const onSel = () => {
+      const el = ref.current;
+      const s = el && !composing.current ? selectionIn(el) : null;
+      if (s) {
+        doc.current.sel = s;
+        setCaret(s[0]);
+      }
+    };
+    document.addEventListener("selectionchange", onSel);
+    return () => document.removeEventListener("selectionchange", onSel);
+  }, []);
+
+  const value = doc.current.text;
+  const typing = focused ? typingTag(value, caret) : null;
   const suggestions =
     typing && dismissed !== caret && !props.tags.includes(typing.text) // a complete tag: ↩ is a new line again
       ? props.tags
@@ -85,16 +302,31 @@ export const Editor = forwardRef<
           .slice(0, 8)
       : [];
   const pick = (tag: string) => {
-    const el = ref.current;
-    if (!el || !typing) return;
-    const next = props.value[caret] === " " ? "" : " ";
-    replace(el, typing.start, caret, `#${tag}${next}`);
-    setCaret(el.selectionStart);
+    if (!typing) return;
+    const next = doc.current.text[caret] === " " ? "" : " ";
+    replace(typing.start, caret, `#${tag}${next}`);
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    const el = e.currentTarget;
+  const wrap = (mark: string) => {
+    const value = doc.current.text;
+    const [s, e] = selectionIn(ref.current!) ?? doc.current.sel;
+    const n = mark.length;
+    if (value.slice(s - n, s) === mark && value.slice(e, e + n) === mark) {
+      replace(s - n, e + n, value.slice(s, e), [s - n, e - n]); // already wrapped → unwrap
+    } else {
+      replace(s, e, mark + value.slice(s, e) + mark, [s + n, e + n]);
+    }
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229 || composing.current) return;
+    const k = e.key.toLowerCase();
+    if (e.metaKey && !e.altKey && !e.ctrlKey && k === "z") {
+      e.preventDefault();
+      e.stopPropagation();
+      travel(!e.shiftKey);
+      return;
+    }
     if (suggestions.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -124,54 +356,111 @@ export const Editor = forwardRef<
       props.onCancel();
       return;
     }
-    const k = e.key.toLowerCase();
     if (e.metaKey && !e.altKey && ((k === "b" && !e.shiftKey) || (k === "u" && !e.shiftKey) || (k === "h" && e.shiftKey))) {
       e.preventDefault();
-      wrap(el, k === "b" ? "**" : k === "u" ? "++" : "==");
+      wrap(k === "b" ? "**" : k === "u" ? "++" : "==");
       return;
     }
-    const { selectionStart: s, selectionEnd: end, value } = el;
+    const value = doc.current.text;
+    const [s, end] = selectionIn(e.currentTarget) ?? doc.current.sel;
     const ls = lineStart(value, s);
     const le = value.indexOf("\n", ls) < 0 ? value.length : value.indexOf("\n", ls);
     const li = LIST.exec(value.slice(ls, le));
-    if (e.key === "Enter" && !e.shiftKey && !e.metaKey && li && s === end) {
+    if (e.key === "Enter" && !e.metaKey) {
       e.preventDefault();
-      if (!li[5].trim()) {
-        if (li[1].length >= 2) replace(el, ls, ls + 2, "", [s - 2, s - 2]); // empty nested item: one level up
-        else replace(el, ls, le, ""); // empty top item: end the list
+      if (li && s === end && !e.shiftKey) {
+        if (!li[5].trim()) {
+          if (li[1].length >= 2) replace(ls, ls + 2, "", [s - 2, s - 2]); // empty nested item: one level up
+          else replace(ls, le, ""); // empty top item: end the list
+        } else {
+          const marker = li[2] ? `${li[2]} ` : `${Number(li[3]) + 1}${li[4]} `;
+          replace(s, s, `\n${li[1]}${marker}`);
+        }
       } else {
-        const marker = li[2] ? `${li[2]} ` : `${Number(li[3]) + 1}${li[4]} `;
-        replace(el, s, s, `\n${li[1]}${marker}`);
+        replace(s, end, "\n");
       }
       return;
     }
     if (e.key === "Tab" && li) {
       e.preventDefault();
       if (e.shiftKey) {
-        if (li[1].length >= 2) replace(el, ls, ls + 2, "", [s - 2, end - 2]);
-      } else replace(el, ls, ls, "  ", [s + 2, end + 2]);
+        if (li[1].length >= 2) replace(ls, ls + 2, "", [s - 2, end - 2]);
+      } else replace(ls, ls, "  ", [s + 2, end + 2]);
     }
+  };
+
+  // what the browser would do in its own way: done here, on the text
+  const onBeforeInput = (e: InputEvent) => {
+    const el = ref.current!;
+    const [s, end] = selectionIn(el) ?? doc.current.sel;
+    switch (e.inputType) {
+      case "insertParagraph":
+      case "insertLineBreak":
+        e.preventDefault();
+        replace(s, end, "\n");
+        break;
+      case "insertFromPaste":
+      case "insertFromDrop":
+      case "insertFromYank":
+        e.preventDefault();
+        replace(s, end, (e.dataTransfer?.getData("text/plain") ?? e.data ?? "").replace(/\r\n?/g, "\n"));
+        break;
+      case "deleteByDrag":
+        e.preventDefault(); // a dragged piece is copied, not moved
+        break;
+      case "historyUndo":
+      case "historyRedo":
+        e.preventDefault();
+        travel(e.inputType === "historyUndo");
+        break;
+      case "formatBold":
+      case "formatItalic":
+      case "formatUnderline":
+        e.preventDefault();
+        break;
+    }
+  };
+  useEffect(() => {
+    const el = ref.current!;
+    el.addEventListener("beforeinput", onBeforeInput);
+    return () => el.removeEventListener("beforeinput", onBeforeInput);
+  });
+
+  const copy = (e: ClipboardEvent<HTMLDivElement>, cut: boolean) => {
+    const [s, end] = selectionIn(e.currentTarget) ?? [0, 0];
+    if (s === end) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", doc.current.text.slice(s, end));
+    if (cut) replace(s, end, "");
   };
 
   return (
     <div className="relative">
-      <textarea
+      <div
         ref={ref}
-        value={props.value}
-        rows={props.minRows ?? 3}
+        role="textbox"
+        aria-multiline
+        aria-label={props.placeholder ?? "笔记"}
+        contentEditable="plaintext-only"
+        suppressContentEditableWarning
         spellCheck={false}
-        placeholder={props.placeholder}
-        onChange={(e) => {
-          props.onChange(e.target.value);
-          setCaret(e.target.selectionStart);
-          setActive(0);
+        autoCorrect="off"
+        autoCapitalize="off"
+        onInput={sync}
+        onCompositionStart={() => (composing.current = true)}
+        onCompositionEnd={() => {
+          composing.current = false;
+          requestAnimationFrame(sync);
         }}
-        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onKeyDown={onKeyDown}
+        onCopy={(e) => copy(e, false)}
+        onCut={(e) => copy(e, true)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        onKeyDown={onKeyDown}
-        className="block max-h-[60vh] w-full resize-none bg-transparent leading-relaxed outline-none placeholder:text-muted-foreground"
+        style={{ minHeight: `${(props.minRows ?? 3) * 1.625}em` }}
+        className="block max-h-[60vh] w-full overflow-y-auto leading-relaxed break-words whitespace-pre-wrap outline-none"
       />
+      {!value && props.placeholder && <div className="pointer-events-none absolute top-0 left-0 leading-relaxed text-muted-foreground">{props.placeholder}</div>}
       {suggestions.length > 0 && (
         <div
           role="listbox"

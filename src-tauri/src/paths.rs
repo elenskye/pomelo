@@ -30,6 +30,8 @@ pub struct DataPaths {
     /// 小拾 (AI): its own database + attachment folder, so pomelo.db never changes for it.
     pub picky_db: PathBuf,
     pub picky_files: PathBuf,
+    /// v0.4: everything search computes from the data (rebuilt when missing; never backed up).
+    pub search_db: PathBuf,
     pub backups: PathBuf,
 }
 
@@ -39,6 +41,7 @@ impl DataPaths {
             db: root.join("pomelo.db"),
             picky_db: root.join("picky.db"),
             picky_files: root.join("picky-files"),
+            search_db: root.join("search.db"),
             backups: root.join("backups"),
             root,
         }
@@ -69,5 +72,6 @@ mod tests {
         assert_eq!(p.backups, PathBuf::from("/r/backups"));
         assert_eq!(p.picky_db, PathBuf::from("/r/picky.db"));
         assert_eq!(p.picky_files, PathBuf::from("/r/picky-files"));
+        assert_eq!(p.search_db, PathBuf::from("/r/search.db"));
     }
 }

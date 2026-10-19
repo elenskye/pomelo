@@ -1,11 +1,20 @@
-// One note in the stream: time · pin · menu (编辑 / 引用 / 置顶 / 删除), the text (long ones fold),
-// the notes it quotes and the notes quoting it. Double-click edits in place.
+// One note in the stream: time · pin · menu (编辑 / 引用 / 转成待办 / 让小拾拆成待办 / 置顶 / 删除), the text
+// (long ones fold), its attachments, the tasks made from it, the notes it quotes and the notes quoting it.
+// Double-click edits in place. 拆成待办 lists what 小拾 found to pick from, with where they go.
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, CornerDownRight, Ellipsis, Pin, Quote, X } from "lucide-react";
+import { useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, CornerDownRight, Ellipsis, Footprints, Pin, Quote, X } from "lucide-react";
+import { IdeaList, assistApi, assistBusyText, useAssistOn } from "@/modules/picky/Assist";
+import { usePickyStatus } from "@/modules/picky/api";
+import { useGoals, useGroups, useTodoMutations } from "@/modules/todo/api";
+import type { FileInfo } from "@/shared/attachments/api";
+import { AttachButton, AttachmentStrip, withFiles } from "@/shared/attachments/Attachments";
+import { useAttachTarget } from "@/shared/attachments/target";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
-import { noteTime, useNoteMutations, type Brief, type Note } from "./api";
+import { NOTES_KEY, noteTime, useNoteMutations, type Brief, type Note, type NoteTask } from "./api";
 import { Editor } from "./Editor";
 import { NoteBody } from "./NoteBody";
 
@@ -56,25 +65,95 @@ function Folding(props: { children: ReactNode }) {
   );
 }
 
+/** 拆成待办: 小拾's list to pick from, and the group / goal they go to. */
+function SplitList(props: { note: Note; ideas: string[]; onDone: () => void }) {
+  const { data: groups = [] } = useGroups();
+  const { data: goals = [] } = useGoals();
+  const [where, setWhere] = useState<string | null>(null);
+  const m = useTodoMutations();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const options = groups.flatMap((g) => [{ value: `g:${g.id}`, label: g.name }, ...goals.filter((o) => o.groupId === g.id && o.status === "active").map((o) => ({ value: `o:${o.id}`, label: `　${o.name}` }))]);
+  const place = where ?? options[0]?.value ?? null;
+  const add = (titles: string[]) => {
+    if (!place) return toast("先在一步一步里建一个分组", "error");
+    const id = Number(place.slice(2));
+    m.fromNote.mutate(
+      { noteId: props.note.id, groupId: place.startsWith("g:") ? id : null, goalId: place.startsWith("o:") ? id : null, titles },
+      {
+        onSuccess: () => {
+          void qc.invalidateQueries({ queryKey: NOTES_KEY });
+          toast(`加上了 ${titles.length} 个待办`);
+          props.onDone();
+        },
+      },
+    );
+  };
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        加到
+        <Dropdown<string | null> ariaLabel="加到哪个分组" value={place} onChange={setWhere} options={options} menuMaxHeight={300} />
+      </div>
+      <IdeaList items={props.ideas} label={(t) => t} busy={m.fromNote.isPending} onAdd={add} onCancel={props.onDone} />
+    </div>
+  );
+}
+
+/** → 待办 rows: the tasks made from this note; a click opens one in 一步一步. */
+function MadeTasks(props: { tasks: NoteTask[] }) {
+  const navigate = useNavigate();
+  const open = (t: NoteTask) =>
+    void navigate("/todo", { state: { open: { module: "todo", kind: "task", id: t.id, title: t.title, detail: null, parent: t.goalId !== null ? -t.goalId : t.groupId, day: null, amount: null, currency: null, flow: null } } });
+  return (
+    <div className="mt-2 space-y-0.5">
+      {props.tasks.map((t) => (
+        <button key={t.id} type="button" onClick={() => open(t)} className="flex max-w-full min-w-0 items-center gap-1.5 text-left text-sm text-muted-foreground hover:text-foreground">
+          <Footprints size={12} className="shrink-0" style={{ color: "var(--module-todo)" }} />
+          <span className={`truncate ${t.done ? "line-through" : ""}`}>{t.title.replace(/\*\*/g, "")}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function NoteCard(props: {
   note: Note;
   tags: string[];
   onTag: (tag: string) => void;
   onOpen: (id: number) => void;
   onQuote: (n: Note) => void;
+  /** 转成待办: the page opens a new-task panel from this note. */
+  onToTodo?: (n: Note) => void;
   focused?: boolean;
 }) {
   const n = props.note;
   const m = useNoteMutations();
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
-  const [draft, setDraft] = useState<{ content: string; refs: Brief[] } | null>(null);
+  const [draft, setDraft] = useState<{ content: string; refs: Brief[]; files: FileInfo[] } | null>(null);
   const [showBack, setShowBack] = useState(!!props.focused);
+  const assist = useAssistOn();
+  const status = usePickyStatus().data;
+  const [ideas, setIdeas] = useState<string[] | null>(null);
+  const [splitting, setSplitting] = useState(false);
+  const split = async () => {
+    setSplitting(true);
+    try {
+      setIdeas(await assistApi.splitNote(n.id));
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setSplitting(false);
+    }
+  };
   const editing = draft !== null;
+  const card = useRef<HTMLElement>(null);
+  const dropping = useAttachTarget(card, (fs) => setDraft((d) => d && { ...d, files: withFiles(d.files, fs) }), (e) => toast(errorText(e), "error"), editing);
 
-  const startEdit = () => setDraft({ content: n.content, refs: n.refs });
-  const ids = (bs: Brief[]) => bs.map((b) => b.id).join();
-  const dirty = draft !== null && (draft.content !== n.content || ids(draft.refs) !== ids(n.refs));
+  const startEdit = () => setDraft({ content: n.content, refs: n.refs, files: n.attachments });
+  const ids = (bs: { id: number }[]) => bs.map((b) => b.id).join();
+  const dirty = draft !== null && (draft.content !== n.content || ids(draft.refs) !== ids(n.refs) || ids(draft.files) !== ids(n.attachments));
   const cancel = async () => {
     if (dirty && !(await confirm({ title: "放弃没有保存的修改？", confirmLabel: "放弃修改", danger: true }))) return;
     setDraft(null);
@@ -83,7 +162,7 @@ export function NoteCard(props: {
     if (!draft) return;
     if (!dirty) return setDraft(null);
     m.update.mutate(
-      { id: n.id, patch: { content: draft.content, refs: draft.refs.map((r) => r.id) } },
+      { id: n.id, patch: { content: draft.content, refs: draft.refs.map((r) => r.id), attachments: draft.files.map((f) => f.id) } },
       { onSuccess: () => setDraft(null), onError: (e) => toast(errorText(e), "error") },
     );
   };
@@ -100,16 +179,19 @@ export function NoteCard(props: {
   const act = (a: string) => {
     if (a === "edit") startEdit();
     else if (a === "quote") props.onQuote(n);
+    else if (a === "todo") props.onToTodo?.(n);
+    else if (a === "split") void split();
     else if (a === "pin") m.update.mutate({ id: n.id, patch: { pinned: !n.pinned } }, { onError: (e) => toast(errorText(e), "error") });
     else if (a === "delete") void remove();
   };
 
   return (
     <article
+      ref={card}
       onDoubleClick={(e) => {
         if (!editing && !(e.target as HTMLElement).closest("button")) startEdit();
       }}
-      className={`group rounded-card border bg-card px-4 py-3 ${props.focused ? "ring-2 ring-ring" : ""}`}
+      className={`group rounded-card border bg-card px-4 py-3 ${props.focused || dropping ? "ring-2 ring-ring" : ""}`}
     >
       <header className="mb-1.5 flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
         <time dateTime={n.createdAt} className="tabular-nums">
@@ -127,6 +209,8 @@ export function NoteCard(props: {
             options={[
               { value: "edit", label: "编辑" },
               { value: "quote", label: "引用" },
+              ...(props.onToTodo ? [{ value: "todo", label: "转成待办" }] : []),
+              ...(assist ? [{ value: "split", label: "让小拾拆成待办" }] : []),
               { value: "pin", label: n.pinned ? "取消置顶" : "置顶" },
               { value: "delete", label: <span className="text-destructive">删除</span> },
             ]}
@@ -147,6 +231,7 @@ export function NoteCard(props: {
             autoFocus
             minRows={2}
           />
+          <AttachmentStrip files={draft.files} onRemove={(id) => setDraft({ ...draft, files: draft.files.filter((f) => f.id !== id) })} />
           {draft.refs.length > 0 && (
             <div className="space-y-0.5">
               {draft.refs.map((r) => (
@@ -160,7 +245,9 @@ export function NoteCard(props: {
               ))}
             </div>
           )}
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <AttachButton onFiles={(fs) => setDraft((d) => d && { ...d, files: withFiles(d.files, fs) })} />
+            <div className="flex-1" />
             <Button onClick={() => void cancel()}>取消</Button>
             <Button variant="primary" disabled={!draft.content.trim() || m.update.isPending} onClick={save}>
               保存
@@ -173,6 +260,10 @@ export function NoteCard(props: {
         </Folding>
       )}
 
+      {!editing && <AttachmentStrip files={n.attachments} className="mt-2" />}
+      {!editing && n.tasks.length > 0 && <MadeTasks tasks={n.tasks} />}
+      {splitting && <p className="mt-2 animate-pulse text-xs text-muted-foreground">{assistBusyText(status, "正在拆成待办…")}</p>}
+      {ideas && <SplitList note={n} ideas={ideas} onDone={() => setIdeas(null)} />}
       {!editing && n.refs.length > 0 && (
         <div className="mt-2 space-y-0.5 border-l-2 pl-2.5">
           {n.refs.map((r) => (

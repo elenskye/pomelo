@@ -1,6 +1,8 @@
 // Modals for groups (name only) and goals (name, group, dates, status, note, 复盘).
 import { useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
+import { useAttachmentsOf, type FileInfo } from "@/shared/attachments/api";
+import { AttachmentField } from "@/shared/attachments/Attachments";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
@@ -72,7 +74,7 @@ export function GroupDialog(props: { group: TodoGroup | null; goalCount: number;
   );
 }
 
-export function GoalDialog(props: {
+type GoalDialogProps = {
   goal: Goal | null; // null = create
   groupId: number;
   groups: TodoGroup[];
@@ -80,7 +82,16 @@ export function GoalDialog(props: {
   onClose: () => void;
   onCreated?: (g: Goal) => void;
   onDeleted?: () => void;
-}) {
+};
+
+/** Opens once a saved goal's attachments are in. */
+export function GoalDialog(props: GoalDialogProps) {
+  const filesQ = useAttachmentsOf("goal", props.goal?.id ?? null);
+  if (props.goal && !filesQ.data) return null;
+  return <GoalForm {...props} files={filesQ.data ?? []} />;
+}
+
+function GoalForm(props: GoalDialogProps & { files: FileInfo[] }) {
   const { goal } = props;
   const [name, setName] = useState(goal?.name ?? "");
   const [groupId, setGroupId] = useState(goal?.groupId ?? props.groupId);
@@ -89,6 +100,7 @@ export function GoalDialog(props: {
   const [endDate, setEndDate] = useState(goal?.endDate ?? "");
   const [note, setNote] = useState(goal?.note ?? "");
   const [review, setReview] = useState(goal?.review ?? "");
+  const [files, setFiles] = useState(props.files);
   const [error, setError] = useState<string | null>(null);
   const m = useTodoMutations();
   const toast = useToast();
@@ -98,7 +110,7 @@ export function GoalDialog(props: {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    const patch = { name, groupId, status, startDate: startDate || null, endDate: endDate || null, note: note.trim() || null, review: review.trim() || null };
+    const patch = { name, groupId, status, startDate: startDate || null, endDate: endDate || null, note: note.trim() || null, review: review.trim() || null, attachments: files.map((f) => f.id) };
     try {
       if (goal) {
         await m.updateGoal.mutateAsync({ id: goal.id, patch });
@@ -172,6 +184,7 @@ export function GoalDialog(props: {
       <Field label="备注">
         <TextArea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={5000} />
       </Field>
+      <AttachmentField files={files} onChange={setFiles} />
       {closed && (
         <Field label="复盘">
           <Polish module="todo" value={review} onChange={setReview}>

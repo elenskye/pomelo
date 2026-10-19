@@ -1,7 +1,8 @@
 //! Files the user adds (from Picky's Attachments / ProjectFiles):
 //! - Formats: .txt / .text (UTF-8, or UTF-16 with a BOM), .md / .markdown, .pdf (PDFKit; pages with
-//!   text — a scanned PDF is refused). Only a regular file the user chose (no folders, no symlinks),
-//!   at most 200 MB, with some text.
+//!   text — a scanned PDF is refused); since v0.4.5 Word, PowerPoint, Excel / CSV, images and saved web
+//!   pages (office.rs). Only a regular file the user chose (no folders, no symlinks), at most 200 MB,
+//!   with some text (images have none).
 //! - Adding copies the bytes into picky-files/ (random name, never overwriting) and extracts the text
 //!   once into segments: a PDF page, or a Markdown section, each at most 6000 characters. The same
 //!   bytes are stored once (sha256) while that copy is intact. Storing is not undoable (it only adds
@@ -29,11 +30,16 @@ const SEGMENT_CHARS: usize = 6000;
 pub struct FileInfo {
     pub id: i64,
     pub name: String,
-    /// PDF | Markdown | 文本
+    /// PDF | Markdown | 文本 | Word | PowerPoint | Excel | CSV | 图片 | 网页
     pub format: &'static str,
+    /// PDF pages / PowerPoint slides.
     pub page_count: Option<i64>,
     pub byte_count: i64,
     pub deleted: bool,
+    /// Tables: data rows.
+    pub row_count: Option<i64>,
+    /// 网页: its address.
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,12 +63,25 @@ impl Segment {
     }
 }
 
-fn format_of(media: &str) -> &'static str {
+const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+fn format_of(media: &str, url: bool) -> &'static str {
     match media {
+        _ if url => "网页",
         "application/pdf" => "PDF",
         "text/markdown" => "Markdown",
+        DOCX | "application/msword" => "Word",
+        PPTX => "PowerPoint",
+        "text/csv" => "CSV",
+        m if m.contains("spreadsheet") || m == "application/vnd.ms-excel" => "Excel",
+        m if m.starts_with("image/") => "图片",
         _ => "文本",
     }
+}
+
+pub fn is_image(media: &str) -> bool {
+    media.starts_with("image/")
 }
 
 // ---------- preparing ----------
@@ -76,17 +95,32 @@ pub struct Prepared {
     pub sha256: String,
     pub page_count: Option<i64>,
     pub segments: Vec<Segment>,
+    pub row_count: Option<i64>,
+    pub source_url: Option<String>,
 }
 
 /// Reads and extracts a file the user chose (slow for a big PDF: call off the main thread).
 pub fn prepare(path: &Path) -> Result<Prepared, String> {
+    read(path, false)
+}
+
+/// `whole_tables`: every row of a big table as text (知识库 files are searched, not sent whole; 查表
+/// only exists for attachments).
+pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).ok_or("请选择一个文件")?;
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     let media_type = match ext.as_str() {
         "txt" | "text" => "text/plain",
         "md" | "markdown" => "text/markdown",
         "pdf" => "application/pdf",
-        _ => return Err("只支持文本、Markdown 和 PDF 文件".into()),
+        "docx" => DOCX,
+        "doc" => "application/msword",
+        "pptx" => PPTX,
+        "xlsx" | "xlsm" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls" => "application/vnd.ms-excel",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "csv" => "text/csv",
+        e => super::office::image_type(e).ok_or("只支持文本、Markdown、PDF、Word、PowerPoint、Excel、CSV 和图片")?,
     };
     let meta = std::fs::symlink_metadata(path).map_err(|_| "文件不存在或没有读取权限".to_string())?;
     if !meta.file_type().is_file() {
@@ -99,7 +133,34 @@ pub fn prepare(path: &Path) -> Result<Prepared, String> {
     if data.is_empty() {
         return Err("文件是空的，没有可以读取的文字".into());
     }
-    let (page_count, segments) = if media_type == "application/pdf" {
+    let mut row_count = None;
+    let (page_count, segments) = if is_image(media_type) {
+        (None, vec![])
+    } else if media_type == DOCX || media_type == "application/msword" {
+        let text = super::office::word_text(path)?;
+        if text.trim().is_empty() {
+            return Err("这个 Word 文件里没有文字".into());
+        }
+        (None, split_text(text.trim(), false))
+    } else if media_type == PPTX {
+        let slides = super::office::pptx_slides(&data)?;
+        let segments: Vec<Segment> = slides
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .enumerate()
+            .map(|(ordinal, (i, t))| Segment { ordinal: ordinal as i64, page_start: Some(i as i64 + 1), page_end: Some(i as i64 + 1), heading: None, content: t.clone() })
+            .collect();
+        if segments.is_empty() {
+            return Err("这个 PowerPoint 里没有文字".into());
+        }
+        (Some(slides.len() as i64), segments)
+    } else if super::office::is_table(&ext) {
+        let sheets = super::office::read_table(path, &ext)?;
+        let (segments, rows) = super::office::table_segments(&sheets, &name, whole_tables);
+        row_count = Some(rows);
+        (None, segments)
+    } else if media_type == "application/pdf" {
         let pages = super::pdf::pages(&data)?;
         let segments: Vec<Segment> = pages
             .iter()
@@ -119,10 +180,28 @@ pub fn prepare(path: &Path) -> Result<Prepared, String> {
         }
         (None, split_text(&text, media_type == "text/markdown"))
     };
-    Ok(Prepared { name, ext, media_type, sha256: super::pdf::sha256_hex(&data), data, page_count, segments })
+    Ok(Prepared { name, ext, media_type, sha256: super::pdf::sha256_hex(&data), data, page_count, segments, row_count, source_url: None })
 }
 
-fn decode(data: &[u8]) -> Result<String, String> {
+/// A pasted image (⌘V): only images; named by the page.
+pub fn prepare_image(name: &str, data: Vec<u8>) -> Result<Prepared, String> {
+    let ext = Path::new(name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "png".into());
+    let media_type = super::office::image_type(&ext).ok_or("只能粘贴图片")?;
+    if data.is_empty() || data.len() as u64 > MAX_BYTES {
+        return Err("图片是空的或太大了".into());
+    }
+    Ok(Prepared { name: name.to_string(), ext, media_type, sha256: super::pdf::sha256_hex(&data), data, page_count: None, segments: vec![], row_count: None, source_url: None })
+}
+
+/// A saved web page: its article as Markdown is the copy.
+pub fn prepare_web(url: &str, title: &str, text: &str) -> Prepared {
+    let host = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or(url).trim_start_matches("www.");
+    let name = if title.trim().is_empty() { host.to_string() } else { title.trim().chars().take(80).collect::<String>() };
+    let data = text.as_bytes().to_vec();
+    Prepared { name, ext: "md".into(), media_type: "text/markdown", sha256: super::pdf::sha256_hex(&data), data, page_count: None, segments: split_text(text, true), row_count: None, source_url: Some(url.to_string()) }
+}
+
+pub fn decode(data: &[u8]) -> Result<String, String> {
     let bad = || "无法识别文件文字，请将文本另存为 UTF-8 后再添加".to_string();
     let text = if data.starts_with(&[0xFF, 0xFE]) || data.starts_with(&[0xFE, 0xFF]) {
         let le = data[0] == 0xFF;
@@ -253,8 +332,8 @@ pub fn store(conn: &Connection, dir: &Path, p: &Prepared) -> Result<i64, String>
         let tx = Tx::begin(conn)?;
         let chars: i64 = p.segments.iter().map(|s| s.content.chars().count() as i64).sum();
         tx.execute(
-            "INSERT INTO artifacts (display_name, file_name, media_type, byte_count, sha256, page_count, text_chars) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![p.name, file_name, p.media_type, p.data.len() as i64, p.sha256, p.page_count, chars],
+            "INSERT INTO artifacts (display_name, file_name, media_type, byte_count, sha256, page_count, text_chars, row_count, source_url) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![p.name, file_name, p.media_type, p.data.len() as i64, p.sha256, p.page_count, chars, p.row_count, p.source_url],
         )
         .map_err(err)?;
         let id = tx.last_insert_rowid();
@@ -274,23 +353,29 @@ pub fn store(conn: &Connection, dir: &Path, p: &Prepared) -> Result<i64, String>
     saved
 }
 
-const INFO_COLS: &str = "a.id, a.display_name, a.media_type, a.page_count, a.byte_count, a.deleted_at IS NOT NULL";
+const INFO_COLS: &str = "a.id, a.display_name, a.media_type, a.page_count, a.byte_count, a.deleted_at IS NOT NULL, a.row_count, a.source_url";
 
 fn info_row(r: &rusqlite::Row) -> rusqlite::Result<FileInfo> {
-    Ok(FileInfo { id: r.get(0)?, name: r.get(1)?, format: format_of(&r.get::<_, String>(2)?), page_count: r.get(3)?, byte_count: r.get(4)?, deleted: r.get(5)? })
+    let url: Option<String> = r.get(7)?;
+    Ok(FileInfo { id: r.get(0)?, name: r.get(1)?, format: format_of(&r.get::<_, String>(2)?, url.is_some()), page_count: r.get(3)?, byte_count: r.get(4)?, deleted: r.get(5)?, row_count: r.get(6)?, url })
+}
+
+/// A copy's media type.
+pub fn media_of(conn: &Connection, id: i64) -> Result<String, String> {
+    conn.query_row("SELECT media_type FROM artifacts WHERE id = ?1", [id], |r| r.get(0)).map_err(err)
 }
 
 pub fn info(conn: &Connection, id: i64) -> Result<Option<FileInfo>, String> {
     conn.query_row(&format!("SELECT {INFO_COLS} FROM artifacts a WHERE a.id = ?1"), [id], info_row).optional().map_err(err)
 }
 
-/// Newest first; copies kept only as project files stay out (they belong to their project).
+/// Newest first; copies kept only as project files or 知识库 web pages stay out (they belong there).
 pub fn library(conn: &Connection) -> Result<Vec<FileInfo>, String> {
     let mut st = conn
         .prepare(&format!(
             "SELECT {INFO_COLS} FROM artifacts a WHERE a.deleted_at IS NULL
                AND (EXISTS (SELECT 1 FROM message_attachments m WHERE m.artifact_id = a.id)
-                    OR NOT EXISTS (SELECT 1 FROM project_file_versions v WHERE v.artifact_id = a.id))
+                    OR NOT (EXISTS (SELECT 1 FROM project_file_versions v WHERE v.artifact_id = a.id) OR EXISTS (SELECT 1 FROM kb_sources k WHERE k.artifact_id = a.id)))
              ORDER BY a.created_at DESC, a.id DESC"
         ))
         .map_err(err)?;
@@ -488,7 +573,6 @@ pub fn replace_project_file(conn: &Connection, id: i64, artifact: i64) -> Result
     let next = f.versions.iter().map(|v| v.version).max().unwrap_or(0) + 1;
     tx.execute("INSERT INTO project_file_versions (file_id, version, artifact_id) VALUES (?1, ?2, ?3)", params![id, next, artifact]).map_err(err)?;
     tx.execute(&format!("UPDATE project_files SET current_version = ?1, updated_at = {NOW} WHERE id = ?2"), params![next, id]).map_err(err)?;
-    super::index::prune(&tx)?;
     tx.commit()?;
     Ok(f.indexed)
 }
@@ -499,15 +583,16 @@ pub fn remove_project_file(conn: &Connection, id: i64) -> Result<(), String> {
     if tx.execute("DELETE FROM project_files WHERE id = ?1", [id]).map_err(err)? == 0 {
         return Err("这份资料已不在项目里了".into());
     }
-    super::index::prune(&tx)?;
     tx.commit()
 }
 
 pub fn set_indexed(conn: &Connection, id: i64, indexed: bool) -> Result<(), String> {
     let tx = Tx::begin(conn)?;
-    project_file(&tx, id)?;
+    let f = project_file(&tx, id)?;
+    if indexed && f.current().is_some_and(|v| v.format == "图片") {
+        return Err("图片没有文字，不能建立索引".into());
+    }
     tx.execute("UPDATE project_files SET indexed = ?1 WHERE id = ?2 AND indexed <> ?1", params![indexed, id]).map_err(err)?;
-    super::index::prune(&tx)?;
     tx.commit()
 }
 
@@ -529,7 +614,8 @@ pub fn current_versions(conn: &Connection, project: Option<i64>, ids: &[i64]) ->
 
 // ---------- commands ----------
 
-/// Stores a copy of a file the user chose (from the dialog or dropped on the window).
+/// Stores a copy of a file the user chose (from the dialog or dropped on the window), remembering where
+/// it came from (the file Word 工具箱 / 文本工具箱 change).
 #[tauri::command]
 pub async fn picky_import_file(app: tauri::AppHandle, path: String) -> Result<FileInfo, String> {
     use tauri::Manager;
@@ -539,8 +625,88 @@ pub async fn picky_import_file(app: tauri::AppHandle, path: String) -> Result<Fi
     let dir = st.picky.files_dir().to_path_buf();
     st.picky.with_db(|c| {
         let id = store(c, &dir, &prepared)?;
+        remember_source(c, id, Path::new(&path))?;
         info(c, id)?.ok_or_else(|| "没能保存文件副本".to_string())
     })
+}
+
+/// Where a copy came from (the latest file with its content).
+pub fn remember_source(conn: &Connection, id: i64, path: &Path) -> Result<(), String> {
+    let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    conn.execute("UPDATE artifacts SET source_path = ?1 WHERE id = ?2", params![full.display().to_string(), id]).map(|_| ()).map_err(err)
+}
+
+/// The file a copy came from, if it was added from disk and is still there.
+pub fn source_of(conn: &Connection, id: i64) -> Result<Option<String>, String> {
+    let p: Option<String> = conn.query_row("SELECT source_path FROM artifacts WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(err)?.flatten();
+    Ok(p.filter(|p| Path::new(p).is_file()))
+}
+
+fn save(app: &tauri::AppHandle, prepared: &Prepared) -> Result<FileInfo, String> {
+    use tauri::Manager;
+    let st = app.state::<crate::AppState>();
+    let dir = st.picky.files_dir().to_path_buf();
+    st.picky.with_db(|c| {
+        let id = store(c, &dir, prepared)?;
+        info(c, id)?.ok_or_else(|| "没能保存文件副本".to_string())
+    })
+}
+
+/// A pasted image (⌘V in the input).
+#[tauri::command]
+pub fn picky_import_image(app: tauri::AppHandle, name: String, bytes: Vec<u8>) -> Result<FileInfo, String> {
+    save(&app, &prepare_image(&name, bytes)?)
+}
+
+/// http(s) only; a bare address gets https://.
+pub fn clean_url(url: &str) -> Result<String, String> {
+    let u = url.trim();
+    let u = if u.contains("://") { u.to_string() } else { format!("https://{u}") };
+    let host = u.split("://").nth(1).unwrap_or("").split(['/', '?', '#']).next().unwrap_or("");
+    if !(u.starts_with("https://") || u.starts_with("http://")) || host.is_empty() || !host.contains('.') || u.chars().any(char::is_whitespace) {
+        return Err("网址不对，应为 https://… 这样的网页地址".into());
+    }
+    Ok(u)
+}
+
+const MAX_PAGE: usize = 5 * 1024 * 1024;
+
+async fn fetch_page(url: &str) -> Result<String, String> {
+    let c = reqwest::Client::builder().user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Pomelo").timeout(std::time::Duration::from_secs(20)).build().map_err(|e| e.to_string())?;
+    let r = c.get(url).send().await.map_err(|e| if e.is_timeout() { "网页 20 秒都没打开，稍后再试".to_string() } else { "打不开这个网页，检查一下网址和网络".to_string() })?;
+    if !r.status().is_success() {
+        return Err(format!("网页打不开（{}）", r.status().as_u16()));
+    }
+    let kind = r.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
+    if !kind.is_empty() && !kind.contains("html") && !kind.contains("text") {
+        return Err("这个网址不是网页（可以下载下来当文件添加）".into());
+    }
+    let bytes = r.bytes().await.map_err(|_| "网页没能读完".to_string())?;
+    if bytes.len() > MAX_PAGE {
+        return Err("网页太大了".into());
+    }
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// A made-up page (dev builds and tests: no network).
+pub fn mock_page(url: &str) -> (String, String) {
+    let host = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or(url).to_string();
+    (format!("示例网页（{host}）"), format!("# 示例网页\n\n这是开发版的模拟网页正文，没有联网。\n\n## 第一部分\n\n租房前要看采光、噪音和通勤时间；押一付三，合同要看清楚。\n\n## 第二部分\n\n网址：{url}"))
+}
+
+/// A web page by its address: the article's text is saved as a copy (dev builds: a made-up page).
+#[tauri::command]
+pub async fn picky_import_web(app: tauri::AppHandle, url: String) -> Result<FileInfo, String> {
+    use tauri::Manager;
+    let url = clean_url(&url)?;
+    let (title, text) = if app.state::<crate::AppState>().picky.mode == super::Mode::Mock {
+        mock_page(&url)
+    } else {
+        let html = fetch_page(&url).await?;
+        let u = url.clone();
+        tauri::async_runtime::spawn_blocking(move || super::office::web_article(&html, &u)).await.map_err(|e| e.to_string())??
+    };
+    save(&app, &prepare_web(&url, &title, &text))
 }
 
 #[tauri::command]
@@ -578,6 +744,93 @@ pub mod tests {
         store(c, &dir.join("files"), &prepare(&temp_file(&src, name, bytes)).unwrap()).unwrap()
     }
 
+    /// A zip of (name, text) entries, stored (what .pptx / .xlsx are).
+    fn zipped(entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, text) in entries {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(text.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    /// A real page through the same path (one GET, no user data). Opt-in:
+    ///   POMELO_REAL_WEB=1 cargo test real_web_page -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_web_page() {
+        if std::env::var("POMELO_REAL_WEB").as_deref() != Ok("1") {
+            return;
+        }
+        let url = clean_url("https://en.wikipedia.org/wiki/Pomelo").unwrap();
+        let html = tauri::async_runtime::block_on(fetch_page(&url)).unwrap();
+        let (title, text) = super::super::office::web_article(&html, &url).unwrap();
+        println!("{title}\n{}…", text.chars().take(400).collect::<String>());
+        assert!(title.contains("Pomelo") && text.contains("citrus"));
+        let p = prepare_web(&url, &title, &text);
+        assert!(p.segments.len() > 1);
+    }
+
+    #[test]
+    fn word_powerpoint_excel_csv_and_images() {
+        let dir = crate::db::tests::temp_dir("picky-office");
+        // Word: made by textutil from text
+        let txt = temp_file(&dir, "src.txt", "租房笔记\n押一付三，合同看清楚。".as_bytes());
+        let docx = dir.join("笔记.docx");
+        assert!(std::process::Command::new("/usr/bin/textutil").args(["-convert", "docx", "-output"]).arg(&docx).arg(&txt).status().unwrap().success());
+        let p = prepare(&docx).unwrap();
+        assert_eq!(format_of(p.media_type, false), "Word");
+        assert!(p.segments[0].content.contains("押一付三"));
+        // PowerPoint: one segment per slide with text, labelled by slide
+        let slide = |t: &str| format!(r#"<p:sld xmlns:a="a" xmlns:p="p"><a:p><a:r><a:t>{t}</a:t></a:r></a:p></p:sld>"#);
+        let pptx = temp_file(&dir, "汇报.pptx", &zipped(&[("ppt/slides/slide2.xml", &slide("第二页")), ("ppt/slides/slide1.xml", &slide("开场")), ("ppt/slides/slide10.xml", &slide(""))]));
+        let p = prepare(&pptx).unwrap();
+        assert_eq!((p.page_count, p.segments.len(), p.segments[1].label(), p.segments[1].content.as_str()), (Some(3), 2, "第 2 页".to_string(), "第二页"));
+        // Excel: a minimal workbook
+        let xlsx = temp_file(&dir, "城市.xlsx", &zipped(&[
+            ("[Content_Types].xml", r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#),
+            ("_rels/.rels", r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#),
+            ("xl/workbook.xml", r#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="人口" sheetId="1" r:id="rId1"/></sheets></workbook>"#),
+            ("xl/_rels/workbook.xml.rels", r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#),
+            ("xl/worksheets/sheet1.xml", r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>城市</t></is></c><c r="B1" t="inlineStr"><is><t>人口</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>上海</t></is></c><c r="B2"><v>2487</v></c></row></sheetData></worksheet>"#),
+        ]));
+        let p = prepare(&xlsx).unwrap();
+        assert_eq!((format_of(p.media_type, false), p.row_count), ("Excel", Some(1)));
+        assert!(p.segments[0].content.contains("1. | 上海 | 2487 |"), "{}", p.segments[0].content);
+        // a big CSV keeps a preview; 查表 reads the copy again
+        let mut csv = String::from("编号,名称\n");
+        for i in 1..=300 {
+            csv.push_str(&format!("{i},第{i}项\n"));
+        }
+        let path = temp_file(&dir, "清单.csv", csv.as_bytes());
+        let p = prepare(&path).unwrap();
+        assert_eq!((p.row_count, p.segments.len()), (Some(300), 1));
+        assert!(p.segments[0].content.contains("前 50 行") && p.segments[0].content.contains("file 填「清单.csv」"));
+        let sheets = super::super::office::read_table(&path, "csv").unwrap();
+        assert!(super::super::office::table_query(&sheets, &serde_json::json!({ "view": "find", "keyword": "第299项" })).unwrap().contains("299. | 299 | 第299项 |"));
+        // images: no text; a big one is shrunk for sending
+        let png = dir.join("小.png");
+        std::fs::write(&png, super::super::office::tests_png()).unwrap();
+        let big = dir.join("大.png");
+        assert!(std::process::Command::new("/usr/bin/sips").args(["-z", "40", "3000"]).arg(&png).arg("--out").arg(&big).output().unwrap().status.success());
+        let p = prepare(&big).unwrap();
+        assert_eq!((format_of(p.media_type, false), p.segments.len()), ("图片", 0));
+        let (media, data) = super::super::office::image_for_model(&big, "image/png", &dir.join("tmp")).unwrap();
+        assert_eq!(media, "image/png");
+        // the PNG header's width (bytes 16–19), after base64
+        let table = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bits: Vec<u8> = data.bytes().take(32).map(|c| table.iter().position(|t| *t == c).unwrap() as u8).collect();
+        let bytes: Vec<u8> = bits.chunks(4).flat_map(|q| [q[0] << 2 | q[1] >> 4, q[1] << 4 | q[2] >> 2, q[2] << 6 | q[3]]).collect();
+        assert_eq!(u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]), 1568);
+        assert!(prepare_image("粘贴的图片.png", std::fs::read(&png).unwrap()).is_ok() && prepare_image("x.txt", b"a".to_vec()).is_err());
+        // a web page's text, with its address
+        let p = prepare_web("https://example.com/a", "租房笔记", "# 租房\n\n押一付三");
+        assert_eq!((p.name.as_str(), p.source_url.as_deref(), format_of(p.media_type, true)), ("租房笔记", Some("https://example.com/a"), "网页"));
+        assert_eq!(clean_url("example.com/x").unwrap(), "https://example.com/x");
+        assert!(clean_url("ftp://x.com").is_err() && clean_url("not a url").is_err());
+    }
+
     #[test]
     fn markdown_splits_by_heading_outside_fences_and_long_sections() {
         let s = split_text("intro\n# A\none\n```\n# not a heading\n```\n## B\ntwo", true);
@@ -592,7 +845,7 @@ pub mod tests {
     #[test]
     fn preparing_checks_format_text_and_encoding() {
         let dir = crate::db::tests::temp_dir("picky-prepare");
-        assert!(prepare(&temp_file(&dir, "a.docx", b"x")).unwrap_err().contains("只支持"));
+        assert!(prepare(&temp_file(&dir, "a.zip", b"x")).unwrap_err().contains("只支持"));
         assert!(prepare(&temp_file(&dir, "a.txt", b"")).unwrap_err().contains("空的"));
         assert!(prepare(&temp_file(&dir, "b.txt", b" \n ")).unwrap_err().contains("空白"));
         assert!(prepare(&temp_file(&dir, "c.txt", &[0xff, 0x00, 0x80])).is_err());

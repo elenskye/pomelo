@@ -1,18 +1,23 @@
 // The conversation list (rules from the old Picky, enforced in Rust library.rs):
-// 置顶 · 项目 (each collapsible, with its conversations) · 最近 · 归档 (folded). Each list follows last
-// activity until dragged by hand. ⋯ on a row: 改名 / 置顶 / 复制整段对话 / 导出 / 移到项目 / 归档 / 删除.
+// 置顶 · 项目 (each collapsible, with its conversations) · 定时 (what 定时任务 wrote) · 最近 · 归档 (folded).
+// Each list follows last activity until dragged by hand. A dot marks a 定时 conversation not opened yet
+// (and the 定时 label while any is). ⋯ on a row: 改名 / 置顶 / 私密 (a lock; stays in its list) / 复制整段对话 /
+// 导出 / 移到项目 / 归档 / 删除.
 // ⌘-click / ⇧-click select several (a bar at the bottom acts on them; no dragging meanwhile). Drag a row:
 // onto another row = that place in its list; onto a list or project header = its top. Into a project
 // moves it in; into 最近 takes it out of its project and unpins it; into 置顶 pins it (keeps its project).
+// 定时 and 最近 don't take each other's conversations (no drop target while dragging one).
+// 助手 (v0.4.5, between 项目 and 定时): each opens its own page instead of a conversation.
 // Project headers drag to reorder projects. Esc or a drop outside cancels. Everything here can be undone.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Ellipsis, Folder, Library as LibraryIcon, Plus, Search, Settings2, X } from "lucide-react";
+import { AlarmClock, ChevronRight, Ellipsis, Folder, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Search, Settings2, X } from "lucide-react";
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { IconButton } from "@/shared/ui";
 import { LIBRARY_KEY, isBool, isNumbers, pickyApi, usePickyUi, type Library, type ListKey, type ProjectRow, type SessionRow } from "./api";
 import { useConversationActions } from "./actions";
+import { ASSISTANTS } from "./assistants";
 import { ProjectDialog } from "./ProjectDialog";
 
 type Target = { list: ListKey; before?: number; after?: number; header?: boolean };
@@ -146,12 +151,18 @@ function RenameInput(props: { initial: string; onDone: (title: string | null) =>
 export function ConversationList(props: {
   library: Library;
   current: number | null;
-  /** The conversation a reply is being written in. */
-  generating: number | null;
+  /** The conversations replies are being written in. */
+  generating: number[];
   onOpen: (id: number) => void;
   onNewInProject: (projectId: number) => void;
   onSearch: () => void;
   onManage: () => void;
+  onPlugins: () => void;
+  onSchedules: () => void;
+  onKnowledge: () => void;
+  /** The 助手 whose page is open, and opening one. */
+  assistant: string | null;
+  onAssistant: (key: string) => void;
   onProjectFiles: (projectId: number) => void;
 }) {
   const lib = props.library;
@@ -166,9 +177,9 @@ export function ConversationList(props: {
   const [renaming, setRenaming] = useState<number | null>(null);
   const [projectDialog, setProjectDialog] = useState<ProjectRow | "new" | null>(null);
 
-  const all = [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.recent, ...lib.archived];
+  const all = [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived];
   const byId = new Map(all.map((s) => [s.id, s]));
-  const order = [...lib.pinned, ...lib.projects.flatMap((p) => (collapsed.includes(p.id) ? [] : p.sessions)), ...lib.recent, ...(archiveOpen ? lib.archived : [])].map((s) => s.id);
+  const order = [...lib.pinned, ...lib.projects.flatMap((p) => (collapsed.includes(p.id) ? [] : p.sessions)), ...lib.scheduled, ...lib.recent, ...(archiveOpen ? lib.archived : [])].map((s) => s.id);
   // selection only holds rows that still exist
   const sel = selected.filter((id) => byId.has(id));
 
@@ -185,6 +196,9 @@ export function ConversationList(props: {
     }
   });
   const dragging = drag?.kind === "session";
+  const draggedScheduled = dragging && !!byId.get(drag.id)?.scheduled;
+  /** Where the dragged conversation may go. */
+  const accepts = (list: ListKey) => !dragging || (list === "recent" ? !draggedScheduled : list === "scheduled" ? draggedScheduled : true);
 
   useEffect(() => {
     if (!sel.length) return;
@@ -214,6 +228,7 @@ export function ConversationList(props: {
     [
       { value: "rename", label: "改名" },
       { value: s.pinned ? "unpin" : "pin", label: s.pinned ? "取消置顶" : "置顶" },
+      { value: s.private ? "public" : "private", label: s.private ? "取消私密" : "设为私密" },
       { value: "copy", label: "复制整段对话" },
       { value: "md", label: "导出 Markdown…" },
       { value: "pkg", label: "导出完整包…" },
@@ -228,6 +243,7 @@ export function ConversationList(props: {
   const onMenu = (s: SessionRow, v: string) => {
     if (v === "rename") setRenaming(s.id);
     else if (v === "pin" || v === "unpin") void act.pin([s.id], v === "pin");
+    else if (v === "private" || v === "public") void act.setPrivate([s.id], v === "private");
     else if (v === "copy") void act.copy(s.id);
     else if (v === "md") void act.exportMarkdown(s.id, s.title);
     else if (v === "pkg") void act.exportPackage(s.id, s.title);
@@ -242,7 +258,7 @@ export function ConversationList(props: {
     return (
       <div
         key={s.id}
-        data-drop="session"
+        data-drop={accepts(list) ? "session" : undefined}
         data-id={s.id}
         data-list={list}
         onPointerDown={(e) => !sel.length && renaming !== s.id && begin(e, "session", s.id, s.title)}
@@ -269,10 +285,15 @@ export function ConversationList(props: {
             onClick={(e) => click(e, s)}
             className="min-w-0 flex-1 truncate py-1.5 pl-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
+            {s.private && <Lock size={11} className="mr-1 inline-block -translate-y-px text-muted-foreground" aria-label="私密" />}
             {s.title}
           </button>
         )}
-        {props.generating === s.id && <span className="size-1.5 shrink-0 animate-pulse rounded-full" style={{ background: "var(--status-doing-fg)" }} aria-label="正在写回复" />}
+        {props.generating.includes(s.id) ? (
+          <span className="size-1.5 shrink-0 animate-pulse rounded-full" style={{ background: "var(--status-doing-fg)" }} aria-label="正在写回复" />
+        ) : (
+          s.unseen && <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="还没看" />
+        )}
         {renaming !== s.id && (
           <Dropdown<string | null>
             plain
@@ -295,7 +316,7 @@ export function ConversationList(props: {
     const hot = dragging && list && drag.target?.header && drag.target.list === list;
     return (
       <div
-        data-drop={list ? "list" : undefined}
+        data-drop={list && accepts(list) ? "list" : undefined}
         data-list={list ?? undefined}
         onClick={onClick}
         className={`mt-3 flex items-center gap-1 rounded-control px-2.5 py-0.5 text-xs text-muted-foreground first:mt-0 ${hot ? "bg-accent ring-1 ring-primary/40" : ""} ${onClick ? "cursor-default hover:text-foreground" : ""}`}
@@ -402,7 +423,31 @@ export function ConversationList(props: {
           </div>
         ))}
 
-        {(lib.recent.length > 0 || dragging) && label("最近", "recent")}
+        {label("助手", null)}
+        {ASSISTANTS.map((a) => (
+          <button
+            key={a.key}
+            type="button"
+            aria-current={a.key === props.assistant}
+            onClick={() => props.onAssistant(a.key)}
+            className={`flex w-full items-center gap-1.5 rounded-control py-1.5 pl-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${a.key === props.assistant ? "bg-accent" : "hover:bg-muted/70"}`}
+          >
+            <a.icon size={14} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
+            <span className="truncate">{a.name}</span>
+          </button>
+        ))}
+
+        {(lib.scheduled.length > 0 || draggedScheduled) &&
+          label(
+            <>
+              定时
+              {lib.scheduled.some((s) => s.unseen) && <span className="size-1.5 rounded-full bg-primary" aria-label="有还没看的" />}
+            </>,
+            "scheduled",
+          )}
+        {lib.scheduled.map((s) => row(s, "scheduled"))}
+
+        {(lib.recent.length > 0 || (dragging && !draggedScheduled)) && label("最近", "recent")}
         {lib.recent.map((s) => row(s, "recent"))}
 
         {(lib.archived.length > 0 || dragging) &&
@@ -445,13 +490,25 @@ export function ConversationList(props: {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={props.onManage}
-        className="mt-1 mr-2 flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <Settings2 size={14} strokeWidth={1.5} /> 管理
-      </button>
+      <div className="mt-1 mr-2 grid grid-cols-2 gap-x-1">
+        {(
+          [
+            ["管理", props.onManage, Settings2],
+            ["定时", props.onSchedules, AlarmClock],
+            ["知识库", props.onKnowledge, LibraryBig],
+            ["插件库", props.onPlugins, Puzzle],
+          ] as const
+        ).map(([label, onClick, Icon]) => (
+          <button
+            key={label}
+            type="button"
+            onClick={onClick}
+            className="flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Icon size={14} strokeWidth={1.5} /> {label}
+          </button>
+        ))}
+      </div>
 
       {drag && (
         <div style={{ position: "fixed", left: drag.x + 12, top: drag.y + 6 }} className="pointer-events-none z-50 max-w-56 truncate rounded-control border bg-popover px-2.5 py-1 text-sm shadow-lg">

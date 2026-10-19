@@ -20,13 +20,13 @@ export function StatusTag(props: { value: StatusCode; labels: StatusLabels }) {
 }
 
 /** Colored pill opening a status menu. Safe inside clickable rows (Dropdown stops propagation). */
-export function StatusSelect(props: { value: StatusCode; labels: StatusLabels; onChange: (s: StatusCode) => void }) {
+export function StatusSelect(props: { value: StatusCode; labels: StatusLabels; onChange: (s: StatusCode) => void; order?: StatusCode[] }) {
   return (
     <Dropdown
       ariaLabel="状态"
       value={props.value}
       onChange={props.onChange}
-      options={STATUS_ORDER.map((s) => ({ value: s, label: <StatusTag value={s} labels={props.labels} /> }))}
+      options={(props.order ?? STATUS_ORDER).map((s) => ({ value: s, label: <StatusTag value={s} labels={props.labels} /> }))}
       triggerClassName="rounded-md outline-none transition-opacity duration-150 hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
       renderTrigger={() => <StatusTag value={props.value} labels={props.labels} />}
     />

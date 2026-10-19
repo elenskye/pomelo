@@ -1,11 +1,15 @@
-//! Cloud models (OpenRouter, DeepSeek, OpenAI), as in the old Picky:
-//! - Requests go only to each service's fixed official HTTPS endpoint (provider.rs).
+//! Cloud models (OpenRouter, DeepSeek, OpenAI, Anthropic, Google), as in the old Picky:
+//! - Requests go only to each service's fixed official HTTPS endpoint (provider.rs). Anthropic
+//!   speaks its own Messages API; Google its OpenAI-compatible endpoint; the rest chat completions.
 //! - The model list (name, API model name, token limits) lives in picky.db `preferences`
 //!   (`cloud.models`; its presence, even `[]`, marks the defaults as seeded — deleted defaults stay
 //!   deleted). Keys never enter the database, backups, exports or logs: only the keychain
-//!   (service "<data dir name> 小拾", account = service code). The release build is signed with a
+//!   (service "<data dir name> 小拾", account = service code, or a skill's key: tavily, tmdb). The
+//!   release build is signed with a
 //!   fixed self-signed certificate, so an update can still read them.
 //! - Mock mode keeps keys in memory.
+//! - Each model says whether it can think (`Think`; set by the user, default 能开关): only a 能开关 one
+//!   gets the service's thinking switch; the others are sent without it (provider.rs).
 
 use super::store::{pref_get, pref_set};
 use crate::modules::common::err;
@@ -24,16 +28,22 @@ pub enum Service {
     DeepSeek,
     #[serde(rename = "openAI")]
     OpenAi,
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "google")]
+    Google,
 }
 
 impl Service {
-    pub const ALL: [Service; 3] = [Service::OpenRouter, Service::DeepSeek, Service::OpenAi];
+    pub const ALL: [Service; 5] = [Service::OpenRouter, Service::DeepSeek, Service::OpenAi, Service::Anthropic, Service::Google];
 
     pub fn name(self) -> &'static str {
         match self {
             Service::OpenRouter => "OpenRouter",
             Service::DeepSeek => "DeepSeek",
             Service::OpenAi => "OpenAI",
+            Service::Anthropic => "Anthropic",
+            Service::Google => "Google",
         }
     }
     /// The only place a key is ever sent.
@@ -42,6 +52,8 @@ impl Service {
             Service::OpenRouter => "https://openrouter.ai/api/v1",
             Service::DeepSeek => "https://api.deepseek.com/v1",
             Service::OpenAi => "https://api.openai.com/v1",
+            Service::Anthropic => "https://api.anthropic.com/v1",
+            Service::Google => "https://generativelanguage.googleapis.com/v1beta/openai",
         }
     }
     pub fn code(self) -> &'static str {
@@ -49,7 +61,38 @@ impl Service {
             Service::OpenRouter => "openRouter",
             Service::DeepSeek => "deepSeek",
             Service::OpenAi => "openAI",
+            Service::Anthropic => "anthropic",
+            Service::Google => "google",
         }
+    }
+}
+
+/// What a model can do about thinking: 不能思考 / 能开关 / 只能思考.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Think {
+    Never,
+    #[default]
+    Switch,
+    Always,
+}
+
+impl Think {
+    /// A local model from the catalog (`thinking`: its template has the switch).
+    pub fn local(thinking: bool) -> Think {
+        if thinking { Think::Switch } else { Think::Never }
+    }
+    /// Whether a request that wants `on` can have it.
+    pub fn allows(self, on: bool) -> bool {
+        match self {
+            Think::Switch => true,
+            Think::Never => !on,
+            Think::Always => on,
+        }
+    }
+    /// Thinking actually happens when `on` is asked for.
+    pub fn thinks(self, on: bool) -> bool {
+        self == Think::Always || (self == Think::Switch && on)
     }
 }
 
@@ -62,6 +105,9 @@ pub struct CloudModel {
     pub service: Service,
     pub context_window: i64,
     pub max_output_tokens: i64,
+    /// Saved before this existed: 能开关.
+    #[serde(default)]
+    pub thinking: Think,
 }
 
 pub const BAD_MODEL: &str = "请检查模型名称、接口模型名和令牌上限。";
@@ -84,7 +130,7 @@ impl CloudModel {
 }
 
 pub fn defaults() -> Vec<CloudModel> {
-    let m = |id: &str, name: &str| CloudModel { id: id.into(), name: name.into(), api_model: id.into(), service: Service::DeepSeek, context_window: 1_048_576, max_output_tokens: 8192 };
+    let m = |id: &str, name: &str| CloudModel { id: id.into(), name: name.into(), api_model: id.into(), service: Service::DeepSeek, context_window: 1_048_576, max_output_tokens: 8192, thinking: Think::Switch };
     vec![m("deepseek-flash", "DeepSeek Flash"), m("deepseek-v4-pro", "DeepSeek V4 Pro")]
 }
 
@@ -131,6 +177,17 @@ pub fn delete_model(conn: &Connection, id: &str) -> Result<(), String> {
     pref_set(conn, MODELS_KEY, &list)
 }
 
+/// The list in `ids`' order (设置 → 云端模型, dragged); the model menu follows it.
+pub fn reorder_models(conn: &Connection, ids: &[String]) -> Result<(), String> {
+    let list = models(conn)?;
+    let same = ids.len() == list.len() && ids.iter().collect::<HashSet<_>>().len() == ids.len() && ids.iter().all(|i| list.iter().any(|m| &m.id == i));
+    if !same {
+        return Err("云端模型列表已经变了，请重新拖一次".into());
+    }
+    let ordered: Vec<CloudModel> = ids.iter().filter_map(|i| list.iter().find(|m| &m.id == i).cloned()).collect();
+    pref_set(conn, MODELS_KEY, &ordered)
+}
+
 fn new_id() -> String {
     let mut b = [0u8; 6];
     let _ = getrandom::fill(&mut b);
@@ -151,12 +208,12 @@ pub fn checked_key(key: &str) -> Result<String, String> {
 /// removals keep the cache right.
 pub struct KeyStore {
     kind: KeyKind,
-    present: Mutex<HashMap<Service, bool>>,
+    present: Mutex<HashMap<String, bool>>,
 }
 
 enum KeyKind {
     Keychain { service: String },
-    Memory(Mutex<HashMap<Service, String>>),
+    Memory(Mutex<HashMap<String, String>>),
 }
 
 impl KeyStore {
@@ -167,47 +224,49 @@ impl KeyStore {
         KeyStore { kind: KeyKind::Memory(Mutex::default()), present: Mutex::default() }
     }
 
-    pub fn has(&self, s: Service) -> bool {
+    /// `account`: a service's code (Service::code) or a skill key's account.
+    pub fn has(&self, account: &str) -> bool {
         match &self.kind {
-            KeyKind::Memory(m) => m.lock().map(|m| m.contains_key(&s)).unwrap_or(false),
+            KeyKind::Memory(m) => m.lock().map(|m| m.contains_key(account)).unwrap_or(false),
             KeyKind::Keychain { service } => {
                 let mut p = self.present.lock().unwrap_or_else(|e| e.into_inner());
-                *p.entry(s).or_insert_with(|| keychain::exists(service, s.code()))
+                *p.entry(account.to_string()).or_insert_with(|| keychain::exists(service, account))
             }
         }
     }
 
-    pub fn read(&self, s: Service) -> Result<String, String> {
-        let missing = || "尚未保存这个云端接口的 API Key。".to_string();
+    pub fn read(&self, account: &str) -> Result<String, String> {
+        let missing = || "还没有保存这个 Key。".to_string();
         match &self.kind {
-            KeyKind::Memory(m) => m.lock().map_err(err)?.get(&s).cloned().ok_or_else(missing),
-            KeyKind::Keychain { service } => match keychain::read(service, s.code()) {
-                Some(bytes) => String::from_utf8(bytes).map_err(|_| "无法读取 API Key，请重新保存。".to_string()),
+            KeyKind::Memory(m) => m.lock().map_err(err)?.get(account).cloned().ok_or_else(missing),
+            KeyKind::Keychain { service } => match keychain::read(service, account) {
+                Some(bytes) => String::from_utf8(bytes).map_err(|_| "无法读取 Key，请重新保存。".to_string()),
                 None => Err(missing()),
             },
         }
     }
 
-    pub fn save(&self, s: Service, key: &str) -> Result<(), String> {
+    /// `label`: what Keychain Access shows (「Pomelo 小拾 · DeepSeek」).
+    pub fn save(&self, account: &str, key: &str, label: &str) -> Result<(), String> {
         let key = checked_key(key)?;
         match &self.kind {
             KeyKind::Memory(m) => {
-                m.lock().map_err(err)?.insert(s, key);
+                m.lock().map_err(err)?.insert(account.to_string(), key);
             }
-            KeyKind::Keychain { service } => keychain::save(service, s.code(), &key, &format!("Pomelo 小拾 · {}", s.name()))?,
+            KeyKind::Keychain { service } => keychain::save(service, account, &key, label)?,
         }
-        self.present.lock().map_err(err)?.insert(s, true);
+        self.present.lock().map_err(err)?.insert(account.to_string(), true);
         Ok(())
     }
 
-    pub fn remove(&self, s: Service) -> Result<(), String> {
+    pub fn remove(&self, account: &str) -> Result<(), String> {
         match &self.kind {
             KeyKind::Memory(m) => {
-                m.lock().map_err(err)?.remove(&s);
+                m.lock().map_err(err)?.remove(account);
             }
-            KeyKind::Keychain { service } => keychain::remove(service, s.code())?,
+            KeyKind::Keychain { service } => keychain::remove(service, account)?,
         }
-        self.present.lock().map_err(err)?.insert(s, false);
+        self.present.lock().map_err(err)?.insert(account.to_string(), false);
         Ok(())
     }
 }
@@ -283,15 +342,28 @@ mod tests {
     fn defaults_seed_once_and_deletions_stick() {
         let c = memory_db();
         assert_eq!(models(&c).unwrap().len(), 2);
+        let ids: Vec<String> = models(&c).unwrap().iter().map(|m| m.id.clone()).rev().collect();
+        reorder_models(&c, &ids).unwrap();
+        assert_eq!(models(&c).unwrap().iter().map(|m| m.id.clone()).collect::<Vec<_>>(), ids);
+        assert!(reorder_models(&c, &ids[1..]).is_err());
         delete_model(&c, "deepseek-flash").unwrap();
         delete_model(&c, "deepseek-v4-pro").unwrap();
         assert!(models(&c).unwrap().is_empty()); // [] still marks "seeded"
     }
 
     #[test]
+    fn a_list_saved_before_thinking_reads_as_switchable() {
+        let c = memory_db();
+        c.execute("INSERT INTO preferences (key, value) VALUES ('cloud.models', ?1)", [r#"[{"id":"g","name":"Gemini","apiModel":"google/gemini","service":"openRouter","contextWindow":1048576,"maxOutputTokens":65536}]"#]).unwrap();
+        assert_eq!(models(&c).unwrap()[0].thinking, Think::Switch);
+        let saved = save_model(&c, CloudModel { thinking: Think::Always, ..models(&c).unwrap()[0].clone() }).unwrap();
+        assert_eq!(model(&c, &saved.id).unwrap().unwrap().thinking, Think::Always);
+    }
+
+    #[test]
     fn save_validates_and_assigns_ids() {
         let c = memory_db();
-        let base = CloudModel { id: String::new(), name: " GPT ".into(), api_model: "gpt-5".into(), service: Service::OpenAi, context_window: 200_000, max_output_tokens: 8192 };
+        let base = CloudModel { id: String::new(), name: " GPT ".into(), api_model: "gpt-5".into(), service: Service::OpenAi, context_window: 200_000, max_output_tokens: 8192, thinking: Think::Switch };
         let saved = save_model(&c, base.clone()).unwrap();
         assert!(saved.id.starts_with("m-"));
         assert_eq!(saved.name, "GPT");
@@ -319,12 +391,14 @@ mod tests {
     #[test]
     fn memory_keys() {
         let k = KeyStore::memory();
-        assert!(!k.has(Service::DeepSeek));
-        assert!(k.read(Service::DeepSeek).unwrap_err().contains("尚未保存"));
-        assert!(k.save(Service::DeepSeek, " bad key ").is_err());
-        k.save(Service::DeepSeek, "  sk-abc123 ").unwrap();
-        assert_eq!(k.read(Service::DeepSeek).unwrap(), "sk-abc123");
-        k.remove(Service::DeepSeek).unwrap();
-        assert!(!k.has(Service::DeepSeek));
+        let ds = Service::DeepSeek.code();
+        assert!(!k.has(ds));
+        assert!(k.read(ds).unwrap_err().contains("还没有保存"));
+        assert!(k.save(ds, " bad key ", "t").is_err());
+        k.save(ds, "  sk-abc123 ", "t").unwrap();
+        assert_eq!(k.read(ds).unwrap(), "sk-abc123");
+        k.save("tavily", "tvly-1", "t").unwrap(); // a skill's key beside it
+        k.remove(ds).unwrap();
+        assert!(!k.has(ds) && k.has("tavily"));
     }
 }

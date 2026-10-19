@@ -18,7 +18,13 @@ const TABLES: &[(&str, &[&str])] = &[
     ("job_channel", &["jobs"]),                // 渠道
 ];
 
+/// 循序渐进 modules: each its own list, keyed like the module ("progress/<id>").
+const PROGRESS: &[&str] = &["progress_lessons"];
+
 fn tables(module: &str) -> Result<&'static [&'static str], String> {
+    if module.strip_prefix("progress/").is_some_and(|id| id.parse::<i64>().is_ok()) {
+        return Ok(PROGRESS);
+    }
     TABLES
         .iter()
         .find(|(m, _)| *m == module)
@@ -85,6 +91,9 @@ fn clean_name(conn: &Connection, module: &str, name: &str, except: Option<i64>) 
 
 pub fn create(conn: &Connection, module: &str, name: &str) -> Result<Kind, String> {
     tables(module)?;
+    if let Some(id) = module.strip_prefix("progress/").and_then(|id| id.parse().ok()) {
+        super::custom::of(conn, super::custom::Template::Progress, id)?;
+    }
     let name = clean_name(conn, module, name, None)?;
     conn.execute(
         "INSERT INTO kinds (module, name, sort_order)

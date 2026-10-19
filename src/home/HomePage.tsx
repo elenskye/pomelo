@@ -1,4 +1,5 @@
-// 首页 (simple version, fixed layout): greeting + date, 今年的数字, then two columns — left 今天的待办 and
+// 首页 (simple version, fixed layout): greeting + date, 年度总结 in the new year's first week (YearCard.tsx), 今日简报
+// (BriefCard.tsx), 今年的数字, then two columns — left 今天的待办, 快到的日子 (only when there are some) and
 // 最近记录, right 总资产, 求职近况, 在读在看, 绘画进度. Hidden modules' blocks are left out. Rows open the
 // record in its module (same hand-off as 全局搜索); a block's title opens the module.
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -6,6 +7,7 @@ import { useNavigate } from "react-router";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import { useHiddenModules } from "@/app/hidden";
 import { moduleById } from "@/app/modules";
+import { countText, type Day } from "@/modules/days/api";
 import { money, moneyShort, dayTick, dayTitle, type Currency } from "@/modules/finance/money";
 import { STAGE_STYLE } from "@/modules/jobs/api";
 import { useAgenda, type Task } from "@/modules/todo/api";
@@ -15,6 +17,8 @@ import { formatDay, toYmd, weekday } from "@/shared/dates";
 import type { Hit } from "@/shared/open";
 import { PageHeader, ProgressBar } from "@/shared/ui";
 import { useOverview, type CourseLine, type JobsCard, type Point, type Recent, type Year } from "./api";
+import { BriefCard } from "./BriefCard";
+import { YearCard } from "./YearCard";
 
 /** Local clock, re-read every minute and when the window comes back. */
 function useNow() {
@@ -176,6 +180,31 @@ function TodayBlock(props: { today: string; onOpen: (t: Task) => void; go: () =>
       ) : (
         <Empty>今天没有安排，喝杯茶吧 🍵</Empty>
       )}
+    </Block>
+  );
+}
+
+const dayHit = (d: Day): Hit => ({ ...BLANK, module: "days", kind: "day", id: d.id, title: d.name });
+
+function DaysBlock(props: { days: Day[]; open: (h: Hit) => void; go: () => void }) {
+  if (props.days.length === 0) return null;
+  return (
+    <Block title="快到的日子" icons={[icon("days")]} onTitle={props.go}>
+      <div className={box}>
+        {props.days.map((d) => {
+          const [before, n, after] = countText(d);
+          const tone = d.days === 0 ? "text-primary" : d.days < 0 ? "text-destructive" : "text-[var(--status-doing-fg)]";
+          return (
+            <button key={d.id} type="button" onClick={() => props.open(dayHit(d))} className={rowClass}>
+              <span className="min-w-0 flex-1 truncate">{d.name}</span>
+              <span className={`shrink-0 text-xs tabular-nums ${tone}`}>
+                {before}
+                {n !== null && ` ${n} ${after}`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </Block>
   );
 }
@@ -369,6 +398,7 @@ export default function HomePage() {
 
   const main = [
     shown("todo") && <TodayBlock key="todo" today={today} onOpen={(t) => open.record(taskHit(t))} go={() => open.module("todo")} />,
+    data?.days && <DaysBlock key="days" days={data.days} open={open.record} go={() => open.module("days")} />,
     data && <RecentBlock key="recent" items={data.recent} today={today} open={open.record} />,
   ];
   const side = data
@@ -385,6 +415,8 @@ export default function HomePage() {
       <PageHeader title={greeting(now.getHours())} right={<p className="pointer-events-none text-sm text-muted-foreground">{formatDay(today)} {weekday(today)}</p>} />
       <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
         <div className="space-y-5 px-8 pb-6">
+          {shown("picky") && <YearCard />}
+          {shown("picky") && <BriefCard today={today} onTitle={() => open.module("picky")} />}
           {data && <YearRow year={data.year} go={(id) => open.module(id)} />}
           <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <div className="space-y-5">{main}</div>

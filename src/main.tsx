@@ -11,6 +11,9 @@ import HomePage from "@/home/HomePage";
 import FinancePage from "@/modules/finance/FinancePage";
 import JobsPage from "@/modules/jobs/JobsPage";
 import NotesPage from "@/modules/notes/NotesPage";
+import DaysPage from "@/modules/days/DaysPage";
+import ListPage from "@/modules/custom/ListPage";
+import ProgressPage from "@/modules/custom/ProgressPage";
 import VaultPage from "@/modules/vault/VaultPage";
 // 小拾 brings Markdown / highlighting / formulas: loaded when first opened
 const PickyPage = lazy(() => import("@/modules/picky/PickyPage"));
@@ -45,6 +48,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="finance" element={<FinancePage />} />
             <Route path="jobs" element={<JobsPage />} />
             <Route path="notes" element={<NotesPage />} />
+            <Route path="days" element={<DaysPage />} />
+            <Route path="list/:id" element={<ListPage />} />
+            <Route path="progress/:id" element={<ProgressPage />} />
             <Route path="vault" element={<VaultPage />} />
             <Route path="picky" element={<Suspense fallback={null}><PickyPage /></Suspense>} />
             <Route path="settings" element={<SettingsPage />} />

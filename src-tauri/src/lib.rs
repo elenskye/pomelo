@@ -2,6 +2,7 @@
 //! Tauri commands here are the application-service layer shared by UI (and later AI tools).
 //! Commands return `Result<T, String>`; error strings are user-facing Chinese.
 
+mod autostart;
 mod backup;
 mod db;
 mod home;
@@ -35,6 +36,8 @@ pub struct AppState {
     startup_error: Option<String>,
     /// 小拾 (AI): its own picky.db, model services, cloud keys (see picky/mod.rs).
     pub(crate) picky: picky::Picky,
+    /// v0.4: search.db and its indexer (see search/mod.rs).
+    pub(crate) search: search::Search,
 }
 
 impl AppState {
@@ -53,11 +56,12 @@ impl AppState {
         });
         // after pomelo.db: ensure() made the folders; a 小拾 failure never blocks the rest
         let picky = picky::Picky::init(&paths, home, mode);
+        let search = search::Search::open(&paths);
         let (db, startup_error) = match opened {
             Ok(conn) => (Some(conn), None),
             Err(e) => (None, Some(e)),
         };
-        Self { paths, db: Mutex::new(db), history: Mutex::default(), vault: Mutex::default(), startup_error, picky }
+        Self { paths, db: Mutex::new(db), history: Mutex::default(), vault: Mutex::default(), startup_error, picky, search }
     }
 
     pub(crate) fn with_db<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
@@ -149,18 +153,42 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(autostart::plugin())
         .setup(|app| {
             let base = app.path().data_dir()?; // ~/Library/Application Support
             let overridden = std::env::var_os(paths::DATA_DIR_ENV);
-            let mode = picky::mode(overridden.is_some());
+            let scratch = overridden.is_some();
+            let mode = picky::mode(scratch);
             let root = paths::resolve_root(&base, overridden.map(Into::into));
             let home = app.path().home_dir()?;
             app.manage(AppState::init(DataPaths::new(root), &home, mode));
             let handle = app.handle().clone();
             app.state::<AppState>().picky.set_app(handle.clone());
             tray::init(&handle)?;
-            picky::spawn_monitor(handle);
+            // the login item opens Pomelo in the menu bar only (hidden before the window is first drawn)
+            if autostart::launched_hidden() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+            autostart::init(&handle, scratch);
+            picky::spawn_monitor(handle.clone());
+            search::indexer::spawn(handle);
             Ok(())
+        })
+        // 附件 images for the page: pomelo-file://localhost/<id> (stored images only, by id)
+        .register_asynchronous_uri_scheme_protocol("pomelo-file", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                let state = app.state::<AppState>();
+                let dir = modules::attachments::folder_of(&state.paths.root);
+                let found = request.uri().path().trim_start_matches('/').parse::<i64>().map_err(|e| e.to_string()).and_then(|id| state.with_db(|c| modules::attachments::image_bytes(c, &dir, id)));
+                let resp = match found {
+                    Ok((bytes, mime)) => tauri::http::Response::builder().header("Content-Type", mime).header("Cache-Control", "max-age=31536000, immutable").body(bytes),
+                    Err(_) => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                responder.respond(resp.unwrap_or_else(|_| tauri::http::Response::new(Vec::new())));
+            });
         })
         // closing the window keeps Pomelo running in the menu bar; ⌘Q / the menu bar quits
         .on_window_event(|window, event| {
@@ -182,11 +210,13 @@ pub fn run() {
             picky::picky_select,
             picky::picky_model_stop,
             picky::picky_refresh,
-            picky::picky_embedding,
+            picky::picky_service,
+            picky::picky_service_model,
             picky::picky_issue_action,
             picky::picky_issue_dismiss,
             picky::picky_cloud_model_save,
             picky::picky_cloud_model_delete,
+            picky::picky_cloud_models_reorder,
             picky::picky_cloud_key_save,
             picky::picky_cloud_key_remove,
             picky::chat::picky_sessions,
@@ -210,6 +240,31 @@ pub fn run() {
             picky::index::picky_index_stop,
             picky::index::picky_retrieval_plan,
             picky::index::picky_retrieve,
+            picky::knowledge::picky_kb_overview,
+            picky::knowledge::picky_kb_library_create,
+            picky::knowledge::picky_kb_library_rename,
+            picky::knowledge::picky_kb_library_delete,
+            picky::knowledge::picky_kb_libraries_reorder,
+            picky::knowledge::picky_kb_folder_add,
+            picky::knowledge::picky_kb_web_add,
+            picky::knowledge::picky_kb_source_remove,
+            picky::knowledge::picky_kb_source_cloud,
+            picky::knowledge::picky_kb_source_rebuild,
+            picky::knowledge::picky_kb_scan,
+            picky::knowledge::picky_kb_open,
+            picky::knowledge::picky_conversation_knowledge,
+            picky::knowledge::picky_conversation_libraries,
+            picky::work::picky_file_create_confirm,
+            picky::work::picky_file_edit_confirm,
+            picky::work::picky_file_edit_cancel,
+            picky::work::picky_word_defaults,
+            picky::work::picky_save_word,
+            picky::assistants::translate::picky_translate,
+            picky::assistants::translate::picky_translate_settings,
+            picky::assistants::translate::picky_translate_input,
+            picky::assistants::translate::picky_translate_preview,
+            picky::assistants::translate::picky_translate_run,
+            picky::assistants::translate::picky_translate_stop,
             picky::storage::picky_storage,
             picky::storage::picky_storage_delete_file,
             picky::storage::picky_storage_delete_stray,
@@ -248,6 +303,9 @@ pub fn run() {
             picky::library::picky_rename,
             picky::library::picky_pin,
             picky::library::picky_archive,
+            picky::library::picky_private,
+            picky::library::picky_conversation_thinking,
+            picky::yearly::picky_year_card,
             picky::library::picky_move,
             picky::library::picky_delete,
             picky::library::picky_project_create,
@@ -341,12 +399,73 @@ pub fn run() {
             modules::jobs::job_delete,
             modules::notes::notes_list,
             modules::notes::notes_overview,
+            modules::attachments::attachments_add_paths,
+            modules::attachments::attachments_add_bytes,
+            modules::attachments::attachments_of,
+            modules::attachments::attachment_open,
+            modules::attachments::attachments_usage,
+            modules::attachments::attachments_clean,
+            modules::days::days_list,
+            modules::days::day_create,
+            modules::days::day_update,
+            modules::days::day_delete,
+            modules::todo::todo_tasks_from_note,
+            picky::assist::picky_split_note,
+            picky::files::picky_import_image,
+            picky::files::picky_import_web,
+            modules::custom::custom_list,
+            modules::custom::custom_create,
+            modules::custom::custom_update,
+            modules::custom::custom_delete,
+            modules::lists::list_fields,
+            modules::lists::list_field_create,
+            modules::lists::list_field_update,
+            modules::lists::list_field_delete,
+            modules::lists::list_fields_reorder,
+            modules::lists::list_items,
+            modules::lists::list_item_create,
+            modules::lists::list_item_update,
+            modules::lists::list_item_delete,
+            modules::lists::list_items_reorder,
+            modules::progress::progress_courses,
+            modules::progress::progress_course_create,
+            modules::progress::progress_course_update,
+            modules::progress::progress_course_delete,
+            modules::progress::progress_courses_reorder,
+            modules::progress::progress_lessons,
+            modules::progress::progress_lesson_create,
+            modules::progress::progress_lesson_update,
+            modules::progress::progress_lesson_delete,
+            modules::progress::progress_lessons_reorder,
             modules::notes::note_create,
             modules::notes::note_update,
             modules::notes::note_delete,
             modules::notes::notes_tag_rename,
             modules::notes::notes_tag_set,
             search::search_all,
+            search::query::search_query,
+            search::query::search_similar,
+            search::query::search_notes_similar,
+            picky::find::picky_search_similar,
+            picky::skills::picky_skills,
+            picky::skills::picky_skill_set,
+            picky::skills::picky_skill_key_save,
+            picky::skills::picky_skill_key_remove,
+            picky::skills::picky_skill_contact_set,
+            picky::schedule::picky_schedules,
+            picky::schedule::picky_schedule_save,
+            picky::schedule::picky_schedule_enable,
+            picky::schedule::picky_schedule_delete,
+            picky::schedule::picky_schedule_run,
+            picky::schedule::picky_seen,
+            picky::brief::picky_brief,
+            picky::brief::picky_brief_write,
+            picky::brief::picky_brief_set,
+            autostart::app_autostart,
+            autostart::app_autostart_set,
+            picky::act::card::picky_card_confirm,
+            picky::act::card::picky_card_cancel,
+            search::query::search_index_status,
             home::home_overview,
             modules::vault::vault_status,
             modules::vault::vault_setup,
@@ -360,8 +479,15 @@ pub fn run() {
             modules::vault::vault_create,
             modules::vault::vault_update,
             modules::vault::vault_delete,
+            modules::vault::vault_reorder,
             modules::vault::vault_copy,
             modules::vault::vault_generate,
+            modules::vault::vault_archive,
+            modules::vault::vault_categories,
+            modules::vault::vault_category_create,
+            modules::vault::vault_category_rename,
+            modules::vault::vault_category_delete,
+            modules::vault::vault_category_reorder,
             modules::packing::packing_template_create,
             modules::packing::packing_template_update,
             modules::packing::packing_template_delete,
@@ -406,7 +532,10 @@ pub fn run() {
         .run(|app, event| match event {
             // Dock icon clicked while the window is hidden
             RunEvent::Reopen { .. } => tray::show_main(app),
-            RunEvent::Exit => picky::chat::shutdown(app),
+            RunEvent::Exit => {
+                picky::chat::shutdown(app);
+                app.state::<AppState>().picky.runtime.stop_ours_on_exit();
+            }
             _ => {}
         });
 }

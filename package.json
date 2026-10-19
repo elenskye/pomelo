@@ -10,8 +10,7 @@
     "app:dev": "tauri dev",
     "app:build": "tauri build --bundles app",
     "app:install": "bash scripts/install-app.sh",
-    "check": "tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml",
-    "import:flomo": "node scripts/flomo-to-pomelo/convert.ts"
+    "check": "tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.0",

@@ -22,6 +22,8 @@ export type Hit = {
 };
 
 export const searchAll = (q: string) => invoke<Hit[]>("search_all", { q });
+/** 意思相近 (v0.4, search/query.rs): by meaning, may start the embedding service. */
+export const searchSimilar = (q: string) => invoke<Hit[]>("search_similar", { q });
 
 export function useOpenRequest(onOpen: (hit: Hit) => void) {
   const location = useLocation();

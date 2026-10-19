@@ -253,21 +253,6 @@ export function MemoriesTab(props: { projects: ProjectRow[]; sessionIds: number[
   );
 }
 
-/** The preview's 记忆 lines. */
-export function memoryLines(p: MemoryPlan) {
-  if (p.off === "everywhere") return ["设置里已停用记忆。"];
-  if (p.off === "conversation") return ["这个对话已关闭记忆。"];
-  if (p.off === "nextMessage") return ["下一条消息不用记忆。"];
-  const out: string[] = [];
-  if (!p.count) out.push("没有可用的记忆。");
-  else {
-    const parts = [p.global && `全局 ${p.global}`, p.project && `本项目 ${p.project}`, p.shared && `其他项目共享 ${p.shared}`].filter(Boolean);
-    out.push(`发送时按问题从 ${p.count} 条记忆（${parts.join("、")}）中挑选相关的几条，附上记录日期。`);
-  }
-  if (p.skippedLocalOnly) out.push(`当前是云端模型，${p.skippedLocalOnly} 条仅本地记忆不会使用。`);
-  return out;
-}
-
 /** The input's 记忆 button: this question / this conversation, and 管理记忆…. */
 export function MemoryButton(props: { plan: MemoryPlan | null; nextOn: boolean; conversationOff: boolean; onNext: (on: boolean) => void; onConversation: (off: boolean) => void; onManage: () => void }) {
   const [open, setOpen] = useState(false);

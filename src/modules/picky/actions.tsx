@@ -32,6 +32,7 @@ export function useConversationActions() {
     rename: (id: number, title: string) => run(() => pickyApi.rename(id, title)),
     pin: (ids: number[], pinned: boolean) => run(() => pickyApi.pin(ids, pinned)),
     archive: (ids: number[], archived: boolean) => run(() => pickyApi.archive(ids, archived)),
+    setPrivate: (ids: number[], priv: boolean) => run(() => pickyApi.setPrivate(ids, priv)),
     move: (ids: number[], projectId: number | null) => run(() => pickyApi.move(ids, projectId)),
     remove: async (ids: number[], title?: string) => {
       const ok = await confirm({

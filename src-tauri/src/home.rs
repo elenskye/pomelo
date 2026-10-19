@@ -10,12 +10,13 @@
 //! - 在读在看: books 在读, then films 在看, latest touched first.
 //! - 绘画: unfinished courses (with lessons) in order, each with its next lesson (one in progress,
 //!   else the first not done).
+//! - 快到的日子 (来日方长): what days.rs marks `soon` (a reminder's window, expired 证件), in its order.
 //! - 最近: the newest `RECENT` of notes, books, films, courses, lessons, trips, jobs and 收支 added,
 //!   and tasks checked off (books / lessons keep no finish time, so they count when added).
 
 use crate::modules::common::{self, err};
 use crate::modules::jobs::{self, Stage};
-use crate::modules::{drawing, finance, notes, todo};
+use crate::modules::{days, drawing, finance, notes, todo};
 use crate::search::Hit;
 use crate::AppState;
 use rusqlite::Connection;
@@ -25,7 +26,7 @@ use tauri::State;
 pub const RECENT: usize = 8;
 
 fn hit(module: &'static str, kind: &'static str, id: i64, title: String, detail: Option<String>, parent: Option<i64>) -> Hit {
-    Hit { module, kind, id, title, detail, parent, day: None, amount: None, currency: None, flow: None }
+    Hit { module: module.into(), kind, id, title, detail, parent, day: None, amount: None, currency: None, flow: None }
 }
 
 /// 今年的数字; None = module hidden.
@@ -105,6 +106,8 @@ pub struct Overview {
     /// Books then films; None when both are hidden.
     pub reading: Option<Vec<Hit>>,
     pub drawing: Option<Vec<CourseLine>>,
+    /// 快到的日子; None = 来日方长 hidden.
+    pub days: Option<Vec<days::Day>>,
     pub recent: Vec<Recent>,
 }
 
@@ -263,7 +266,7 @@ fn recent(conn: &Connection, shown: &impl Fn(&str) -> bool) -> Result<Vec<Recent
                     at: r.get(8)?,
                     done: s.done,
                     hit: Hit {
-                        module: s.module,
+                        module: s.module.into(),
                         kind: s.kind,
                         id: r.get(0)?,
                         title: r.get(1)?,
@@ -306,6 +309,7 @@ pub fn overview(conn: &Connection, today: &str, hidden: &[String]) -> Result<Ove
         jobs: job_list.as_deref().map(|js| jobs_card(conn, js, today)).transpose()?,
         reading: if shown("books") || shown("films") { Some(reading(conn, &shown)?) } else { None },
         drawing: if shown("drawing") { Some(drawing_card(conn)?) } else { None },
+        days: if shown("days") { Some(days::soon(conn, today)?) } else { None },
         recent: recent(conn, &shown)?,
     })
 }
@@ -410,8 +414,19 @@ mod tests {
         assert_eq!((o.assets, o.jobs, o.drawing), (None, None, None));
         assert_eq!(o.reading.unwrap().iter().map(|h| h.kind).collect::<Vec<_>>(), ["film"]);
         assert!(o.recent.iter().all(|x| x.hit.module == "films"));
-        let o = overview(&c, TODAY, &["books".into(), "films".into()]).unwrap();
-        assert_eq!(o.reading, None);
+        let o = overview(&c, TODAY, &["books".into(), "films".into(), "days".into()]).unwrap();
+        assert_eq!((o.reading, o.days), (None, None));
+    }
+
+    #[test]
+    fn coming_days() {
+        let c = memory_db();
+        let mk = |v: serde_json::Value| days::create(&c, serde_json::from_value(v).unwrap(), TODAY).unwrap();
+        mk(serde_json::json!({"kind": "birthday", "name": "妈妈", "date": "1966-10-10", "remind": [7]}));
+        mk(serde_json::json!({"name": "还早", "date": "2026-12-31", "remind": [7]}));
+        mk(serde_json::json!({"kind": "document", "name": "签证", "date": "2026-10-01"}));
+        let names: Vec<String> = overview(&c, TODAY, &[]).unwrap().days.unwrap().into_iter().map(|d| d.name).collect();
+        assert_eq!(names, ["签证", "妈妈"]);
     }
 
     #[test]
@@ -421,7 +436,7 @@ mod tests {
         assert_eq!((o.year.books, o.year.todos, o.year.jobs), (Some(0), Some(0), Some(0)));
         assert_eq!(o.assets, Some(vec![]));
         assert_eq!(o.jobs.unwrap().total, 0);
-        assert!(o.reading.unwrap().is_empty() && o.drawing.unwrap().is_empty() && o.recent.is_empty());
+        assert!(o.reading.unwrap().is_empty() && o.drawing.unwrap().is_empty() && o.recent.is_empty() && o.days.unwrap().is_empty());
         assert!(overview(&c, "2026-13-01", &[]).is_err());
     }
 }

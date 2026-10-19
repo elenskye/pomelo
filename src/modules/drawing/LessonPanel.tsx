@@ -4,9 +4,9 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { currentMonth, MonthInput } from "@/shared/MonthInput";
 import { SidePanel } from "@/shared/panel";
-import { STATUS_ORDER, type StatusCode } from "@/shared/status";
+import type { StatusCode } from "@/shared/status";
 import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
-import { DRAWING_STATUS, useDrawingMutations, type Lesson, type LessonPatch } from "./api";
+import { DRAWING_ORDER, DRAWING_STATUS, useDrawingMutations, type Lesson, type LessonPatch } from "./api";
 import { Polish } from "@/modules/picky/Assist";
 
 type Draft = {
@@ -135,7 +135,7 @@ export function LessonPanel(props: {
         <Segmented
           ariaLabel="状态"
           value={d.status}
-          options={STATUS_ORDER.map((s) => ({ value: s, label: DRAWING_STATUS[s] }))}
+          options={DRAWING_ORDER.map((s) => ({ value: s, label: DRAWING_STATUS[s] }))}
           onChange={setStatus}
         />
       </Field>

@@ -1,16 +1,18 @@
 // The input: Enter sends, Shift+Enter is a new line, Enter while composing Chinese only confirms.
 // Drafts are kept per conversation while the app runs (not saved: gone after quitting). While a reply is
 // being written the next question can be typed; sending waits until it's done (the button stops it).
-// Templates (Picky's rules, slots.ts): a draft that is just "/filter" opens the "/" menu (↑↓ Enter, Esc
-// closes it for that text); choosing replaces the draft, the 模板 menu and the empty page insert at the
-// cursor. `{{名称}}` places are tinted (a mirror behind the transparent textarea) and Tab / Shift-Tab
+// Templates (Picky's rules, slots.ts): a "/filter" word at the cursor opens the "/" menu — at the start
+// or after other text (↑↓ Enter, Esc closes it for that text; mid-text only while something matches);
+// choosing replaces that word, the 模板 menu and the empty page insert at the cursor. `{{名称}}` places are tinted (a mirror behind the transparent textarea) and Tab / Shift-Tab
 // step through them. Inserting goes through the editor's own insert so ⌘Z in the field still works.
+// Skills (v0.4 phase 6): the "/" menu lists them first (技能); choosing one clears the "/" draft and
+// asks the page to add its chip (the next question asks for it).
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, FileText, Square } from "lucide-react";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { TEMPLATES_KEY, pickyApi, type Template } from "./api";
-import { nextSlot, slashMatches, slashQuery, slots } from "./slots";
+import { nextSlot, slashAt, slashMatches, slots } from "./slots";
 
 const drafts = new Map<string, string>();
 
@@ -29,7 +31,7 @@ const REMEMBER: Template = { id: -1, title: "记住", category: "保存为记忆
 const commandsFor = (q: string) => (q && ("记住".startsWith(q) || "jizhu".startsWith(q.toLowerCase())) ? [REMEMBER] : []);
 
 const toolClass =
-  "flex items-center gap-1 rounded-control px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
+  "flex shrink-0 items-center gap-1 whitespace-nowrap rounded-control px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
 
 export const Composer = forwardRef<
   ComposerHandle,
@@ -49,6 +51,11 @@ export const Composer = forwardRef<
     /** Files are being dragged over the window. */
     dropping?: boolean;
     onTextChange?: (text: string) => void;
+    /** Skills the "/" menu offers (on and ready). */
+    skills?: { key: string; name: string }[];
+    onAskSkill?: (key: string) => void;
+    /** ⌘V with images (they become attachments instead of text). */
+    onPasteFiles?: (files: File[]) => void;
     /** Resolves false when the question was not sent (the text comes back). */
     onSend: (text: string) => Promise<boolean>;
     onStop: () => void;
@@ -80,10 +87,16 @@ export const Composer = forwardRef<
     else drafts.delete(props.draftKey);
   };
 
-  const query = dismissed === text ? null : slashQuery(text);
+  const slash = dismissed === text || sel[0] !== sel[1] ? null : slashAt(text, sel[0]);
+  const query = slash?.query ?? null;
   const found = query == null ? null : slashMatches(props.templates, query);
-  const commands = query == null ? [] : commandsFor(query);
-  const items = found ? [...commands, ...found.pinned, ...found.others] : [];
+  // 「/记住」 is a whole message: only at its start
+  const commands = query == null || slash?.start !== 0 ? [] : commandsFor(query);
+  // skills as menu rows: ids -100, -101… (their keys by position)
+  const skillList = query == null ? [] : (props.skills ?? []).filter((s) => !query || s.name.includes(query));
+  const skillRows: Template[] = skillList.map((s, i) => ({ id: -100 - i, title: s.name, category: "", body: "", pinned: false, lastUsedAt: null }));
+  const items = found ? [...skillRows, ...commands, ...found.pinned, ...found.others] : [];
+  const menuOpen = slash != null && (slash.start === 0 || items.length > 0);
 
   const send = async () => {
     const t = text.trim();
@@ -107,8 +120,18 @@ export const Composer = forwardRef<
   const insert = (t: Template) => {
     const el = area.current;
     if (!el) return;
-    const replacing = query != null;
-    const [a, b] = replacing ? [0, text.length] : [el.selectionStart, el.selectionEnd];
+    if (t.id <= -100) {
+      // a skill: the "/word" goes, its chip comes
+      const s = skillList[-100 - t.id];
+      if (s) props.onAskSkill?.(s.key);
+      const [a, b] = slash ? [slash.start, slash.end] : [el.selectionStart, el.selectionStart];
+      pendingSel.current = [a, a];
+      change(text.slice(0, a) + text.slice(b));
+      setDismissed(null);
+      el.focus();
+      return;
+    }
+    const [a, b] = slash ? [slash.start, slash.end] : [el.selectionStart, el.selectionEnd];
     const next = text.slice(0, a) + t.body + text.slice(b);
     const first = slots(next).find((s) => s.start >= a && s.start < a + t.body.length);
     pendingSel.current = first ? [first.start, first.end] : [a + t.body.length, a + t.body.length];
@@ -150,7 +173,7 @@ export const Composer = forwardRef<
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const composing = e.nativeEvent.isComposing || e.keyCode === 229;
     if (composing) return;
-    if (query != null) {
+    if (menuOpen) {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -190,15 +213,16 @@ export const Composer = forwardRef<
 
   return (
     <div className="relative">
-      {query != null && (
+      {menuOpen && (
         <div ref={menu} role="listbox" aria-label="模板" className="absolute bottom-full left-0 z-30 mb-2 max-h-72 w-80 overflow-y-auto rounded-card border bg-popover p-1.5 text-sm shadow-lg">
           {!items.length && <p className="px-2 py-1.5 text-muted-foreground">{props.templates.length ? "没有匹配的模板" : "暂无模板"}</p>}
           {found &&
             (
               [
-                ["命令", commands, 0],
-                ["置顶", found.pinned, commands.length],
-                ["全部", found.others, commands.length + found.pinned.length],
+                ["技能", skillRows, 0],
+                ["命令", commands, skillRows.length],
+                ["置顶", found.pinned, skillRows.length + commands.length],
+                ["全部", found.others, skillRows.length + commands.length + found.pinned.length],
               ] as const
             ).map(
               ([title, list, offset]) =>
@@ -256,35 +280,47 @@ export const Composer = forwardRef<
             spellCheck={false}
             aria-label="问题"
             placeholder="想问点什么……"
-            onChange={(e) => change(e.target.value)}
+            onChange={(e) => {
+              change(e.target.value);
+              setSel([e.target.selectionStart, e.target.selectionEnd]); // the caret, also where no select event follows typing
+            }}
             onSelect={(e) => setSel([e.currentTarget.selectionStart, e.currentTarget.selectionEnd])}
+            onPaste={(e) => {
+              const images = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+              if (images.length && props.onPasteFiles) {
+                e.preventDefault();
+                props.onPasteFiles(images);
+              }
+            }}
             onScroll={(e) => mirror.current && (mirror.current.scrollTop = e.currentTarget.scrollTop)}
             onKeyDown={onKeyDown}
             className="relative block min-h-7 w-full resize-none bg-transparent py-1 font-reading text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground"
           />
         </div>
-        <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
-          {props.before}
-          <Dropdown<number | null>
-            plain
-            ariaLabel="模板"
-            value={null}
-            options={menuOptions}
-            actions={[{ label: "管理模板…", onSelect: props.onManageTemplates }]}
-            onChange={(id) => {
-              const t = props.templates.find((x) => x.id === id);
-              if (t) insert(t);
-            }}
-            menuMaxHeight={320}
-            renderTrigger={() => (
-              <span className="flex items-center gap-1">
-                <FileText size={14} strokeWidth={1.5} /> 模板
-              </span>
-            )}
-            triggerClassName={toolClass}
-          />
-          {props.tools}
-          <div className="flex-1" />
+        {/* tools wrap onto a second line when narrow; send stays at the right */}
+        <div className="flex items-end gap-0.5 px-2 pt-1 pb-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
+            {props.before}
+            <Dropdown<number | null>
+              plain
+              ariaLabel="模板"
+              value={null}
+              options={menuOptions}
+              actions={[{ label: "管理模板…", onSelect: props.onManageTemplates }]}
+              onChange={(id) => {
+                const t = props.templates.find((x) => x.id === id);
+                if (t) insert(t);
+              }}
+              menuMaxHeight={320}
+              renderTrigger={() => (
+                <span className="flex items-center gap-1">
+                  <FileText size={14} strokeWidth={1.5} /> 模板
+                </span>
+              )}
+              triggerClassName={toolClass}
+            />
+            {props.tools}
+          </div>
           {props.busy ? (
             <button type="button" aria-label="停止" title="停止" onClick={props.onStop} className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background hover:opacity-80">
               <Square size={12} fill="currentColor" />

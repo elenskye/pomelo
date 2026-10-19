@@ -7,7 +7,7 @@ import { api } from "@/shared/ipc";
 const TAG_MAX = 50;
 const validTag = (t: string) => t.length > 0 && !t.startsWith("/") && !t.includes("//") && [...t].length <= TAG_MAX;
 
-type Span = { start: number; end: number; kind: "tag" | "url"; value: string };
+export type Span = { start: number; end: number; kind: "tag" | "url"; value: string };
 
 /** Tag spans in a line (`start` is the `#`). */
 export function tagSpans(line: string): Span[] {
@@ -37,7 +37,7 @@ export function excerpt(content: string, max = 60): string {
 
 const URL_RE = /(?:https?:\/\/|www\.)[^\s<>"'，。；！？、）】」』]+/giu;
 
-function atoms(line: string): Span[] {
+export function atoms(line: string): Span[] {
   const spans = tagSpans(line);
   for (const m of line.matchAll(URL_RE)) {
     const url = m[0].replace(/[.,;:!?)\]]+$/, "");
@@ -47,11 +47,11 @@ function atoms(line: string): Span[] {
   return spans.sort((a, b) => a.start - b.start);
 }
 
-type Mark = "**" | "==" | "++";
+export type Mark = "**" | "==" | "++";
 const ALNUM = /[A-Za-z0-9]/;
 
 /** Paired mark positions (index → mark). `==` / `++` must not touch ASCII letters on the outside (C++). */
-function pairMarks(line: string, skip: Span[]): Map<number, Mark> {
+export function pairMarks(line: string, skip: Span[]): Map<number, Mark> {
   const inAtom = (i: number) => skip.some((s) => i >= s.start && i < s.end);
   const open = new Map<Mark, number>();
   const pairs = new Map<number, Mark>();

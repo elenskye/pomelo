@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { FolderOpen, Settings } from "lucide-react";
 import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";
+import { AttachmentsRow } from "./Attachments";
 import { BackupsSection } from "./Backups";
 import { PickySection } from "./Picky";
 import { Path, Row, Section } from "./layout";
 import { SidebarSection } from "./Sidebar";
+import { StartupSection } from "./Startup";
 import { ExportRow, ImportRow } from "./Transfer";
 import { VaultSection } from "./Vault";
 
@@ -19,7 +21,7 @@ export default function SettingsPage() {
         <Section title="数据">
           <Row
             label="数据目录"
-            help="所有数据都在这个文件夹里：数据库和备份。不要把它放进 iCloud 这类同步文件夹。"
+            help="所有数据都在这个文件夹里：数据库、附件和备份。不要把它放进 iCloud 这类同步文件夹。"
             actions={
               <Button onClick={() => void api.revealDataDir()}>
                 <FolderOpen size={14} strokeWidth={1.5} /> 在 Finder 中打开
@@ -34,8 +36,10 @@ export default function SettingsPage() {
           <Row label="数据库版本" help="每次升级 App、数据结构变了，版本就加一；升级前会自动备份。">
             {info.schemaVersion ?? "—"}
           </Row>
+          <AttachmentsRow />
         </Section>
         <SidebarSection />
+        <StartupSection />
         <Section title="导出与导入">
           <ExportRow />
           <ImportRow />

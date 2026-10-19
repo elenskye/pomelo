@@ -1,14 +1,15 @@
 // Attachments and project files on the page: chips in the input, cards on questions, the attachment
 // library, a project's files (versions, index) and the input's 资料 menu. Rules live in Rust
 // (files.rs / index.rs); copies are opened in their default app.
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Check, CircleCheck, Ellipsis, Library, Plus, TriangleAlert, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
-import { Button, IconButton } from "@/shared/ui";
+import { Modal } from "@/shared/Modal";
+import { Button, IconButton, TextInput } from "@/shared/ui";
 import {
   FILE_EXTENSIONS,
   LIBRARY_FILES_KEY,
@@ -24,9 +25,11 @@ import {
 } from "./api";
 import { toolClass } from "./Composer";
 
-/** PDF / MD / TXT */
+const BADGE: Record<FileInfo["format"], string> = { PDF: "PDF", Markdown: "MD", 文本: "TXT", Word: "DOC", PowerPoint: "PPT", Excel: "XLS", CSV: "CSV", 图片: "图", 网页: "网" };
+
+/** PDF / MD / TXT / DOC / PPT / XLS / CSV / 图 / 网 */
 export function FileBadge(props: { format: FileInfo["format"] }) {
-  const t = props.format === "PDF" ? "PDF" : props.format === "Markdown" ? "MD" : "TXT";
+  const t = BADGE[props.format] ?? "TXT";
   return (
     <span aria-hidden className={`inline-flex h-5 w-8 shrink-0 items-center justify-center rounded text-[10px] font-bold ${t === "PDF" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
       {t}
@@ -35,13 +38,14 @@ export function FileBadge(props: { format: FileInfo["format"] }) {
 }
 
 /** A file in the input (an attachment of the draft, or a project file chosen for it). */
-export function FileChip(props: { file: FileInfo; project?: boolean; onOpen: () => void; onRemove: () => void }) {
+/** `note`: said after it (an image the local model can't see). */
+export function FileChip(props: { file: FileInfo; project?: boolean; note?: string | null; onOpen: () => void; onRemove: () => void }) {
   return (
-    <span className={`inline-flex max-w-64 items-center gap-1.5 rounded-control py-1 pr-1 pl-1.5 text-xs ${props.project ? "bg-primary/10" : "bg-muted"}`}>
+    <span className={`inline-flex max-w-80 items-center gap-1.5 rounded-control py-1 pr-1 pl-1.5 text-xs ${props.project ? "bg-primary/10" : "bg-muted"}`}>
       <button type="button" onClick={props.onOpen} className="flex min-w-0 items-center gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <FileBadge format={props.file.format} />
         <span className="truncate">{props.file.name}</span>
-        <span className="shrink-0 text-muted-foreground">{fileDetail(props.file)}</span>
+        <span className="shrink-0 text-muted-foreground">{props.note ?? fileDetail(props.file)}</span>
       </button>
       <button type="button" aria-label={`移除 ${props.file.name}`} onClick={props.onRemove} className="rounded p-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground">
         <X size={12} />
@@ -91,11 +95,53 @@ export function useImport() {
     return out;
   };
   const choose = async (multiple: boolean) => {
-    const picked = await openDialog({ multiple, directory: false, filters: [{ name: "文本、Markdown、PDF", extensions: FILE_EXTENSIONS }] });
+    const picked = await openDialog({ multiple, directory: false, filters: [{ name: "文本、PDF、Word、PowerPoint、表格、图片", extensions: FILE_EXTENSIONS }] });
     const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
     return paths.length ? importPaths(paths) : [];
   };
-  return { choose, importPaths };
+  /** ⌘V: pasted images (other pasted files are left to the text box). */
+  const importPasted = async (files: File[]) => {
+    const out: FileInfo[] = [];
+    for (const f of files) {
+      try {
+        const ext = f.type.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+        out.push(await pickyApi.importImage(f.name && f.name !== "image.png" ? f.name : `粘贴的图片.${ext}`, [...new Uint8Array(await f.arrayBuffer())]));
+      } catch (e) {
+        toast(`没能添加图片：${errorText(e)}`, "error");
+      }
+    }
+    void qc.invalidateQueries({ queryKey: LIBRARY_FILES_KEY });
+    return out;
+  };
+  return { choose, importPaths, importPasted };
+}
+
+/** 添加网页: an address; the page's article is saved and comes back as a file. */
+export function WebDialog(props: { onAdded: (f: FileInfo) => void; onClose: () => void }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const f = await pickyApi.importWeb(url);
+      void qc.invalidateQueries({ queryKey: LIBRARY_FILES_KEY });
+      props.onAdded(f);
+      props.onClose();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="添加网页" onClose={props.onClose} onSubmit={submit} error={error} submitLabel={busy ? "正在读取…" : "添加"}>
+      <TextInput autoFocus aria-label="网址" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" disabled={busy} />
+    </Modal>
+  );
 }
 
 export function openFile(id: number, toast: ReturnType<typeof useToast>) {
@@ -174,6 +220,7 @@ function IndexControl(props: { file: ProjectFile; act: (p: Promise<unknown>) => 
   const f = props.file;
   const s = f.index;
   const small = "rounded-control px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
+  if (currentFile(f)?.format === "图片") return null; // no text to index
   switch (s.kind) {
     case "none":
       return (
@@ -228,6 +275,7 @@ export function ProjectFiles(props: { projectId: number; projectName: string; on
   const [confirm, confirmDialog] = useConfirm();
   const { choose } = useImport();
   const [library, setLibrary] = useState(false);
+  const [web, setWeb] = useState(false);
   const files = useProjectFiles(props.projectId).data ?? [];
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: projectFilesKey(props.projectId) });
@@ -261,9 +309,10 @@ export function ProjectFiles(props: { projectId: number; projectName: string; on
           align="end"
           options={[
             { value: "file", label: "从文件选择…" },
+            { value: "web", label: "网页…" },
             { value: "library", label: "从附件库…" },
           ]}
-          onChange={(v) => (v === "file" ? void choose(true).then(add) : v === "library" ? setLibrary(true) : null)}
+          onChange={(v) => (v === "file" ? void choose(true).then(add) : v === "web" ? setWeb(true) : v === "library" ? setLibrary(true) : null)}
           renderTrigger={() => (
             <span className="flex items-center gap-1">
               <Plus size={14} /> 添加
@@ -316,6 +365,7 @@ export function ProjectFiles(props: { projectId: number; projectName: string; on
           })}
         </div>
       </div>
+      {web && <WebDialog onAdded={(f) => void add([f])} onClose={() => setWeb(false)} />}
       {library && (
         <AttachmentLibrary
           pickLabel="添加"

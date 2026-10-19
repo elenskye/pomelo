@@ -1,13 +1,18 @@
 //! 小拾's part of the Pomelo data file (「设置 → 导出 / 导入」, module `picky`, from format version
 //! 11): the global instructions, projects (name, background instructions, whether they use global
-//! memories), purpose presets, templates and memories (sharing by project name). Conversations,
-//! files and indexes stay out (they live in picky.db and its backups).
+//! memories), purpose presets, templates, memories (sharing by project name) and, from 12, 定时任务
+//! (from 13 with 思考; before: on).
+//! Conversations (also the ones schedules wrote), files and indexes stay out (they live in picky.db
+//! and its backups).
 //! Import replaces the global instructions, templates and memories; projects and presets are
-//! matched by name (updated or added; others are kept, so conversations keep theirs).
+//! matched by name (updated or added; others are kept, so conversations keep theirs). Schedules
+//! (when the file has them) replace too, matched by name so their conversations stay linked; they
+//! count from the import on (nothing runs for the past); a cloud model not set up here → 小拾's
+//! selection.
 //! Export → import into an empty picky.db → export gives the same record (see test).
 
 use super::store::NOW;
-use super::{instructions, memory, templates};
+use super::{instructions, memory, schedule, templates};
 use crate::modules::common::{err, Tx};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -63,6 +68,34 @@ pub struct MemoryRec {
     pub noted_on: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleRec {
+    pub name: String,
+    pub prompt: String,
+    pub every: String,
+    #[serde(default)]
+    pub day: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub month: Option<i64>,
+    pub at: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub builtin: Option<String>,
+    /// From format 13 (before: on).
+    #[serde(default = "yes")]
+    pub thinking: bool,
+}
+
+impl ScheduleRec {
+    fn input(&self) -> schedule::ScheduleInput {
+        schedule::ScheduleInput { name: self.name.clone(), prompt: self.prompt.clone(), every: self.every.clone(), day: self.day, month: self.month, at: self.at.clone(), model: self.model.clone(), thinking: self.thinking }
+    }
+}
+
 fn yes() -> bool {
     true
 }
@@ -83,11 +116,14 @@ pub struct PickyRecord {
     pub templates: Vec<TemplateRec>,
     #[serde(default)]
     pub memories: Vec<MemoryRec>,
+    /// None: a file from before schedules (format 11) — the ones here stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedules: Option<Vec<ScheduleRec>>,
 }
 
 impl PickyRecord {
     pub fn len(&self) -> usize {
-        self.projects.len() + self.presets.len() + self.templates.len() + self.memories.len()
+        self.projects.len() + self.presets.len() + self.templates.len() + self.memories.len() + self.schedules.as_ref().map_or(0, Vec::len)
     }
 }
 
@@ -118,6 +154,12 @@ pub fn export(conn: &Connection) -> Result<PickyRecord, String> {
             })
             .collect(),
         projects: projects.into_iter().map(|p| p.1).collect(),
+        schedules: Some(
+            schedule::list(conn, "2000-01-01 00:00")?
+                .into_iter()
+                .map(|s| ScheduleRec { name: s.name, prompt: s.prompt, every: s.rule.every, day: s.rule.day, month: s.rule.month, at: s.rule.at, model: s.model, enabled: s.enabled, builtin: s.builtin, thinking: s.thinking })
+                .collect(),
+        ),
     })
 }
 
@@ -129,6 +171,13 @@ pub fn validate(r: &PickyRecord) -> Result<(), String> {
     }
     if r.presets.iter().any(|p| p.name.trim().is_empty()) {
         return Err("小拾：有用途预设没有名称".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for s in r.schedules.iter().flatten() {
+        schedule::check_input(&s.input()).map_err(|e| format!("小拾：定时任务「{}」：{e}", s.name.trim()))?;
+        if !seen.insert(s.name.trim()) {
+            return Err(format!("小拾：有两个定时任务都叫「{}」", s.name.trim()));
+        }
     }
     for m in &r.memories {
         let n = m.content.trim().chars().count();
@@ -146,7 +195,7 @@ pub fn validate(r: &PickyRecord) -> Result<(), String> {
 
 /// What an import would replace or update.
 pub fn count(conn: &Connection) -> Result<i64, String> {
-    conn.query_row("SELECT (SELECT count(*) FROM projects) + (SELECT count(*) FROM presets) + (SELECT count(*) FROM templates) + (SELECT count(*) FROM memories)", [], |r| r.get(0)).map_err(err)
+    conn.query_row("SELECT (SELECT count(*) FROM projects) + (SELECT count(*) FROM presets) + (SELECT count(*) FROM templates) + (SELECT count(*) FROM memories) + (SELECT count(*) FROM schedules)", [], |r| r.get(0)).map_err(err)
 }
 
 pub fn replace(conn: &Connection, r: &PickyRecord) -> Result<usize, String> {
@@ -206,8 +255,44 @@ pub fn replace(conn: &Connection, r: &PickyRecord) -> Result<usize, String> {
         let id = memory::create(&tx, &input, source, None)?;
         tx.execute("UPDATE memories SET noted_on = ?1 WHERE id = ?2", params![m.noted_on, id]).map_err(err)?;
     }
+    if let Some(list) = &r.schedules {
+        import_schedules(&tx, list)?;
+    }
     tx.commit()?;
     Ok(r.len())
+}
+
+/// By name: kept ones updated (their conversations stay linked), the rest deleted, new ones added.
+fn import_schedules(conn: &Connection, list: &[ScheduleRec]) -> Result<(), String> {
+    let names: Vec<String> = list.iter().map(|s| s.name.trim().to_string()).collect();
+    let mut st = conn.prepare("SELECT id, name FROM schedules").map_err(err)?;
+    let have: Vec<(i64, String)> = st.query_map([], |x| Ok((x.get(0)?, x.get(1)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    for (id, name) in &have {
+        if !names.contains(name) {
+            schedule::delete(conn, *id)?;
+        }
+    }
+    for (i, s) in list.iter().enumerate() {
+        let mut input = s.input();
+        if let Some(id) = input.model.as_deref().and_then(|m| m.strip_prefix("cloud:")) {
+            if super::cloud::model(conn, id)?.is_none() {
+                input.model = None;
+            }
+        }
+        let id = match have.iter().find(|h| h.1 == s.name.trim()) {
+            Some((id, _)) => {
+                schedule::update(conn, *id, &input)?;
+                *id
+            }
+            None => schedule::create(conn, &input)?,
+        };
+        conn.execute(
+            &format!("UPDATE schedules SET enabled = ?1, builtin = ?2, sort_order = ?3, since = {NOW} WHERE id = ?4"),
+            params![s.enabled, s.builtin, i as i64, id],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -229,13 +314,30 @@ mod tests {
         templates::create(&a, &templates::TemplateInput { title: "解释".into(), category: "".into(), body: "x".into() }).unwrap();
         memory::create(&a, &memory::MemoryInput { content: "住在新加坡".into(), enabled: true, local_only: true, ..Default::default() }, "manual", None).unwrap();
         memory::create(&a, &memory::MemoryInput { content: "用 APA".into(), project_id: Some(p1), shared_project_ids: vec![p2], enabled: false, ..Default::default() }, "command", Some(1)).unwrap();
+        let mine = schedule::ScheduleInput { name: "早报".into(), prompt: "今天要做什么".into(), every: "day".into(), day: None, month: None, at: "08:30".into(), model: Some("local:qwen".into()), thinking: false };
+        let early = schedule::create(&a, &mine).unwrap();
+        schedule::set_enabled(&a, early, false).unwrap();
+        let monthly = schedule::list(&a, "2026-10-14 10:00").unwrap()[1].id;
+        schedule::delete(&a, monthly).unwrap();
         let rec = export(&a).unwrap();
-        assert_eq!(rec.len(), 2 + 1 + 2 + 2);
+        assert_eq!(rec.len(), 2 + 1 + 2 + 2 + 3);
+        assert_eq!(rec.schedules.as_ref().unwrap().iter().map(|s| (s.name.as_str(), s.enabled, s.month)).collect::<Vec<_>>(), [("每周回顾", true, None), ("年度总结", true, Some(12)), ("早报", false, None)]);
         assert_eq!(rec.memories[1].shared_projects, ["求职"]);
 
         let b = memory_db();
         replace(&b, &serde_json::from_value(serde_json::to_value(&rec).unwrap()).unwrap()).unwrap();
         assert_eq!(export(&b).unwrap(), rec);
+        // a file from before schedules leaves them; a cloud model not set up here → the selection
+        let old = PickyRecord { schedules: None, ..rec.clone() };
+        replace(&b, &old).unwrap();
+        assert_eq!(export(&b).unwrap(), rec);
+        let mut cloud = rec.clone();
+        cloud.schedules.as_mut().unwrap()[1].model = Some("cloud:gone".into());
+        replace(&b, &cloud).unwrap();
+        assert_eq!(export(&b).unwrap().schedules.unwrap()[1].model, None);
+        let mut twice = rec.clone();
+        twice.schedules.as_mut().unwrap()[1].name = "每周回顾".into();
+        assert!(validate(&twice).is_err());
 
         // into a picky.db with a conversation in 论文: the project is updated, not replaced
         let c = memory_db();

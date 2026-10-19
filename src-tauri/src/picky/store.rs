@@ -17,6 +17,19 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 4, name: "files", sql: include_str!("../../migrations/picky/0004_files.sql") },
     Migration { version: 5, name: "memories", sql: include_str!("../../migrations/picky/0005_memories.sql") },
     Migration { version: 6, name: "queries", sql: include_str!("../../migrations/picky/0006_queries.sql") },
+    Migration { version: 7, name: "search_db", sql: include_str!("../../migrations/picky/0007_search_db.sql") },
+    Migration { version: 8, name: "run_sources", sql: include_str!("../../migrations/picky/0008_run_sources.sql") },
+    Migration { version: 9, name: "cards", sql: include_str!("../../migrations/picky/0009_cards.sql") },
+    Migration { version: 10, name: "card_choices", sql: include_str!("../../migrations/picky/0010_card_choices.sql") },
+    Migration { version: 11, name: "skills", sql: include_str!("../../migrations/picky/0011_skills.sql") },
+    Migration { version: 12, name: "schedules", sql: include_str!("../../migrations/picky/0012_schedules.sql") },
+    Migration { version: 13, name: "briefs", sql: include_str!("../../migrations/picky/0013_briefs.sql") },
+    Migration { version: 14, name: "year_letter", sql: include_str!("../../migrations/picky/0014_year_letter.sql") },
+    Migration { version: 15, name: "thinking", sql: include_str!("../../migrations/picky/0015_thinking.sql") },
+    Migration { version: 16, name: "more_files", sql: include_str!("../../migrations/picky/0016_more_files.sql") },
+    Migration { version: 17, name: "knowledge", sql: include_str!("../../migrations/picky/0017_knowledge.sql") },
+    Migration { version: 18, name: "work", sql: include_str!("../../migrations/picky/0018_work.sql") },
+    Migration { version: 19, name: "toolboxes", sql: include_str!("../../migrations/picky/0019_toolboxes.sql") },
 ];
 
 pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";

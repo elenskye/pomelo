@@ -3,11 +3,18 @@
 // 普通 / 打卡 / 进度条 = 时间: 不设 or a 时间段; 重复 = none to enter (Rust derives each occurrence
 // from the rule and the counts), only 完成后 takes a start date. For saved tasks the type's records
 // (skip / check-in calendar / amounts) act immediately. 小拾: 润色 on 内容; a saved 普通 task can be split
-// into subtasks to pick from (「加上」 adds them as one undo step).
+// into subtasks to pick from (「加上」 adds them as one undo step). A task made from a note links back to it.
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
-import { IdeaList, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
+import { useNavigate } from "react-router";
+import { invoke } from "@tauri-apps/api/core";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, Feather, X } from "lucide-react";
+import type { Note } from "@/modules/notes/api";
+import { excerpt } from "@/modules/notes/NoteBody";
+import { AssistAction, IdeaList, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
 import { usePickyStatus } from "@/modules/picky/api";
+import { useAttachmentsOf, type FileInfo } from "@/shared/attachments/api";
+import { AttachmentField } from "@/shared/attachments/Attachments";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";
 import { addDays, formatDay, localToday, mondayOf, parseYmd, slashDate, toYmd } from "@/shared/dates";
@@ -31,10 +38,11 @@ type Draft = {
   target: string;
   unit: string;
   link: string;
+  files: FileInfo[];
 };
 
-/** Where a new task goes. `where` = "g:<groupId>" or "o:<goalId>". */
-export type NewTask = { where: string; parentId?: number; parentTitle?: string; dueDate?: string };
+/** Where a new task goes. `where` = "g:<groupId>" or "o:<goalId>". 转成待办 fills title / note and links the note. */
+export type NewTask = { where: string; parentId?: number; parentTitle?: string; dueDate?: string; title?: string; note?: string; fromNote?: number };
 
 /** UTC timestamp → local "10 月 1 日". */
 const localDay = (ts: string) => formatDay(toYmd(new Date(ts)));
@@ -308,32 +316,33 @@ function ProgressLog(props: { task: Task }) {
 }
 
 /** 小拾 splits a saved 普通 task: suggestions to pick, 「加上」 adds them under it. */
-function SplitTask(props: { taskId: number }) {
+/** 拆成子任务: the action (in 内容's label row) and, once 小拾 answered, its list (under 内容). */
+function useSplitTask(taskId: number | null) {
   const status = usePickyStatus().data;
   const m = useTodoMutations();
   const toast = useToast();
   const [ideas, setIdeas] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
-  if (!useAssistOn()) return null;
+  const on = useAssistOn();
+  if (!on || taskId == null) return { action: null, list: null };
   const split = async () => {
     setBusy(true);
     try {
-      setIdeas(await assistApi.splitTask(props.taskId));
+      setIdeas(await assistApi.splitTask(taskId));
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
       setBusy(false);
     }
   };
-  if (ideas)
-    return (
-      <IdeaList
-        items={ideas}
-        label={(t) => t}
-        busy={m.addSubtasks.isPending}
-        onAdd={(titles) =>
-          m.addSubtasks.mutate(
-            { parentId: props.taskId, titles },
+  const list = ideas && (
+    <IdeaList
+      items={ideas}
+      label={(t) => t}
+      busy={m.addSubtasks.isPending}
+      onAdd={(titles) =>
+        m.addSubtasks.mutate(
+          { parentId: taskId, titles },
             {
               onSuccess: () => {
                 setIdeas(null);
@@ -342,17 +351,35 @@ function SplitTask(props: { taskId: number }) {
             },
           )
         }
-        onCancel={() => setIdeas(null)}
-      />
-    );
+      onCancel={() => setIdeas(null)}
+    />
+  );
+  const action = !ideas && (
+    <AssistAction disabled={busy} onClick={() => void split()}>
+      {busy ? assistBusyText(status, "正在拆…") : "拆成子任务"}
+    </AssistAction>
+  );
+  return { action, list };
+}
+
+/** 来自笔记: the note this task was made from; a click opens it in 念念不忘. */
+function FromNote(props: { id: number }) {
+  const navigate = useNavigate();
+  const q = useQuery({ queryKey: ["notes", "list", { id: props.id }], queryFn: () => invoke<Note[]>("notes_list", { filter: { id: props.id } }) });
+  const note = q.data?.[0];
+  if (!note) return null;
+  const open = () => void navigate("/notes", { state: { open: { module: "notes", kind: "note", id: note.id, title: "", detail: null, parent: null, day: null, amount: null, currency: null, flow: null } } });
   return (
-    <Button variant="ghost" className="-ml-2 self-start" disabled={busy} onClick={() => void split()}>
-      <Sparkles size={14} strokeWidth={1.75} /> {busy ? assistBusyText(status, "正在拆…") : "拆成子任务"}
-    </Button>
+    <Field label="来自笔记">
+      <button type="button" onClick={open} className="flex min-w-0 items-center gap-1.5 text-left text-sm text-muted-foreground hover:text-foreground">
+        <Feather size={13} className="shrink-0" style={{ color: "var(--module-notes)" }} />
+        <span className="truncate">{excerpt(note.content)}</span>
+      </button>
+    </Field>
   );
 }
 
-export function TaskPanel(props: {
+type PanelProps = {
   task: Task | null; // null = create
   create?: NewTask;
   parentTitle: string | null;
@@ -363,7 +390,16 @@ export function TaskPanel(props: {
   onDone: () => void;
   onDirtyChange: (dirty: boolean) => void;
   onDelete?: () => void;
-}) {
+};
+
+/** Opens once a saved task's attachments are in (they are part of its draft). */
+export function TaskPanel(props: PanelProps) {
+  const filesQ = useAttachmentsOf("task", props.task?.id ?? null);
+  if (props.task && !filesQ.data) return null;
+  return <TaskForm {...props} files={filesQ.data ?? []} />;
+}
+
+function TaskForm(props: PanelProps & { files: FileInfo[] }) {
   const { task } = props;
   const today = localToday();
   const initial = useMemo<Draft>(() => {
@@ -371,8 +407,8 @@ export function TaskPanel(props: {
     const dueDate = (dated ? task?.dueDate : null) ?? props.create?.dueDate ?? "";
     const startDate = (dated ? task?.startDate : null) ?? "";
     return {
-      title: task?.title ?? "",
-      note: task?.note ?? "",
+      title: task?.title ?? props.create?.title ?? "",
+      note: task?.note ?? props.create?.note ?? "",
       where: task ? whereOf(task) : (props.create?.where ?? ""),
       taskType: task?.taskType ?? "normal",
       ranged: !!(startDate || dueDate),
@@ -385,13 +421,15 @@ export function TaskPanel(props: {
       target: task?.target?.toString() ?? "",
       unit: task?.unit ?? "",
       link: task?.link ?? "",
+      files: props.files,
     };
-  }, [task, props.create]);
+  }, [task, props.create, props.files]);
   const [d, setD] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const m = useTodoMutations();
   const toast = useToast();
   const isSub = task ? task.parentId !== null : props.create?.parentId !== undefined;
+  const splitTask = useSplitTask(task && task.taskType === "normal" && d.taskType === "normal" ? task.id : null);
 
   // Counts can move underneath the panel (an occurrence finished from the list): follow them unless
   // the user already edited that field.
@@ -463,11 +501,12 @@ export function TaskPanel(props: {
       target: type === "progress" ? num(d.target) : null,
       unit: type === "progress" ? d.unit.trim() || null : null,
       ...(byCount ? { doneCount: num(d.doneCount) ?? 0 } : {}),
+      attachments: d.files.map((x) => x.id),
     };
     try {
       if (!task) {
         const c = props.create!;
-        await m.createTask.mutateAsync({ ...fields, ...(c.parentId !== undefined ? { parentId: c.parentId } : placeOf(d.where)) });
+        await m.createTask.mutateAsync({ ...fields, ...(c.parentId !== undefined ? { parentId: c.parentId } : placeOf(d.where)), ...(c.fromNote !== undefined ? { fromNote: c.fromNote } : {}) });
         toast(`已添加「${d.title.trim().replace(/\*\*/g, "")}」`);
       } else {
         const move = !isSub && d.where !== initial.where ? placeOf(d.where) : {};
@@ -518,12 +557,13 @@ export function TaskPanel(props: {
       <Field label="标题">
         <TextInput autoFocus={!quick} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" maxLength={500} className={filled.cls("title")} />
       </Field>
-      <Field label="内容">
+      <Field label="内容" action={splitTask.action}>
         <Polish module="todo" value={d.note} onChange={(v) => set("note", v)}>
           <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
         </Polish>
-        {task && task.taskType === "normal" && d.taskType === "normal" && <SplitTask taskId={task.id} />}
+        {splitTask.list}
       </Field>
+      {task?.fromNote != null && <FromNote id={task.fromNote} />}
       <Field label="类型">
         {props.hasChildren ? (
           <p className="text-sm">普通</p>
@@ -623,6 +663,7 @@ export function TaskPanel(props: {
       <Field label="链接">
         <TextInput value={d.link} onChange={(e) => set("link", e.target.value)} maxLength={1000} />
       </Field>
+      <AttachmentField files={d.files} onChange={(v) => set("files", v)} />
     </SidePanel>
   );
 }

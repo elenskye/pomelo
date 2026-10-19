@@ -53,9 +53,24 @@ export const assistApi = {
   fillWork: (module: "books" | "films", title: string) => invoke<WorkFill>("picky_fill_work", { module, title }),
   fillJob: (jd: string) => invoke<JobFill>("picky_fill_job", { jd }),
   splitTask: (taskId: number) => invoke<string[]>("picky_split_task", { taskId }),
+  splitNote: (noteId: number) => invoke<string[]>("picky_split_note", { noteId }),
   tripMissing: (tripId: number) => invoke<ItemIdea[]>("picky_trip_missing", { tripId }),
   quickFill: (module: QuickModule, sentence: string) => invoke<QuickFillResult>("picky_quick_fill", { module, sentence }),
 };
+
+/** A help started from a field's label row (small, 淡墨, a star). */
+export function AssistAction(props: { onClick: () => void; disabled?: boolean; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className="-my-0.5 inline-flex shrink-0 items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+    >
+      <Sparkles size={12} strokeWidth={1.75} className={props.disabled ? "animate-pulse" : ""} /> {props.children}
+    </button>
+  );
+}
 
 /** These helps are 小拾's: gone while 小拾 is hidden. */
 export function useAssistOn() {

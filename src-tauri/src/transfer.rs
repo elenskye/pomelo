@@ -1,19 +1,20 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":11,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":13,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
 //! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
 //! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 小拾
-//! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db). All older versions are read.
+//! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db); v11 = no 定时任务 (picky keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型.
+//! All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
 //! in the file (finance has two: fin_out / fin_in). Overwriting existing data requires `overwrite = true` and takes a snapshot first.
 //! Export → import into an empty DB reproduces everything except ids (see roundtrip test).
 //! Adding a module: new `Payload` variant + arms below + `export_payloads`.
 
-use crate::modules::{books, drawing, films, finance, jobs, kinds, notes, packing, todo};
+use crate::modules::{books, custom, days, drawing, films, finance, jobs, kinds, notes, packing, todo};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -24,7 +25,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 11;
+pub const FORMAT_VERSION: u32 = 18;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +47,8 @@ enum Payload {
     Finance(finance::FinanceRecord),
     Jobs(jobs::JobsRecord),
     Notes(notes::NotesRecord),
+    Days(Vec<days::DayRecord>),
+    Custom(Vec<custom::CustomRecord>),
 }
 
 impl Payload {
@@ -59,6 +62,8 @@ impl Payload {
             Payload::Finance(_) => finance::KEY,
             Payload::Jobs(_) => jobs::KEY,
             Payload::Notes(_) => notes::KEY,
+            Payload::Days(_) => days::KEY,
+            Payload::Custom(_) => custom::KEY,
         }
     }
     fn label(&self) -> &'static str {
@@ -71,6 +76,8 @@ impl Payload {
             Payload::Finance(_) => finance::LABEL,
             Payload::Jobs(_) => jobs::LABEL,
             Payload::Notes(_) => notes::LABEL,
+            Payload::Days(_) => days::LABEL,
+            Payload::Custom(_) => custom::LABEL,
         }
     }
     fn len(&self) -> usize {
@@ -83,6 +90,8 @@ impl Payload {
             Payload::Finance(r) => r.len(),
             Payload::Jobs(r) => r.len(),
             Payload::Notes(r) => r.len(),
+            Payload::Days(r) => r.len(),
+            Payload::Custom(r) => r.len(),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
@@ -95,6 +104,8 @@ impl Payload {
             Payload::Finance(_) => finance::count(conn),
             Payload::Jobs(_) => jobs::count(conn),
             Payload::Notes(_) => notes::count(conn),
+            Payload::Days(_) => days::count(conn),
+            Payload::Custom(_) => custom::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
@@ -107,6 +118,8 @@ impl Payload {
             Payload::Finance(r) => finance::replace_all(conn, r),
             Payload::Jobs(r) => jobs::replace_all(conn, r),
             Payload::Notes(r) => notes::replace_all(conn, r),
+            Payload::Days(r) => days::replace_all(conn, r),
+            Payload::Custom(r) => custom::replace_all(conn, r),
         }
     }
     /// kinds.rs modules this payload's kinds lists live under.
@@ -119,7 +132,7 @@ impl Payload {
             Payload::Todo(_) => &[],
             Payload::Finance(_) => &[finance::OUT_KINDS, finance::IN_KINDS],
             Payload::Jobs(_) => &[jobs::CHANNELS],
-            Payload::Notes(_) => &[],
+            Payload::Notes(_) | Payload::Days(_) | Payload::Custom(_) => &[],
         }
     }
     fn to_json(&self) -> Result<Value, String> {
@@ -132,6 +145,8 @@ impl Payload {
             Payload::Finance(r) => serde_json::to_value(r),
             Payload::Jobs(r) => serde_json::to_value(r),
             Payload::Notes(r) => serde_json::to_value(r),
+            Payload::Days(r) => serde_json::to_value(r),
+            Payload::Custom(r) => serde_json::to_value(r),
         }
         .map_err(err)
     }
@@ -214,6 +229,16 @@ fn parse(text: &str) -> Result<Parsed, String> {
                 notes::validate_records(&rec)?;
                 payloads.push(Payload::Notes(rec));
             }
+            days::KEY => {
+                let rec: Vec<days::DayRecord> = serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", days::LABEL))?;
+                days::validate_records(&rec)?;
+                payloads.push(Payload::Days(rec));
+            }
+            custom::KEY => {
+                let rec: Vec<custom::CustomRecord> = serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", custom::LABEL))?;
+                custom::validate_records(&rec)?;
+                payloads.push(Payload::Custom(rec));
+            }
             _ => skipped.push(key),
         }
     }
@@ -290,7 +315,10 @@ pub fn apply(conn: &mut Connection, text: &str, overwrite: bool, backups_dir: &P
     for (module, names) in &parsed.kinds {
         kinds::replace_names(&tx, module, names)?;
     }
-    for p in &parsed.payloads {
+    // notes before todo: tasks find the notes they came from (by createdAt)
+    let mut order: Vec<&Payload> = parsed.payloads.iter().collect();
+    order.sort_by_key(|p| !matches!(p, Payload::Notes(_)));
+    for p in order {
         p.replace(&tx)?;
     }
     tx.commit().map_err(err)?;
@@ -313,6 +341,8 @@ fn export_payloads(conn: &Connection) -> Result<Vec<Payload>, String> {
         Payload::Finance(finance::export(conn)?),
         Payload::Jobs(jobs::export(conn)?),
         Payload::Notes(notes::export(conn)?),
+        Payload::Days(days::export(conn)?),
+        Payload::Custom(custom::export(conn)?),
     ])
 }
 
@@ -491,8 +521,12 @@ mod tests {
         let first = packing::items(&a, packing::List::Trip, t1.id).unwrap()[0].id;
         packing::update_item(&a, packing::List::Trip, first, serde_json::from_value(json!({"packed": true})).unwrap()).unwrap();
         let tg = todo::create_group(&a, "🖥️ Diploma").unwrap().id;
-        let goal = todo::create_goal(&a, serde_json::from_value(json!({"groupId": tg, "name": "毕业", "status": "paused"})).unwrap()).unwrap().id;
-        let root = todo::create_task(&a, serde_json::from_value(json!({"goalId": goal, "title": "答辩前提交", "collapsed": true})).unwrap()).unwrap().id;
+        // 附件: names and checksums travel (the files stay on the Mac they were added on)
+        let att_dir = temp_dir("roundtrip-attachments");
+        let pic = crate::modules::attachments::store(&a, &att_dir, "海报.png", b"poster").unwrap().id;
+        let pdf = crate::modules::attachments::store(&a, &att_dir, "开题报告.pdf", b"%PDF-report").unwrap().id;
+        let goal = todo::create_goal(&a, serde_json::from_value(json!({"groupId": tg, "name": "毕业", "status": "paused", "attachments": [pdf]})).unwrap()).unwrap().id;
+        let root = todo::create_task(&a, serde_json::from_value(json!({"goalId": goal, "title": "答辩前提交", "collapsed": true, "attachments": [pic, pdf]})).unwrap()).unwrap().id;
         let kid = todo::create_task(&a, serde_json::from_value(json!({"parentId": root, "title": "IA Report", "dueDate": "2027-01-22"})).unwrap()).unwrap().id;
         todo::create_task(&a, serde_json::from_value(json!({"parentId": root, "title": "Poster"})).unwrap()).unwrap();
         todo::create_task(&a, serde_json::from_value(json!({"groupId": tg, "title": "窗口", "startDate": "2027-01-22", "dueDate": "2027-01-25"})).unwrap()).unwrap();
@@ -517,15 +551,25 @@ mod tests {
             .unwrap();
         // notes: a pinned one quoting another (refs travel by createdAt)
         let first_note = notes::create(&a, serde_json::from_value(json!({"content": "#读书/摘抄 第一条"})).unwrap()).unwrap().id;
-        notes::create(&a, serde_json::from_value(json!({"content": "批注 **加粗**", "pinned": true, "refs": [first_note]})).unwrap()).unwrap();
+        notes::create(&a, serde_json::from_value(json!({"content": "批注 **加粗**", "pinned": true, "refs": [first_note], "attachments": [pic]})).unwrap()).unwrap();
         notes::set_tag(&a, "读书", serde_json::from_value(json!({"pinned": true, "icon": "i:book-open"})).unwrap()).unwrap();
+        // 笔记转待办: a task made from the first note (linked by its createdAt)
+        todo::create_from_note(&a, first_note, Some(tg), None, &["整理摘抄".into()], "2026-10-17").unwrap();
         notes::set_tag(&a, "读书/摘抄", serde_json::from_value(json!({"icon": "📖"})).unwrap()).unwrap();
+        // 来日方长: a birthday with a gift, pinned
+        days::create(&a, serde_json::from_value(json!({"kind": "birthday", "name": "妈妈", "date": "1966-11-02", "remind": [7], "pinned": true, "gifts": [{"year": "2025", "gift": "茶具"}]})).unwrap(), "2026-10-17").unwrap();
+        // 五花八门 (a list with fields and an item) and 循序渐进 (called 季 / 集)
+        let (_, _) = crate::modules::lists::tests::seed(&a);
+        let games = custom::all(&a).unwrap()[0].id;
+        let year = crate::modules::lists::create_field(&a, games, serde_json::from_value(json!({"name": "玩过", "type": "year"})).unwrap()).unwrap().id;
+        crate::modules::lists::create_item(&a, games, serde_json::from_value(json!({"name": "塞尔达", "values": {"1": "Switch", "3": 5, year.to_string(): "2025"}})).unwrap()).unwrap();
+        crate::modules::progress::tests::seed(&a);
         // 书影: a reread
         let little = books::list(&a).unwrap().into_iter().find(|b| b.title == "小王子").unwrap().id;
         books::update(&a, little, serde_json::from_value(json!({"rereads": [{"year": "2026", "rating": 5}]})).unwrap()).unwrap();
 
         let (text, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 6), ("finance", 4), ("jobs", 1), ("notes", 2)]);
+        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 7), ("finance", 4), ("jobs", 1), ("notes", 2), ("days", 1), ("custom", 2)]);
 
         let dir = temp_dir("roundtrip");
         let mut b = memory_db();
@@ -536,7 +580,19 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 11);
+        assert_eq!(v["formatVersion"], 18);
+        let made = v["modules"]["todo"]["groups"][0]["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "整理摘抄").unwrap().clone();
+        assert_eq!(made["fromNote"], v["modules"]["notes"]["notes"][0]["createdAt"]);
+        assert_eq!(v["modules"]["custom"][0]["items"][0]["values"], json!({"平台": "Switch", "评分": 5, "玩过": "2025"}));
+        assert_eq!((v["modules"]["custom"][1]["kinds"].clone(), v["modules"]["custom"][1]["courses"][0]["lessons"][0]["kind"].clone()), (json!(["正篇", "番外"]), json!("正篇")));
+        assert_eq!((v["modules"]["custom"][1]["courseWord"].as_str(), v["modules"]["custom"][1]["courses"][0]["lessons"][2]["title"].as_str()), (Some("季"), Some("告别")));
+        assert!(v["modules"]["custom"][0].get("courses").is_none());
+        assert_eq!(v["modules"]["days"][0]["gifts"][0]["gift"], "茶具");
+        assert_eq!(v["modules"]["notes"]["notes"][1]["attachments"][0]["name"], "海报.png");
+        assert_eq!(v["modules"]["todo"]["groups"][0]["goals"][0]["attachments"][0]["name"], "开题报告.pdf");
+        // on the other Mac they are names waiting for their files
+        let missing: i64 = b.query_row("SELECT count(*) FROM attachment_files WHERE stored IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(missing, 2);
         assert_eq!(v["modules"]["notes"]["notes"][1]["refs"][0], v["modules"]["notes"]["notes"][0]["createdAt"]);
         assert_eq!(v["modules"]["notes"]["tags"], json!([{"tag": "读书", "pinned": true, "icon": "i:book-open"}, {"tag": "读书/摘抄", "icon": "📖"}]));
         assert_eq!(v["modules"]["books"][0]["rereads"], json!([{"year": "2026", "rating": 5}]));
@@ -677,7 +733,7 @@ mod tests {
         let mut a = memory_db();
         apply(&mut a, &text, false, &temp_dir("real-rt")).unwrap();
         let (out, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| m.incoming).collect::<Vec<_>>(), [21, 50, 5, 3, 0, 0, 0, 0]);
+        assert_eq!(counts.iter().map(|m| m.incoming).collect::<Vec<_>>(), [21, 50, 5, 3, 0, 0, 0, 0, 0, 0]); // … notes, days, custom
         let mut b = memory_db();
         apply(&mut b, &out, false, &temp_dir("real-rt")).unwrap();
         assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));
@@ -718,12 +774,12 @@ mod tests {
         assert_eq!(without_time(&out), without_time(&export(&mut b).unwrap().0));
     }
 
-    /// The Flomo export (`pnpm import:flomo`, gitignored) imports cleanly and round-trips.
+    /// The notes imported from Flomo (prototype/notes-import.json, gitignored) import cleanly and round-trip.
     #[test]
     #[ignore]
     fn real_notes_import() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype/notes-import.json");
-        let text = std::fs::read_to_string(&path).expect("run `pnpm import:flomo` first");
+        let text = std::fs::read_to_string(&path).expect("prototype/notes-import.json missing (local only)");
         let mut c = memory_db();
         apply(&mut c, &text, false, &temp_dir("real-notes")).unwrap();
         let o = notes::overview(&c).unwrap();

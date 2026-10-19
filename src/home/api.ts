@@ -2,6 +2,7 @@
 // null / are left out. 今天的待办 comes from todo_agenda instead.
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
+import type { Day } from "@/modules/days/api";
 import type { Stage } from "@/modules/jobs/api";
 import type { Hit } from "@/shared/open";
 
@@ -21,6 +22,8 @@ export type Overview = {
   jobs: JobsCard | null;
   reading: Hit[] | null;
   drawing: CourseLine[] | null;
+  /** 快到的日子 (days.rs soon); null = hidden. */
+  days: Day[] | null;
   recent: Recent[];
 };
 

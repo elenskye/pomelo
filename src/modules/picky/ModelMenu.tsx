@@ -34,8 +34,10 @@ export function ModelMenu(props: { status: PickyStatus }) {
     ...s.local.models.map((m) => ({ value: `local:${m.key}`, label: m.name, group: "本地模型" })),
     ...s.cloud.map((m) => ({ value: `cloud:${m.id}`, label: m.name, group: "云端模型" })),
   ];
+  // replies being written keep their model: switching is fine, except the local model while it answers
+  const localBusy = s.active.some((a) => a.model.startsWith("local:"));
   const actions: DropdownAction[] =
-    s.local.active && !s.local.working
+    s.local.active && !s.local.working && !localBusy
       ? [{ label: "停止本地模型", onSelect: () => void pickyApi.stopModel().then(refresh, (e) => toast(errorText(e), "error")) }]
       : [];
   const trigger = (
@@ -45,7 +47,7 @@ export function ModelMenu(props: { status: PickyStatus }) {
       {label.missingKey && <span className="text-xs text-destructive">缺 Key</span>}
     </span>
   );
-  if (s.generating || s.local.working)
+  if (s.local.working)
     return <span className="inline-flex items-center gap-1.5 rounded-control border bg-card py-1.5 pr-3 pl-3 text-sm text-muted-foreground">{trigger}</span>;
   return (
     <Dropdown
@@ -71,7 +73,7 @@ const ACTION_LABEL: Record<IssueAction["kind"], string> = {
   refresh: "重试",
   openServerLog: "打开服务日志",
   openCatalog: "打开模型清单",
-  openEmbeddingLog: "打开向量服务日志",
+  openServiceLog: "打开服务日志",
 };
 
 /** A model-service problem: what happened, why, what next (raw output on hover). */

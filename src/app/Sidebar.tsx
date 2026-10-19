@@ -1,22 +1,29 @@
 // App sidebar: 首页 (fixed on top), the modules not hidden in 设置 (drag a row to reorder; order kept in settings) + 设置.
-// Collapses to an icon strip (names show on hover); the state is kept in settings too.
+// The + on top makes a module from 五花八门 / 循序渐进 (it joins the modules, last).
+// Collapses to an icon strip (names show on hover); the state is kept in settings too. A dot on 小拾 while a
+// conversation a 定时任务 wrote hasn't been opened.
+import { useState } from "react";
 import { NavLink } from "react-router";
-import { Bird, House, PanelLeftClose, PanelLeftOpen, Search, Settings, type LucideIcon } from "lucide-react";
+import { Bird, House, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, type LucideIcon } from "lucide-react";
+import { useAllModules, type Template } from "@/modules/custom/api";
+import { CustomDialog } from "@/modules/custom/CustomDialog";
+import { Dropdown } from "@/shared/Dropdown";
+import { usePickyStatus } from "@/modules/picky/api";
 import { isBoolean, isStringArray, useSetting } from "@/shared/settings";
 import { useSortable } from "@/shared/sortable";
 import { useHiddenModules } from "./hidden";
-import { MODULES, type ModuleDef } from "./modules";
+import type { ModuleDef } from "./modules";
 
 const COLLAPSED = "ui.sidebar_collapsed";
 const ORDER = "ui.module_order";
 
 /** Saved order first (unknown ids dropped), then modules added since. */
-export function orderModules(order: string[]): ModuleDef[] {
-  const known = order.map((id) => MODULES.find((m) => m.id === id)).filter((m): m is ModuleDef => !!m);
-  return [...known, ...MODULES.filter((m) => !known.includes(m))];
+export function orderModules(order: string[], all: ModuleDef[]): ModuleDef[] {
+  const known = order.map((id) => all.find((m) => m.id === id)).filter((m): m is ModuleDef => !!m);
+  return [...known, ...all.filter((m) => !known.includes(m))];
 }
 
-function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: string; collapsed: boolean; end?: boolean }) {
+function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: string; collapsed: boolean; end?: boolean; dot?: boolean }) {
   const Icon = props.icon;
   return (
     <NavLink
@@ -30,6 +37,7 @@ function NavItem(props: { to: string; label: string; icon: LucideIcon; color?: s
       }
     >
       <Icon size={16} strokeWidth={1.5} style={{ color: props.color }} className="shrink-0" />
+      {props.dot && <span aria-label="有新内容" className={`size-1.5 shrink-0 rounded-full bg-primary ${props.collapsed ? "absolute top-1 right-[calc(50%-12px)]" : "order-last ml-auto"}`} />}
       {props.collapsed ? (
         <span
           role="tooltip"
@@ -48,7 +56,9 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void; onChat?
   const [collapsed, setCollapsed] = useSetting(COLLAPSED, false, isBoolean);
   const [order, setOrder] = useSetting<string[]>(ORDER, [], isStringArray);
   const [hidden] = useHiddenModules();
-  const all = orderModules(order);
+  const unseen = (usePickyStatus().data?.unseen ?? 0) > 0;
+  const all = orderModules(order, useAllModules());
+  const [making, setMaking] = useState<Template | null>(null);
   const modules = all.filter((m) => !hidden.includes(m.id));
   // hidden ones keep their place at the end of the saved order
   const sort = useSortable<HTMLElement>((ids) => setOrder([...ids.map((i) => modules[i].id), ...all.filter((m) => hidden.includes(m.id)).map((m) => m.id)]));
@@ -63,6 +73,20 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void; onChat?
     >
       <Toggle size={16} strokeWidth={1.5} />
     </button>
+  );
+  const plus = (
+    <Dropdown<Template | null>
+      plain
+      ariaLabel="新建模块"
+      value={null}
+      onChange={(t) => t && setMaking(t)}
+      options={[
+        { value: "list", label: "五花八门（清单）" },
+        { value: "progress", label: "循序渐进（进度）" },
+      ]}
+      renderTrigger={() => <Plus size={16} strokeWidth={1.5} />}
+      triggerClassName="rounded-control p-1.5 text-muted-foreground transition-colors duration-150 outline-none hover:bg-black/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/5"
+    />
   );
   const search = props.onSearch && (
     <button
@@ -97,11 +121,13 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void; onChat?
           {toggle}
           {search}
           {chat}
+          {plus}
         </div>
       ) : (
         <div data-tauri-drag-region className="mb-3 flex items-center justify-between pl-2.5">
           <span className="pointer-events-none text-base font-bold">柚儿园</span>
           <span className="flex items-center">
+            {plus}
             {search}
             {chat}
             {toggle}
@@ -114,7 +140,7 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void; onChat?
       <nav ref={sort.listRef} className="flex flex-col gap-0.5">
         {modules.map((m, i) => (
           <div key={m.id} {...sort.item(i)} {...sort.handle(i)} className="rounded-control bg-sidebar">
-            <NavItem to={`/${m.id}`} label={m.label} icon={m.icon} color={m.color} collapsed={collapsed} />
+            <NavItem to={`/${m.id}`} label={m.label} icon={m.icon} color={m.color} collapsed={collapsed} dot={m.id === "picky" && unseen} />
           </div>
         ))}
       </nav>
@@ -125,6 +151,7 @@ export function Sidebar(props: { isDev?: boolean; onSearch?: () => void; onChat?
       {props.isDev && (
         <div className={`mt-2 text-xs text-muted-foreground ${collapsed ? "text-center" : "px-2.5"}`}>{collapsed ? "开发" : "开发版 · 使用测试数据"}</div>
       )}
+      {making && <CustomDialog template={making} onClose={() => setMaking(null)} />}
     </aside>
   );
 }

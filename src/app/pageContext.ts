@@ -1,4 +1,4 @@
-// What the page tells the 小拾 小窗 (requirements「小拾懂 Pomelo」→ 当前页面): the module, its view, the
+// What the page tells the 小拾 小窗 (requirements「小拾 · 懂 Pomelo」→ 当前页面): the module, its view, the
 // filters as shown, the record whose editor is open, the records picked in 多选 — ids and labels only;
 // Rust fetches the content under its rules. The innermost view publishes (usePageContext); a module
 // that publishes nothing still counts by its route (App passes the fallback).

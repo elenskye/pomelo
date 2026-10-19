@@ -32,6 +32,12 @@ objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
 # 小拾: streaming from the local model (127.0.0.1) and the cloud services; tokio is already in the tree via tauri
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy", "json"] }
 tokio = { version = "1", features = ["time"] }
+tauri-plugin-autostart = "2"
+# 小拾 reads more files (v0.4.5): Excel / CSV, PowerPoint (a zip of XML), web pages (a Readability port)
+calamine = "0.36"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42"
+dom_smoothie = "0.18"
 
 [profile.release]
 codegen-units = 1

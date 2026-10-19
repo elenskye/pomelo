@@ -64,14 +64,14 @@ export function MonthInput(props: { value: string | null; onChange: (v: string |
   );
 }
 
-/** 'YYYY' | null (摸鱼读读 / 好奇看看 only record the year). */
-export function YearInput(props: { value: string | null; onChange: (v: string | null) => void; clearable?: boolean }) {
+/** 'YYYY' | null (书影, 五花八门's 年份): next year back to `from` (1950). */
+export function YearInput(props: { value: string | null; onChange: (v: string | null) => void; clearable?: boolean; label?: string; from?: number }) {
   const thisYear = new Date().getFullYear();
-  const years = Array.from({ length: thisYear - 1950 + 2 }, (_, i) => String(thisYear + 1 - i));
+  const years = Array.from({ length: thisYear - (props.from ?? 1950) + 2 }, (_, i) => String(thisYear + 1 - i));
   return (
     <div className="flex items-center gap-2">
       <Dropdown
-        ariaLabel="年"
+        ariaLabel={props.label ?? "年"}
         value={props.value ?? ""}
         onChange={(y) => props.onChange(y || null)}
         placeholder="年"
@@ -79,7 +79,7 @@ export function YearInput(props: { value: string | null; onChange: (v: string | 
         options={years.map((y) => ({ value: y, label: `${y} 年` }))}
       />
       {props.value && props.clearable !== false && (
-        <button type="button" aria-label="清除完成时间" onClick={() => props.onChange(null)} className="rounded-control p-1.5 text-muted-foreground hover:bg-muted">
+        <button type="button" aria-label={props.label ? `清除${props.label}` : "清除完成时间"} onClick={() => props.onChange(null)} className="rounded-control p-1.5 text-muted-foreground hover:bg-muted">
           <X size={14} />
         </button>
       )}

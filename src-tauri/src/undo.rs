@@ -13,9 +13,9 @@ use serde::Serialize;
 use tauri::State;
 
 const LIMIT: usize = 100;
-/// Not user data (UI state like the last page; 芝麻开门 unlock state; 小拾 settings; 小拾 file indexes,
-/// and memory vectors, which are derived and large); never undone.
-const SKIP: &[&str] = &["settings", "vault_meta", "preferences", "artifact_indexes", "artifact_chunks", "memory_vectors"];
+/// Not user data (UI state like the last page; 芝麻开门 unlock state; 小拾 settings); never undone.
+/// Search indexes live in search.db, outside undo.
+const SKIP: &[&str] = &["settings", "vault_meta", "preferences"];
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -150,7 +150,7 @@ pub struct UndoResult {
 
 /// Replays the next step on its own store. Lock order is always database → history (as in
 /// `with_undo_in`), so the store is looked up first and checked again under both locks.
-fn step_back(state: &AppState, redo_it: bool) -> Result<UndoResult, String> {
+pub(crate) fn step_back(state: &AppState, redo_it: bool) -> Result<UndoResult, String> {
     let busy = || "撤销记录异常，请重启 App".to_string();
     let Some(store) = state.history.lock().map_err(|_| busy())?.next_store(redo_it) else {
         return Ok(UndoResult { label: None });
@@ -211,6 +211,34 @@ mod tests {
         assert_eq!(n(&c, "todo_tasks"), 0);
         assert_eq!(undo(&c, &mut h).unwrap().as_deref(), Some("删除分组"));
         assert_eq!(undo(&c, &mut h).unwrap(), None);
+    }
+
+    #[test]
+    fn deleted_records_take_their_attachments_and_undo_brings_them_back() {
+        use crate::modules::attachments::{self as att, Owner};
+        let c = memory_db();
+        let dir = crate::db::tests::temp_dir("att-undo");
+        let mut h = History::default();
+        let file = att::store(&c, &dir, "a.png", b"aaa").unwrap().id;
+        let g = todo::create_group(&c, "A").unwrap().id;
+        let goal = todo::create_goal(&c, serde_json::from_value(json!({"groupId": g, "name": "目标"})).unwrap()).unwrap().id;
+        let t = todo::create_task(&c, serde_json::from_value(json!({"goalId": goal, "title": "t"})).unwrap()).unwrap().id;
+        let note = att::tests::note(&c, "笔记");
+        for (o, id) in [(Owner::Goal, goal), (Owner::Task, t), (Owner::Note, note)] {
+            att::set(&c, o, id, &[file]).unwrap();
+        }
+        step(&c, &mut h, "删除分组", |c| todo::delete_group(c, g));
+        step(&c, &mut h, "删除笔记", |c| crate::modules::notes::delete(c, note));
+        assert_eq!(n(&c, "attachments"), 0);
+        undo(&c, &mut h).unwrap();
+        undo(&c, &mut h).unwrap();
+        assert_eq!(n(&c, "attachments"), 3);
+        assert_eq!(att::of(&c, Owner::Task, t).unwrap()[0].id, file);
+        redo(&c, &mut h).unwrap();
+        redo(&c, &mut h).unwrap();
+        assert_eq!(n(&c, "attachments"), 0);
+        undo(&c, &mut h).unwrap();
+        assert_eq!(n(&c, "attachments"), 1); // the note's
     }
 
     #[test]
@@ -341,7 +369,6 @@ mod tests {
         step(&c, &mut h, &|c| files::add_project_file(c, p, v1).map(|_| ()));
         let f = files::project_files(&c, Some(p)).unwrap()[0].id;
         step(&c, &mut h, &|c| files::set_indexed(c, f, true));
-        index::save(&c, v1, "m", &[index::Chunk { segment: 0, content: "one".into(), vector: vec![1.0] }]).unwrap();
         step(&c, &mut h, &|c| files::replace_project_file(c, f, v2).map(|_| ()));
         step(&c, &mut h, &|c| files::remove_project_file(c, f));
         assert!(files::project_files(&c, Some(p)).unwrap().is_empty());
@@ -350,10 +377,47 @@ mod tests {
         undo(&c, &mut h).unwrap();
         let back = files::project_file(&c, f).unwrap();
         assert_eq!((back.current_version, back.versions.len(), back.indexed), (1, 1, true));
-        assert!(index::indexed(&c, "m").unwrap().is_empty()); // the index stays gone: rebuild it
+        assert_eq!(index::wanted(&c, None).unwrap().len(), 1); // indexed again: the search indexer rebuilds it
         undo(&c, &mut h).unwrap();
         undo(&c, &mut h).unwrap();
         assert!(files::project_files(&c, Some(p)).unwrap().is_empty());
+    }
+
+    /// 小拾's 知识库: deleting a library brings back its folders and the choices of it; the switch and
+    /// 「发给云端」 are steps too.
+    #[test]
+    fn picky_knowledge_changes_undo() {
+        use crate::picky::knowledge::{self as kb, Owner};
+        use crate::picky::{chat, library, store};
+        let c = store::tests::memory_db();
+        let dir = crate::db::tests::temp_dir("undo-knowledge");
+        std::fs::create_dir_all(dir.join("资料")).unwrap();
+        let mut h = History::default();
+        let p = library::create_project(&c, "P", "").unwrap();
+        let s = chat::begin_run(&c, None, Some(p), "q", "local:x", "X").unwrap().session_id;
+        let step = |c: &Connection, h: &mut History, f: &dyn Fn(&Connection) -> Result<(), String>| {
+            let ((), cs) = record(c, f).unwrap();
+            h.push(Store::Picky, "知识库", cs.unwrap());
+        };
+        step(&c, &mut h, &|c| kb::create_library(c, "工作").map(|_| ()));
+        let lib = kb::libraries(&c).unwrap()[0].id;
+        step(&c, &mut h, &|c| kb::add_folder(c, lib, &dir.join("资料"), &dir.join("data")).map(|_| ()));
+        let f = kb::sources(&c, None).unwrap()[0].id;
+        step(&c, &mut h, &|c| kb::set_cloud(c, f, false));
+        step(&c, &mut h, &|c| kb::set_chosen(c, Owner::Project(p), &[lib]));
+        step(&c, &mut h, &|c| kb::set_knowledge(c, s, true));
+        step(&c, &mut h, &|c| kb::delete_library(c, lib));
+        assert!(kb::sources(&c, None).unwrap().is_empty() && kb::chosen(&c, Owner::Project(p)).unwrap().is_empty());
+        undo(&c, &mut h).unwrap();
+        assert_eq!((kb::sources(&c, None).unwrap()[0].cloud, kb::chosen(&c, Owner::Project(p)).unwrap()), (false, vec![lib]));
+        undo(&c, &mut h).unwrap();
+        assert_eq!(kb::scope(&c, Some(s), None, None, false).unwrap(), None);
+        undo(&c, &mut h).unwrap();
+        undo(&c, &mut h).unwrap();
+        assert!(kb::sources(&c, None).unwrap()[0].cloud);
+        undo(&c, &mut h).unwrap();
+        undo(&c, &mut h).unwrap();
+        assert!(kb::libraries(&c).unwrap().is_empty());
     }
 
     /// 小拾's memories: edits come back, and deleting a project brings its memories back with it.

@@ -24,6 +24,8 @@ export function Dropdown<T>(props: {
   menuMaxHeight?: number;
   /** Action menu: no check column. */
   plain?: boolean;
+  /** Several at once (多选): every option shown ticked by `isPicked`, choosing one toggles it and the menu stays open. */
+  isPicked?: (v: T) => boolean;
 }) {
   const { options, actions = [] } = props;
   const [open, setOpen] = useState(false);
@@ -46,11 +48,13 @@ export function Dropdown<T>(props: {
     if (refocus) btn.current?.focus();
   };
   const choose = (i: number) => {
+    if (props.isPicked && i < options.length) return props.onChange(options[i].value);
     hide(true);
     if (i < options.length) {
       if (!Object.is(options[i].value, props.value)) props.onChange(options[i].value);
     } else actions[i - options.length]?.onSelect();
   };
+  const picked = (i: number) => (props.isPicked ? props.isPicked(options[i].value) : i === selectedIndex);
 
   // Position after the menu renders (measure its size), before paint. In the top layer first: a
   // dialog (WebKit) would otherwise clip it, and a hidden popover has no size.
@@ -181,6 +185,7 @@ export function Dropdown<T>(props: {
             ref={menu}
             popover="manual"
             role="listbox"
+            aria-multiselectable={props.isPicked ? true : undefined}
             aria-label={props.ariaLabel}
             onMouseDown={(e) => e.preventDefault()} // keep focus on the trigger
             onClick={(e) => e.stopPropagation()}
@@ -201,10 +206,10 @@ export function Dropdown<T>(props: {
               o.group && o.group !== options[i - 1]?.group ? (
                 <div key={i} role="presentation">
                   <div className={`px-2 pb-1 text-xs text-muted-foreground ${i > 0 ? "pt-2" : "pt-1"}`}>{o.group}</div>
-                  {item(i, o.label, i === selectedIndex)}
+                  {item(i, o.label, picked(i))}
                 </div>
               ) : (
-                item(i, o.label, i === selectedIndex)
+                item(i, o.label, picked(i))
               ),
             )}
             {actions.length > 0 && <div className="mx-1 my-1 border-t" />}

@@ -38,10 +38,16 @@ export function summary(t: Template): string {
 
 /** The "/" menu opens while the whole draft is "/" plus a filter without spaces or slashes, so
  *  "/usr/bin" or "/ 开头的句子" stay plain text. Returns the filter, or null. */
-export function slashQuery(text: string): string | null {
-  if (!text.startsWith("/")) return null;
-  const rest = text.slice(1);
-  return /[\s/]/.test(rest) ? null : rest;
+/** The "/word" just before the caret (the "/" opens a word: not after a letter, digit, ":" — a path, a
+ * url, a date like 10/12); null when there is none. */
+export function slashAt(text: string, caret: number): { start: number; end: number; query: string } | null {
+  const before = text.slice(0, caret);
+  const i = before.lastIndexOf("/");
+  if (i < 0) return null;
+  const query = before.slice(i + 1);
+  if (/[\s/]/.test(query)) return null;
+  if (i > 0 && /[A-Za-z0-9:./\\_-]/.test(before[i - 1])) return null;
+  return { start: i, end: caret, query };
 }
 
 /** Matches (title or category): pinned ones first, then the rest by last use. */

@@ -1,5 +1,5 @@
 // Right-side editor shell + page-level selection/keyboard helpers shared by module pages.
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Trash2, X } from "lucide-react";
 import { useConfirm } from "./feedback";
 import { Button } from "./ui";
@@ -15,7 +15,13 @@ export function SidePanel(props: {
   children: ReactNode;
   extra?: ReactNode; // rendered outside the form (datalists, dialogs)
   cancelLabel?: string;
+  footerStart?: ReactNode; // after 删除 (e.g. 归档)
 }) {
+  // a field focused while the panel slides in scrolls a long panel down a little: start at the top
+  const body = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, []);
   return (
     <aside className="absolute inset-y-0 right-[var(--chat-float,0px)] z-10 flex w-[400px] animate-slide-in flex-col border-l bg-card shadow-2xl">
       <form onSubmit={props.onSubmit} className="flex min-h-0 flex-1 flex-col">
@@ -30,7 +36,7 @@ export function SidePanel(props: {
             <X size={16} />
           </button>
         </header>
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-2">
+        <div ref={body} className="flex-1 space-y-4 overflow-y-auto px-6 py-2">
           {props.children}
           {props.error && <p className="text-sm text-destructive">{props.error}</p>}
           {props.meta && <p className="pt-2 text-xs text-muted-foreground">{props.meta}</p>}
@@ -41,6 +47,7 @@ export function SidePanel(props: {
               <Trash2 size={14} /> 删除
             </Button>
           )}
+          {props.footerStart}
           <div className="flex-1" />
           <Button onClick={props.onClose}>{props.cancelLabel ?? "取消"}</Button>
           <Button type="submit" variant="primary">

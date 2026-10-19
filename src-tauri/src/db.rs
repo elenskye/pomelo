@@ -35,6 +35,14 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 20, name: "note_tag_meta", sql: include_str!("../migrations/0020_note_tag_meta.sql") },
     Migration { version: 21, name: "rereads", sql: include_str!("../migrations/0021_rereads.sql") },
     Migration { version: 22, name: "root_pins", sql: include_str!("../migrations/0022_root_pins.sql") },
+    Migration { version: 23, name: "vault_order", sql: include_str!("../migrations/0023_vault_order.sql") },
+    Migration { version: 24, name: "vault_groups", sql: include_str!("../migrations/0024_vault_groups.sql") },
+    Migration { version: 25, name: "attachments", sql: include_str!("../migrations/0025_attachments.sql") },
+    Migration { version: 26, name: "days", sql: include_str!("../migrations/0026_days.sql") },
+    Migration { version: 27, name: "custom", sql: include_str!("../migrations/0027_custom.sql") },
+    Migration { version: 28, name: "drawing_status", sql: include_str!("../migrations/0028_drawing_status.sql") },
+    Migration { version: 29, name: "task_from_note", sql: include_str!("../migrations/0029_task_from_note.sql") },
+    Migration { version: 30, name: "custom_year_kinds", sql: include_str!("../migrations/0030_custom_year_kinds.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -489,6 +497,31 @@ pub mod tests {
         let rows: Vec<(String, Option<i64>, Option<String>)> =
             c.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY tag").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
         assert_eq!(rows, [("读书".into(), Some(1), None), ("读书/摘抄".into(), None, Some("📖".into()))]);
+    }
+
+    /// v30: 五花八门 日期 fields become 年份 (values keep the year, other values as they were);
+    /// 循序渐进 lessons get a kind.
+    #[test]
+    fn v29_dates_become_years() {
+        let dir = temp_dir("v29-years");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..29], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            r#"INSERT INTO custom_modules (template, name, icon) VALUES ('list', '游戏', 'x'), ('list', '电影', 'x');
+             INSERT INTO list_fields (module_id, name, type, options, sort_order) VALUES (1, '平台', 'select', '["Switch"]', 1), (1, '玩过', 'date', '[]', 2), (1, '通关', 'check', '[]', 3), (1, '标签', 'multi', '["a","b"]', 4), (2, '时长', 'number', '[]', 1);
+             INSERT INTO list_items (module_id, name, data, sort_order) VALUES (1, '塞尔达', '{"1":"Switch","2":"2025-03-04","3":true,"4":["a","b"]}', 1), (1, '空', '{}', 2), (2, '千与千寻', '{"5":12.5}', 1);"#,
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), latest_version());
+        let ty: String = c.query_row("SELECT type FROM list_fields WHERE id = 2", [], |r| r.get(0)).unwrap();
+        assert_eq!(ty, "year");
+        let data: Vec<String> = c.prepare("SELECT data FROM list_items ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(data, [r#"{"1":"Switch","2":"2025","3":true,"4":["a","b"]}"#, "{}", r#"{"5":12.5}"#]);
+        assert!(c.execute("INSERT INTO list_fields (module_id, name, type, sort_order) VALUES (1, 'x', 'date', 9)", []).is_err());
+        c.execute_batch("INSERT INTO custom_modules (template, name, icon) VALUES ('progress', '日语', 'x'); INSERT INTO progress_courses (module_id, name, sort_order) VALUES (3, 'N5', 1); INSERT INTO kinds (module, name, sort_order) VALUES ('progress/3', '语法', 1); INSERT INTO progress_lessons (course_id, title, sort_order, kind_id) VALUES (1, '五十音', 1, (SELECT id FROM kinds WHERE module = 'progress/3'));").unwrap();
+        c.execute("DELETE FROM kinds WHERE module = 'progress/3'", []).unwrap();
+        let k: Option<i64> = c.query_row("SELECT kind_id FROM progress_lessons", [], |r| r.get(0)).unwrap();
+        assert_eq!(k, None); // 未分类
     }
 
     #[test]

@@ -34,6 +34,7 @@ function StorageDialog(props: { onClose: () => void }) {
           <li>删除小拾保存的这份副本，原文件不受影响。</li>
           {f.messages > 0 && <li>用到它的 {f.messages} 个问题会显示「文件已删除」。</li>}
           {f.projectFiles > 0 && <li>项目资料里的这一版不能再读取，索引也会删掉。</li>}
+          {f.knowledge > 0 && <li>知识库里的这个网页不能再查，索引也会删掉。</li>}
           <li>不能撤销。</li>
         </ul>
       ),
@@ -43,7 +44,7 @@ function StorageDialog(props: { onClose: () => void }) {
   const removeStray = async (name: string) => {
     if (await confirm({ title: `删除「${name}」？`, message: "这个文件没有任何记录在用。不能撤销。", confirmLabel: "删除", danger: true })) act(pickyApi.storageDeleteStray(name));
   };
-  const uses = (f: StoredFile) => [f.messages > 0 && `用于 ${f.messages} 个问题`, f.projectFiles > 0 && "项目资料"].filter(Boolean).join(" · ") || "没有用到";
+  const uses = (f: StoredFile) => [f.messages > 0 && `用于 ${f.messages} 个问题`, f.projectFiles > 0 && "项目资料", f.knowledge > 0 && "知识库"].filter(Boolean).join(" · ") || "没有用到";
   const head = "px-2 pt-3 pb-1 text-xs text-muted-foreground";
   return (
     <Panel title="空间管理" onClose={props.onClose}>
@@ -109,7 +110,7 @@ export function StorageRow() {
   return (
     <Row
       label="空间"
-      help="小拾的数据库，加上附件和项目资料的副本（备份另算）。可以删掉不要的副本、清理 30 天没动过的空对话。"
+      help="小拾的数据库，加上小拾的附件和项目资料的副本（在数据目录的 picky-files 文件夹，不进每日备份）。和「数据 → 附件」各放各的，不重复。可以删掉不要的副本、清理 30 天没动过的空对话。"
       actions={
         <Button onClick={() => setOpen(true)}>
           <HardDrive size={14} strokeWidth={1.5} /> 管理…

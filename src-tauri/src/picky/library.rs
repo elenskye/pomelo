@@ -1,18 +1,25 @@
 //! Organising 小拾's conversations (from Picky's ConversationLibrary / SessionGroups / SidebarOrder):
 //! - Lists: 置顶 = pinned and not archived (shown only there, whatever its project) · each project =
-//!   its sessions not pinned / archived · 最近 = the rest · 归档 = archived.
+//!   its sessions not pinned / archived · 定时 = the rest written by 定时任务 (schedule.rs) · 最近 = the
+//!   rest · 归档 = archived. Shown in that order. 定时 and 最近 don't take each other's sessions.
 //! - A list follows last activity until the user drags within it (`manual_lists`); then it keeps
 //!   that order and sessions arriving since (moved in, new) come first, by activity. A drop that
 //!   leaves the order as it was changes nothing (an automatic list stays automatic).
 //! - Dropping into a list changes membership: 置顶 pins (keeps the project), a project moves in and
 //!   unpins, 最近 leaves the project and unpins, 归档 archives; out of 归档 restores. Sending in an
 //!   archived session restores it too (chat.rs).
+//! - 思考 (`thinking`, on for new ones): the conversation's switch, set from the composer (undoable).
+//!   知识库 (`knowledge`, off for new ones) and the libraries it chose (knowledge.rs) likewise; a
+//!   project's libraries are saved with its settings.
+//! - 私密 (`private`): stays in its list with a lock; 年度总结 and 小拾's pomelo_search / pomelo_read
+//!   leave it out (⌘K and 对话搜索 don't).
 //! - None of this touches `updated_at` (= last activity). Everything here is undoable
 //!   (`with_picky_undo`).
 //! - Projects: name (60 chars; empty = 未命名项目) and background instructions (sent with its
 //!   sessions, chat.rs). New ones go first. Deleting one keeps its sessions (they go to 最近).
 
 use super::chat::{self, auto_title, NEW_TITLE};
+use super::knowledge;
 use super::store::NOW;
 use crate::modules::common::{err, Tx};
 use crate::AppState;
@@ -26,6 +33,7 @@ pub const UNNAMED: &str = "未命名项目";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum List {
     Pinned,
+    Scheduled,
     Recent,
     Archived,
     Project(i64),
@@ -35,6 +43,7 @@ impl List {
     pub fn key(self) -> String {
         match self {
             List::Pinned => "pinned".into(),
+            List::Scheduled => "scheduled".into(),
             List::Recent => "recent".into(),
             List::Archived => "archived".into(),
             List::Project(id) => format!("project:{id}"),
@@ -43,6 +52,7 @@ impl List {
     pub fn parse(s: &str) -> Result<List, String> {
         Ok(match s {
             "pinned" => List::Pinned,
+            "scheduled" => List::Scheduled,
             "recent" => List::Recent,
             "archived" => List::Archived,
             _ => List::Project(s.strip_prefix("project:").and_then(|n| n.parse().ok()).ok_or_else(|| format!("不认识的列表：{s}"))?),
@@ -59,6 +69,16 @@ pub struct SessionRow {
     pub pinned: bool,
     pub archived: bool,
     pub updated_at: String,
+    /// Written by a 定时任务; not opened yet.
+    pub scheduled: bool,
+    pub unseen: bool,
+    /// 私密: 年度总结 and 小拾's search leave it out.
+    pub private: bool,
+    /// Its 思考 switch (the composer's button).
+    pub thinking: bool,
+    /// Its 知识库 switch, and the libraries it chose (none: its project's, then all).
+    pub knowledge: bool,
+    pub libraries: Vec<i64>,
     #[serde(skip)]
     sort_order: Option<i64>,
 }
@@ -72,6 +92,7 @@ impl SessionRow {
         } else {
             match self.project_id {
                 Some(p) if projects.contains(&p) => List::Project(p),
+                _ if self.scheduled => List::Scheduled,
                 _ => List::Recent,
             }
         }
@@ -89,6 +110,8 @@ pub struct ProjectRow {
     pub files: i64,
     /// Its conversations also use global memories.
     pub include_global_memories: bool,
+    /// The 知识库 libraries its conversations search (none: all).
+    pub libraries: Vec<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -96,6 +119,7 @@ pub struct ProjectRow {
 pub struct Library {
     pub pinned: Vec<SessionRow>,
     pub projects: Vec<ProjectRow>,
+    pub scheduled: Vec<SessionRow>,
     pub recent: Vec<SessionRow>,
     pub archived: Vec<SessionRow>,
 }
@@ -105,6 +129,7 @@ impl Library {
         let ids = |v: &Vec<SessionRow>| v.iter().map(|s| s.id).collect();
         Some(match list {
             List::Pinned => ids(&self.pinned),
+            List::Scheduled => ids(&self.scheduled),
             List::Recent => ids(&self.recent),
             List::Archived => ids(&self.archived),
             List::Project(p) => ids(&self.projects.iter().find(|x| x.id == p)?.sessions),
@@ -114,11 +139,11 @@ impl Library {
 
 fn sessions(conn: &Connection) -> Result<Vec<SessionRow>, String> {
     let mut st = conn
-        .prepare("SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order FROM sessions ORDER BY updated_at DESC, id DESC")
+        .prepare("SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge FROM sessions ORDER BY updated_at DESC, id DESC")
         .map_err(err)?;
     let rows = st
         .query_map([], |r| {
-            Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)? })
+            Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)?, scheduled: r.get(7)?, unseen: r.get(8)?, private: r.get(9)?, thinking: r.get(10)?, knowledge: r.get(11)?, libraries: vec![] })
         })
         .map_err(err)?;
     rows.collect::<Result<_, _>>().map_err(err)
@@ -134,13 +159,26 @@ fn manual(conn: &Connection) -> Result<HashSet<String>, String> {
 pub fn library(conn: &Connection) -> Result<Library, String> {
     let mut st = conn.prepare("SELECT id, name, instructions, (SELECT count(*) FROM project_files f WHERE f.project_id = projects.id), include_global_memories FROM projects ORDER BY sort_order, id").map_err(err)?;
     let mut projects: Vec<ProjectRow> =
-        st.query_map([], |r| Ok(ProjectRow { id: r.get(0)?, name: r.get(1)?, instructions: r.get(2)?, sessions: vec![], files: r.get(3)?, include_global_memories: r.get(4)? })).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+        st.query_map([], |r| Ok(ProjectRow { id: r.get(0)?, name: r.get(1)?, instructions: r.get(2)?, sessions: vec![], files: r.get(3)?, include_global_memories: r.get(4)?, libraries: vec![] })).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
     let known: HashSet<i64> = projects.iter().map(|p| p.id).collect();
     let manual = manual(conn)?;
-    let mut lib = Library { pinned: vec![], projects: vec![], recent: vec![], archived: vec![] };
-    for s in sessions(conn)? {
+    let chosen = |table: &str, col: &str| -> Result<Vec<(i64, i64)>, String> {
+        let mut st = conn.prepare(&format!("SELECT c.{col}, c.library_id FROM {table} c JOIN kb_libraries l ON l.id = c.library_id ORDER BY l.sort_order, l.id")).map_err(err)?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    };
+    for (p, l) in chosen("project_libraries", "project_id")? {
+        if let Some(x) = projects.iter_mut().find(|x| x.id == p) {
+            x.libraries.push(l);
+        }
+    }
+    let by_session = chosen("session_libraries", "session_id")?;
+    let mut lib = Library { pinned: vec![], projects: vec![], scheduled: vec![], recent: vec![], archived: vec![] };
+    for mut s in sessions(conn)? {
+        s.libraries = by_session.iter().filter(|x| x.0 == s.id).map(|x| x.1).collect();
         match s.list(&known) {
             List::Pinned => lib.pinned.push(s),
+            List::Scheduled => lib.scheduled.push(s),
             List::Recent => lib.recent.push(s),
             List::Archived => lib.archived.push(s),
             List::Project(p) => projects.iter_mut().find(|x| x.id == p).expect("known project").sessions.push(s),
@@ -153,6 +191,7 @@ pub fn library(conn: &Connection) -> Result<Library, String> {
         }
     };
     arrange(&mut lib.pinned, List::Pinned);
+    arrange(&mut lib.scheduled, List::Scheduled);
     arrange(&mut lib.recent, List::Recent);
     arrange(&mut lib.archived, List::Archived);
     for p in projects.iter_mut() {
@@ -164,9 +203,9 @@ pub fn library(conn: &Connection) -> Result<Library, String> {
 
 fn row(conn: &Connection, id: i64) -> Result<SessionRow, String> {
     conn.query_row(
-        "SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order FROM sessions WHERE id = ?1",
+        "SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge FROM sessions WHERE id = ?1",
         [id],
-        |r| Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)? }),
+        |r| Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)?, scheduled: r.get(7)?, unseen: r.get(8)?, private: r.get(9)?, thinking: r.get(10)?, knowledge: r.get(11)?, libraries: vec![] }),
     )
     .optional()
     .map_err(err)?
@@ -232,6 +271,29 @@ pub fn set_archived(conn: &Connection, ids: &[i64], archived: bool) -> Result<()
         regroup(&tx, *id, |s| s.archived = archived)?;
     }
     tx.commit()
+}
+
+/// 私密 conversations (left out of 年度总结 and 小拾's search).
+pub fn private_ids(conn: &Connection) -> Result<HashSet<i64>, String> {
+    let mut st = conn.prepare("SELECT id FROM sessions WHERE private").map_err(err)?;
+    let rows = st.query_map([], |r| r.get(0)).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
+}
+
+/// 私密 stays in its list (a lock before the title).
+pub fn set_private(conn: &Connection, ids: &[i64], private: bool) -> Result<(), String> {
+    let tx = Tx::begin(conn)?;
+    for id in ids {
+        row(&tx, *id)?;
+        tx.execute("UPDATE sessions SET private = ?1 WHERE id = ?2 AND private <> ?1", params![private, id]).map_err(err)?;
+    }
+    tx.commit()
+}
+
+/// A conversation's 思考 switch (its replies ask the model to think when it can).
+pub fn set_thinking(conn: &Connection, id: i64, on: bool) -> Result<(), String> {
+    row(conn, id)?;
+    conn.execute("UPDATE sessions SET thinking = ?1 WHERE id = ?2 AND thinking <> ?1", params![on, id]).map(|_| ()).map_err(err)
 }
 
 /// `project` None = out of any project.
@@ -333,6 +395,12 @@ pub fn drop(conn: &Connection, id: i64, list: List, before: Option<i64>, after: 
             return Ok(false);
         }
     }
+    let scheduled = row(&tx, id)?.scheduled;
+    match list {
+        List::Scheduled if !scheduled => return Err("只有定时任务写的对话能放进「定时」".into()),
+        List::Recent if scheduled => return Err("定时任务写的对话不能放进「最近」".into()),
+        _ => {}
+    }
     let mut order: Vec<i64> = members.iter().copied().filter(|x| *x != id).collect();
     let at = match (before, after) {
         (Some(b), _) => order.iter().position(|x| *x == b).unwrap_or(0),
@@ -348,7 +416,7 @@ pub fn drop(conn: &Connection, id: i64, list: List, before: Option<i64>, after: 
             s.pinned = true;
             s.archived = false;
         }
-        List::Recent => {
+        List::Recent | List::Scheduled => {
             s.pinned = false;
             s.archived = false;
             s.project_id = None;
@@ -391,32 +459,44 @@ pub fn picky_archive(state: State<AppState>, ids: Vec<i64>, archived: bool) -> R
 }
 
 #[tauri::command]
+pub fn picky_conversation_thinking(state: State<AppState>, session_id: i64, on: bool) -> Result<(), String> {
+    state.with_picky_undo(if on { "本会话开启思考" } else { "本会话关闭思考" }, |c| set_thinking(c, session_id, on))
+}
+
+#[tauri::command]
+pub fn picky_private(state: State<AppState>, ids: Vec<i64>, private: bool) -> Result<(), String> {
+    state.with_picky_undo(if private { "设为私密" } else { "取消私密" }, |c| set_private(c, &ids, private))
+}
+
+#[tauri::command]
 pub fn picky_move(state: State<AppState>, ids: Vec<i64>, project_id: Option<i64>) -> Result<(), String> {
     state.with_picky_undo(if project_id.is_some() { "移到项目" } else { "移出项目" }, |c| move_to(c, &ids, project_id))
 }
 
 #[tauri::command]
 pub fn picky_delete(state: State<AppState>, ids: Vec<i64>) -> Result<(), String> {
-    if state.picky.runs.active_session().is_some_and(|s| ids.contains(&s)) {
+    if ids.iter().any(|s| state.picky.runs.busy_in(*s)) {
         return Err("这个对话正在写回复，等它写完再删除。".into());
     }
     state.with_picky_undo("删除对话", |c| delete(c, &ids))
 }
 
 #[tauri::command]
-pub fn picky_project_create(state: State<AppState>, name: String, instructions: String, include_global_memories: bool) -> Result<i64, String> {
+pub fn picky_project_create(state: State<AppState>, name: String, instructions: String, include_global_memories: bool, libraries: Vec<i64>) -> Result<i64, String> {
     state.with_picky_undo("新建项目", |c| {
         let id = create_project(c, &name, &instructions)?;
         set_include_global(c, id, include_global_memories)?;
+        knowledge::set_chosen(c, knowledge::Owner::Project(id), &libraries)?;
         Ok(id)
     })
 }
 
 #[tauri::command]
-pub fn picky_project_update(state: State<AppState>, id: i64, name: String, instructions: String, include_global_memories: bool) -> Result<(), String> {
+pub fn picky_project_update(state: State<AppState>, id: i64, name: String, instructions: String, include_global_memories: bool, libraries: Vec<i64>) -> Result<(), String> {
     state.with_picky_undo("修改项目", |c| {
         update_project(c, id, &name, &instructions)?;
-        set_include_global(c, id, include_global_memories)
+        set_include_global(c, id, include_global_memories)?;
+        knowledge::set_chosen(c, knowledge::Owner::Project(id), &libraries)
     })
 }
 
@@ -430,7 +510,7 @@ pub fn picky_projects_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(
     state.with_picky_undo("调整顺序", |c| reorder_projects(c, &ids))
 }
 
-/// `list`: "pinned" | "recent" | "archived" | "project:<id>".
+/// `list`: "pinned" | "scheduled" | "recent" | "archived" | "project:<id>".
 #[tauri::command]
 pub fn picky_drop(state: State<AppState>, id: i64, list: String, before: Option<i64>, after: Option<i64>) -> Result<bool, String> {
     let list = List::parse(&list)?;
@@ -438,7 +518,7 @@ pub fn picky_drop(state: State<AppState>, id: i64, list: String, before: Option<
         List::Pinned => "置顶",
         List::Archived => "归档",
         List::Project(_) => "移到项目",
-        List::Recent => "调整顺序",
+        List::Recent | List::Scheduled => "调整顺序",
     };
     state.with_picky_undo(label, |c| drop(c, id, list, before, after))
 }
@@ -478,6 +558,27 @@ mod tests {
         set_archived(&c, &[d], true).unwrap();
         assert_eq!(ids(&library(&c).unwrap().archived), [d]);
         assert!(library(&c).unwrap().recent.is_empty());
+    }
+
+    #[test]
+    fn private_stays_in_its_list() {
+        let c = memory_db();
+        let (a, b) = (new_session(&c, "a"), new_session(&c, "b"));
+        set_pinned(&c, &[a], true).unwrap();
+        set_private(&c, &[a, b], true).unwrap();
+        let lib = library(&c).unwrap();
+        assert_eq!((ids(&lib.pinned), ids(&lib.recent)), (vec![a], vec![b]));
+        assert!(lib.pinned[0].private && lib.recent[0].private);
+        assert_eq!(private_ids(&c).unwrap(), HashSet::from([a, b]));
+        set_private(&c, &[b], false).unwrap();
+        assert_eq!(private_ids(&c).unwrap(), HashSet::from([a]));
+        assert!(set_private(&c, &[999], true).is_err());
+        // 思考: on for new ones, the switch sticks to the conversation
+        assert!(library(&c).unwrap().recent[0].thinking);
+        set_thinking(&c, b, false).unwrap();
+        assert!(!library(&c).unwrap().recent[0].thinking);
+        assert!(!crate::picky::context::request(&c, b, &[], "q").unwrap().thinking);
+        assert!(crate::picky::context::request(&c, a, &[], "q").unwrap().thinking);
     }
 
     #[test]

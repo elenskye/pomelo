@@ -5,14 +5,16 @@
 //!   the newest matching message; the hit carries that message (possibly an older version).
 //! - ⌘K (search.rs) gets the same without archived sessions, at most PER_SOURCE.
 //! - Opening a hit on an older version first shows that version (`reveal`).
+//! - 意思相近 (v0.4): the search index's meaning hits among 小拾's messages and titles, with the
+//!   same filters and one hit per conversation (`similar`); the page leaves out the ones words found.
 
 use super::chat;
 use crate::modules::common::err;
 use crate::search::{Hit, PER_SOURCE};
 use crate::AppState;
-use rusqlite::{params_from_iter, types::Value, Connection};
+use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 const MAX_WORDS: usize = 8;
 const LIMIT: usize = 40;
@@ -131,6 +133,35 @@ pub fn search(conn: &Connection, q: &str, f: &Filter, limit: usize) -> Result<Ve
     Ok(out)
 }
 
+/// Meaning hits (search::query, messages and titles) as conversation hits, filtered like `search`.
+pub fn similar(conn: &Connection, found: &[crate::search::query::Found], f: &Filter, limit: usize) -> Result<Vec<ChatHit>, String> {
+    let mut out: Vec<ChatHit> = vec![];
+    for h in found {
+        let (session, message) = if h.kind == "message" { (h.parent.unwrap_or_default(), Some(h.id)) } else { (h.id, None) };
+        if out.iter().any(|x| x.session_id == session) {
+            continue;
+        }
+        let row = conn
+            .query_row(
+                "SELECT s.title, s.archived_at IS NOT NULL, coalesce(m.created_at, s.updated_at), r.model_name FROM sessions s
+                 LEFT JOIN messages m ON m.id = ?2 AND m.session_id = s.id LEFT JOIN runs r ON r.id = m.run_id WHERE s.id = ?1",
+                rusqlite::params![session, message],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        let Some((title, archived, at, model)) = row else { continue };
+        if (archived && !f.archived) || f.since.as_ref().is_some_and(|s| &at < s) || f.model.as_ref().is_some_and(|m| model.as_ref() != Some(m)) {
+            continue;
+        }
+        out.push(ChatHit { session_id: session, title, message_id: message, snippet: message.map(|_| h.snippet.clone()), at, model, archived });
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// Reply models that appear in history, for the filter.
 pub fn models(conn: &Connection) -> Result<Vec<String>, String> {
     let mut st = conn.prepare("SELECT model_name FROM runs GROUP BY model_name ORDER BY max(started_at) DESC").map_err(err)?;
@@ -143,7 +174,7 @@ pub fn global(conn: &Connection, q: &str) -> Result<Vec<Hit>, String> {
     Ok(search(conn, q, &Filter::default(), PER_SOURCE)?
         .into_iter()
         .map(|h| Hit {
-            module: "picky",
+            module: "picky".into(),
             kind: "chat",
             id: h.session_id,
             title: h.title,
@@ -162,6 +193,15 @@ pub fn global(conn: &Connection, q: &str) -> Result<Vec<Hit>, String> {
 #[tauri::command]
 pub fn picky_search(state: State<AppState>, q: String, model: Option<String>, since: Option<String>, archived: bool) -> Result<Vec<ChatHit>, String> {
     state.picky.with_db(|c| search(c, &q, &Filter { model, since, archived }, LIMIT))
+}
+
+/// 意思相近 in 小拾's search (may start the embedding service).
+#[tauri::command]
+pub async fn picky_search_similar(app: tauri::AppHandle, q: String, model: Option<String>, since: Option<String>, archived: bool) -> Result<Vec<ChatHit>, String> {
+    use crate::search::query::{self, Request, Way};
+    let req = Request { text: q, way: Way::Meaning, modules: vec!["picky".into()], kinds: vec![], for_cloud: false, limit: Some(LIMIT * 2) };
+    let found = query::search(&app, &req).await?.found;
+    app.state::<AppState>().picky.with_db(|c| similar(c, &found, &Filter { model, since, archived }, LIMIT))
 }
 
 #[tauri::command]
@@ -184,6 +224,32 @@ mod tests {
     use crate::picky::chat::{begin_run, begin_version, finish, path, Outcome};
     use crate::picky::library;
     use crate::picky::store::tests::memory_db;
+
+    #[test]
+    fn meaning_hits_follow_the_filters_one_per_conversation() {
+        use crate::search::query::{Found, Way};
+        let c = memory_db();
+        c.execute_batch(
+            "INSERT INTO sessions (id, title) VALUES (1, '找房'), (2, '旧的');
+             UPDATE sessions SET archived_at = '2026-10-01T00:00:00Z' WHERE id = 2;
+             INSERT INTO runs (id, session_id, model, model_name, state) VALUES (1, 1, 'local:a', 'A', 'completed');
+             INSERT INTO messages (id, session_id, run_id, role, content, state, created_at) VALUES
+               (10, 1, NULL, 'user', '租房要注意什么', 'complete', '2026-10-05T00:00:00Z'),
+               (11, 1, 1, 'assistant', '押金和合同', 'complete', '2026-10-05T00:01:00Z'),
+               (20, 2, NULL, 'user', '搬家', 'complete', '2026-09-01T00:00:00Z');",
+        )
+        .unwrap();
+        let hit = |kind: &'static str, id: i64, parent: Option<i64>| Found { module: "picky".into(), kind, id, title: String::new(), detail: None, parent, day: None, snippet: "片段".into(), score: 1.0, by: Way::Meaning };
+        let found = [hit("message", 11, Some(1)), hit("message", 10, Some(1)), hit("message", 20, Some(2)), hit("session", 1, None)];
+        let all = similar(&c, &found, &Filter::default(), 10).unwrap();
+        assert_eq!(all.iter().map(|h| (h.session_id, h.message_id)).collect::<Vec<_>>(), [(1, Some(11))]); // one per conversation; archived left out
+        assert_eq!(all[0].model.as_deref(), Some("A"));
+        assert_eq!(similar(&c, &found, &Filter { archived: true, ..Filter::default() }, 10).unwrap().len(), 2);
+        assert!(similar(&c, &found, &Filter { model: Some("B".into()), ..Filter::default() }, 10).unwrap().is_empty());
+        // since: the messages are older, but the title counts by its last activity (like word search)
+        let recent = similar(&c, &found, &Filter { since: Some("2026-10-06".into()), ..Filter::default() }, 10).unwrap();
+        assert_eq!(recent.iter().map(|h| (h.session_id, h.message_id)).collect::<Vec<_>>(), [(1, None)]);
+    }
 
     fn done(c: &Connection, b: &chat::Begun, text: &str) {
         finish(c, b.run_id, b.reply_id, &Outcome { content: text.into(), state: "completed", ..Default::default() }).unwrap();
@@ -221,7 +287,7 @@ mod tests {
         assert!(search(&c, "向量", &future, 40).unwrap().is_empty());
         assert_eq!(models(&c).unwrap().len(), 2);
         let g = global(&c, "博物馆").unwrap();
-        assert_eq!((g[0].module, g[0].kind, g[0].id, g[0].parent), ("picky", "chat", b.session_id, Some(v.reply_id)));
+        assert_eq!((g[0].module.as_str(), g[0].kind, g[0].id, g[0].parent), ("picky", "chat", b.session_id, Some(v.reply_id)));
     }
 
     #[test]

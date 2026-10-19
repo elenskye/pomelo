@@ -9,8 +9,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { TextArea } from "@/shared/ui";
-import { INSTRUCTIONS_KEY, pickyApi, usePresets, type MemoryPlan, type RetrievalPlan, type SessionSetting } from "./api";
-import { memoryLines } from "./Memory";
+import { INSTRUCTIONS_KEY, pickyApi, usePresets, type RetrievalPlan, type SessionSetting } from "./api";
 import { toolClass } from "./Composer";
 
 export const NO_SETTING: SessionSetting = { content: "", presetId: null };
@@ -38,7 +37,6 @@ export function InstructionsButton(props: {
   onManage: () => void;
   /** Conversations in a project. */
   files?: FilesPreview | null;
-  memory?: { plan: MemoryPlan | null; onManage: () => void };
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -129,29 +127,6 @@ export function InstructionsButton(props: {
                 </div>
               ))}
             </div>
-            {props.memory?.plan && (
-              <div className="mt-3 border-t pt-3">
-                <div className="flex items-center">
-                  <span className="text-xs text-muted-foreground">记忆</span>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpen(false);
-                      props.memory?.onManage();
-                    }}
-                    className="rounded-control px-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    管理…
-                  </button>
-                </div>
-                {memoryLines(props.memory.plan).map((l) => (
-                  <p key={l} className="mt-1">
-                    {l}
-                  </p>
-                ))}
-              </div>
-            )}
             {props.files && (
               <div className="mt-3 border-t pt-3">
                 <div className="flex items-center">

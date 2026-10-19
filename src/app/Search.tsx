@@ -1,15 +1,17 @@
 // 全局搜索: ⌘K (or the sidebar's magnifier) opens a box over every module that isn't hidden (芝麻开门 is
-// never searched — Rust doesn't look there). Words all have to match (search.rs). Results are grouped by
-// module; ↑↓ move, ↩ opens (navigate with the hit; the page opens the record), Esc closes.
+// never searched — Rust doesn't look there). Words all have to match (search/mod.rs). Results are grouped
+// by module; below them 意思相近 (v0.4: by meaning, a moment later, without what words found). ↑↓ move,
+// ↩ opens (navigate with the hit; the page opens the record), Esc closes.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { Search as SearchIcon } from "lucide-react";
+import { Search as SearchIcon, Sparkles } from "lucide-react";
+import { errorText } from "@/shared/feedback";
 import { money, type Currency } from "@/modules/finance/money";
 import { slashDate } from "@/shared/dates";
-import { searchAll, type Hit } from "@/shared/open";
+import { searchAll, searchSimilar, type Hit } from "@/shared/open";
+import { useAllModules } from "@/modules/custom/api";
 import { useHiddenModules } from "./hidden";
-import { MODULES } from "./modules";
 
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
 
@@ -27,6 +29,7 @@ export function SearchBox(props: { onClose: () => void }) {
   const list = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const [hidden] = useHiddenModules();
+  const modules = useAllModules();
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
@@ -39,7 +42,17 @@ export function SearchBox(props: { onClose: () => void }) {
     return () => clearTimeout(t);
   }, [text]);
   const { data = [], isFetched } = useQuery({ queryKey: ["search", q], queryFn: () => searchAll(q), enabled: q !== "", placeholderData: keepPreviousData });
-  const hits = useMemo(() => (q ? data.filter((h) => !hidden.includes(h.module)) : []), [data, hidden, q]);
+  const similar = useQuery({ queryKey: ["search", "similar", q], queryFn: () => searchSimilar(q), enabled: q !== "", retry: false, staleTime: 30_000 });
+  // grouped in the sidebar's module order (the list below and the arrow keys go the same way)
+  const hits = useMemo(() => {
+    const rank = (h: Hit) => modules.findIndex((m) => m.id === h.module);
+    return q ? data.filter((h) => !hidden.includes(h.module) && rank(h) >= 0).sort((a, b) => rank(a) - rank(b)) : [];
+  }, [data, hidden, q, modules]);
+  const near = useMemo(
+    () => (q && similar.data ? similar.data.filter((h) => !hidden.includes(h.module) && !hits.some((x) => x.module === h.module && x.kind === h.kind && x.id === h.id)) : []),
+    [similar.data, hidden, hits, q],
+  );
+  const all = useMemo(() => [...hits, ...near], [hits, near]);
   useEffect(() => setActive(0), [hits]);
   useEffect(() => {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
@@ -52,10 +65,10 @@ export function SearchBox(props: { onClose: () => void }) {
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      if (hits.length) setActive((i) => (i + (e.key === "ArrowDown" ? 1 : -1) + hits.length) % hits.length);
+      if (all.length) setActive((i) => (i + (e.key === "ArrowDown" ? 1 : -1) + all.length) % all.length);
     } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      if (hits[active]) open(hits[active]);
+      if (all[active]) open(all[active]);
     }
   };
 
@@ -85,10 +98,10 @@ export function SearchBox(props: { onClose: () => void }) {
       </div>
       {q !== "" && (
         <div ref={list} role="listbox" aria-label="搜索结果" className="max-h-[56vh] overflow-y-auto p-1.5">
-          {hits.length === 0 ? (
+          {all.length === 0 && !similar.isFetching ? (
             isFetched && <p className="px-3 py-6 text-center text-sm text-muted-foreground">没有找到</p>
           ) : (
-            MODULES.filter((m) => hits.some((h) => h.module === m.id)).map((m) => {
+            modules.filter((m) => hits.some((h) => h.module === m.id)).map((m) => {
               const Icon = m.icon;
               return (
                 <div key={m.id} className="pb-1">
@@ -120,6 +133,38 @@ export function SearchBox(props: { onClose: () => void }) {
                 </div>
               );
             })
+          )}
+          {(near.length > 0 || similar.isFetching || similar.isError) && (
+            <div className="pb-1">
+              <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-xs text-muted-foreground">
+                <Sparkles size={13} strokeWidth={1.75} />
+                意思相近
+                {similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
+                {similar.isError && <span className="truncate">· {errorText(similar.error)}</span>}
+              </div>
+              {near.map((h) => {
+                i += 1;
+                const index = i;
+                const d = detail(h);
+                const m = modules.find((x) => x.id === h.module);
+                const Icon = m?.icon;
+                return (
+                  <div
+                    key={`near-${h.module}${h.kind}${h.id}`}
+                    role="option"
+                    aria-selected={index === active}
+                    data-index={index}
+                    onMouseMove={() => setActive(index)}
+                    onClick={() => open(h)}
+                    className={`flex cursor-default items-baseline gap-2 rounded-control px-2.5 py-1.5 text-sm ${index === active ? "bg-accent" : ""}`}
+                  >
+                    {Icon && <Icon size={13} strokeWidth={1.75} className="shrink-0 self-center" style={{ color: m.color }} aria-label={m.label} />}
+                    <span className="min-w-0 flex-1 truncate">{h.title}</span>
+                    {d && <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground tabular-nums">{d}</span>}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}

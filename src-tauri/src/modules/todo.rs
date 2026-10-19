@@ -10,6 +10,7 @@
 //! today inside their [start, due] range; check-ins on their scheduled days. 已过期: due before today.
 //! (plan_date on normal tasks only exists in data older than v10 and is read as a range start.)
 
+use super::attachments::{self, AttachmentRecord, Owner};
 use super::common::{self, err, some, str_enum};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -104,7 +105,7 @@ pub fn rename_group(conn: &Connection, id: i64, name: &str) -> Result<Group, Str
 pub fn delete_group(conn: &Connection, id: i64) -> Result<(), String> {
     match conn.execute("DELETE FROM todo_groups WHERE id = ?1", [id]).map_err(err)? {
         0 => Err(gone("分组")),
-        _ => Ok(()),
+        _ => attachments::prune(conn),
     }
 }
 
@@ -165,6 +166,9 @@ pub struct GoalPatch {
     pub note: Option<Option<String>>,
     #[serde(default, deserialize_with = "some")]
     pub review: Option<Option<String>>,
+    /// Attachment file ids, in order (replaces the list).
+    #[serde(default)]
+    pub attachments: Option<Vec<i64>>,
 }
 
 fn goal_sql() -> String {
@@ -258,13 +262,18 @@ pub fn create_goal(conn: &Connection, patch: GoalPatch) -> Result<Goal, String> 
         note: patch.note.flatten(),
         review: patch.review.flatten(),
     })?;
-    conn.execute(
+    let files = attachments::clean_ids(conn, &patch.attachments.unwrap_or_default())?;
+    let tx = common::Tx::begin(conn)?;
+    tx.execute(
         "INSERT INTO todo_goals (group_id, name, status, start_date, end_date, note, review, sort_order)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT coalesce(max(sort_order), 0) + 1 FROM todo_goals WHERE group_id = ?1))",
         params![f.group_id, f.name, f.status, f.start_date, f.end_date, f.note, f.review],
     )
     .map_err(err)?;
-    goal(conn, conn.last_insert_rowid())
+    let id = tx.last_insert_rowid();
+    attachments::set(&tx, Owner::Goal, id, &files)?;
+    tx.commit().map_err(err)?;
+    goal(conn, id)
 }
 
 /// Moving a goal to another group moves its tasks along and appends it there.
@@ -298,6 +307,9 @@ pub fn update_goal(conn: &Connection, id: i64, patch: GoalPatch) -> Result<Goal,
         params![f.name, f.status, f.start_date, f.end_date, f.note, f.review, id],
     )
     .map_err(err)?;
+    if let Some(files) = &patch.attachments {
+        attachments::set(&tx, Owner::Goal, id, files)?;
+    }
     tx.commit().map_err(err)?;
     goal(conn, id)
 }
@@ -306,7 +318,7 @@ pub fn update_goal(conn: &Connection, id: i64, patch: GoalPatch) -> Result<Goal,
 pub fn delete_goal(conn: &Connection, id: i64) -> Result<(), String> {
     match conn.execute("DELETE FROM todo_goals WHERE id = ?1", [id]).map_err(err)? {
         0 => Err(gone("目标")),
-        _ => Ok(()),
+        _ => attachments::prune(conn),
     }
 }
 
@@ -477,6 +489,8 @@ pub struct Task {
     pub period: Option<Period>,
     /// Repeat: occurrences done before logging started.
     pub done_before: i64,
+    /// The note it was made from (念念不忘 转成待办 / 拆成待办).
+    pub from_note: Option<i64>,
     /// Derived (`enrich`): repeat = occurrences done, checkin = days checked, progress = amount this period.
     pub count: i64,
     /// Derived, repeat series with a total: date of the last occurrence.
@@ -531,12 +545,18 @@ pub struct TaskPatch {
     /// Repeat: occurrences done so far (sets `done_before` = this − logs).
     #[serde(default)]
     pub done_count: Option<i64>,
+    /// Attachment file ids, in order (replaces the list).
+    #[serde(default)]
+    pub attachments: Option<Vec<i64>>,
+    /// Create only: the note it is made from.
+    #[serde(default)]
+    pub from_note: Option<i64>,
 }
 
 const TASK_COLS: &str = "t.id, t.group_id, t.goal_id, t.parent_id, t.title, t.note, t.link, t.plan_date, t.start_date,
   t.due_date, t.done, t.done_at, t.collapsed, t.sort_order, t.created_at, t.updated_at,
-  t.task_type, t.repeat_rule, t.repeat_total, t.repeat_until, t.target, t.unit, t.period, t.done_before";
-const TASK_NCOLS: usize = 24;
+  t.task_type, t.repeat_rule, t.repeat_total, t.repeat_until, t.target, t.unit, t.period, t.done_before, t.from_note";
+const TASK_NCOLS: usize = 25;
 
 fn task_row(r: &Row) -> rusqlite::Result<Task> {
     Ok(Task {
@@ -564,6 +584,7 @@ fn task_row(r: &Row) -> rusqlite::Result<Task> {
         unit: r.get(21)?,
         period: r.get(22)?,
         done_before: r.get(23)?,
+        from_note: r.get(24)?,
         count: 0,
         last_date: None,
         total_amount: 0,
@@ -900,19 +921,24 @@ pub fn create_task_on(conn: &Connection, patch: TaskPatch, today: &str) -> Resul
         f.set_done_count(patch.done_count, 0)?;
         f.due_date = Some(f.first_due(today)?);
     }
+    let files = attachments::clean_ids(conn, patch.attachments.as_deref().unwrap_or_default())?;
+    if let Some(n) = patch.from_note {
+        super::notes::get(conn, n).map_err(|_| "那条笔记找不到了，可能已经被删除了".to_string())?;
+    }
     let tx = common::Tx::begin(conn)?;
     tx.execute(
         "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date, collapsed, sort_order,
-           task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+           task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before, from_note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             place.group_id, place.goal_id, place.parent_id, f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date,
             patch.collapsed.unwrap_or(false), next_sort(&tx, place)?, f.task_type, f.repeat_rule, f.repeat_total,
-            f.repeat_until, f.target, f.unit, f.period, f.done_before
+            f.repeat_until, f.target, f.unit, f.period, f.done_before, patch.from_note
         ],
     )
     .map_err(err)?;
     let id = tx.last_insert_rowid();
+    attachments::set(&tx, Owner::Task, id, &files)?;
     reopen_ancestors(&tx, id)?;
     settle(&tx, id, today)?;
     tx.commit().map_err(err)?;
@@ -974,6 +1000,9 @@ pub fn update_task_on(conn: &Connection, id: i64, patch: TaskPatch, today: &str)
         ],
     )
     .map_err(err)?;
+    if let Some(files) = &patch.attachments {
+        attachments::set(&tx, Owner::Task, id, files)?;
+    }
     settle(&tx, id, today)?; // e.g. a lowered target may complete it
     tx.commit().map_err(err)?;
     task_view(conn, id)
@@ -1136,7 +1165,7 @@ pub fn skip_on(conn: &Connection, id: i64, today: &str) -> Result<(), String> {
 pub fn delete_task(conn: &Connection, id: i64) -> Result<(), String> {
     match conn.execute("DELETE FROM todo_tasks WHERE id = ?1", [id]).map_err(err)? {
         0 => Err(gone("任务")),
-        _ => Ok(()),
+        _ => attachments::prune(conn),
     }
 }
 
@@ -1324,6 +1353,56 @@ pub fn create_subtasks(conn: &Connection, parent_id: i64, titles: &[String], tod
         out.push(create_task_on(&tx, TaskPatch { parent_id: Some(parent_id), title: Some(t.clone()), ..Default::default() }, today)?);
     }
     tx.commit()?;
+    Ok(out)
+}
+
+/// Several new root tasks from a note, in order, as one step (小拾's 拆成待办 the user picked), at the
+/// group / goal given.
+pub fn create_from_note(conn: &Connection, note_id: i64, group_id: Option<i64>, goal_id: Option<i64>, titles: &[String], today: &str) -> Result<Vec<Task>, String> {
+    if titles.is_empty() || titles.len() > 20 {
+        return Err("一次加 1～20 个待办".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    let mut out = Vec::with_capacity(titles.len());
+    for t in titles {
+        out.push(create_task_on(&tx, TaskPatch { group_id, goal_id: goal_id.map(Some), title: Some(t.clone()), from_note: Some(note_id), ..Default::default() }, today)?);
+    }
+    tx.commit()?;
+    Ok(out)
+}
+
+/// A check-in task's days in a span (小拾's 年度总结).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Checkins {
+    pub title: String,
+    pub days: i64,
+    /// The longest run of scheduled days all checked.
+    pub longest: i64,
+}
+
+/// Check-in tasks with days checked in [from, to], most days first.
+pub fn checkins_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<Checkins>, String> {
+    let mut st = conn
+        .prepare("SELECT t.id, t.title, t.repeat_rule FROM todo_tasks t WHERE t.task_type = 'checkin' AND EXISTS (SELECT 1 FROM todo_logs l WHERE l.task_id = t.id AND l.day BETWEEN ?1 AND ?2) ORDER BY t.id")
+        .map_err(err)?;
+    let tasks: Vec<(i64, String, Option<String>)> = st.query_map([from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    let mut days_of = conn.prepare("SELECT DISTINCT day FROM todo_logs WHERE task_id = ?1 AND day BETWEEN ?2 AND ?3 ORDER BY day").map_err(err)?;
+    let mut out = vec![];
+    for (id, title, rule) in tasks {
+        let days: Vec<String> = days_of.query_map(params![id, from, to], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+        let rule = rule.as_deref().and_then(|r| Rule::parse(r).ok());
+        let (mut run, mut longest, mut d) = (0, 0, days[0].clone());
+        let last = days[days.len() - 1].clone();
+        while d <= last {
+            if rule.as_ref().is_none_or(|r| r.scheduled(&d)) {
+                run = if days.binary_search(&d).is_ok() { run + 1 } else { 0 };
+                longest = longest.max(run);
+            }
+            d = common::add_days(&d, 1);
+        }
+        out.push(Checkins { title, days: days.len() as i64, longest });
+    }
+    out.sort_by(|a, b| (b.days, b.longest).cmp(&(a.days, a.longest)));
     Ok(out)
 }
 
@@ -1531,6 +1610,13 @@ pub struct TaskRecord {
     pub done_before: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<LogRecord>,
+    /// v13 and older: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRecord>,
+    /// The note it was made from, by its createdAt (v15 and older: none; a note not in the file or
+    /// the app: unlinked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_note: Option<String>,
 }
 
 fn is_normal(t: &TaskType) -> bool {
@@ -1575,6 +1661,9 @@ pub struct GoalRecord {
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// v13 and older: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1681,6 +1770,7 @@ pub fn validate_records(rec: &TodoRecord) -> Result<(), String> {
                 review: goal.review.clone(),
             })
             .map_err(|e| format!("{LABEL}「{name}」的目标「{}」：{e}", goal.name.trim()))?;
+            attachments::check_records(&goal.attachments).map_err(|e| format!("{LABEL}「{name}」的目标「{}」：{e}", goal.name.trim()))?;
         }
         let mut all = Vec::new();
         walk(&g.tasks, &mut all);
@@ -1689,6 +1779,7 @@ pub fn validate_records(rec: &TodoRecord) -> Result<(), String> {
         }
         for t in all {
             t.fields().map_err(|e| format!("{LABEL}「{name}」的任务「{}」：{e}", t.title.trim()))?;
+            attachments::check_records(&t.attachments).map_err(|e| format!("{LABEL}「{name}」的任务「{}」：{e}", t.title.trim()))?;
         }
     }
     Ok(())
@@ -1710,18 +1801,20 @@ fn insert_tasks(conn: &Connection, place: Place, tasks: &[TaskRecord]) -> Result
             &format!(
                 "INSERT INTO todo_tasks (group_id, goal_id, parent_id, title, note, link, plan_date, start_date, due_date,
                    done, done_at, collapsed, sort_order, created_at, updated_at,
-                   task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before)
+                   task_type, repeat_rule, repeat_total, repeat_until, target, unit, period, done_before, from_note)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, coalesce(?14, {NOW}), coalesce(?15, ?14, {NOW}),
-                   ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)"
+                   ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, (SELECT id FROM notes WHERE created_at = ?24))"
             ),
             params![
                 place.group_id, place.goal_id, place.parent_id, f.title, f.note, f.link, f.plan_date, f.start_date, f.due_date,
                 t.done, t.done_at, t.collapsed, i as i64 + 1, t.created_at, t.updated_at, f.task_type, f.repeat_rule,
-                f.repeat_total, f.repeat_until, f.target, f.unit, f.period, f.done_before
+                f.repeat_total, f.repeat_until, f.target, f.unit, f.period, f.done_before, t.from_note
             ],
         )
         .map_err(err)?;
         let id = conn.last_insert_rowid();
+        let files = attachments::import_records(conn, &t.attachments)?;
+        attachments::set(conn, Owner::Task, id, &files)?;
         for l in &t.logs {
             conn.execute(
                 &format!("INSERT INTO todo_logs (task_id, day, amount, created_at) VALUES (?1, ?2, ?3, coalesce(?4, {NOW}))"),
@@ -1739,6 +1832,7 @@ fn insert_tasks(conn: &Connection, place: Place, tasks: &[TaskRecord]) -> Result
 pub fn replace_all(conn: &Connection, rec: &TodoRecord) -> Result<usize, String> {
     validate_records(rec)?;
     conn.execute("DELETE FROM todo_groups", []).map_err(err)?; // goals + tasks cascade
+    attachments::prune(conn)?;
     for (i, g) in rec.groups.iter().enumerate() {
         conn.execute(
             &format!(
@@ -1761,7 +1855,10 @@ pub fn replace_all(conn: &Connection, rec: &TodoRecord) -> Result<usize, String>
                 ],
             )
             .map_err(err)?;
-            let place = Place { group_id, goal_id: Some(conn.last_insert_rowid()), parent_id: None };
+            let goal_id = conn.last_insert_rowid();
+            let files = attachments::import_records(conn, &goal.attachments)?;
+            attachments::set(conn, Owner::Goal, goal_id, &files)?;
+            let place = Place { group_id, goal_id: Some(goal_id), parent_id: None };
             insert_tasks(conn, place, &goal.tasks)?;
         }
         insert_tasks(conn, Place { group_id, goal_id: None, parent_id: None }, &g.tasks)?;
@@ -1772,8 +1869,13 @@ pub fn replace_all(conn: &Connection, rec: &TodoRecord) -> Result<usize, String>
 fn task_tree(conn: &Connection, all: &[Task]) -> Result<Vec<TaskRecord>, String> {
     let mut by_parent: HashMap<Option<i64>, Vec<&Task>> = HashMap::new();
     let mut logs: HashMap<i64, Vec<LogRecord>> = HashMap::new();
+    let files = attachments::all_of(conn, Owner::Task)?;
+    let mut atts: HashMap<i64, Vec<AttachmentRecord>> = HashMap::new();
     for t in all {
         by_parent.entry(t.parent_id).or_default().push(t);
+        if let Some(fs) = files.get(&t.id) {
+            atts.insert(t.id, attachments::records_of(fs, conn)?);
+        }
         if t.task_type != TaskType::Normal {
             let mut st = conn
                 .prepare("SELECT day, amount, created_at FROM todo_logs WHERE task_id = ?1 ORDER BY day, id")
@@ -1786,7 +1888,14 @@ fn task_tree(conn: &Connection, all: &[Task]) -> Result<Vec<TaskRecord>, String>
             logs.insert(t.id, ls);
         }
     }
-    fn build(parent: Option<i64>, by_parent: &HashMap<Option<i64>, Vec<&Task>>, logs: &HashMap<i64, Vec<LogRecord>>) -> Vec<TaskRecord> {
+    // the note a task came from, by its createdAt
+    let from: HashMap<i64, String> = {
+        let mut st = conn.prepare("SELECT t.id, n.created_at FROM todo_tasks t JOIN notes n ON n.id = t.from_note").map_err(err)?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)?
+    };
+    type Atts = HashMap<i64, Vec<AttachmentRecord>>;
+    fn build(parent: Option<i64>, by_parent: &HashMap<Option<i64>, Vec<&Task>>, logs: &HashMap<i64, Vec<LogRecord>>, atts: &Atts, from: &HashMap<i64, String>) -> Vec<TaskRecord> {
         by_parent
             .get(&parent)
             .map(|ts| {
@@ -1801,7 +1910,7 @@ fn task_tree(conn: &Connection, all: &[Task]) -> Result<Vec<TaskRecord>, String>
                         done: t.done,
                         done_at: t.done_at.clone(),
                         collapsed: t.collapsed,
-                        children: build(Some(t.id), by_parent, logs),
+                        children: build(Some(t.id), by_parent, logs, atts, from),
                         created_at: Some(t.created_at.clone()),
                         updated_at: Some(t.updated_at.clone()),
                         task_type: t.task_type,
@@ -1813,16 +1922,19 @@ fn task_tree(conn: &Connection, all: &[Task]) -> Result<Vec<TaskRecord>, String>
                         period: t.period,
                         done_before: t.done_before,
                         logs: logs.get(&t.id).cloned().unwrap_or_default(),
+                        attachments: atts.get(&t.id).cloned().unwrap_or_default(),
+                        from_note: from.get(&t.id).cloned(),
                     })
                     .collect()
             })
             .unwrap_or_default()
     }
-    Ok(build(None, &by_parent, &logs))
+    Ok(build(None, &by_parent, &logs, &atts, &from))
 }
 
 pub fn export(conn: &Connection) -> Result<TodoRecord, String> {
     let all_goals = goals(conn)?;
+    let goal_files = attachments::all_of(conn, Owner::Goal)?;
     let groups = groups(conn)?
         .into_iter()
         .map(|g| {
@@ -1840,6 +1952,7 @@ pub fn export(conn: &Connection) -> Result<TodoRecord, String> {
                         tasks: task_tree(conn, &tasks(conn, None, Some(x.id))?)?,
                         created_at: Some(x.created_at.clone()),
                         updated_at: Some(x.updated_at.clone()),
+                        attachments: attachments::records_of(goal_files.get(&x.id).map(Vec::as_slice).unwrap_or_default(), conn)?,
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
@@ -1900,6 +2013,11 @@ pub fn todo_task_create(state: State<AppState>, patch: TaskPatch) -> Result<Task
 #[tauri::command]
 pub fn todo_subtasks_create(state: State<AppState>, parent_id: i64, titles: Vec<String>) -> Result<Vec<Task>, String> {
     state.with_undo("加上子任务", |c| create_subtasks(c, parent_id, &titles, &today(c)?))
+}
+
+#[tauri::command]
+pub fn todo_tasks_from_note(state: State<AppState>, note_id: i64, group_id: Option<i64>, goal_id: Option<i64>, titles: Vec<String>) -> Result<Vec<Task>, String> {
+    state.with_undo("加上待办", |c| create_from_note(c, note_id, group_id, goal_id, &titles, &today(c)?))
 }
 #[tauri::command]
 pub fn todo_task_update(state: State<AppState>, id: i64, patch: TaskPatch) -> Result<Task, String> {
@@ -1973,6 +2091,28 @@ mod tests {
 
     fn tp(v: serde_json::Value) -> TaskPatch {
         serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn tasks_made_from_notes() {
+        use crate::modules::notes;
+        let c = memory_db();
+        let g = create_group(&c, "生活").unwrap().id;
+        let n = notes::create(&c, serde_json::from_value(json!({ "content": "周末\n- 交水电费\n- 给房东打电话" })).unwrap()).unwrap().id;
+        let t = create_task(&c, tp(json!({ "groupId": g, "title": "周末", "note": "全文", "fromNote": n }))).unwrap();
+        assert_eq!(t.from_note, Some(n));
+        let made = create_from_note(&c, n, Some(g), None, &["交水电费".into(), "给房东打电话".into()], "2026-10-17").unwrap();
+        assert!(made.iter().all(|x| x.from_note == Some(n) && x.parent_id.is_none()));
+        let titles: Vec<String> = notes::get(&c, n).unwrap().tasks.into_iter().map(|x| x.title).collect();
+        assert_eq!(titles, ["周末", "交水电费", "给房东打电话"]);
+        assert!(create_task(&c, tp(json!({ "groupId": g, "title": "x", "fromNote": 999 }))).unwrap_err().contains("笔记"));
+        // a notes import keeps the link (same createdAt); deleting the note leaves the task unlinked
+        let rec = notes::export(&c).unwrap();
+        notes::replace_all(&c, &rec).unwrap();
+        let n2 = notes::list(&c, &notes::Filter::default()).unwrap()[0].id;
+        assert_eq!(task(&c, t.id).unwrap().from_note, Some(n2));
+        notes::delete(&c, n2).unwrap();
+        assert_eq!(task(&c, t.id).unwrap().from_note, None);
     }
     fn gp(v: serde_json::Value) -> GoalPatch {
         serde_json::from_value(v).unwrap()

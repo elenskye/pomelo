@@ -7,9 +7,9 @@ import { KindManager } from "@/shared/kinds/KindManager";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { DragHandle, useSortable } from "@/shared/sortable";
-import { STATUS_ORDER, StatusSelect, type StatusCode } from "@/shared/status";
+import { StatusSelect, type StatusCode } from "@/shared/status";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } from "@/shared/ui";
-import { DRAWING_KEY, DRAWING_STATUS, useCourses, useDrawingMutations, useLessons, type Course, type Lesson } from "./api";
+import { DRAWING_KEY, DRAWING_ORDER, DRAWING_STATUS, useCourses, useDrawingMutations, useLessons, type Course, type Lesson } from "./api";
 import { CourseDialog } from "./CourseDialog";
 import { LessonPanel } from "./LessonPanel";
 import { usePageContext } from "@/app/pageContext";
@@ -131,6 +131,7 @@ function LessonTable(props: {
                 <StatusSelect
                   value={l.status}
                   labels={DRAWING_STATUS}
+                  order={DRAWING_ORDER}
                   onChange={(status) => quickUpdate.mutate({ id: l.id, patch: { status } })}
                 />
               </td>
@@ -282,7 +283,7 @@ export default function DrawingPage() {
                     onChange={setFilter}
                     options={[
                       { value: "all" as Filter, label: `全部 ${lessons.length}` },
-                      ...STATUS_ORDER.map((s) => ({ value: s as Filter, label: `${DRAWING_STATUS[s]} ${counts[s]}` })),
+                      ...DRAWING_ORDER.map((s) => ({ value: s as Filter, label: `${DRAWING_STATUS[s]} ${counts[s]}` })),
                     ]}
                   />
                   <div className="flex-1" />

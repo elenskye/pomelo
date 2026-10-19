@@ -28,6 +28,10 @@
 .md .record-link { text-decoration: underline dotted; text-decoration-color: var(--muted-foreground); text-underline-offset: 3px; cursor: pointer; border-radius: 3px; outline: none; }
 .md .record-link:hover { color: var(--primary); text-decoration-color: var(--primary); }
 .md .record-link:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
+/* a citation [n] of a numbered source (picky/cite.rs) */
+.md .cite-link { display: inline-block; min-width: 1.45em; margin: 0 0.1em; padding: 0 0.35em; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); font-size: 0.72em; line-height: 1.55; text-align: center; vertical-align: 0.3em; font-variant-numeric: tabular-nums; cursor: pointer; outline: none; }
+.md .cite-link:hover { background: var(--accent); color: var(--primary); }
+.md .cite-link:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
 .md a .ext { display: inline-block; width: 0.8em; height: 0.8em; margin-left: 0.1em; vertical-align: -0.05em; }
 .md .img-link { color: var(--muted-foreground); }
 .md :not(pre) > code {

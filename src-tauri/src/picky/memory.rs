@@ -7,8 +7,8 @@
 //! - Which memories the next reply may use (`plan`): none when 使用记忆 is off in settings, when the
 //!   conversation turned memories off, or when 「本条使用记忆」 is unticked; otherwise enabled ones in
 //!   scope, without local-only ones for a cloud model. The preview and sending use the same rule.
-//! - Before a question is saved, at most 6 of them (cosine ≥ 0.35 to the question, through 8081) are
-//!   chosen; the reply's run keeps them as they read then (`run_memories`) and the reply lists them.
+//! - Before a question is saved, at most 6 of them are chosen: v0.4 the rerank model (8082) picks from
+//!   the 12 most similar (cosine ≥ 0.30, through 8081); without it, cosine ≥ 0.35 alone; the reply's run keeps them as they read then (`run_memories`) and the reply lists them.
 //!   They go after the instructions in the system message, with their dates. Reading material in
 //!   segments gets the instructions only.
 //! - Deleting a project keeps its memories: they become global and turned off.
@@ -24,6 +24,9 @@ use tauri::{AppHandle, Manager, State};
 pub const MAX_CHARS: usize = 300;
 pub const LIMIT: usize = 6;
 const MIN_SCORE: f32 = 0.35;
+/// v0.4: the pool the rerank model reorders (wider than what is sent).
+const POOL: usize = 12;
+const POOL_MIN: f32 = 0.30;
 pub const ENABLED_KEY: &str = "memory.enabled";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -282,17 +285,22 @@ pub fn section(used: &[UsedMemory]) -> String {
     format!("以下是用户明确让你记住的信息，括号内是记录日期。只在与当前问题相关时参考；信息可能已经过时，请结合日期判断，不要逐条复述。\n{}", lines.join("\n"))
 }
 
-/// Best first (ties keep their order), at most LIMIT scoring ≥ MIN_SCORE.
+/// Best first (ties keep their order), at most LIMIT scoring ≥ MIN_SCORE (without the rerank model).
 pub fn rank(query: &[f32], candidates: &[(Memory, Vec<f32>)]) -> Vec<UsedMemory> {
-    let mut scored: Vec<(f32, usize, &Memory)> = candidates.iter().enumerate().map(|(i, (m, v))| (embed::cosine(query, v), i, m)).filter(|x| x.0 >= MIN_SCORE).collect();
+    similar(query, candidates, LIMIT, MIN_SCORE)
+}
+
+fn similar(query: &[f32], candidates: &[(Memory, Vec<f32>)], keep: usize, min: f32) -> Vec<UsedMemory> {
+    let mut scored: Vec<(f32, usize, &Memory)> = candidates.iter().enumerate().map(|(i, (m, v))| (embed::cosine(query, v), i, m)).filter(|x| x.0 >= min).collect();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(&b.1)));
-    scored.into_iter().take(LIMIT).map(|(_, _, m)| UsedMemory { memory_id: Some(m.id), content: m.content.clone(), noted_on: m.noted_on.clone() }).collect()
+    scored.into_iter().take(keep).map(|(_, _, m)| UsedMemory { memory_id: Some(m.id), content: m.content.clone(), noted_on: m.noted_on.clone() }).collect()
 }
 
 fn hash(content: &str) -> String {
     super::pdf::sha256_hex(content.as_bytes())
 }
 
+/// search.db (v0.4): memory vectors are derived, so they live with the other indexes.
 fn cached(conn: &Connection, model: &str) -> Result<Vec<(i64, String, Vec<f32>)>, String> {
     let mut st = conn.prepare("SELECT memory_id, content_hash, vector FROM memory_vectors WHERE model = ?1").map_err(err)?;
     let rows = st
@@ -321,21 +329,19 @@ pub async fn choose(app: &AppHandle, question: &str, candidates: &[Memory]) -> R
         return Ok(vec![]);
     }
     let st = app.state::<AppState>();
-    let mode = st.picky.mode;
-    let model = embed::model(mode);
-    embed::prepare(app).await?;
-    let have = st.picky.with_db(|c| cached(c, model))?;
+    let model = embed::prepare(app).await?;
+    let have = st.search.with_db(|c| cached(c, &model.key))?;
     let mut vectors: Vec<Option<Vec<f32>>> = candidates.iter().map(|m| have.iter().find(|h| h.0 == m.id && h.1 == hash(&m.content)).map(|h| h.2.clone())).collect();
     let missing: Vec<usize> = (0..candidates.len()).filter(|i| vectors[*i].is_none()).collect();
     if !missing.is_empty() {
         let texts: Vec<String> = missing.iter().map(|i| candidates[*i].content.clone()).collect();
-        let made = embed::embed(mode, &texts, Input::Document).await.map_err(String::from)?;
+        let made = embed::embed(&st.picky.runtime, &model, &texts, Input::Document).await.map_err(String::from)?;
         if made.len() != missing.len() {
             return Err("向量服务返回的数量不对。".into());
         }
-        st.picky.with_db(|c| {
+        st.search.with_db(|c| {
             for (i, v) in missing.iter().zip(&made) {
-                save_vector(c, candidates[*i].id, model, &hash(&candidates[*i].content), v)?;
+                save_vector(c, candidates[*i].id, &model.key, &hash(&candidates[*i].content), v)?;
             }
             Ok(())
         })?;
@@ -343,9 +349,11 @@ pub async fn choose(app: &AppHandle, question: &str, candidates: &[Memory]) -> R
             vectors[i] = Some(v);
         }
     }
-    let q = embed::embed(mode, &[question.to_string()], Input::MemoryQuery).await.map_err(String::from)?.pop().ok_or("向量服务没有返回问题的向量。")?;
+    let q = embed::embed(&st.picky.runtime, &model, &[question.to_string()], Input::MemoryQuery).await.map_err(String::from)?.pop().ok_or("向量服务没有返回问题的向量。")?;
     let pairs: Vec<(Memory, Vec<f32>)> = candidates.iter().cloned().zip(vectors.into_iter().map(|v| v.unwrap_or_default())).collect();
-    Ok(rank(&q, &pairs))
+    // v0.4: the rerank model picks from a wider pool; without it, similarity alone
+    let pool = similar(&q, &pairs, POOL, POOL_MIN);
+    Ok(super::rerank::pick(app, question, &pool, |m| m.content.clone(), LIMIT).await.unwrap_or_else(|| rank(&q, &pairs)))
 }
 
 pub fn record_used(conn: &Connection, run_id: i64, used: &[UsedMemory]) -> Result<(), String> {

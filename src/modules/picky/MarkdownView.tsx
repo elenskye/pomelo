@@ -2,9 +2,10 @@
 // whose HTML changed: finished paragraphs stay put (and selectable) while a reply streams in. A caret
 // sits at the end of the text while streaming. React never manages the children of this container.
 // A finished reply links the names of records its lookups returned (`links`): the first mention of
-// each becomes a .record-link (Transcript opens it like 全局搜索).
+// each becomes a .record-link (Transcript opens it like 全局搜索). Its [n] citations of numbered sources
+// (`cites`) become .cite-link chips (copied back as "[n]").
 import { useLayoutEffect, useRef } from "react";
-import type { QueryRecord } from "./api";
+import type { QueryRecord, Source } from "./api";
 import { renderMarkdown } from "./markdown";
 import "katex/dist/katex.min.css";
 import "./messages.css";
@@ -78,7 +79,7 @@ function linkRecords(box: HTMLElement, records: QueryRecord[]) {
     .sort((a, b) => a.rank - b.rank);
   if (!wanted.length) return;
   const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement?.closest("code, pre, a, .katex, .record-link") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    acceptNode: (n) => (n.parentElement?.closest("code, pre, a, .katex, .record-link, .cite-link") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
   });
   const texts: Text[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
@@ -105,7 +106,51 @@ function linkRecords(box: HTMLElement, records: QueryRecord[]) {
   }
 }
 
-export function MarkdownView(props: { source: string; streaming?: boolean; className?: string; body?: boolean; links?: QueryRecord[] }) {
+/** The [n] a text cites, among `sources`, in number order. */
+export function citedIn(text: string, sources: Source[]): Source[] {
+  const used = new Set([...text.matchAll(/\[(\d{1,3})\](?!\()/g)].map((m) => Number(m[1])));
+  return sources.filter((s) => used.has(s.n));
+}
+
+function linkCites(box: HTMLElement, sources: Source[]) {
+  const known = new Map(sources.map((s) => [s.n, s]));
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest("code, pre, a, .katex, .cite-link") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const texts: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
+  for (const t of texts) {
+    const parts: (string | Source)[] = [];
+    let last = 0;
+    for (const m of t.data.matchAll(/\[(\d{1,3})\](?!\()/g)) {
+      const s = known.get(Number(m[1]));
+      if (!s) continue;
+      parts.push(t.data.slice(last, m.index), s);
+      last = m.index + m[0].length;
+    }
+    if (!parts.length) continue;
+    parts.push(t.data.slice(last));
+    const frag = document.createDocumentFragment();
+    for (const p of parts) {
+      if (typeof p === "string") {
+        if (p) frag.append(p);
+        continue;
+      }
+      const chip = document.createElement("span");
+      chip.className = "cite-link";
+      chip.setAttribute("role", "link");
+      chip.tabIndex = 0;
+      chip.title = p.detail ? `${p.detail}：${p.title}` : p.title;
+      chip.dataset.cite = JSON.stringify(p);
+      chip.dataset.source = `[${p.n}]`;
+      chip.textContent = String(p.n);
+      frag.append(chip);
+    }
+    t.replaceWith(frag);
+  }
+}
+
+export function MarkdownView(props: { source: string; streaming?: boolean; className?: string; body?: boolean; links?: QueryRecord[]; cites?: Source[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const blocks = useRef<Blocks>({ nodes: [], keys: [] });
   useLayoutEffect(() => {
@@ -119,9 +164,10 @@ export function MarkdownView(props: { source: string; streaming?: boolean; class
       caret.setAttribute("aria-hidden", "true");
       const last = blocks.current.nodes[blocks.current.nodes.length - 1];
       ((last && caretHost(last)) || box).appendChild(caret);
-    } else if (props.links?.length) {
-      linkRecords(box, props.links);
+    } else {
+      if (props.cites?.length) linkCites(box, props.cites);
+      if (props.links?.length) linkRecords(box, props.links);
     }
-  }, [props.source, props.streaming, props.links]);
+  }, [props.source, props.streaming, props.links, props.cites]);
   return <div ref={ref} data-body={props.body ? "" : undefined} className={`md ${props.className ?? ""}`} />;
 }

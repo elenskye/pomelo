@@ -7,21 +7,34 @@
 // - 「查了：…」 above a reply that looked things up in Pomelo; unfolds to what each lookup returned. Records
 //   the lookups returned are linked where the finished reply names them; a click opens them like 全局搜索.
 // - A question asked in the 小窗 shows 「带着：…」 (the page it went with), unfolding to what was sent.
+// - Citations (v0.4): a finished reply's [n] become chips and the sources it cites are listed under it
+//   (来源); a record opens like 全局搜索 (a past conversation opens in 小拾), a project file passage
+//   shows its text with 打开文件.
+// - Cards (v0.4): a reply that proposed writes shows its card under the text: one tick per item (all on);
+//   an edit the words fit several records lists them to pick one; long text shows its changes marked.
+//   取消 / 确认 once the reply is finished; confirming writes the ticked ones in one ⌘Z step. Afterwards
+//   each written item opens its record (已撤销 when it is gone or back to how it was), unticked ones are muted.
+// - Skills (v0.4 phase 6): a question that asked for some shows them (「/联网搜索」) above it; web
+//   sources (联网搜索, 书单 / 影单检索) open in the browser.
 // - `compact`: the 小窗's narrow column.
 // - Follows new text only while the reader is at the bottom (scrolling up stops it; ↓ comes back).
 // - Links open in the browser (Rust); code blocks copy; right-click a formula → 复制 LaTeX; a selection
 //   spanning messages or formulas copies as plain text with formulas as written.
 // - ⌘F finds in the page with the CSS Custom Highlight API (no DOM changes).
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, MapPin, Pencil, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileDown, MapPin, Pencil, RotateCcw, X } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
-import { pickyApi, type ChatMessage, type Note, type Query, type QueryRecord, type ReadingProgress } from "./api";
-import { MessageFiles } from "./Files";
+import { pickyApi, type Card, type CardField, type ChatMessage, type Note, type Query, type QueryRecord, type ReadingProgress, type Source } from "./api";
+import { MessageFiles, openFile } from "./Files";
+import { openKnowledge } from "./Knowledge";
+import { EditCard, EditFileTag, WordDialog } from "./Work";
 import { UsedMemories } from "./Memory";
-import { MarkdownView } from "./MarkdownView";
+import { DiffView } from "./Assist";
+import { MarkdownView, citedIn } from "./MarkdownView";
 
 export type TranscriptHandle = { openFind: () => void; closeFind: () => boolean; toBottom: () => void };
 
@@ -153,10 +166,12 @@ function Notice(props: { m: ChatMessage; retry?: () => void }) {
 /** A reply reading material in segments: a progress bar and what it is reading. */
 function Reading(props: { r: ReadingProgress; onStop?: () => void }) {
   const { current, total, label } = props.r;
+  // 年度总结 reads its year month by month
+  const monthly = /^正在读 \d+ 月$/.test(label);
   return (
     <div data-find-skip className="mb-2 max-w-md rounded-card border bg-card px-3 py-2 text-sm">
       <div className="flex items-center gap-2">
-        <span className="font-bold">正在分段阅读</span>
+        <span className="font-bold">{monthly ? "正在读这一年" : "正在分段阅读"}</span>
         <div className="flex-1" />
         {props.onStop && (
           <button type="button" onClick={props.onStop} className="rounded-control px-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
@@ -168,7 +183,7 @@ function Reading(props: { r: ReadingProgress; onStop?: () => void }) {
         <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${(current / Math.max(1, total)) * 100}%` }} />
       </div>
       <p className="mt-1 truncate text-xs text-muted-foreground">
-        第 {current} 段，共 {total} 段{label && ` · ${label}`}
+        {monthly ? `第 ${current} 个月，共 ${total} 个月 · ${label}` : `第 ${current} 段，共 ${total} 段${label && ` · ${label}`}`}
       </p>
     </div>
   );
@@ -180,7 +195,7 @@ function Notes(props: { notes: Note[] }) {
     <details className="picky-think group/notes mb-2" data-find-skip>
       <summary className="inline-flex cursor-default list-none items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRight size={12} className="transition-transform duration-150 group-open/notes:rotate-90" />
-        分段要点 · {props.notes.length} 段
+        {props.notes.every((n) => /^\d+ 月$/.test(n.label)) ? `每月小结 · ${props.notes.length} 个月` : `分段要点 · ${props.notes.length} 段`}
       </summary>
       <div className="mt-1 space-y-2 border-l-2 pl-3">
         {props.notes.map((n, i) => (
@@ -214,6 +229,193 @@ function Queries(props: { queries: Query[] }) {
   );
 }
 
+/** Under a reply: the sources its text cites, by number (folded until opened). */
+function SourceList(props: { sources: Source[]; onOpen: (s: Source) => void }) {
+  if (!props.sources.length) return null;
+  return (
+    <details className="group/sources mt-2 max-w-full text-xs" data-find-skip>
+      <summary className="inline-flex cursor-default list-none items-center gap-1 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <ChevronRight size={12} className="transition-transform duration-150 group-open/sources:rotate-90" />
+        来源 · {props.sources.length}
+      </summary>
+      <div className="mt-1 flex max-w-full flex-col items-start gap-0.5">
+        {props.sources.map((s) => (
+          <button
+            key={s.n}
+            type="button"
+            onClick={() => props.onOpen(s)}
+            className="flex max-w-full items-baseline gap-1.5 rounded-control text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="shrink-0 rounded-full bg-muted px-1.5 tabular-nums">{s.n}</span>
+            <span className="truncate">
+              {s.detail && <span>{s.detail}：</span>}
+              {s.title}
+            </span>
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+/** One item's lines: a value, 改前 → 改后, or (long text) the new text with the changes marked. */
+function CardFields(props: { fields: CardField[] }) {
+  return (
+    <dl className="mt-0.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+      {props.fields.map((f) =>
+        f.long ? (
+          <Fragment key={f.label}>
+            <dt className="col-span-2 text-muted-foreground">{f.label}</dt>
+            <dd className="col-span-2 min-w-0 text-[13px]">{f.before != null ? <DiffView from={f.before} to={f.after} /> : <p className="max-h-60 overflow-y-auto whitespace-pre-wrap">{f.after}</p>}</dd>
+          </Fragment>
+        ) : (
+          <Fragment key={f.label}>
+            <dt className="text-muted-foreground">{f.label}</dt>
+            <dd className="min-w-0 break-words">
+              {f.before != null && <s className="text-muted-foreground">{f.before}</s>}
+              {f.before != null && " → "}
+              {f.after}
+            </dd>
+          </Fragment>
+        ),
+      )}
+    </dl>
+  );
+}
+
+/** Under a reply that proposed writes: one tick per item (several records fit: pick one), then 取消 / 确认. */
+function ProposalCard(props: { card: Card; streaming: boolean; onOpen: (r: QueryRecord) => void }) {
+  const { card } = props;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [off, setOff] = useState<Set<number>>(() => new Set());
+  const [chosen, setChosen] = useState<Map<number, number>>(() => new Map());
+  const [busy, setBusy] = useState(false);
+  const pending = card.state === "pending";
+  const ticked = card.items.filter((i) => !off.has(i.position));
+  const unpicked = ticked.some((i) => i.options && !chosen.has(i.position));
+  const decide = async (confirm: boolean) => {
+    setBusy(true);
+    try {
+      await (confirm ? pickyApi.confirmCard(card.runId, ticked.map((i) => ({ position: i.position, option: chosen.get(i.position) ?? null }))) : pickyApi.cancelCard(card.runId));
+      await qc.invalidateQueries(); // the records show in their modules too
+    } catch (err) {
+      toast(errorText(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggle = (p: number) => setOff((s) => (s.has(p) ? new Set([...s].filter((x) => x !== p)) : new Set(s).add(p)));
+  return (
+    <div data-find-skip data-card={card.runId} className="mt-2 max-w-md rounded-card border bg-card text-sm">
+      <ul className="divide-y">
+        {card.items.map((it) => {
+          const w = it.written;
+          const choosing = pending && it.options;
+          const pick = chosen.get(it.position);
+          const fields = choosing ? (pick != null ? it.options![pick].fields : []) : it.fields;
+          return (
+            <li key={it.position} className={`flex items-start gap-2 px-3 py-2 ${!pending && !w ? "text-muted-foreground" : ""}`}>
+              <input
+                type="checkbox"
+                checked={pending ? !off.has(it.position) : it.checked}
+                disabled={!pending || busy}
+                onChange={() => toggle(it.position)}
+                aria-label={`${it.label}：${it.title}`}
+                className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="font-bold">{it.label}</p>
+                {choosing && (
+                  <div role="radiogroup" aria-label={`${it.label}：选是哪一条`} className="mt-1 flex flex-col gap-1 text-xs">
+                    {it.options!.map((o, k) => (
+                      <label key={k} className="flex items-start gap-1.5">
+                        <input
+                          type="radio"
+                          name={`card-${card.runId}-${it.position}`}
+                          checked={pick === k}
+                          disabled={busy}
+                          onChange={() => setChosen((m) => new Map(m).set(it.position, k))}
+                          className="mt-0.5 size-3 shrink-0 accent-[var(--primary)]"
+                        />
+                        <span className="min-w-0 break-words">{o.title.split("：")[0]}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {!pending && it.options && !w && <p className="mt-0.5 text-xs">{it.title}</p>}
+                {fields.length > 0 && <CardFields fields={fields} />}
+              </div>
+              {w &&
+                (w.gone ? (
+                  <span className="shrink-0 text-xs text-muted-foreground">已撤销</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => props.onOpen({ module: w.module, kind: w.kind, id: w.id, title: it.title, parent: w.parent, day: w.day })}
+                    className="shrink-0 rounded-control text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {it.fields.some((f) => f.before != null) ? "已改好" : "已记下"}
+                  </button>
+                ))}
+            </li>
+          );
+        })}
+      </ul>
+      <div className="flex items-center justify-end gap-2 border-t px-3 py-2">
+        {pending ? (
+          <>
+            <Button disabled={busy || props.streaming} onClick={() => void decide(false)}>
+              取消
+            </Button>
+            <Button variant="primary" disabled={busy || props.streaming || !ticked.length || unpicked} onClick={() => void decide(true)}>
+              确认
+            </Button>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">{card.state === "confirmed" ? "已确认" : "已取消"}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A cited project file or 知识库 passage: its text, and the whole file (a 知识库 one opens where it lives). */
+function PassageDialog(props: { source: Source; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const toast = useToast();
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.showModal();
+  }, []);
+  const s = props.source;
+  return (
+    <dialog
+      ref={ref}
+      aria-label={s.title}
+      onCancel={(e) => {
+        e.preventDefault();
+        props.onClose();
+      }}
+      onClick={(e) => e.target === ref.current && props.onClose()}
+      className="m-auto h-fit max-h-[80vh] w-[560px] max-w-[calc(100vw-32px)] rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30"
+    >
+      <p className="text-base font-bold">{s.title}</p>
+      <p className="selectable -m-1 mt-3 max-h-[56vh] overflow-y-auto p-1 font-reading text-sm leading-relaxed whitespace-pre-wrap">{s.content}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        {s.kbSource != null ? (
+          <Button onClick={() => openKnowledge(s.kbSource!, s.kbPath ?? "", toast)}>{s.kbPath ? "打开文件" : "打开网页"}</Button>
+        ) : (
+          s.artifactId != null && <Button onClick={() => openFile(s.artifactId!, toast)}>打开文件</Button>
+        )}
+        <Button variant="primary" onClick={props.onClose}>
+          关闭
+        </Button>
+      </div>
+    </dialog>
+  );
+}
+
 /** Above a question from the 小窗: the page it went with. */
 function PageChip(props: { page: Query }) {
   return (
@@ -240,11 +442,15 @@ type ItemProps = {
   onRegenerate: () => void;
   onSwitch: (delta: -1 | 1) => void;
   onOpenFile: (id: number) => void;
+  onOpenSource: (s: Source) => void;
+  onOpenRecord: (r: QueryRecord) => void;
   onStop?: () => void;
 };
 
 function Item(p: ItemProps) {
   const { m } = p;
+  const qc = useQueryClient();
+  const [word, setWord] = useState(false);
   const links = useMemo(() => (m.queries ?? []).flatMap((q) => q.records), [m.queries]);
   const streaming = m.state === "streaming";
   const divider = p.divider && (
@@ -260,6 +466,12 @@ function Item(p: ItemProps) {
         {divider}
         <div className="group flex flex-col items-end" data-msg={m.id}>
           {m.page && <PageChip page={m.page} />}
+          {(m.skills?.length ?? 0) > 0 && (
+            <p data-find-skip className="mb-1 text-xs text-muted-foreground">
+              {m.skills!.map((s) => `/${s}`).join(" ")}
+            </p>
+          )}
+          {m.editFile && <EditFileTag target={m.editFile} />}
           <MessageFiles files={m.files ?? []} onOpen={p.onOpenFile} />
           {p.editing ? (
             <EditBox initial={m.content} onCancel={p.onCancelEdit} onSubmit={p.onSubmitEdit} />
@@ -295,8 +507,11 @@ function Item(p: ItemProps) {
           <MarkdownView className="reasoning mt-1 border-l-2 pl-3" source={m.reasoning} streaming={thinkingLive} />
         </details>
       )}
-      {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={streaming} links={streaming ? undefined : links} />}
-      {streaming && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">正在生成…</p>}
+      {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={streaming} links={streaming ? undefined : links} cites={streaming ? undefined : m.sources} />}
+      {m.card && <ProposalCard card={m.card} streaming={streaming} onOpen={p.onOpenRecord} />}
+      {m.edit && <EditCard edit={m.edit} streaming={streaming} onChanged={() => void qc.invalidateQueries({ queryKey: ["picky", "messages"] })} />}
+      {!streaming && <SourceList sources={citedIn(m.content, m.sources ?? [])} onOpen={p.onOpenSource} />}
+      {streaming && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">{m.queued ? (m.model?.startsWith("cloud:") ? "云端模型忙，等一下再试…" : "排队中（本地模型正在回答别的）") : "正在生成…"}</p>}
       {!streaming && <UsedMemories memories={m.memories ?? []} />}
       <Notice m={m} retry={p.last && !p.busy && RETRYABLE.has(m.state) ? p.onRegenerate : undefined} />
       {!streaming && (
@@ -304,12 +519,16 @@ function Item(p: ItemProps) {
           className={`msg-actions mt-1 -ml-1.5 flex items-center transition-opacity duration-150 ${p.pinned ? "" : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"}`}
         >
           <CopyButton text={m.content} />
+          <ActionButton label="保存为 Word" disabled={!m.content.trim() || m.state !== "complete"} onClick={() => setWord(true)}>
+            <FileDown size={14} strokeWidth={1.5} />
+          </ActionButton>
           <ActionButton label="重新生成" disabled={p.busy} onClick={p.onRegenerate}>
             <RotateCcw size={14} strokeWidth={1.5} />
           </ActionButton>
           <Versions m={m} disabled={p.busy} onSwitch={p.onSwitch} />
         </div>
       )}
+      {word && <WordDialog messageId={m.id} onClose={() => setWord(false)} />}
     </div>
   );
 }
@@ -457,6 +676,7 @@ export function Transcript(props: {
   const [editing, setEditing] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; tex: string } | null>(null);
   const [find, setFind] = useState<{ query: string; ranges: Range[]; index: number } | null>(null);
+  const [passage, setPassage] = useState<Source | null>(null);
 
   const distance = () => {
     const el = scroller.current;
@@ -588,15 +808,31 @@ export function Transcript(props: {
 
   // ----- clicks inside messages: records, links, code copy -----
   const navigate = useNavigate();
+  const openHit = (r: QueryRecord) => void navigate(`/${r.module}`, { state: { open: { ...r, detail: null, parent: r.parent ?? null, day: r.day ?? null, amount: null, currency: null, flow: null } } });
   const openRecord = (el: HTMLElement) => {
     const r = JSON.parse(el.dataset.record ?? "null") as QueryRecord | null;
-    if (r) void navigate(`/${r.module}`, { state: { open: { ...r, detail: null, parent: r.parent ?? null, day: r.day ?? null, amount: null, currency: null, flow: null } } });
+    if (r) openHit(r);
+  };
+  const openSource = (s: Source) => {
+    if (s.kind === "passage") return setPassage(s);
+    if (s.kind === "web") return void (s.url && api.openLink(s.url).catch((e) => toast(errorText(e), "error")));
+    if (!s.module || !s.recordKind || s.id == null) return;
+    // a past conversation opens in 小拾 (on the message when it is one)
+    if (s.module === "picky") return openHit({ module: "picky", kind: "chat", id: s.recordKind === "message" ? (s.parent ?? 0) : s.id, title: s.title, parent: s.recordKind === "message" ? s.id : null });
+    openHit({ module: s.module, kind: s.recordKind, id: s.id, title: s.title, parent: s.parent, day: s.day });
+  };
+  const openCite = (el: HTMLElement) => {
+    const s = JSON.parse(el.dataset.cite ?? "null") as Source | null;
+    if (s) openSource(s);
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const rec = (e.target as HTMLElement).closest?.(".record-link") as HTMLElement | null;
-    if (rec && e.key === "Enter") {
+    const t = e.target as HTMLElement;
+    const rec = t.closest?.(".record-link") as HTMLElement | null;
+    const cite = t.closest?.(".cite-link") as HTMLElement | null;
+    if ((rec || cite) && e.key === "Enter") {
       e.preventDefault();
-      openRecord(rec);
+      if (rec) openRecord(rec);
+      else if (cite) openCite(cite);
     }
   };
   const onClick = (e: React.MouseEvent) => {
@@ -604,6 +840,11 @@ export function Transcript(props: {
     const rec = t.closest(".record-link") as HTMLElement | null;
     if (rec) {
       openRecord(rec);
+      return;
+    }
+    const cite = t.closest(".cite-link") as HTMLElement | null;
+    if (cite) {
+      openCite(cite);
       return;
     }
     const link = t.closest("a[href]") as HTMLAnchorElement | null;
@@ -691,6 +932,8 @@ export function Transcript(props: {
                 onRegenerate={() => props.onRegenerate(m)}
                 onSwitch={(d) => props.onSwitch(m, d)}
                 onOpenFile={props.onOpenFile}
+                onOpenSource={openSource}
+                onOpenRecord={openHit}
                 onStop={props.onStop}
               />
             ))}
@@ -728,6 +971,7 @@ export function Transcript(props: {
           </button>
         </div>
       )}
+      {passage && <PassageDialog source={passage} onClose={() => setPassage(null)} />}
     </div>
   );
 }

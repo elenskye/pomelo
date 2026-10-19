@@ -2,7 +2,8 @@
 //! The bird icon is solid while a local model is ready, hollow otherwise. The menu shows the
 //! model status and holds the everyday controls; it is rebuilt only when what it shows changes.
 
-use crate::picky::{self, runtime::Dot, Status};
+use crate::picky::runtime::{Dot, ServiceState, ServiceStatus, Svc};
+use crate::picky::{self, Status};
 use crate::AppState;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
@@ -69,8 +70,15 @@ fn headline(s: &Status) -> String {
     }
 }
 
-fn emb_title(s: &Status) -> String {
-    format!("向量服务 · {}", s.embedding.text)
+fn service(s: &Status, svc: Svc) -> &ServiceStatus {
+    match svc {
+        Svc::Embedding => &s.embedding,
+        Svc::Rerank => &s.rerank,
+    }
+}
+
+fn service_title(s: &Status, svc: Svc) -> String {
+    format!("{} · {}", svc.label(), service(s, svc).text)
 }
 
 /// Everything the menu shows; a change rebuilds it.
@@ -78,15 +86,17 @@ fn signature(s: &Status) -> String {
     let local: Vec<String> = s.local.models.iter().map(|m| format!("{}|{}", m.key, m.name)).collect();
     let cloud: Vec<String> = s.cloud.iter().map(|m| format!("{}|{}", m.id, m.name)).collect();
     format!(
-        "{}\n{:?}\n{:?}|{:?}|{}\n{}\n{}|{:?}|{}\n{:?}\n{:?}",
+        "{}\n{:?}\n{:?}|{:?}|{}\n{}\n{}|{:?}|{}|{:?}\n{}\n{:?}\n{:?}",
         headline(s),
         s.local.issue.as_ref().map(|i| &i.title),
         s.local.active.as_ref().map(|m| &m.key),
         s.local.presentation.dot,
         s.local.working,
         s.selection,
-        emb_title(s),
+        service_title(s, Svc::Embedding),
         s.embedding.state,
+        service_title(s, Svc::Rerank),
+        s.rerank.state,
         s.generating,
         local,
         cloud,
@@ -131,13 +141,20 @@ fn build(app: &AppHandle, s: &Status) -> tauri::Result<Menu<Wry>> {
     top.push(Box::new(item("stop", "停止本地模型", active.is_some() && !s.local.working && !s.generating)?));
     top.push(Box::new(sep()?));
 
-    // 向量服务
-    let stopped = s.embedding.state == picky::runtime::EmbState::Stopped;
-    let emb_items = [
-        item("emb-name", &format!("{} · {}", picky::runtime::EMBED_MODEL, s.embedding.text), false)?,
-        item("emb-start", "启动向量服务", stopped && !s.embedding.working)?, item("emb-stop", "停止向量服务", !stopped && !s.embedding.working)?];
-    let emb_refs: Vec<&dyn IsMenuItem<Wry>> = emb_items.iter().map(|i| i as &dyn IsMenuItem<Wry>).collect();
-    top.push(Box::new(Submenu::with_id_and_items(app, "emb", emb_title(s), true, &emb_refs)?));
+    // 向量服务、重排服务
+    for svc in Svc::ALL {
+        let st = service(s, svc);
+        let stopped = st.state == ServiceState::Stopped;
+        let name = st.model.as_ref().map_or("模型清单里没有", |m| m.name.as_str());
+        let id = svc.arg();
+        let items = [
+            item(&format!("{id}-name"), &format!("{name} · {}", st.text), false)?,
+            item(&format!("{id}-start"), &format!("启动{}", svc.label()), stopped && !st.working && st.model.is_some())?,
+            item(&format!("{id}-stop"), &format!("停止{}", svc.label()), !stopped && !st.working)?,
+        ];
+        let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|i| i as &dyn IsMenuItem<Wry>).collect();
+        top.push(Box::new(Submenu::with_id_and_items(app, id, service_title(s, svc), true, &refs)?));
+    }
     top.push(Box::new(sep()?));
     top.push(Box::new(MenuItem::with_id(app, "quit", "退出柚儿园", true, Some("CmdOrCtrl+Q"))?));
 
@@ -157,8 +174,10 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
             Ok(())
         }
         "stop" => picky::stop_model(app),
-        "emb-start" => picky::embedding(app, "start"),
-        "emb-stop" => picky::embedding(app, "stop"),
+        "embedding-start" => picky::service(app, Svc::Embedding, "start"),
+        "embedding-stop" => picky::service(app, Svc::Embedding, "stop"),
+        "rerank-start" => picky::service(app, Svc::Rerank, "start"),
+        "rerank-stop" => picky::service(app, Svc::Rerank, "stop"),
         other => match other.strip_prefix("model:") {
             Some(choice) => picky::select(app, choice),
             None => Ok(()),

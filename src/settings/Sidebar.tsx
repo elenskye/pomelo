@@ -1,15 +1,16 @@
 // 设置 → 侧栏: show / hide each module (hidden ones leave the sidebar and 全局搜索; data stays).
 import { useHiddenModules } from "@/app/hidden";
-import { MODULES } from "@/app/modules";
+import { useAllModules } from "@/modules/custom/api";
 import { Switch } from "@/shared/ui";
 import { Section } from "./layout";
 
 export function SidebarSection() {
   const [hidden, setHidden] = useHiddenModules();
+  const modules = useAllModules();
   return (
     <Section title="侧栏" help="关掉的模块不在侧栏里出现，全局搜索也不搜它；数据都还在，再打开就回来了。顺序在侧栏里按住拖动调整。">
       <div className="grid grid-cols-3 gap-x-6 px-4 py-1">
-        {MODULES.map((m) => {
+        {modules.map((m) => {
           const Icon = m.icon;
           const shown = !hidden.includes(m.id);
           return (

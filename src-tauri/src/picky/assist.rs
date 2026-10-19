@@ -29,27 +29,40 @@ const START_WAIT: Duration = Duration::from_secs(180);
 
 /// Where a help goes: the selected model, started if it is a stopped local one.
 async fn route(p: &Picky) -> Result<Route, String> {
-    if p.selection() == Selection::Local && p.runtime.ready_model().is_none() {
-        let status = p.runtime.local_status();
-        if !status.working {
-            let last: Option<String> = p.with_db(|c| pref_get(c, LAST_LOCAL)).ok().flatten();
-            let key = last.filter(|k| status.models.iter().any(|m| &m.key == k)).or_else(|| status.models.first().map(|m| m.key.clone())).ok_or("没有可用的本地模型")?;
-            p.runtime.activate(&key).await;
-            p.changed();
-        }
-        let started = std::time::Instant::now();
-        while p.runtime.ready_model().is_none() {
-            if started.elapsed() > START_WAIT {
-                return Err("本地模型还没准备好，等它就绪再试。".into());
-            }
-            if let Some(issue) = p.runtime.local_status().issue {
-                return Err(format!("本地模型没能启动：{}", issue.title));
-            }
-            tokio::time::sleep(Duration::from_millis(if p.mode == Mode::Mock { 50 } else { 1000 })).await;
-            p.runtime.refresh(false).await;
-        }
+    if p.selection() == Selection::Local {
+        ready_local(p, None).await?;
     }
     p.target()
+}
+
+/// A local model ready for work: the running one (or the one starting), else `want` (if listed),
+/// the last used or the first listed, started. Returns the key it started (None: one was there).
+pub async fn ready_local(p: &Picky, want: Option<&str>) -> Result<Option<String>, String> {
+    if p.runtime.ready_model().is_some() {
+        return Ok(None);
+    }
+    let status = p.runtime.local_status();
+    let mut started = None;
+    if !status.working {
+        let listed = |k: &String| status.models.iter().any(|m| &m.key == k);
+        let last: Option<String> = p.with_db(|c| pref_get(c, LAST_LOCAL)).ok().flatten();
+        let key = want.map(String::from).filter(listed).or(last.filter(listed)).or_else(|| status.models.first().map(|m| m.key.clone())).ok_or("没有可用的本地模型")?;
+        p.runtime.activate(&key).await;
+        p.changed();
+        started = Some(key);
+    }
+    let since = std::time::Instant::now();
+    while p.runtime.ready_model().is_none() {
+        if since.elapsed() > START_WAIT {
+            return Err("本地模型还没准备好，等它就绪再试。".into());
+        }
+        if let Some(issue) = p.runtime.local_status().issue {
+            return Err(format!("本地模型没能启动：{}", issue.title));
+        }
+        tokio::time::sleep(Duration::from_millis(if p.mode == Mode::Mock { 50 } else { 1000 })).await;
+        p.runtime.refresh(false).await;
+    }
+    Ok(started)
 }
 
 /// A module's data may go to this model (a cloud model only gets the allowed ones).
@@ -58,7 +71,7 @@ fn check(p: &Picky, route: &Route, module: &str) -> Result<(), String> {
     if !route.model.starts_with("cloud:") {
         return Ok(());
     }
-    let allowed = p.with_db(|c| Ok(data::cloud_allowed(c)))?;
+    let allowed = p.with_db(|c| Ok(data::cloud_allowed(c, &[])))?;
     let access = Access { cloud: true, cloud_allowed: allowed, ..Default::default() };
     if access.may_send(&data::Query { module: Some(m.key.into()), label: String::new(), state: "ok".into(), result: String::new(), records: vec![] }) {
         Ok(())
@@ -67,11 +80,11 @@ fn check(p: &Picky, route: &Route, module: &str) -> Result<(), String> {
     }
 }
 
-/// One answer, whole.
+/// One answer, whole; thinking when the model can (with room for it).
 async fn ask(route: &Route, system: &str, user: &str, max_tokens: i64) -> Result<String, String> {
     let mut out = String::new();
     let messages = vec![Msg::new("system", &format!("{MARK}{system}")), Msg::new("user", user)];
-    provider::stream(route.target.clone(), messages, Options { max_tokens: Some(max_tokens), thinking: Some(false), ..Default::default() }, |e| {
+    provider::stream(route.target.clone(), messages, Options { max_tokens: Some(route.with_thinking(max_tokens, true)), thinking: Some(true), ..Default::default() }, |e| {
         if let Event::Content(t) = e {
             out.push_str(&t);
         }
@@ -92,7 +105,7 @@ pub fn json_in(text: &str) -> Option<Value> {
     None
 }
 
-fn field(v: &Value, k: &str, max: usize) -> Option<String> {
+pub(crate) fn field(v: &Value, k: &str, max: usize) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(|s| s.trim().chars().take(max).collect::<String>()).filter(|s| !s.is_empty() && s != "无" && s != "未知")
 }
 
@@ -172,6 +185,8 @@ pub fn parse_work(reply: &str, kinds: &[(i64, String)]) -> Result<WorkFill, Stri
     })
 }
 
+/// 补全: 书单 / 影单检索 first (v0.4 phase 6, when on); the model only fills what it didn't find
+/// (and is not even started when it found everything).
 async fn fill_work(app: &AppHandle, module: &str, title: &str) -> Result<WorkFill, String> {
     if module != "books" && module != "films" {
         return Err("只能补全书和影视".into());
@@ -180,12 +195,25 @@ async fn fill_work(app: &AppHandle, module: &str, title: &str) -> Result<WorkFil
     if title.is_empty() {
         return Err("先填名称".into());
     }
-    let p = &app.state::<AppState>().picky;
-    let route = route(p).await?;
-    check(p, &route, module)?;
     let names: Vec<(i64, String)> = app.state::<AppState>().with_db(|c| Ok(kinds::list(c, module)?.into_iter().map(|k| (k.id, k.name)).collect()))?;
-    let system = work_prompt(module, &names.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>());
-    parse_work(&ask(&route, &system, &format!("名称：{}", common::clean(Some(title.chars().take(200).collect())).unwrap_or_default()), 512).await?, &names)
+    let looked = super::skills::work(app, module, title, None).await.map(|w| WorkFill { kind_id: super::skills::works::kind_id(&names, w.kind.as_deref()), creator: w.creator, country: w.country });
+    if let Some(f) = looked.as_ref().filter(|f| f.creator.is_some() && f.country.is_some() && f.kind_id.is_some()) {
+        return Ok(f.clone());
+    }
+    let p = &app.state::<AppState>().picky;
+    let by_model = async {
+        let route = route(p).await?;
+        check(p, &route, module)?;
+        let system = work_prompt(module, &names.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>());
+        parse_work(&ask(&route, &system, &format!("名称：{}", common::clean(Some(title.chars().take(200).collect())).unwrap_or_default()), 512).await?, &names)
+    }
+    .await;
+    match (looked, by_model) {
+        // what the lookup found wins
+        (Some(l), Ok(m)) => Ok(WorkFill { creator: l.creator.or(m.creator), country: l.country.or(m.country), kind_id: l.kind_id.or(m.kind_id) }),
+        (Some(l), Err(_)) => Ok(l),
+        (None, m) => m,
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -216,6 +244,8 @@ async fn fill_job(app: &AppHandle, jd: &str) -> Result<JobFill, String> {
 }
 
 pub const SPLIT: &str = "把用户的任务拆成 3～8 个具体、一次能做完的子任务，按先后顺序，避开已经有的子任务。只输出一个 JSON 数组，每项是一个子任务标题（20 字以内，不要编号），比如 [\"查资料\", \"写提纲\"]。";
+
+pub const NOTE_SPLIT: &str = "用户的一条笔记里写了几件要做的事。把它们拆成待办，每件一个，按笔记里的顺序；笔记里没提到的不要加，已经转成待办的不要再列。只输出一个 JSON 数组，每项是一个待办标题（20 字以内，动词开头，不要编号），比如 [\"给房东打电话\", \"交水电费\"]。";
 
 /// A reply's list: its JSON array, else one item per line (small models sometimes write `[一项]` lines).
 fn list_in(reply: &str) -> Vec<Value> {
@@ -277,6 +307,23 @@ async fn split_task(app: &AppHandle, task_id: i64) -> Result<Vec<String>, String
         Ok((user, have))
     })?;
     parse_list(&ask(&route, SPLIT, &user, 1024).await?, 8, &have)
+}
+
+/// 念念不忘 让小拾拆成待办: the things to do a note mentions (those already made into tasks left out).
+async fn split_note(app: &AppHandle, note_id: i64) -> Result<Vec<String>, String> {
+    let p = &app.state::<AppState>().picky;
+    let route = route(p).await?;
+    check(p, &route, "notes")?;
+    let (user, have) = app.state::<AppState>().with_db(|c| {
+        let n = crate::modules::notes::get(c, note_id)?;
+        let have: Vec<String> = n.tasks.iter().map(|t| t.title.replace("**", "")).collect();
+        let mut user = format!("笔记：\n{}", n.content.trim());
+        if !have.is_empty() {
+            user.push_str(&format!("\n\n已经转成的待办：{}", have.join("、")));
+        }
+        Ok((user, have))
+    })?;
+    parse_list(&ask(&route, NOTE_SPLIT, &user, 1024).await?, 12, &have)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -480,7 +527,7 @@ pub struct QuickFill {
 }
 
 /// By name: exact, else the one name that contains it (or it contains).
-fn pick(name: Option<String>, list: &[(i64, String)]) -> Option<i64> {
+pub(crate) fn pick(name: Option<String>, list: &[(i64, String)]) -> Option<i64> {
     let n = name?.trim().to_lowercase();
     if n.is_empty() {
         return None;
@@ -492,7 +539,7 @@ fn pick(name: Option<String>, list: &[(i64, String)]) -> Option<i64> {
     (near.len() == 1).then(|| near[0])
 }
 
-fn date(v: &Value, k: &str) -> Option<String> {
+pub(crate) fn date(v: &Value, k: &str) -> Option<String> {
     field(v, k, 10).filter(|d| common::check_date(&Some(d.clone()), "").is_ok())
 }
 
@@ -526,7 +573,7 @@ fn joined(list: &[(i64, String)]) -> String {
 }
 
 /// The module's fields for the prompt, and how to read the answer back (with the sentence).
-fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) -> Result<(String, Box<dyn Fn(&Value, &str) -> QuickFill + Send + Sync>), String> {
+pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) -> Result<(String, Box<dyn Fn(&Value, &str) -> QuickFill + Send + Sync>), String> {
     let text = |v: &Value, k: &str, n: usize| field(v, k, n);
     match module {
         "finance" => {
@@ -686,6 +733,15 @@ async fn quick_fill(app: &AppHandle, module: &str, sentence: &str) -> Result<Qui
     let v = json_in(&reply).filter(Value::is_object).ok_or("没看懂这句话，换个说法试试")?;
     let mut f = read(&v, sentence);
     fix_dates(module, &mut f, sentence, &today);
+    // 书影: the creator / country / 类型 from 书单 / 影单检索 (when on and found)
+    if let (true, Some(title)) = (module == "books" || module == "films", f.title.clone()) {
+        if let Some(w) = super::skills::work(app, module, &title, f.creator.as_deref()).await {
+            let names: Vec<(i64, String)> = app.state::<AppState>().with_db(|c| Ok(kinds::list(c, module)?.into_iter().map(|k| (k.id, k.name)).collect()))?;
+            f.creator = w.creator.or(f.creator);
+            f.country = w.country.or(f.country);
+            f.kind_id = super::skills::works::kind_id(&names, w.kind.as_deref()).or(f.kind_id);
+        }
+    }
     Ok(f)
 }
 
@@ -711,6 +767,11 @@ pub fn mock_reply(system: &str, user: &str) -> String {
         "```json\n{\"company\": \"模拟公司\", \"position\": \"产品经理\", \"location\": \"上海\"}\n```".into()
     } else if system.contains("子任务") {
         "[\"列出要做的步骤\", \"先做第一步\", \"检查一遍\"]".into()
+    } else if system.contains("拆成待办") {
+        // one per line of the note (its list items or sentences), up to 5
+        let note = user.split("笔记：\n").nth(1).unwrap_or(user).split("\n\n已经转成的待办").next().unwrap_or("");
+        let items: Vec<String> = note.split(['\n', '；', '。']).map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c.is_ascii_digit() || c == '.').trim().to_string()).filter(|l| !l.is_empty() && !l.starts_with('#')).take(5).collect();
+        serde_json::to_string(&items).unwrap_or_default()
     } else if system.contains("出门") {
         let k = first_kind(system);
         format!("[{{\"name\": \"充电宝\", \"kind\": \"{k}\"}}, {{\"name\": \"雨伞\", \"kind\": \"{k}\"}}, {{\"name\": \"常用药\", \"kind\": \"{k}\"}}]")
@@ -801,6 +862,11 @@ pub async fn picky_split_task(app: AppHandle, task_id: i64) -> Result<Vec<String
 }
 
 #[tauri::command]
+pub async fn picky_split_note(app: AppHandle, note_id: i64) -> Result<Vec<String>, String> {
+    split_note(&app, note_id).await
+}
+
+#[tauri::command]
 pub async fn picky_trip_missing(app: AppHandle, trip_id: i64) -> Result<Vec<ItemIdea>, String> {
     trip_missing(&app, trip_id).await
 }
@@ -854,6 +920,8 @@ mod tests {
         assert_eq!(parse_work(&ask(&work_prompt("books", &["虚构".into()]), "名称：沙丘"), &kinds).unwrap().kind_id, Some(1));
         assert_eq!(parse_job(&ask(JOB, "招聘")).unwrap().company.as_deref(), Some("模拟公司"));
         assert_eq!(parse_list(&ask(SPLIT, "任务：写论文"), 8, &[]).unwrap().len(), 3);
+        let todos = parse_list(&ask(NOTE_SPLIT, "笔记：\n周末要做的 #生活\n- 交水电费\n- 给房东打电话\n\n已经转成的待办：交水电费"), 12, &["交水电费".into()]).unwrap();
+        assert_eq!(todos, ["周末要做的 #生活", "给房东打电话"]);
         let items = parse_items(&ask(&trip_prompt(&["随身".into()]), "出行：东京"), &[(9, "随身".into())], &[]).unwrap();
         assert_eq!((items.len(), items[0].kind_id), (3, Some(9)));
     }
@@ -867,7 +935,7 @@ mod tests {
             return;
         }
         let model = std::env::var("POMELO_MODEL").unwrap_or_else(|_| "qwen3.5-9b".into());
-        let route = Route { target: crate::picky::provider::Target::Local { model }, model: "local:x".into(), name: "X".into(), window: 32768 };
+        let route = Route { target: crate::picky::provider::Target::Local { model }, model: "local:x".into(), name: "X".into(), window: 32768, think: crate::picky::cloud::Think::Switch };
         let run = |label: &str, system: &str, user: &str| {
             let t = std::time::Instant::now();
             let out = tauri::async_runtime::block_on(ask(&route, system, user, 1024)).unwrap();
@@ -1016,7 +1084,7 @@ mod tests {
             return;
         }
         let model = std::env::var("POMELO_MODEL").unwrap_or_else(|_| "qwen3.5-9b".into());
-        let route = Route { target: crate::picky::provider::Target::Local { model }, model: "local:x".into(), name: "X".into(), window: 32768 };
+        let route = Route { target: crate::picky::provider::Target::Local { model }, model: "local:x".into(), name: "X".into(), window: 32768, think: crate::picky::cloud::Think::Switch };
         let c = memory_db();
         let g = todo::create_group(&c, "学业").unwrap().id;
         todo::create_group(&c, "个人项目").unwrap();
