@@ -84,8 +84,8 @@ export function useFilled<K extends string>() {
   return {
     mark: (keys: K[]) => setFilled((s) => new Set([...s, ...keys])),
     clear: (k: K) => setFilled((s) => (s.has(k) ? new Set([...s].filter((x) => x !== k)) : s)),
-    /** Text inputs: the field itself. */
-    cls: (k: K) => (filled.has(k) ? "bg-accent" : ""),
+    /** Text inputs: the field itself (over the input's own bg-card, which comes later in the CSS). */
+    cls: (k: K) => (filled.has(k) ? "bg-accent!" : ""),
     /** Other controls (pickers, dates, segments): a 浅柚红 halo around them. */
     halo: (k: K) => (filled.has(k) ? "w-fit rounded-control shadow-[0_0_0_3px_var(--accent)]" : "w-fit"),
   };
@@ -178,7 +178,8 @@ export function Polish(props: { module: string; value: string; onChange: (text: 
 
 type PolishState = { kind: "idle" } | { kind: "working" } | { kind: "done"; from: string; text: string } | { kind: "error"; message: string };
 
-function PolishBox(props: { module: string; value: string; onReplace: (text: string) => void; onClose: () => void }) {
+/** The 润色 box itself (呦呦漫游's body uses it on a selection). */
+export function PolishBox(props: { module: string; value: string; onReplace: (text: string) => void; onClose: () => void }) {
   const status = usePickyStatus().data;
   const [request, setRequest] = useState("");
   const [state, setState] = useState<PolishState>({ kind: "idle" });

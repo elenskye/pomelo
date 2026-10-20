@@ -2,11 +2,12 @@
 // open task panel…) — the innermost registered element under the drop point, or holding the focus for
 // a paste. The app's window delivers drops as paths (Tauri); the browser mock delivers File objects.
 // A window drop that hits no target goes to the latest one still on screen (the note being edited,
-// the open panel, else the box for a new note).
+// the open panel, else the box for a new note). 附件 targets store attachments; others (呦呦漫游's
+// editor) take the paths / files themselves (useDropTarget).
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { attachmentsApi, type FileInfo } from "./api";
 
-type Target = { el: RefObject<HTMLElement | null>; add: (files: Promise<FileInfo[]>) => void; hover: (on: boolean) => void };
+type Target = { el: RefObject<HTMLElement | null>; paths: (paths: string[]) => void; files: (files: File[]) => void; hover: (on: boolean) => void };
 
 const targets: Target[] = [];
 let hovered: Target | null = null;
@@ -29,10 +30,6 @@ function setHovered(t: Target | null) {
   t?.hover(true);
 }
 
-function fromFiles(files: File[]): Promise<FileInfo[]> {
-  return Promise.all(files.map((f) => attachmentsApi.addFile(f)));
-}
-
 function install() {
   if (installed) return;
   installed = true;
@@ -44,7 +41,7 @@ function install() {
         const r = window.devicePixelRatio || 1;
         const t = targetOf(document.elementFromPoint(d.position.x / r, d.position.y / r)) ?? [...targets].reverse().find((x) => x.el.current?.isConnected) ?? null;
         setHovered(d.type === "drop" ? null : t);
-        if (d.type === "drop" && t && d.paths.length) t.add(attachmentsApi.addPaths(d.paths));
+        if (d.type === "drop" && t && d.paths.length) t.paths(d.paths);
       }),
     )
     .catch(() => {});
@@ -63,7 +60,7 @@ function install() {
     setHovered(null);
     if (!files.length || !t) return;
     e.preventDefault();
-    t.add(fromFiles(files));
+    t.files(files);
   });
   // capture: before an editable box would paste the file as text
   document.addEventListener(
@@ -73,21 +70,22 @@ function install() {
       const t = files.length ? targetOf(document.activeElement) : null;
       if (!t) return;
       e.preventDefault();
-      t.add(fromFiles(files));
+      t.files(files);
     },
     true,
   );
 }
 
-/** Makes `el` take dropped and pasted files; returns whether files are being dragged over it. */
-export function useAttachTarget(el: RefObject<HTMLElement | null>, onFiles: (files: FileInfo[]) => void, onError: (e: unknown) => void, enabled = true) {
+/** Makes `el` take dropped paths (the app window) and dropped / pasted files (the browser, screenshots);
+ * returns whether files are being dragged over it. */
+export function useDropTarget(el: RefObject<HTMLElement | null>, take: { paths: (paths: string[]) => void; files: (files: File[]) => void }, enabled = true) {
   const [dropping, setDropping] = useState(false);
-  const cb = useRef({ onFiles, onError });
-  cb.current = { onFiles, onError };
+  const cb = useRef(take);
+  cb.current = take;
   useEffect(() => {
     if (!enabled) return;
     install();
-    const t: Target = { el, add: (p) => void p.then((fs) => cb.current.onFiles(fs), (e) => cb.current.onError(e)), hover: setDropping };
+    const t: Target = { el, paths: (p) => cb.current.paths(p), files: (f) => cb.current.files(f), hover: setDropping };
     targets.push(t);
     return () => {
       targets.splice(targets.indexOf(t), 1);
@@ -95,4 +93,10 @@ export function useAttachTarget(el: RefObject<HTMLElement | null>, onFiles: (fil
     };
   }, [el, enabled]);
   return dropping;
+}
+
+/** Makes `el` take dropped and pasted files; returns whether files are being dragged over it. */
+export function useAttachTarget(el: RefObject<HTMLElement | null>, onFiles: (files: FileInfo[]) => void, onError: (e: unknown) => void, enabled = true) {
+  const add = (p: Promise<FileInfo[]>) => void p.then(onFiles, onError);
+  return useDropTarget(el, { paths: (paths) => add(attachmentsApi.addPaths(paths)), files: (files) => add(Promise.all(files.map((f) => attachmentsApi.addFile(f)))) }, enabled);
 }

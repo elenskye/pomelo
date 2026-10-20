@@ -12,6 +12,7 @@ mod picky;
 mod search;
 mod secure;
 mod settings;
+mod site;
 mod transfer;
 mod tray;
 mod undo;
@@ -161,6 +162,7 @@ pub fn run() {
             let mode = picky::mode(scratch);
             let root = paths::resolve_root(&base, overridden.map(Into::into));
             let home = app.path().home_dir()?;
+            app.manage(site::Site::new(site::mode(scratch), &home, &root));
             app.manage(AppState::init(DataPaths::new(root), &home, mode));
             let handle = app.handle().clone();
             app.state::<AppState>().picky.set_app(handle.clone());
@@ -186,6 +188,18 @@ pub fn run() {
                 let resp = match found {
                     Ok((bytes, mime)) => tauri::http::Response::builder().header("Content-Type", mime).header("Cache-Control", "max-age=31536000, immutable").body(bytes),
                     Err(_) => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                responder.respond(resp.unwrap_or_else(|_| tauri::http::Response::new(Vec::new())));
+            });
+        })
+        // 呦呦漫游's images for the page: pomelo-site://localhost/<url on the site> (images under the site's public/)
+        .register_asynchronous_uri_scheme_protocol("pomelo-site", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                let url = modules::attachments::percent_decode(request.uri().path());
+                let resp = match site::public_image(&app, &url) {
+                    Some((bytes, mime)) => tauri::http::Response::builder().header("Content-Type", mime).header("Cache-Control", "no-cache").body(bytes),
+                    None => tauri::http::Response::builder().status(404).body(Vec::new()),
                 };
                 responder.respond(resp.unwrap_or_else(|_| tauri::http::Response::new(Vec::new())));
             });
@@ -265,6 +279,10 @@ pub fn run() {
             picky::assistants::translate::picky_translate_preview,
             picky::assistants::translate::picky_translate_run,
             picky::assistants::translate::picky_translate_stop,
+            picky::assistants::site::picky_site_draft,
+            picky::assistants::site::picky_site_draft_run,
+            picky::assistants::site::picky_site_draft_stop,
+            picky::assistants::site::picky_site_draft_clear,
             picky::storage::picky_storage,
             picky::storage::picky_storage_delete_file,
             picky::storage::picky_storage_delete_stray,
@@ -285,6 +303,7 @@ pub fn run() {
             picky::templates::picky_template_delete,
             picky::data::picky_data_cloud,
             picky::assist::picky_polish,
+            picky::assist::picky_site_english,
             picky::assist::picky_fill_work,
             picky::assist::picky_fill_job,
             picky::assist::picky_split_task,
@@ -467,6 +486,47 @@ pub fn run() {
             picky::act::card::picky_card_cancel,
             search::query::search_index_status,
             home::home_overview,
+            site::site_overview,
+            site::site_changes,
+            site::site_diff,
+            site::site_prepare,
+            site::site_publish,
+            site::site_dismiss,
+            site::site_history,
+            site::site_server_start,
+            site::site_server_stop,
+            site::site_sandbox,
+            site::site_set_folder,
+            site::site_works,
+            site::site_work,
+            site::site_work_save,
+            site::site_work_create,
+            site::site_work_add_version,
+            site::site_work_rename,
+            site::site_work_delete,
+            site::site_image_bytes,
+            site::site_files_add,
+            site::site_now_list,
+            site::site_now,
+            site::site_now_save,
+            site::site_now_create,
+            site::site_now_delete,
+            site::site_status_save,
+            site::site_about,
+            site::site_about_save,
+            site::site_career,
+            site::site_career_save,
+            site::site_registry,
+            site::site_registry_save,
+            site::site_registry_citations,
+            site::site_registry_delete,
+            site::site_registry_unregistered,
+            site::site_registry_adopt,
+            site::site_terms,
+            site::site_terms_save,
+            site::site_links_save,
+            site::site_assets,
+            site::site_preview,
             modules::vault::vault_status,
             modules::vault::vault_setup,
             modules::vault::vault_unlock,
@@ -535,6 +595,7 @@ pub fn run() {
             RunEvent::Exit => {
                 picky::chat::shutdown(app);
                 app.state::<AppState>().picky.runtime.stop_ours_on_exit();
+                app.state::<site::Site>().on_exit();
             }
             _ => {}
         });

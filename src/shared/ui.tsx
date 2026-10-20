@@ -1,7 +1,7 @@
 // Shared UI primitives styled to docs/design.md (no component library). Dropdowns: ./Dropdown.tsx.
 import type { LucideIcon } from "lucide-react";
 import { Search } from "lucide-react";
-import type { ButtonHTMLAttributes, ComponentProps, ReactNode, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from "react";
 
 export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; right?: ReactNode }) {
   const Icon = props.icon;
@@ -54,7 +54,7 @@ export function TextInput({ className, ...rest }: ComponentProps<"input">) {
   return <input type="text" autoComplete="off" spellCheck={false} className={`${inputClass} ${className ?? ""}`} {...rest} />;
 }
 
-export function TextArea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function TextArea({ className, ...rest }: ComponentProps<"textarea">) {
   return <textarea spellCheck={false} className={`${inputClass} resize-none leading-relaxed ${className ?? ""}`} {...rest} />;
 }
 

@@ -38,6 +38,8 @@ calamine = "0.36"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.42"
 dom_smoothie = "0.18"
+# 呦呦漫游 (v0.5): reads the website's front matter (written back by site/yaml.rs, as Keystatic's js-yaml does)
+yaml-rust2 = { version = "0.13", default-features = false }
 
 [profile.release]
 codegen-units = 1

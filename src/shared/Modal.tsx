@@ -10,6 +10,7 @@ export function Modal(props: {
   children: ReactNode;
   footerLeft?: ReactNode;
   submitLabel: string;
+  submitDisabled?: boolean;
   extra?: ReactNode;
   wide?: boolean;
 }) {
@@ -35,7 +36,7 @@ export function Modal(props: {
           {props.footerLeft}
           <div className="flex-1" />
           <Button onClick={props.onClose}>取消</Button>
-          <Button type="submit" variant="primary">
+          <Button type="submit" variant="primary" disabled={props.submitDisabled}>
             {props.submitLabel}
           </Button>
         </div>

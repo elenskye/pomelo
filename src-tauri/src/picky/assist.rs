@@ -4,7 +4,8 @@
 //! - 润色: a note rewritten to this time's request (任务内容、目标复盘、投递备注、书影 / 课节 / 出行 /
 //!   收支的备注; never 念念不忘).
 //! - 补全: 书影 (作者 / 导演、国家、类型 from the model's own knowledge), JD (公司、岗位、地点), a task's
-//!   子任务, what a trip may have forgotten (names + 类别).
+//!   子任务, what a trip may have forgotten (names + 类别), a website work's English title and summary
+//!   (呦呦漫游, from its Chinese title, summary and the start of its body).
 //! - Same model as 小拾; a stopped local model is started first (the last one picked, else the first in
 //!   the list). A module a cloud model may not get (钱来钱往 by default) is refused.
 
@@ -66,8 +67,8 @@ pub async fn ready_local(p: &Picky, want: Option<&str>) -> Result<Option<String>
 }
 
 /// A module's data may go to this model (a cloud model only gets the allowed ones).
-fn check(p: &Picky, route: &Route, module: &str) -> Result<(), String> {
-    let m = data::MODULES.iter().find(|m| m.key == module).ok_or_else(|| format!("没有这个模块：{module}"))?;
+pub(crate) fn check(p: &Picky, route: &Route, module: &str) -> Result<(), String> {
+    let m = data::module_info(module).ok_or_else(|| format!("没有这个模块：{module}"))?;
     if !route.model.starts_with("cloud:") {
         return Ok(());
     }
@@ -157,6 +158,43 @@ async fn polish(app: &AppHandle, module: &str, text: &str, request: &str) -> Res
 }
 
 // ---------- 补全 ----------
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SiteEnglish {
+    pub title: Option<String>,
+    pub summary: Option<String>,
+}
+
+pub const SITE_EN: &str = "你帮我给个人网站上一篇中文作品起草英文标题和英文摘要，它们显示在英文页上（读者还看不到英文全文）。标题译得自然、简洁，专有名词照常用的英文写法；摘要用一两句英文说这篇写了什么，不超过 50 个词，语气平实，不夸张。只输出 JSON：{\"title\": \"…\", \"summary\": \"…\"}。";
+
+pub fn parse_site_english(reply: &str) -> Result<SiteEnglish, String> {
+    let v = json_in(reply).ok_or("模型没有给出英文标题和摘要，再试一次吧")?;
+    let out = SiteEnglish { title: field(&v, "title", 200), summary: field(&v, "summary", 800) };
+    if out.title.is_none() && out.summary.is_none() {
+        return Err("模型没有给出英文标题和摘要，再试一次吧".into());
+    }
+    Ok(out)
+}
+
+async fn site_english(app: &AppHandle, title: &str, summary: &str, body: &str) -> Result<SiteEnglish, String> {
+    if title.trim().is_empty() && body.trim().is_empty() {
+        return Err("先写中文的标题或正文".into());
+    }
+    let p = &app.state::<AppState>().picky;
+    let route = route(p).await?;
+    check(p, &route, "site")?;
+    site_english_with(&route, title, summary, body).await
+}
+
+pub(crate) async fn site_english_with(route: &Route, title: &str, summary: &str, body: &str) -> Result<SiteEnglish, String> {
+    let body: String = body.trim().chars().take(3000).collect();
+    let mut user = format!("标题：{}\n", title.trim());
+    if !summary.trim().is_empty() {
+        user += &format!("摘要：{}\n", summary.trim());
+    }
+    user += &format!("正文：\n{body}");
+    parse_site_english(&ask(route, SITE_EN, &user, 600).await?)
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -758,7 +796,10 @@ pub fn mock_reply(system: &str, user: &str) -> String {
     if system.contains("拆成各个字段") {
         return mock_quick(system, user);
     }
-    if system.contains("润色") {
+    if system.contains("英文标题和英文摘要") {
+        let title = user.lines().next().and_then(|l| l.strip_prefix("标题：")).unwrap_or("");
+        format!("{{\"title\": \"[Mock] {title}\", \"summary\": \"A mock summary of this piece.\"}}")
+    } else if system.contains("润色") {
         let text = user.split("原文：\n").nth(1).unwrap_or(user);
         format!("{}（模拟润色）", text.replace('很', "非常"))
     } else if system.contains("补全信息") {
@@ -846,6 +887,12 @@ pub async fn picky_polish(app: AppHandle, module: String, text: String, request:
     polish(&app, &module, &text, &request).await
 }
 
+/// 呦呦漫游: the English stub's title and summary, drafted from the Chinese.
+#[tauri::command]
+pub async fn picky_site_english(app: AppHandle, title: String, summary: String, body: String) -> Result<SiteEnglish, String> {
+    site_english(&app, &title, &summary, &body).await
+}
+
 #[tauri::command]
 pub async fn picky_fill_work(app: AppHandle, module: String, title: String) -> Result<WorkFill, String> {
     fill_work(&app, &module, &title).await
@@ -880,6 +927,14 @@ pub fn remember_local(conn: &rusqlite::Connection, key: &str) {
 mod tests {
     use super::*;
     use crate::db::tests::memory_db;
+
+    #[test]
+    fn site_english_from_the_reply() {
+        let reply = mock_reply(&format!("{MARK}{SITE_EN}"), "标题：春天的散步\n正文：\n沿着河边走了一圈");
+        assert_eq!(parse_site_english(&reply).unwrap(), SiteEnglish { title: Some("[Mock] 春天的散步".into()), summary: Some("A mock summary of this piece.".into()) });
+        assert_eq!(parse_site_english("{\"title\": \"Big Fish\"}").unwrap().summary, None);
+        assert!(parse_site_english("Sorry").is_err() && parse_site_english("{\"title\": \"\"}").is_err());
+    }
 
     #[test]
     fn replies_are_read_through_fences_and_chatter() {

@@ -10,6 +10,8 @@
 //! - 五花八门 / 循序渐进: one tool each (`pomelo_lists`, `pomelo_progress`) for every module made from
 //!   it; each made module is hidden / allowed for the cloud on its own (key "list/3"), like a module.
 //! - Tool definitions carry no user data (no names, categories, amounts).
+//! - 呦呦漫游 (HELP_ONLY): 小拾 helps in its editor (润色、补全、起草英文版) but never reads it — no tool,
+//!   only its 「发给云端」 switch (allowed by default: the site is public once published).
 //! - Nothing here writes Pomelo data.
 
 use super::provider::{Msg, ToolCall};
@@ -52,11 +54,19 @@ pub const MODULES: &[Module] = &[
     Module { key: "days", label: "来日方长", tool: "pomelo_days", cloud: true },
 ];
 
+/// Modules 小拾 only helps in (assist.rs), never reads: no tool, only a 「发给云端」 switch.
+pub const HELP_ONLY: &[Module] = &[Module { key: "site", label: "呦呦漫游", tool: "", cloud: true }];
+
 /// The `module` of what a skill (skills/) brought from the web.
 pub const WEB: &str = "web";
 
 fn module(key: &str) -> Option<&'static Module> {
-    MODULES.iter().find(|m| m.key == key)
+    MODULES.iter().chain(HELP_ONLY).find(|m| m.key == key)
+}
+
+/// A module 小拾 knows (reads or helps in).
+pub fn module_info(key: &str) -> Option<&'static Module> {
+    module(key)
 }
 
 // ---------- 设置 → 小拾: 允许发给云端 ----------
@@ -73,7 +83,7 @@ pub struct CloudSetting {
 /// their default.
 pub fn cloud_settings(conn: &Connection, made: &[Made]) -> Result<Vec<CloudSetting>, String> {
     let saved: HashMap<String, bool> = pref_get(conn, CLOUD_KEY).ok().flatten().unwrap_or_default();
-    let fixed = MODULES.iter().map(|m| CloudSetting { module: m.key.into(), label: m.label.into(), allowed: saved.get(m.key).copied().unwrap_or(m.cloud) });
+    let fixed = MODULES.iter().chain(HELP_ONLY).map(|m| CloudSetting { module: m.key.into(), label: m.label.into(), allowed: saved.get(m.key).copied().unwrap_or(m.cloud) });
     let made = made.iter().map(|m| CloudSetting { module: m.key.clone(), label: m.name.clone(), allowed: saved.get(&m.key).copied().unwrap_or(true) });
     Ok(fixed.chain(made).collect())
 }
@@ -163,7 +173,7 @@ impl Access {
             (Some(_), _) => self.check_made(key).is_ok(),
             // a result about several made modules: all of them must be readable
             (None, Some(t)) => self.made.iter().filter(|m| m.template == t).all(|m| self.check_made(&m.key).is_ok()),
-            _ => MODULES.iter().find(|m| m.key == key).is_some_and(|m| self.check(m).is_ok()),
+            _ => module(key).is_some_and(|m| self.check(m).is_ok()),
         }
     }
     /// An earlier result may go to this model (its module is readable and allowed here).
@@ -3070,11 +3080,14 @@ pub mod tests {
         let p = crate::picky::store::tests::memory_db();
         let made = [Made { key: "list/3".into(), name: "游戏".into(), template: Template::List }, Made { key: "progress/4".into(), name: "日语".into(), template: Template::Progress }];
         let allowed = |p: &Connection| cloud_settings(p, &made).unwrap().into_iter().filter(|s| s.allowed).map(|s| s.module).collect::<Vec<_>>();
-        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", "jobs", "notes", "days", "list/3", "progress/4"]);
+        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", "jobs", "notes", "days", "site", "list/3", "progress/4"]);
         set_cloud(&p, "finance", true, &made).unwrap();
         set_cloud(&p, "notes", false, &made).unwrap();
         set_cloud(&p, "list/3", false, &made).unwrap();
+        set_cloud(&p, "site", false, &made).unwrap();
         assert_eq!(cloud_allowed(&p, &["list/3".into(), "progress/4".into(), "list/9".into()]), ["todo", "books", "films", "drawing", "packing", "finance", "jobs", "days", "progress/4", "list/9"]);
+        // 呦呦漫游 has a switch but never a tool
+        assert!(!tools(&all()).iter().any(|t| t.to_string().contains("site")));
         assert_eq!(cloud_settings(&p, &made).unwrap().last().unwrap().label, "日语");
         assert!(set_cloud(&p, "vault", true, &made).is_err() && set_cloud(&p, "list/9", true, &made).is_err());
     }

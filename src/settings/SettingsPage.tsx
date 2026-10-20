@@ -7,6 +7,7 @@ import { BackupsSection } from "./Backups";
 import { PickySection } from "./Picky";
 import { Path, Row, Section } from "./layout";
 import { SidebarSection } from "./Sidebar";
+import { SiteSection } from "./Site";
 import { StartupSection } from "./Startup";
 import { ExportRow, ImportRow } from "./Transfer";
 import { VaultSection } from "./Vault";
@@ -40,6 +41,7 @@ export default function SettingsPage() {
         </Section>
         <SidebarSection />
         <StartupSection />
+        <SiteSection />
         <Section title="导出与导入">
           <ExportRow />
           <ImportRow />

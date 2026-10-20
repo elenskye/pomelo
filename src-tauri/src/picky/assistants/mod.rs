@@ -5,10 +5,13 @@
 //!   never exported. Model work goes through the same 小拾服务 as everything else (schedule.rs `route`
 //!   for its own model choice, provider.rs for the call), without taking a conversation's slot.
 
+pub mod site;
 pub mod translate;
 
 /// What the assistants are doing right now (in memory).
 #[derive(Default)]
 pub struct State {
     pub translate: translate::Live,
+    /// 呦呦漫游's 按中文起草英文版 (the same pipeline as 翻译).
+    pub site: site::Live,
 }

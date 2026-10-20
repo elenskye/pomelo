@@ -2349,7 +2349,7 @@ type PQuery = { module: string | null; label: string; state: string; result: str
 const P_MODULES: [string, string, boolean][] = [
   ["todo", "一步一步", true], ["books", "摸鱼读读", true], ["films", "好奇看看", true], ["drawing", "随意画画", true],
   ["packing", "出门走走", true], ["finance", "钱来钱往", false], ["jobs", "投石问路", true], ["notes", "念念不忘", true],
-  ["days", "来日方长", true],
+  ["days", "来日方长", true], ["site", "呦呦漫游", true],
 ];
 /** assist.rs mentions: two characters in a row of the name (emoji, spaces left out). */
 const mentions = (sentence: string, name: string) => {
@@ -4663,8 +4663,531 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
   },
 };
 
+// ---- 呦呦漫游 (site/): a pretend website. ?mock&site=sandbox (开发版，还没副本) | missing | clean | big (a file too big) | ahead (an unpushed commit)
+const siteParam = new URLSearchParams(location.search).get("site") ?? "";
+const svgUrl = (fill: string, text: string) =>
+  "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="320" height="200" fill="${fill}"/><text x="160" y="108" font-size="22" text-anchor="middle" fill="#fff">${text}</text></svg>`)));
+type SiteJob = { id: number; step: "check" | "push" | "deploy"; state: "running" | "done" | "failed"; since: number; subject: string; sha: string | null; error: string | null; log: string[]; deployUrl: string | null; unknown: boolean };
+const site = {
+  sandbox: siteParam === "sandbox",
+  hasCopy: siteParam !== "sandbox",
+  missing: siteParam === "missing",
+  server: { state: "stopped" as "stopped" | "starting" | "running", ours: false },
+  job: null as SiteJob | null,
+  jobs: 0,
+  files: (siteParam === "clean"
+    ? []
+    : [
+        { path: "public/assets/images/spring-walk-2.jpg", action: "add", kind: "content", label: "图片 spring-walk-2.jpg", size: 820_000 },
+        ...(siteParam === "big" ? [{ path: "public/assets/images/spring-walk-raw.png", action: "add", kind: "content", label: "图片 spring-walk-raw.png", size: 2_516_582, blocked: "图片有 2.4 MB，网站规定不超过 1.5 MB" }] : []),
+        { path: "public/assets/images/spring-walk-cover.webp", action: "modify", kind: "content", label: "图片 spring-walk-cover.webp", size: 96_000 },
+        { path: "src/content/now/2026-10.en.md", action: "add", kind: "content", label: "Now 2026-10 English", size: 2_100 },
+        { path: "src/content/wander/spring-walk.zh.md", action: "modify", kind: "content", label: "作品《春天的散步》中文", size: 3_180 },
+        { path: "src/data/now-status.json", action: "modify", kind: "content", label: "当下状态", size: 48 },
+        { path: "src/components/WanderWall.astro", action: "modify", kind: "code", label: "src/components/WanderWall.astro", size: 6_400 },
+      ]
+  ).map((f) => ({ from: null, blocked: null, ...f })) as Record<string, unknown>[],
+  ahead: siteParam === "ahead" ? [{ sha: "a1b2c3d", subject: "fix: 页脚链接", time: Math.floor(Date.now() / 1000) - 3600 }] : [],
+  history: Array.from({ length: 6 }, (_, i) => ({
+    sha: `${(9 - i).toString(16)}e5f${i}`,
+    subject: ["content: 春天的散步", "content: Now 2026-09", "fix: 卡片间距", "content: 外部链接", "content: 关于我", "initial commit"][i],
+    time: Math.floor(Date.now() / 1000) - (i + 1) * 86400 * 2,
+    state: i === 0 ? "pending" : "success",
+    url: `https://vercel.com/team/site/dep${i}`,
+  })),
+};
+const siteToken = () => `t${site.files.length}-${site.ahead.length}-${site.jobs}`;
+const siteProblem = () =>
+  site.missing ? { kind: "missing", text: "找不到网站文件夹：/Users/me/Documents/GitHub/personal-website" } : site.sandbox && !site.hasCopy ? { kind: "no-sandbox", text: "开发版用网站的副本，还没有建" } : null;
+const siteOverview = () => ({
+  mode: site.sandbox ? "sandbox" : "real",
+  folder: site.sandbox ? "/Users/me/Library/Application Support/Pomelo OS Dev/site-sandbox/website" : "/Users/me/Documents/GitHub/personal-website",
+  isDefault: true,
+  problem: siteProblem(),
+  siteUrl: "https://elenskye.com",
+  githubUrl: site.sandbox || siteProblem() ? null : "https://github.com/elenskye/elenskye-website",
+  server: { ...site.server, url: `http://127.0.0.1:${site.sandbox ? 4338 : 4328}/`, error: null },
+  job: site.job ? { ...site.job, log: site.job.state === "running" && site.job.step === "check" ? ["> astro build"] : site.job.log } : null,
+});
+const siteChanges = () => ({ files: site.files, ahead: site.ahead, token: siteToken() });
+const siteRun = (message: string) => {
+  const id = ++site.jobs;
+  const subject = message.trim().split("\n")[0] ?? "";
+  site.job = { id, step: "check", state: "running", since: Date.now(), subject, sha: null, error: null, log: [], deployUrl: null, unknown: false };
+  const at = (ms: number, f: (j: SiteJob) => void) => setTimeout(() => site.job?.id === id && f(site.job), ms);
+  if (message.includes("失败测试"))
+    return at(2500, (j) => Object.assign(j, { state: "failed", error: "网站的检查没有通过，什么都没提交。", log: ["> astro build", "[InvalidContentEntryDataError] wander → spring-walk.zh data does not match collection schema.", "  month: Invalid input", "npm error Lifecycle script `build:site` failed with error:", "npm error code 1"] }));
+  at(2500, (j) => Object.assign(j, { step: "push", since: Date.now() }));
+  at(3500, (j) => {
+    Object.assign(j, { step: "deploy", since: Date.now(), sha: "f00d123", deployUrl: "https://vercel.com/team/site/depnew" });
+    site.history.unshift({ sha: "f00d123", subject: subject || site.ahead[0]?.subject || "", time: Math.floor(Date.now() / 1000), state: "pending", url: "https://vercel.com/team/site/depnew" });
+    site.files = [];
+    site.ahead = [];
+  });
+  at(6500, (j) => {
+    const failed = message.includes("上线失败");
+    Object.assign(j, failed ? { state: "failed", error: "Vercel 没有上线这次的改动，线上还是原来的样子。" } : { state: "done" });
+    site.history[0].state = failed ? "failure" : "success";
+  });
+};
+const siteHandlers: Record<string, (a: Args) => unknown> = {
+  site_overview: () => siteOverview(),
+  site_changes: () => {
+    if (siteProblem()) throw siteProblem()!.text;
+    return siteChanges();
+  },
+  site_diff: (a) => {
+    const f = site.files.find((x) => x.path === a.path);
+    if (!f) throw "这个文件已经没有改动了";
+    if (String(f.path).match(/\.(jpe?g|png|webp)$/)) return { type: "image", before: f.action === "add" ? null : svgUrl("#9a6b4a", "以前"), after: svgUrl("#3a8a5c", "现在") };
+    if (f.kind === "code") return { type: "text", truncated: false, lines: [{ t: "hunk", s: "<section class=\"wall\">" }, { t: "ctx", s: "  <ul class=\"cards\">" }, { t: "del", s: "    {works.slice(0, 50).map((w) => (" }, { t: "add", s: "    {works.slice(0, LIMIT).map((w) => (" }, { t: "ctx", s: "      <Card work={w} />" }] };
+    return {
+      type: "text",
+      truncated: false,
+      lines: [
+        { t: "hunk", s: "" },
+        { t: "ctx", s: "---" },
+        { t: "ctx", s: "title: 春天的散步" },
+        { t: "del", s: "month: '2026-03'" },
+        { t: "add", s: "month: '2026-04'" },
+        { t: "ctx", s: "---" },
+        { t: "del", s: "沿着河边走了一圈。" },
+        { t: "add", s: "沿着河边走了一圈，樱花开了一半，风里还有一点凉。" },
+        { t: "add", s: "" },
+        { t: "add", s: "![](/assets/images/spring-walk-2.jpg)" },
+      ],
+    };
+  },
+  site_prepare: async () => {
+    await new Promise((r) => setTimeout(r, 700));
+    if (site.job?.state === "running") throw "正在发布，等这次发完";
+    return siteChanges();
+  },
+  site_publish: (a) => {
+    if (a.token !== siteToken()) throw "改动和确认框里的不一样了，再点一次「发布…」";
+    if (site.files.some((f) => f.blocked)) throw "有文件超过了网站规定的大小，不能发布";
+    if (site.files.length && !String(a.message).trim()) throw "写好 commit 文本再发布";
+    siteRun(String(a.message));
+    return siteOverview();
+  },
+  site_dismiss: () => {
+    if (site.job?.state !== "running") site.job = null;
+    return siteOverview();
+  },
+  site_history: () => ({ items: site.history.slice(0, 10), vercelUrl: site.sandbox ? null : "https://vercel.com/team/site" }),
+  site_server_start: async () => {
+    site.server = { state: "starting", ours: true };
+    await new Promise((r) => setTimeout(r, 1200));
+    site.server = { state: "running", ours: true };
+    return siteOverview().server;
+  },
+  site_server_stop: () => {
+    site.server = { state: "stopped", ours: false };
+    return siteOverview().server;
+  },
+  site_sandbox: async () => {
+    await new Promise((r) => setTimeout(r, 900));
+    site.hasCopy = true;
+    return siteOverview();
+  },
+  site_set_folder: (a) => {
+    if (a.folder && !String(a.folder).startsWith("/")) throw `找不到这个文件夹：${a.folder}`;
+    return siteOverview();
+  },
+};
+
+// ---- 呦呦漫游 · 作品 (site/wander.rs): pretend works in the pretend site
+type MVersion = { title: string; summary: string; body: string; englishTitle: string; englishSummary: string };
+type MGallery = { image: string; altZh: string; captionZh: string; altEn: string; captionEn: string };
+type MWork = { slug: string; category: string; topics: string[]; month: string; cover: string | null; gallery: MGallery[]; zh: MVersion | null; en: MVersion | null; prints: { zh: string | null; en: string | null } };
+const mV = (title: string, body = "", extra: Partial<MVersion> = {}): MVersion => ({ title, summary: "", body, englishTitle: "", englishSummary: "", ...extra });
+const siteBlobs = new Map<string, string>();
+const siteColors = ["#3a8a5c", "#c4503b", "#3a7fba", "#b07a10", "#8466c4", "#9a6b4a"];
+(window as unknown as { __pomeloSiteSrc: (url: string) => string }).__pomeloSiteSrc = (url) =>
+  siteBlobs.get(url) ?? svgUrl(siteColors[[...url].reduce((n, c) => n + c.charCodeAt(0), 0) % siteColors.length], url.split("/").pop() ?? "");
+const siteTax = {
+  categories: [
+    { slug: "notes", zh: "写作", en: "Notes" },
+    { slug: "project", zh: "项目", en: "Projects" },
+    { slug: "gallery", zh: "画廊", en: "Gallery" },
+    { slug: "literature", zh: "创作", en: "Literature" },
+  ],
+  topics: [
+    { slug: "travelogue", zh: "游记", en: "Travelogue" },
+    { slug: "essays", zh: "随笔", en: "Essays" },
+    { slug: "learning-methods", zh: "学习方法", en: "Learning Methods" },
+  ],
+};
+let sitePrint = 1;
+const mPrints = (w: MWork) => ({ zh: w.zh ? `p${sitePrint++}` : null, en: w.en ? `p${sitePrint++}` : null });
+const siteWorks: MWork[] = [
+  {
+    slug: "spring-walk",
+    category: "notes",
+    topics: ["travelogue"],
+    month: "2026-04",
+    cover: "public/assets/images/spring-walk-cover.webp",
+    gallery: [],
+    zh: mV(
+      "春天的散步",
+      "## 河边\n\n沿着河边走了一圈，樱花开了一半，风里还有一点凉。**最好看**的是桥下那一段，*水很清*。\n\n![](/assets/images/spring-walk-river.jpg)\n\n- 早上七点出门\n- 带了 `相机` 和一本书\n  - 书没看几页\n\n> 春天是走出来的。\n\n更多照片见[相册](https://example.com/album)。\n",
+      { englishTitle: "A Spring Walk", englishSummary: "A walk along the river." },
+    ),
+    en: mV("A Spring Walk", "## By the river\n\nA loop along the river; the cherry blossoms were half out.\n\n![](/assets/images/spring-walk-river.jpg)\n"),
+    prints: { zh: null, en: null },
+  },
+  {
+    slug: "photo-set-1",
+    category: "gallery",
+    topics: [],
+    month: "2025-09",
+    cover: null,
+    gallery: [
+      { image: "public/assets/images/photo-set-1-1.jpg", altZh: "黑白照片中，窗外的楼群", captionZh: "", altEn: "", captionEn: "" },
+      { image: "public/assets/images/photo-set-1-2.jpg", altZh: "雨里的两把伞", captionZh: "第二张", altEn: "", captionEn: "" },
+      { image: "public/assets/images/photo-set-1-3.jpg", altZh: "", captionZh: "", altEn: "", captionEn: "" },
+    ],
+    zh: mV("摄影集：其一", "这一组共三张。\n", { englishTitle: "Photo Set I" }),
+    en: null,
+    prints: { zh: null, en: null },
+  },
+  { slug: "notes-on-tools", category: "project", topics: ["learning-methods"], month: "2025-05", cover: null, gallery: [], zh: null, en: mV("Notes on Tools", "Short notes.\n"), prints: { zh: null, en: null } },
+];
+siteWorks.forEach((w) => (w.prints = mPrints(w)));
+const mWork = (slug: unknown) => {
+  const w = siteWorks.find((x) => x.slug === slug);
+  if (!w) throw "找不到这个作品，可能已经删掉或改名了";
+  return w;
+};
+const mCheck = (w: MWork, prints: { zh: string | null; en: string | null }) => {
+  if (w.prints.zh !== prints.zh || w.prints.en !== prints.en) throw "中文版在别处被改过了（编辑器或 git），先重新读取再改";
+};
+const mTouched = (w: MWork, action = "modify") => {
+  for (const l of ["zh", "en"] as const) {
+    if (!w[l] && action !== "delete") continue;
+    const path = `src/content/wander/${w.slug}.${l}.md`;
+    if (!site.files.some((f) => f.path === path))
+      site.files.push({ path, from: null, action, kind: "content", label: `作品《${w[l]?.title ?? w.slug}》${l === "zh" ? "中文" : "English"}`, size: 2048, blocked: null });
+  }
+};
+const mValidSlug = (s: string) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(s);
+const workHandlers: Record<string, (a: Args) => unknown> = {
+  site_works: () => ({
+    works: [...siteWorks]
+      .sort((a, b) => b.month.localeCompare(a.month) || a.slug.localeCompare(b.slug))
+      .map((w) => ({ slug: w.slug, title: (w.zh ?? w.en)!.title, month: w.month, category: w.category, topics: w.topics, langs: (["zh", "en"] as const).filter((l) => w[l]) })),
+    taxonomy: siteTax,
+    broken: [],
+  }),
+  site_work: (a) => structuredClone(mWork(a.slug)),
+  site_work_save: (a) => {
+    const n = a.work as MWork;
+    const w = mWork(n.slug);
+    mCheck(w, n.prints);
+    if (n.month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(n.month)) throw "年月要写成 2025-05 这样";
+    if (n.zh && !n.zh.title.trim()) throw "中文标题不能空着";
+    if (n.en && !n.en.title.trim()) throw "英文标题不能空着";
+    const norm = (v: MVersion | null) => v && { ...v, title: v.title.trim(), summary: v.summary.trimEnd(), body: v.body.trim() ? (v.body.endsWith("\n") ? v.body : v.body + "\n") : "" };
+    Object.assign(w, structuredClone({ ...n, zh: norm(n.zh), en: norm(n.en) }));
+    w.prints = mPrints(w);
+    mTouched(w);
+    return structuredClone(w);
+  },
+  site_work_create: (a) => {
+    const slug = String(a.slug);
+    if (!mValidSlug(slug)) throw "slug 只能用小写英文字母、数字和短横线，比如 big-fish";
+    if (siteWorks.some((w) => w.slug === slug)) throw `已经有叫 ${slug} 的作品了`;
+    const v = mV(String(a.title).trim());
+    const w: MWork = { slug, category: "", topics: [], month: month(), cover: null, gallery: [], zh: a.lang === "zh" ? v : null, en: a.lang === "en" ? v : null, prints: { zh: null, en: null } };
+    w.prints = mPrints(w);
+    siteWorks.push(w);
+    mTouched(w, "add");
+    return structuredClone(w);
+  },
+  site_work_add_version: (a) => {
+    const w = mWork(a.slug);
+    mCheck(w, a.prints as MWork["prints"]);
+    if (a.lang === "en") w.en = mV(w.zh!.englishTitle || w.zh!.title, "", { summary: w.zh!.englishSummary });
+    else w.zh = mV(w.en!.title);
+    w.prints = mPrints(w);
+    mTouched(w, "add");
+    return structuredClone(w);
+  },
+  site_work_rename: (a) => {
+    const w = mWork(a.slug);
+    mCheck(w, a.prints as MWork["prints"]);
+    const to = String(a.to);
+    if (!mValidSlug(to)) throw "slug 只能用小写英文字母、数字和短横线，比如 big-fish";
+    if (siteWorks.some((x) => x.slug === to)) throw `已经有叫 ${to} 的作品了`;
+    mTouched(w, "delete");
+    w.slug = to;
+    mTouched(w, "add");
+    return structuredClone(w);
+  },
+  site_work_delete: (a) => {
+    const w = mWork(a.slug);
+    mCheck(w, a.prints as MWork["prints"]);
+    siteWorks.splice(siteWorks.indexOf(w), 1);
+    mTouched(w, "delete");
+    return null;
+  },
+  site_image_bytes: (a) => {
+    const bytes = a as unknown as Uint8Array;
+    const url = mAdd("asset:image", `pasted-${siteBlobs.size + 1}.png`);
+    siteBlobs.set(url, URL.createObjectURL(new Blob([new Uint8Array(bytes)])));
+    return url;
+  },
+  site_assets: (a) => regs.filter((r) => r.kind === (a.kind ?? "image")).map((r) => ({ slug: r.slug, title: r.title, path: r.file, url: r.file.slice("public".length), alt: r.note, usage: r.usage })),
+  site_preview: () => null,
+};
+
+// ---- 呦呦漫游 · 小拾 (assist.rs picky_site_english, assistants/site.rs): the mock model
+type MDraft = { slug: string | null; running: boolean; title: string; summary: string; body: string; status: string | null; error: string | null; modelName: string | null; note: string | null; token: number };
+const sDraft: MDraft = { slug: null, running: false, title: "", summary: "", body: "", status: null, error: null, modelName: null, note: null, token: 0 };
+const sDraftView = () => ({ ...sDraft, token: undefined });
+const siteCloudCheck = () => {
+  if (pky.selection.startsWith("cloud:") && !pDataCloud().find((m) => m.module === "site")!.allowed) throw "选了云端模型：呦呦漫游不发给云端。换成本地模型再用。";
+};
+const siteAssistHandlers: Record<string, (a: Args) => unknown> = {
+  picky_site_english: async (a) => {
+    await new Promise((r) => setTimeout(r, 700));
+    siteCloudCheck();
+    if (!String(a.title).trim() && !String(a.body).trim()) throw "先写中文的标题或正文";
+    return { title: `[Mock] ${String(a.title).trim()}`, summary: "A mock summary of this piece." };
+  },
+  picky_site_draft: () => sDraftView(),
+  picky_site_draft_run: (a) => {
+    if (sDraft.running) throw "正在起草另一个英文版，等它写完或先停止。";
+    siteCloudCheck();
+    const token = ++sDraft.token;
+    Object.assign(sDraft, { slug: a.slug, running: true, title: "", summary: "", body: "", status: "正在准备…", error: null, modelName: "Mock", note: null });
+    const parts: [keyof MDraft & ("title" | "summary" | "body"), string, string][] = [
+      ["title", "标题", String(a.title)],
+      ["summary", "摘要", String(a.summary)],
+      ["body", "正文", String(a.body)],
+    ];
+    const chunks = parts.filter(([, , t]) => t.trim()).flatMap(([k, label, t]) => {
+      const out = `[Mock English] ${t.trim()}`;
+      const n = k === "body" ? Math.max(1, Math.ceil(out.length / 60)) : 1;
+      return Array.from({ length: n }, (_, i) => ({ k, label: n > 1 ? `${label} · 正在翻译 ${i + 1}/${n}` : `${label} · 正在翻译…`, text: out.slice(Math.floor((i * out.length) / n), Math.floor(((i + 1) * out.length) / n)) }));
+    });
+    const step = (i: number) => {
+      if (sDraft.token !== token || !sDraft.running) return;
+      if (i >= chunks.length) return Object.assign(sDraft, { running: false, status: null });
+      const c = chunks[i];
+      sDraft.status = c.label;
+      sDraft[c.k] += c.text;
+      setTimeout(() => step(i + 1), 350);
+    };
+    setTimeout(() => step(0), 300);
+    return sDraftView();
+  },
+  picky_site_draft_stop: () => {
+    Object.assign(sDraft, { running: false, status: null });
+    return sDraftView();
+  },
+  picky_site_draft_clear: () => {
+    if (!sDraft.running) Object.assign(sDraft, { slug: null, title: "", summary: "", body: "", error: null, note: null });
+    return sDraftView();
+  },
+};
+
+// ---- 呦呦漫游 · Now、关于我、职业页、资源库、站点 (site/now.rs, about.rs, career.rs, registry.rs, terms.rs)
+const mClone = <T,>(x: T): T => structuredClone(x);
+const mTouch = (path: string, label: string, action = "modify") => {
+  if (!site.files.some((f) => f.path === path)) site.files.push({ path, from: null, action, kind: "content", label, size: 1024, blocked: null });
+};
+/** As site/mod.rs target_of + images.rs add: into the library, registered with where it was added. */
+const mAdd = (target: string, file: string) => {
+  const usage = ({ now: "Now", about: "关于我", career: "职业页", portraits: "关于我 · 肖像", artworks: "关于我 · 画作 / 摄影", "cv:zh": "职业页 · 中文简历", "cv:en": "职业页 · 英文简历", "asset:image": "", "asset:document": "" } as Record<string, string>)[target] ?? (target.startsWith("wander:") ? `作品《${siteWorks.find((w) => w.slug === target.slice(7))?.zh?.title ?? target.slice(7)}》` : null);
+  if (usage === null) throw "放到哪里不对";
+  const kind = target.startsWith("cv:") || target === "asset:document" ? "document" : "image";
+  const name = file.toLowerCase().replace(/[^a-z0-9.]+/g, "-");
+  const path = `public/assets/${kind === "image" ? "images" : "documents"}/${name}`;
+  if (!regs.some((r) => r.file === path)) {
+    const slug = name.replace(/\.[^.]+$/, "");
+    regs.push({ kind, slug, title: slug, file: path, note: "", usage, print: `r${Date.now()}`, size: 240_000 });
+    mTouch(path, `${kind === "image" ? "图片" : "文档"} ${name}`, "add");
+  }
+  return path.slice("public".length);
+};
+/** Something on the (mock) site refers to the file. */
+const mUsed = (file: string) => JSON.stringify([siteWorks, aboutDoc, careerDoc, nowMonths]).includes(file.slice("public".length));
+let mLoose: { image: string[]; document: string[] } = { image: ["public/assets/images/scan-1.jpg"], document: [] };
+const nowMonths: Record<string, { zh: string | null; en: string | null }> = {
+  "2026-07": { zh: "从毕业典礼回来以后，一直在忙项目和考试。\n\n今天刚考完，想写点什么。\n", en: "Back from graduation, busy with projects and exams.\n" },
+  "2026-09": { zh: "九月开始实习。\n", en: null },
+};
+let nowStatus = { zh: "研究生在读", en: "Open to Work", print: "s1" };
+const nowView = (m: string) => {
+  const x = nowMonths[m];
+  if (!x) throw "找不到这个月的记录，可能已经删掉了";
+  return { month: m, zh: x.zh, en: x.en, prints: { zh: x.zh === null ? null : `n${m}zh`, en: x.en === null ? null : `n${m}en` } };
+};
+let aboutDoc = {
+  zh: { contextIntro: "大学期间涉猎过好几个方向，现在专注写代码。\n\n喜欢阅读、画画和到处走走。", timeline: [{ role: "研究生", org: "某某大学", period: "2025.07 – 至今", description: "计算机方向。" }, { role: "本科", org: "某某大学", period: "2022 – 2026", description: "" }], story: "我在长江边的小镇长大。\n" },
+  en: { contextIntro: "I tried a few fields before settling on code.", timeline: [{ role: "Graduate student", org: "Some University", period: "2025.07 – now", description: "" }], story: "I grew up in a small town by the river.\n" },
+  images: { portraits: ["public/assets/images/me-1.png", "public/assets/images/me-2.jpg"], artworks: ["public/assets/images/art-1.jpg"], print: "ai1" },
+  prints: { zh: "a1", en: "a2" },
+};
+let careerDoc = {
+  zh: {
+    email: "me@example.com",
+    summary: "全栈开发、机器学习、Agent。",
+    resumes: [{ label: "下载中文简历", file: "public/assets/documents/cv-zh.pdf" }],
+    sections: [
+      { title: "技能", mode: "simple", simple: [{ heading: "编程", items: "Rust、TypeScript、Python" }], detailed: [] },
+      { title: "项目", mode: "detailed", simple: [], detailed: [{ period: "2026", role: "作者", org: "Pomelo", bullets: ["一个人用的 macOS 应用"] }] },
+    ],
+    extra: "",
+  },
+  en: { email: "me@example.com", summary: "Full-stack, ML and agents.", resumes: [{ label: "Download CV", file: "public/assets/documents/cv-en.pdf" }], sections: [{ title: "Skills", mode: "simple", simple: [{ heading: "Code", items: "Rust, TypeScript" }], detailed: [] }], extra: "" },
+  prints: { zh: "c1", en: "c2" },
+};
+let regs = [
+  { kind: "image", slug: "spring-walk-cover", title: "spring-walk-cover", file: "public/assets/images/spring-walk-cover.webp", note: "河边的樱花", usage: "作品《春天的散步》", print: "r1", size: 96_000 },
+  { kind: "image", slug: "spring-walk-river", title: "spring-walk-river", file: "public/assets/images/spring-walk-river.jpg", note: "", usage: "作品《春天的散步》", print: "r2", size: 610_000 },
+  { kind: "image", slug: "ielts-1", title: "ielts-1", file: "public/assets/images/ielts-1.jpeg", note: "复习表格", usage: "作品《雅思》", print: "r3", size: 232_000 },
+  { kind: "image", slug: "photo-set-1-1", title: "photo-set-1-1", file: "public/assets/images/photo-set-1-1.jpg", note: "", usage: "作品《摄影集：其一》", print: "r4", size: 540_000 },
+  { kind: "image", slug: "photo-set-1-2", title: "photo-set-1-2", file: "public/assets/images/photo-set-1-2.jpg", note: "", usage: "作品《摄影集：其一》", print: "r5", size: 344_000 },
+  { kind: "image", slug: "photo-set-1-3", title: "photo-set-1-3", file: "public/assets/images/photo-set-1-3.jpg", note: "", usage: "作品《摄影集：其一》", print: "r6", size: 1_052_000 },
+  { kind: "image", slug: "me-1", title: "me-1", file: "public/assets/images/me-1.png", note: "", usage: "关于我 · 肖像", print: "r7", size: 968_000 },
+  { kind: "image", slug: "me-2", title: "me-2", file: "public/assets/images/me-2.jpg", note: "", usage: "关于我 · 肖像", print: "r8", size: 392_000 },
+  { kind: "image", slug: "art-1", title: "art-1", file: "public/assets/images/art-1.jpg", note: "", usage: "关于我 · 画作 / 摄影", print: "r9", size: 576_000 },
+  { kind: "image", slug: "old-sketch", title: "old-sketch", file: "public/assets/images/old-sketch.jpg", note: "", usage: "", print: "r10", size: 180_000 },
+  { kind: "document", slug: "cv-zh", title: "cv-zh", file: "public/assets/documents/cv-zh.pdf", note: "中文简历", usage: "职业页 · 中文简历", print: "r11", size: 4_000 },
+  { kind: "document", slug: "cv-en", title: "cv-en", file: "public/assets/documents/cv-en.pdf", note: "英文简历", usage: "职业页 · 英文简历", print: "r12", size: 144_000 },
+];
+let termsDoc = {
+  terms: {
+    categories: [
+      { slug: "notes", zh: "写作", en: "Notes", used: 4 },
+      { slug: "project", zh: "项目", en: "Projects", used: 1 },
+      { slug: "gallery", zh: "画廊", en: "Gallery", used: 1 },
+      { slug: "literature", zh: "创作", en: "Literature", used: 0 },
+    ],
+    topics: [
+      { slug: "travelogue", zh: "游记", en: "Travelogue", used: 1 },
+      { slug: "essays", zh: "随笔", en: "Essays", used: 2 },
+      { slug: "learning-methods", zh: "学习方法", en: "Learning Methods", used: 1 },
+    ],
+  },
+  links: [
+    { key: "github", label: "GitHub", href: "https://github.com/example" },
+    { key: "linkedin", label: "LinkedIn", href: "https://www.linkedin.com/in/example" },
+    { key: "email", label: "Email", href: "mailto:me@example.com" },
+  ],
+  termsPrint: "t1",
+  linksPrint: "l1",
+};
+const pageHandlers: Record<string, (a: Args) => unknown> = {
+  site_files_add: (a) => (a.paths as string[]).map((p) => mAdd(String(a.target), p.split("/").pop() ?? "file")),
+  site_now_list: () => ({ months: Object.keys(nowMonths).sort().reverse().map((m) => ({ month: m, langs: (["zh", "en"] as const).filter((l) => nowMonths[m][l] !== null) })), status: { ...nowStatus } }),
+  site_now: (a) => nowView(String(a.month)),
+  site_now_save: (a) => {
+    const n = a.month as { month: string; zh: string | null; en: string | null };
+    const norm = (b: string | null) => (b === null ? null : b.trim() ? (b.endsWith("\n") ? b : b + "\n") : "");
+    nowMonths[n.month] = { zh: norm(n.zh), en: norm(n.en) };
+    mTouch(`src/content/now/${n.month}.zh.md`, `Now ${n.month} 中文`);
+    return nowView(n.month);
+  },
+  site_now_create: (a) => {
+    const m = String(a.month);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw "年月要写成 2026-07 这样";
+    const l = a.lang as "zh" | "en";
+    const x = (nowMonths[m] ??= { zh: null, en: null });
+    if (x[l] !== null) throw "这个月已经有这个语言的记录了";
+    x[l] = "";
+    mTouch(`src/content/now/${m}.${l}.md`, `Now ${m} ${l === "zh" ? "中文" : "English"}`, "add");
+    return nowView(m);
+  },
+  site_now_delete: (a) => {
+    delete nowMonths[String(a.month)];
+    mTouch(`src/content/now/${a.month}.zh.md`, `Now ${a.month} 中文`, "delete");
+    return null;
+  },
+  site_status_save: (a) => {
+    const s = a.status as typeof nowStatus;
+    nowStatus = { zh: s.zh.trim(), en: s.en.trim(), print: `s${Date.now()}` };
+    mTouch("src/data/now-status.json", "当下状态");
+    return { ...nowStatus };
+  },
+  site_about: () => mClone(aboutDoc),
+  site_about_save: (a) => {
+    const n = a.about as typeof aboutDoc;
+    for (const v of [n.zh, n.en]) if (v?.timeline.some((e) => !e.role.trim() || !e.org.trim() || !e.period.trim())) throw "时间轴的每一行都要填职位 / 身份、公司 / 学校和时间段";
+    aboutDoc = mClone(n);
+    mTouch("src/content/about/zh.md", "关于我 中文");
+    return mClone(aboutDoc);
+  },
+  site_career: () => mClone(careerDoc),
+  site_career_save: (a) => {
+    const n = a.career as typeof careerDoc;
+    for (const [l, v] of [["zh", n.zh], ["en", n.en]] as const) {
+      if (!v) continue;
+      if (!v.email.trim()) throw `${l === "zh" ? "中文" : "英文"}职业页的联系邮箱不能空着`;
+      if (v.resumes.some((r) => !r.label.trim() || !r.file)) throw `${l === "zh" ? "中文" : "英文"}职业页的每个简历都要有按钮文字和文件`;
+      v.sections.forEach((s) => s.detailed.forEach((d) => (d.bullets = d.bullets.map((b) => b.trim()).filter(Boolean))));
+    }
+    careerDoc = mClone(n);
+    mTouch("src/content/career/zh.md", "职业页 中文");
+    return mClone(careerDoc);
+  },
+  site_registry: () => regs.map((r) => ({ ...r, used: mUsed(r.file) })),
+  site_registry_save: (a) => {
+    const n = a.entry as (typeof regs)[number];
+    const i = regs.findIndex((r) => r.kind === n.kind && r.slug === n.slug);
+    regs[i] = { ...n, print: `r${Date.now()}` };
+    return regs[i];
+  },
+  site_registry_citations: (a) => (a.slug === "spring-walk-cover" ? [{ path: "src/content/wander/spring-walk.zh.md", role: "Cover" }, { path: "src/content/wander/spring-walk.en.md", role: "Cover" }] : []),
+  site_registry_delete: (a) => {
+    regs = regs.filter((r) => !(r.kind === a.kind && r.slug === a.slug));
+    mTouch(`src/data/assets/${a.kind === "image" ? "images" : "documents"}/${a.slug}.json`, `资源库 ${a.slug}`, "delete");
+    return null;
+  },
+  site_registry_unregistered: (a) => [...mLoose[a.kind as "image" | "document"]],
+  site_registry_adopt: (a) => {
+    const k = a.kind as "image" | "document";
+    const n = mLoose[k].length;
+    for (const file of mLoose[k]) {
+      const slug = file.split("/").pop()!.replace(/\.[^.]+$/, "");
+      regs.push({ kind: k, slug, title: slug, file, note: "", usage: "", print: `r${Date.now()}`, size: 300_000 });
+    }
+    mLoose = { ...mLoose, [k]: [] };
+    return n;
+  },
+  site_terms: () => mClone(termsDoc),
+  site_terms_save: (a) => {
+    const t = a.terms as typeof termsDoc.terms;
+    for (const l of [t.categories, t.topics]) {
+      const seen = new Set<string>();
+      for (const x of l) {
+        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(x.slug)) throw `ID「${x.slug}」只能用小写英文字母、数字和短横线`;
+        if (seen.has(x.slug)) throw `ID「${x.slug}」重复了`;
+        seen.add(x.slug);
+        if (!x.zh.trim() || !x.en.trim()) throw `「${x.slug}」要有中文名和英文名`;
+      }
+    }
+    termsDoc = { ...termsDoc, terms: mClone(t), termsPrint: `t${Date.now()}` };
+    mTouch("src/data/wander-taxonomy.json", "话题与类别");
+    return mClone(termsDoc);
+  },
+  site_links_save: (a) => {
+    const l = a.links as typeof termsDoc.links;
+    if (l.some((x) => !x.key.trim() || !x.label.trim() || !x.href.trim())) throw "每个外部链接都要有图标、名称和链接";
+    termsDoc = { ...termsDoc, links: mClone(l), linksPrint: `l${Date.now()}` };
+    mTouch("src/data/social-links.json", "外部链接");
+    return mClone(termsDoc);
+  },
+};
+
 const handlers: Record<string, (a: Args) => unknown> = {
   ...pickyHandlers,
+  ...siteHandlers,
+  ...workHandlers,
+  ...siteAssistHandlers,
+  ...pageHandlers,
   home_overview: (a) => homeMock((a.hidden as string[]) ?? []),
   // v0.4 search (query.rs): the mock answers every way with ⌘K's word matches
   search_query: (a) => {

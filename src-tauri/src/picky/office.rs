@@ -331,7 +331,7 @@ pub fn image_type(ext: &str) -> Option<&'static str> {
 }
 
 /// (width, height) by `sips`.
-fn size_of(path: &Path) -> Option<(u32, u32)> {
+pub(crate) fn size_of(path: &Path) -> Option<(u32, u32)> {
     let out = Command::new("/usr/bin/sips").args(["-g", "pixelWidth", "-g", "pixelHeight"]).arg(path).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let get = |k: &str| text.lines().find_map(|l| l.trim().strip_prefix(k).map(|v| v.trim().parse::<u32>().ok())).flatten();

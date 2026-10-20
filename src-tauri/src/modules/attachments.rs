@@ -439,7 +439,7 @@ pub fn attachments_add_bytes(state: State<AppState>, request: tauri::ipc::Reques
     state.with_db(|c| store(c, &dir, &name, data))
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
