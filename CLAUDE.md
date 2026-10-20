@@ -34,6 +34,11 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **建出来的模块**（侧栏加号，`custom.rs`）是数据不是代码：键 `list/编号`、`progress/编号`，编号不重用；隐藏、发给云端、搜索、小拾查数据都按单个模块算。新增读数据的地方（搜索、首页、小拾）要连它们一起照顾。
 - **芝麻开门**：密码只以密文存（规则见 `modules/vault.rs` 开头）。不要把它的命令做成 AI 工具，不要加进导出、全局搜索和搜索索引，不要向我要主密码；测试只用临时目录和自己编的测试主密码，不往真实钥匙串写东西（单元测试用 `secure.rs` 的假实现）。
 
+## 个人网站（相关项目）
+
+- `~/Documents/GitHub/personal-website` 是独立项目（Astro + Keystatic，`main` 推到 GitHub 后 Vercel 自动上线），有自己的 `AGENTS.md`、`ROADMAP.md`、`DEPLOY.md`：碰它之前先读。它的规矩：Agent 不审查、不代拟网站内容；push、PR、部署要站主授权；方案获批不等于开工。
+- 在 Pomelo 的会话里只读它；要改网站项目里的东西（代码、文档）先问我。接进 Pomelo 怎么做等第八轮问卷（`docs/Questionnaire-round8.docx`）定。
+
 ## 小拾（AI）
 
 - 小拾的数据只在 `picky.db`（自己的升级脚本和版本号）；不为小拾给 `pomelo.db` 加 migration。
