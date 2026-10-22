@@ -22,6 +22,14 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **Git**：不主动提交，我自己提交。
 - **代码格式**：仓库没有格式化配置，照周围的写法手动排（长行）；不要跑 prettier 这类格式化工具。
 
+## 多个 worktree
+
+- 主目录 `~/Documents/GitHub/pomelo`（main）是我日常用的。大块的新功能可能在单独的 worktree 里做（v0.7 的 Seeker 第一轮由 Codex 做，Claude 再审核、调整、优化）。Git 规矩不变：不提交、不合并、不推送，都由我来。
+- **开发数据目录各用各的**：主目录之外跑开发版时设 `POMELO_DATA_DIR="$HOME/Library/Application Support/Pomelo OS Dev-<分支名>"`（`seeklo` 的是 `Pomelo OS Dev-seeklo`）。共用「Pomelo OS Dev」的话，分支里新加的 migration 会把它升级，主目录的开发版就打不开了（数据库版本比 App 新）。
+- `pnpm dev` 固定用 1420 端口，同一时间只能有一个 worktree 在跑。每个 worktree 要自己 `pnpm install`，有自己的 `src-tauri/target`（各自 20 GB 上限）。
+- 分支里新加的 migration 接着现有编号写；合并前 main 也加过的，把分支里的往后改号（main 上已有的永远不改）。`picky.db` 的升级脚本、`transfer.rs` 的格式版本、`search/store.rs` 的版本同理。
+- `pnpm app:install` 只在 main 上、合并以后、我同意时做。
+
 ## 数据规则
 
 - 只有 Rust 读写 SQLite；界面和小拾只调用 Rust 命令。业务规则只写在 Rust 里。
@@ -45,6 +53,12 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 - Pub2MD 已经用 Rust 完整并入小拾（`picky/assistants/pub2md/`，需求见 `requirements.md` 的「Pub2MD」）。旧的 Python 项目 `~/Documents/GitHub/pub2md-agent` 只读、不运行，`.env` 里是真实的 Key，不读取、不输出；v0.6 验收后整个删掉（删前再问我）。
 
+## Seeker（v0.7 嵌入）
+
+- `~/Documents/Seeker` 是我的求职资料（简历和模板、经历档案、写作规则、招聘资料、证书原件），不是 Git 仓库，有自己的 `AGENTS.md`。v0.7 把它的主体做成小拾的助手「Seeker」，开发计划叫 Seeklo：进度和分工见 `docs/roadmap.md` 的「v0.7」，需求见 `requirements.md` 的「Seeker」。
+- 第一轮由 Codex 在 worktree `~/Documents/GitHub/pomelo-seeklo`（分支 `seeklo`）写代码，Claude 审核、补测试、验证、优化。计划和 UI 要我批准、我说开工才动代码。
+- 数据在 `picky.db`。Pomelo 会记住 Seeker 文件夹、从 `transfer/` 导入，但开发和测试只用临时目录里编的资料（编一个假的 Seeker 文件夹），不读写真的（只读它的 `AGENTS.md`、`transfer/`、`prototypes/` 了解需求）；`material/` 只看文件名、不打开；原件不改、不移、不删。真的导入由我在正式版里点。简历、经历这些个人资料不进 Git。
+
 ## 小拾（AI）
 
 - 小拾的数据只在 `picky.db`（自己的升级脚本和版本号）；不为小拾给 `pomelo.db` 加 migration。
@@ -58,7 +72,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **思考**：每次调用模型都传要不要思考（`Options.thinking`，谁看哪个开关见 `requirements.md`）；模型能不能做到看 `cloud::Think` 和模型清单，在 `provider.rs` 里处理；开思考时用 `Route::with_thinking` / `context::think_room` 多留回复长度。
 - **写数据**：模型只能提议，Rust 用模块自己的校验试写（在撤回的事务里）后存成卡片，我确认后才写，整张卡片一步 `with_undo`。
 - **插件库**（`picky/skills/`）：技能是 Rust 写的固定功能。发给 Wikidata / Open Library 的请求带着我在插件库填的联系邮箱（`picky.db` 偏好 `skills.contact`，不写进代码），别的地方不带。
-- **助手**（`assistants/`）：名字由我来定，新加的先问我（现在有 Translator、Pub2MD）。
+- **助手**（`assistants/`）：名字由我来定，新加的先问我（现在有 Translator、Pub2MD，v0.7 加 Seeker）。
 - **定时任务、今日简报、年度总结**：只读，不给写的工具；今日简报和年度总结也不给查数据的工具（Rust 先用 `data.rs` 读好）。开机自动启动（LaunchAgent）只有正式数据目录的打包版会登记：测试不要碰真实的登录项。
 - 模拟模型和 `mockIpc.ts` 都要能模拟查数据、提议写数据、定时任务、简报和年度总结；按意思搜用模拟的向量和重排，联网搜索、书单 / 影单检索用模拟的结果。
 
@@ -72,7 +86,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## 文档规则
 
-- **给我看的**：`README.md`、`CLAUDE.md`、`docs/`。简洁、通俗、全中文，只写现状和决定，不写变更历史。
+- **给我看的**：`README.md`、`CLAUDE.md`、`AGENTS.md`、`docs/`。简洁、通俗、全中文，只写现状和决定，不写变更历史。
 - **不给我看的**：代码、注释、脚本、提交信息，按 Agent 效率最高的方式写。
 - 阶段完成或一轮优化后更新 `roadmap.md`；需求变了改 `requirements.md`，数据结构变了改 `schema.md`（含版本记录），视觉变了改 `design.md`，做法变了改 `architecture.md`。
 

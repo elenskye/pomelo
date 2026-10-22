@@ -36,18 +36,19 @@
 | [技术架构](docs/architecture.md) | 选型、数据存放、备份升级、安全 |
 | [数据结构](docs/schema.md) | 每张表的字段和规则、数据文件格式 |
 | [视觉规范](docs/design.md) | 颜色、字体、布局、各处的样子 |
-| [CLAUDE.md](CLAUDE.md) | 给 AI 编程助手的规则、代码地图、验证方法 |
+| [CLAUDE.md](CLAUDE.md) | 给 AI 编程助手的规则、代码地图、验证方法（Codex 读 [AGENTS.md](AGENTS.md)，它指向 CLAUDE.md） |
 | [原件](docs/archive/) | 需求问卷、历次优化清单 |
 
 ## 数据在哪里
 
 - 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`picky.db` 小拾，`attachments/` 笔记、任务、目标的附件，`picky-files/` 小拾的附件和资料，`backups/` 每日备份，`search.db` 搜索索引，删了自动重建）
 - 本地模型：`~/Documents/LLM`（模型、清单 `config/models.json`、脚本 `scripts/llmctl.sh`）
-- 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`
+- 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`（别的 worktree 各用自己的，见 CLAUDE.md）
 - 原型和转换好的导入文件：`prototype/`（只在本机，不进 Git）
 - Pub2MD 的真测结果和测试用的 Key：`~/Downloads/Pub2MD 测试/`（v0.6 验收后删 Key）
 
 ## 相关项目
 
 - 个人网站：`~/Documents/GitHub/personal-website`（独立项目，自己的文档和规则），在「呦呦漫游」里编辑和发布。
+- Seeker：`~/Documents/Seeker`（求职资料，不是 Git 仓库）；v0.7 把它的主体做成小拾的助手「Seeker」（数据在 `picky.db`），投石问路继续管投递。开发在 worktree `~/Documents/GitHub/pomelo-seeklo`（分支 `seeklo`）。
 - Pub2MD：已经并入小拾（助手）；旧的 Python 项目 `~/Documents/GitHub/pub2md-agent` 只当参考，v0.6 验收后删掉。
