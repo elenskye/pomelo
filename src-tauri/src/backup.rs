@@ -2,7 +2,9 @@
 //! (consistent single-file copy, WAL-safe). The file name is the only metadata (store + time + label).
 //! Stores: `pomelo` (pomelo.db, life data) and `picky` (picky.db, 小拾); each is backed up, pruned and
 //! restored on its own. Labels: `daily` (auto, first launch/focus of the day; pruned), `manual`,
-//! `before-vN` (migration), `before-import`, `before-picky-import`, `before-restore`. Only `daily` is ever pruned automatically.
+//! `before-vN` (migration), `before-import`, `before-picky-import`, `before-restore`. `manual` is never
+//! pruned; the safety copies (升级前 = any `before-vN`, 导入前, 恢复前) keep the newest KEEP_SAFETY of each
+//! kind per store, pruned with the daily ones.
 //! Restore copies a snapshot into the live connection via the SQLite backup API (atomic), then migrates.
 
 use crate::{db, AppState};
@@ -16,6 +18,8 @@ use tauri_plugin_opener::OpenerExt;
 pub const DAILY: &str = "daily";
 pub const MANUAL: &str = "manual";
 pub const BEFORE_RESTORE: &str = "before-restore";
+/// Safety copies kept of each kind (升级前, 导入前, 恢复前), per store.
+pub const KEEP_SAFETY: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -175,6 +179,31 @@ pub fn prune_daily(dir: &Path, store: Store, keep: usize) -> Result<Vec<PathBuf>
     Ok(deleted)
 }
 
+/// The kind of an automatic safety copy (None: daily, manual, unknown labels).
+fn safety_kind(label: &str) -> Option<&'static str> {
+    match label {
+        "before-import" | "before-picky-import" => Some("import"),
+        BEFORE_RESTORE => Some("restore"),
+        _ => label.strip_prefix("before-v").filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).map(|_| "upgrade"),
+    }
+}
+
+/// Deletes `store`'s safety copies beyond the newest `keep` of each kind. Returns the deleted paths.
+pub fn prune_safety(dir: &Path, store: Store, keep: usize) -> Result<Vec<PathBuf>, String> {
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut deleted = Vec::new();
+    for (name, path) in scan(dir)?.into_iter().filter(|(n, _)| n.store == store) {
+        let Some(kind) = safety_kind(&name.label) else { continue };
+        let n = seen.entry(kind).or_default();
+        *n += 1;
+        if *n > keep {
+            std::fs::remove_file(&path).map_err(|e| format!("清理旧备份失败：{e}"))?;
+            deleted.push(path);
+        }
+    }
+    Ok(deleted)
+}
+
 /// Takes today's `daily` snapshot of `pomelo.db` unless one exists, then prunes.
 pub fn daily(conn: &Connection, dir: &Path) -> Result<Option<PathBuf>, String> {
     daily_of(Store::Pomelo, conn, dir)
@@ -190,6 +219,7 @@ pub fn daily_of(store: Store, conn: &Connection, dir: &Path) -> Result<Option<Pa
     }
     let path = snapshot_of(store, conn, dir, DAILY)?;
     prune_daily(dir, store, store.keep_daily())?;
+    prune_safety(dir, store, KEEP_SAFETY)?;
     Ok(Some(path))
 }
 
@@ -419,6 +449,36 @@ mod tests {
         assert_eq!(deleted.len(), 90 - 31);
         assert_eq!(list(&dir).unwrap().len(), 33);
         assert!(prune_daily(&dir, Store::Pomelo, 30).unwrap().is_empty()); // idempotent
+    }
+
+    #[test]
+    fn safety_copies_keep_the_newest_three_of_each_kind() {
+        let dir = temp_dir("backup-safety");
+        let mut files = vec![];
+        for d in 1..=6 {
+            files.push(format!("pomelo-202610{d:02}-080000-before-v{}.db", 20 + d));
+            files.push(format!("pomelo-202610{d:02}-090000-before-import.db"));
+            files.push(format!("picky-202610{d:02}-080000-before-v{d}.db"));
+        }
+        files.extend(["pomelo-20261007-080000-before-restore.db", "pomelo-20261008-080000-before-restore.db", "pomelo-20261008-080000-before-restore-2.db", "pomelo-20261009-080000-before-restore.db"].map(String::from));
+        files.extend(["picky-20261001-080000-before-picky-import.db", "picky-20261002-080000-before-import.db"].map(String::from));
+        files.extend(["pomelo-20260901-080000-manual.db", "pomelo-20260901-080000-daily.db", "pomelo-20260901-080000-before-vx.db"].map(String::from));
+        for f in &files {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        let deleted = prune_safety(&dir, Store::Pomelo, KEEP_SAFETY).unwrap();
+        let left: Vec<String> = list(&dir).unwrap().into_iter().filter(|b| b.store == Store::Pomelo).map(|b| b.file_name).collect();
+        for kept in ["pomelo-20261006-080000-before-v26.db", "pomelo-20261004-080000-before-v24.db", "pomelo-20261004-090000-before-import.db", "pomelo-20261009-080000-before-restore.db", "pomelo-20261008-080000-before-restore-2.db", "pomelo-20261008-080000-before-restore.db"] {
+            assert!(left.iter().any(|f| f == kept), "{kept}");
+        }
+        assert!(!left.iter().any(|f| f == "pomelo-20261003-080000-before-v23.db" || f == "pomelo-20261007-080000-before-restore.db"));
+        // manual, daily and labels that aren't safety copies stay; 3 + 3 + 3 + 3 = 12 left
+        assert_eq!((deleted.len(), left.len()), (3 + 3 + 1, 12));
+        // picky on its own: its upgrades and its imports (both kinds of import label) are one kind each
+        assert_eq!(list(&dir).unwrap().iter().filter(|b| b.store == Store::Picky).count(), 8);
+        prune_safety(&dir, Store::Picky, KEEP_SAFETY).unwrap();
+        assert_eq!(list(&dir).unwrap().iter().filter(|b| b.store == Store::Picky).count(), 5);
+        assert!(prune_safety(&dir, Store::Pomelo, KEEP_SAFETY).unwrap().is_empty()); // idempotent
     }
 
     #[test]

@@ -72,11 +72,11 @@ export function TranslatePage() {
       <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3">
         <div>
           <Segmented
-            ariaLabel="翻译"
+            ariaLabel="Translator"
             value={tab}
             onChange={setTab}
             options={[
-              { value: "translate", label: "翻译" },
+              { value: "translate", label: "Translator" },
               { value: "prompt", label: "提示词" },
             ]}
           />
@@ -135,7 +135,7 @@ function TranslateTab(props: {
         </button>
         <Dropdown<string> ariaLabel="目标语言" value={s.target} options={[{ value: ZH_EN, label: "中英互译" }, ...langs]} onChange={(v) => props.onSettings({ ...s, target: v })} menuMaxHeight={320} />
         <span className="mx-1 h-4 border-l" />
-        <Dropdown<string | null> ariaLabel="模型" value={s.model} options={models} onChange={(v) => props.onSettings({ ...s, model: v })} menuMaxHeight={360} />
+        <Dropdown<string | null> ariaLabel="模型" value={s.model} options={models} foldKey="models" onChange={(v) => props.onSettings({ ...s, model: v })} menuMaxHeight={360} />
         <button
           type="button"
           aria-pressed={thinking}

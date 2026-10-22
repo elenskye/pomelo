@@ -258,6 +258,7 @@ impl Picky {
 
 /// Where model work goes: the backend, the run's model id, the name shown in history, and the
 /// window from the catalog / cloud settings (a local server's own value wins, context.rs).
+#[derive(Clone)]
 pub struct Route {
     pub target: Target,
     pub model: String,

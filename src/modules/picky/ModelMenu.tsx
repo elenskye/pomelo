@@ -1,10 +1,19 @@
-// The model button (page header): local models + cloud models in one menu; choosing a local model
+// The model button (page header): cloud models (by provider) + local models in one menu; choosing a local model
 // switches to it (starting it if needed). Shares its state with the menu bar (Rust keeps both).
 import { ChevronDown, Cloud } from "lucide-react";
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
-import { pickyApi, selectedLabel, useRefreshStatus, type Dot, type Issue, type IssueAction, type PickyStatus } from "./api";
+import { pickyApi, selectedLabel, SERVICE_NAMES, useRefreshStatus, type Dot, type Issue, type IssueAction, type PickyStatus } from "./api";
+
+/** Every model to choose from: the cloud ones by provider (in the order the list first names each), then the local ones. */
+export function modelOptions(s: PickyStatus | undefined): DropdownOption<string>[] {
+  const cloud = s?.cloud ?? [];
+  return [
+    ...[...new Set(cloud.map((m) => m.service))].flatMap((sv) => cloud.filter((m) => m.service === sv).map((m) => ({ value: `cloud:${m.id}`, label: m.name, group: SERVICE_NAMES[sv] }))),
+    ...(s?.local.models ?? []).map((m) => ({ value: `local:${m.key}`, label: m.name, group: "本地" })),
+  ];
+}
 
 const DOT_COLOR: Record<Dot, string> = {
   ready: "var(--status-done-fg)",
@@ -30,10 +39,7 @@ export function ModelMenu(props: { status: PickyStatus }) {
   const refresh = useRefreshStatus();
   const label = selectedLabel(s);
   const value = s.selection === "local" ? (s.local.active ? `local:${s.local.active.key}` : "") : s.selection;
-  const options: DropdownOption<string>[] = [
-    ...s.local.models.map((m) => ({ value: `local:${m.key}`, label: m.name, group: "本地模型" })),
-    ...s.cloud.map((m) => ({ value: `cloud:${m.id}`, label: m.name, group: "云端模型" })),
-  ];
+  const options = modelOptions(s);
   // replies being written keep their model: switching is fine, except the local model while it answers
   const localBusy = s.active.some((a) => a.model.startsWith("local:"));
   const actions: DropdownAction[] =
@@ -53,6 +59,7 @@ export function ModelMenu(props: { status: PickyStatus }) {
     <Dropdown
       ariaLabel="选择模型"
       align="end"
+      foldKey="models"
       value={value}
       options={options}
       actions={actions}

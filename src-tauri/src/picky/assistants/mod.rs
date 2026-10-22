@@ -1,10 +1,11 @@
 //! 助手 (v0.4.5 阶段 8): small agents 小拾 provides, each with its own page (not a conversation), its own
 //! way of working, prompt and settings. Listed in 小拾's left column between 项目 and 定时 (the page side
-//! keeps the list: `src/modules/picky/assistants/`). Built in only: 翻译 now; Work next; Pub2MD later.
+//! keeps the list: `src/modules/picky/assistants/`). Built in only: 翻译 and Pub2MD (v0.6).
 //! - Each keeps its settings and last work in picky.db `preferences` (`assistant.<key>`), never undone and
 //!   never exported. Model work goes through the same 小拾服务 as everything else (schedule.rs `route`
 //!   for its own model choice, provider.rs for the call), without taking a conversation's slot.
 
+pub mod pub2md;
 pub mod site;
 pub mod translate;
 
@@ -14,4 +15,5 @@ pub struct State {
     pub translate: translate::Live,
     /// 呦呦漫游's 按中文起草英文版 (the same pipeline as 翻译).
     pub site: site::Live,
+    pub pub2md: pub2md::Live,
 }

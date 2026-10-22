@@ -1,5 +1,6 @@
 // The conversation list (rules from the old Picky, enforced in Rust library.rs):
 // 置顶 · 项目 (each collapsible, with its conversations) · 定时 (what 定时任务 wrote) · 最近 · 归档 (folded).
+// 项目, 助手, 定时 and 最近 fold too (their label; remembered); 归档 starts folded.
 // Each list follows last activity until dragged by hand. A dot marks a 定时 conversation not opened yet
 // (and the 定时 label while any is). ⋯ on a row: 改名 / 置顶 / 私密 (a lock; stays in its list) / 复制整段对话 /
 // 导出 / 移到项目 / 归档 / 删除.
@@ -15,7 +16,7 @@ import { AlarmClock, ChevronRight, Ellipsis, Folder, Library as LibraryIcon, Lib
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { IconButton } from "@/shared/ui";
-import { LIBRARY_KEY, isBool, isNumbers, pickyApi, usePickyUi, type Library, type ListKey, type ProjectRow, type SessionRow } from "./api";
+import { LIBRARY_KEY, isBool, isNumbers, isStrings, pickyApi, usePickyUi, type Library, type ListKey, type ProjectRow, type SessionRow } from "./api";
 import { useConversationActions } from "./actions";
 import { ASSISTANTS } from "./assistants";
 import { ProjectDialog } from "./ProjectDialog";
@@ -172,6 +173,10 @@ export function ConversationList(props: {
   const box = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = usePickyUi("ui.collapsed_projects", [] as number[], isNumbers);
   const [archiveOpen, setArchiveOpen] = usePickyUi("ui.archive_open", false, isBool);
+  /** The folded lists: projects | assistants | scheduled | recent. */
+  const [folded, setFolded] = usePickyUi("ui.folded_lists", [] as string[], isStrings);
+  const open = (list: string) => !folded.includes(list);
+  const fold = (list: string) => ({ open: open(list), toggle: () => setFolded(open(list) ? [...folded, list] : folded.filter((x) => x !== list)) });
   const [selected, setSelected] = useState<number[]>([]);
   const anchor = useRef<number | null>(null);
   const [renaming, setRenaming] = useState<number | null>(null);
@@ -179,7 +184,13 @@ export function ConversationList(props: {
 
   const all = [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived];
   const byId = new Map(all.map((s) => [s.id, s]));
-  const order = [...lib.pinned, ...lib.projects.flatMap((p) => (collapsed.includes(p.id) ? [] : p.sessions)), ...lib.scheduled, ...lib.recent, ...(archiveOpen ? lib.archived : [])].map((s) => s.id);
+  const order = [
+    ...lib.pinned,
+    ...(open("projects") ? lib.projects.flatMap((p) => (collapsed.includes(p.id) ? [] : p.sessions)) : []),
+    ...(open("scheduled") ? lib.scheduled : []),
+    ...(open("recent") ? lib.recent : []),
+    ...(archiveOpen ? lib.archived : []),
+  ].map((s) => s.id);
   // selection only holds rows that still exist
   const sel = selected.filter((id) => byId.has(id));
 
@@ -311,17 +322,29 @@ export function ConversationList(props: {
     );
   };
 
-  /** A list's label row; it is also a drop target (= the top of that list). */
-  const label = (text: ReactNode, list: ListKey | null, extra?: ReactNode, onClick?: () => void) => {
+  /** A list's label row; it is also a drop target (= the top of that list). `folding`: a chevron, and the
+   *  label folds the list. */
+  const label = (text: ReactNode, list: ListKey | null, extra?: ReactNode, folding?: { open: boolean; toggle: () => void }) => {
     const hot = dragging && list && drag.target?.header && drag.target.list === list;
     return (
       <div
         data-drop={list && accepts(list) ? "list" : undefined}
         data-list={list ?? undefined}
-        onClick={onClick}
-        className={`mt-3 flex items-center gap-1 rounded-control px-2.5 py-0.5 text-xs text-muted-foreground first:mt-0 ${hot ? "bg-accent ring-1 ring-primary/40" : ""} ${onClick ? "cursor-default hover:text-foreground" : ""}`}
+        className={`mt-3 flex items-center gap-1 rounded-control px-2.5 py-0.5 text-xs text-muted-foreground first:mt-0 ${hot ? "bg-accent ring-1 ring-primary/40" : ""}`}
       >
-        <span className="flex flex-1 items-center gap-1">{text}</span>
+        {folding ? (
+          <button
+            type="button"
+            aria-expanded={folding.open}
+            onClick={() => !swallow() && folding.toggle()}
+            className="flex flex-1 cursor-default items-center gap-1 rounded-control text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRight size={12} className={`transition-transform duration-150 ${folding.open ? "rotate-90" : ""}`} />
+            {text}
+          </button>
+        ) : (
+          <span className="flex flex-1 items-center gap-1">{text}</span>
+        )}
         {extra}
       </div>
     );
@@ -402,40 +425,43 @@ export function ConversationList(props: {
           <IconButton label="新建项目" onClick={() => setProjectDialog("new")}>
             <Plus size={13} strokeWidth={1.75} />
           </IconButton>,
+          fold("projects"),
         )}
-        {lib.projects.map((p) => (
-          <div key={p.id}>
-            {projectHeader(p)}
-            {!collapsed.includes(p.id) && (
-              <div className="pl-4">
-                {p.files > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => props.onProjectFiles(p.id)}
-                    className="flex w-full items-center gap-1.5 rounded-control px-2.5 py-1 text-left text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
-                  </button>
-                )}
-                {p.sessions.map((s) => row(s, `project:${p.id}`))}
-              </div>
-            )}
-          </div>
-        ))}
+        {open("projects") &&
+          lib.projects.map((p) => (
+            <div key={p.id}>
+              {projectHeader(p)}
+              {!collapsed.includes(p.id) && (
+                <div className="pl-4">
+                  {p.files > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => props.onProjectFiles(p.id)}
+                      className="flex w-full items-center gap-1.5 rounded-control px-2.5 py-1 text-left text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
+                    </button>
+                  )}
+                  {p.sessions.map((s) => row(s, `project:${p.id}`))}
+                </div>
+              )}
+            </div>
+          ))}
 
-        {label("助手", null)}
-        {ASSISTANTS.map((a) => (
-          <button
-            key={a.key}
-            type="button"
-            aria-current={a.key === props.assistant}
-            onClick={() => props.onAssistant(a.key)}
-            className={`flex w-full items-center gap-1.5 rounded-control py-1.5 pl-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${a.key === props.assistant ? "bg-accent" : "hover:bg-muted/70"}`}
-          >
-            <a.icon size={14} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
-            <span className="truncate">{a.name}</span>
-          </button>
-        ))}
+        {label("助手", null, null, fold("assistants"))}
+        {open("assistants") &&
+          ASSISTANTS.map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              aria-current={a.key === props.assistant}
+              onClick={() => props.onAssistant(a.key)}
+              className={`flex w-full items-center gap-1.5 rounded-control py-1.5 pl-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${a.key === props.assistant ? "bg-accent" : "hover:bg-muted/70"}`}
+            >
+              <a.icon size={14} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
+              <span className="truncate">{a.name}</span>
+            </button>
+          ))}
 
         {(lib.scheduled.length > 0 || draggedScheduled) &&
           label(
@@ -444,22 +470,16 @@ export function ConversationList(props: {
               {lib.scheduled.some((s) => s.unseen) && <span className="size-1.5 rounded-full bg-primary" aria-label="有还没看的" />}
             </>,
             "scheduled",
+            null,
+            fold("scheduled"),
           )}
-        {lib.scheduled.map((s) => row(s, "scheduled"))}
+        {open("scheduled") && lib.scheduled.map((s) => row(s, "scheduled"))}
 
-        {(lib.recent.length > 0 || (dragging && !draggedScheduled)) && label("最近", "recent")}
-        {lib.recent.map((s) => row(s, "recent"))}
+        {(lib.recent.length > 0 || (dragging && !draggedScheduled)) && label("最近", "recent", null, fold("recent"))}
+        {open("recent") && lib.recent.map((s) => row(s, "recent"))}
 
         {(lib.archived.length > 0 || dragging) &&
-          label(
-            <>
-              <ChevronRight size={12} className={`transition-transform duration-150 ${archiveOpen ? "rotate-90" : ""}`} />
-              归档 {lib.archived.length || ""}
-            </>,
-            "archived",
-            null,
-            () => setArchiveOpen(!archiveOpen),
-          )}
+          label(<>归档 {lib.archived.length || ""}</>, "archived", null, { open: archiveOpen, toggle: () => setArchiveOpen(!archiveOpen) })}
         {archiveOpen && lib.archived.map((s) => row(s, "archived"))}
       </div>
 

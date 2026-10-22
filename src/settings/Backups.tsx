@@ -74,7 +74,7 @@ export function BackupsSection() {
   return (
     <Section
       title="备份"
-      help="生活数据和小拾分开备份、分开恢复。每天第一次打开 App 时各自动备份一份：生活数据保留最近 30 份，小拾保留最近 7 份，更早的每个月只留一份；手动、升级前、导入前、恢复前的备份不会自动删除。恢复前会先备份现在的数据。"
+      help="生活数据和小拾分开备份、分开恢复。每天第一次打开 App 时各自动备份一份：生活数据保留最近 30 份，小拾保留最近 7 份，更早的每个月只留一份；升级前、导入前、恢复前的备份各留最近 3 份；手动备份不会自动删除。恢复前会先备份现在的数据。"
       actions={
         <>
           <Button onClick={() => void api.revealBackupsDir().catch((e) => toast(errorText(e), "error"))}>

@@ -6,11 +6,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
-import { Dropdown } from "@/shared/Dropdown";
+import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { formatDay, toYmd, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
 import { BRIEF_KEY, LIBRARY_KEY, SCHEDULES_KEY, pickyApi, ruleText, useBrief, usePickyStatus, useSchedules, type Schedule, type ScheduleInput } from "./api";
+import { modelOptions } from "./ModelMenu";
 import { thinkFits, thinkOf } from "./Thinking";
 
 type Confirm = ReturnType<typeof useConfirm>[0];
@@ -22,11 +23,7 @@ const DAYS = (day: number | null) => [...Array.from({ length: 28 }, (_, i) => ({
 export function useModels(current: string | null, thinking: boolean) {
   const status = usePickyStatus().data;
   const fits = (code: string) => thinkFits(thinkOf(status, code), thinking);
-  const models = [
-    { value: null as string | null, label: "小拾现在选的" },
-    ...(status?.local.models ?? []).map((m) => ({ value: `local:${m.key}` as string | null, label: m.name, group: "本地" })),
-    ...(status?.cloud ?? []).map((m) => ({ value: `cloud:${m.id}` as string | null, label: m.name, group: "云端" })),
-  ].filter((m) => m.value == null || m.value === current || fits(m.value));
+  const models: DropdownOption<string | null>[] = [{ value: null, label: "小拾现在选的" }, ...modelOptions(status)].filter((m) => m.value == null || m.value === current || fits(m.value));
   if (current && !models.some((m) => m.value === current)) models.push({ value: current, label: "（已经不在了）", group: "" });
   /** The model to keep when 思考 changes (one that no longer fits → 小拾现在选的). */
   const keep = (model: string | null, on: boolean) => (model && !thinkFits(thinkOf(status, model), on) ? null : model);
@@ -166,7 +163,7 @@ function BriefEditor() {
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-muted-foreground">模型</span>
         <div className="flex items-center gap-4">
-          <Dropdown<string | null> ariaLabel="模型" value={b.model} options={models} onChange={(m) => put(b.enabled, m)} />
+          <Dropdown<string | null> ariaLabel="模型" value={b.model} options={models} foldKey="models" onChange={(m) => put(b.enabled, m)} />
           <span className="flex items-center gap-2 text-sm">
             思考 <Switch label="思考" checked={b.thinking} onChange={(on) => put(b.enabled, keep(b.model, on), on)} />
           </span>
@@ -278,7 +275,7 @@ function ScheduleEditor(props: { schedule: Schedule | null; confirm: Confirm; on
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-muted-foreground">模型</span>
         <div className="flex items-center gap-4">
-          <Dropdown<string | null> ariaLabel="模型" value={form.model} options={models} onChange={(model) => set({ model })} />
+          <Dropdown<string | null> ariaLabel="模型" value={form.model} options={models} foldKey="models" onChange={(model) => set({ model })} />
           <span className="flex items-center gap-2 text-sm">
             思考 <Switch label="思考" checked={form.thinking} onChange={(thinking) => set({ thinking, model: keep(form.model, thinking) })} />
           </span>

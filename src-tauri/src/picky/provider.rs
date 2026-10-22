@@ -1,6 +1,6 @@
 //! One "send messages, stream the reply" interface over three backends:
 //! - local llama-server (127.0.0.1:8080, OpenAI-compatible; never through a proxy),
-//! - cloud: OpenRouter / DeepSeek / OpenAI at their fixed official HTTPS endpoints (bearer key,
+//! - cloud: OpenRouter / DeepSeek / OpenAI / Google / Aliyun at their fixed official HTTPS endpoints (bearer key,
 //!   redirects refused so a key is never forwarded; system proxy allowed),
 //! - mock: canned replies (dev builds / tests), no network.
 //! SSE framing is byte-based (split UTF-8 safe), bounded (4 MB per frame). Server error text is
@@ -11,7 +11,12 @@
 //! Thinking (`Options::thinking`, what the work wants): a cloud model set as 能开关 gets the switch
 //! (DeepSeek `thinking`, OpenRouter `reasoning.enabled`, OpenAI `reasoning_effort: none` when off);
 //! 不能 / 只能思考 ones get none. One that turns the switch down anyway (400) is asked again without it,
-//! remembered for the run of the app. Local: the template's `enable_thinking`.
+//! remembered for the run of the app. Local: the template's `enable_thinking`; Aliyun: `enable_thinking`.
+//! Effort (`Options::effort`, v0.6), only for a model that thinks this time: OpenAI / Google
+//! `reasoning_effort`, OpenRouter `reasoning.effort`, DeepSeek `reasoning_effort` (low / high: it has no
+//! medium), Anthropic `output_config.effort`; Aliyun and local models have only the switch. A level a
+//! model turns down (400) is dropped the same way (its own level), before the switch.
+//! Aliyun's content check turns a request down with a 400 of its own: said as such, never retried.
 //! OpenRouter: the reasoning blocks (`reasoning_details`: Gemini's thought signatures, Claude's signed
 //! thinking) of a response that called tools go back unchanged with its assistant message (else the
 //! next round is refused).
@@ -23,7 +28,7 @@
 //! rebuilt from saved text). Thinking: adaptive with summaries and `drop_block` (a later round's
 //! changed tool list must not turn the request down), `disabled` when off.
 
-use super::cloud::{CloudModel, Service, Think};
+use super::cloud::{CloudModel, Effort, Service, Think};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -148,6 +153,10 @@ pub struct Options {
     pub max_tokens: Option<i64>,
     /// None keeps the model's default.
     pub thinking: Option<bool>,
+    /// How hard, when the model thinks this time; None = its own level.
+    pub effort: Option<Effort>,
+    /// Aliyun: the model searches the web itself (`enable_search`; Pub2MD's 联网查术语).
+    pub search: bool,
     /// Tool definitions (OpenAI `tools` entries); empty = none.
     pub tools: Vec<Value>,
     /// With tools: forbid calls this time (the last round must answer).
@@ -172,6 +181,8 @@ pub mod failure {
     pub const NETWORK: &str = "无法连接云端接口，请检查网络。";
     pub const INTERRUPTED: &str = "云端回复意外中断。";
     pub const RESPONSE: &str = "云端接口返回了无法处理的回复。";
+    /// Aliyun's content check.
+    pub const INSPECTED: &str = "阿里云的内容审核拦下了这次请求，可以换个模型再试。";
 }
 
 /// The service turned the request itself down (e.g. a model or server that takes no tools).
@@ -192,7 +203,7 @@ fn backoff(attempt: usize, retry_after: Option<u64>) -> Duration {
 /// Cloud requests asked again when they fail before anything was shown.
 const RETRIES: usize = 3;
 
-fn http_failure(status: u16) -> &'static str {
+pub(crate) fn http_failure(status: u16) -> &'static str {
     match status {
         401 => failure::UNAUTHORIZED,
         402 | 403 => failure::CREDITS,
@@ -302,6 +313,9 @@ fn anthropic_body(model: &CloudModel, messages: &[Msg], opts: &Options, max: i64
     }
     if anthropic_thinks(model, opts) {
         b["thinking"] = json!({ "type": "adaptive", "display": "summarized", "block_binding": { "prefix_mismatch_behavior": "drop_block" } });
+        if let Some(e) = effort_of(model, opts) {
+            b["output_config"] = json!({ "effort": e.word() });
+        }
     } else if model.thinking == Think::Switch {
         b["thinking"] = json!({ "type": "disabled" });
     }
@@ -327,6 +341,11 @@ fn anthropic_body(model: &CloudModel, messages: &[Msg], opts: &Options, max: i64
         }
     }
     b
+}
+
+/// How hard this request asks a cloud model to think: only when it thinks this time.
+fn effort_of(model: &CloudModel, opts: &Options) -> Option<Effort> {
+    opts.effort.filter(|_| model.thinking.thinks(opts.thinking != Some(false)))
 }
 
 /// The JSON body for a request (exposed for tests: the wire contract without any secret).
@@ -355,14 +374,17 @@ pub fn body(target: &Target, messages: &[Msg], opts: &Options) -> Value {
             let max = opts.max_tokens.unwrap_or(model.max_output_tokens).clamp(1, model.max_output_tokens);
             // only a model that can switch gets the switch (one that can't may turn the request down)
             let thinking = if model.thinking == Think::Switch { opts.thinking } else { None };
+            let effort = effort_of(model, opts);
             let mut b = json!({ "model": model.api_model, "messages": messages, "stream": true, "stream_options": { "include_usage": true } });
             match model.service {
                 Service::OpenAi => {
                     b["max_completion_tokens"] = json!(max);
                     b["store"] = json!(false);
-                    // on: the model's own effort
+                    // on without a level: the model's own
                     if thinking == Some(false) {
                         b["reasoning_effort"] = json!("none");
+                    } else if let Some(e) = effort {
+                        b["reasoning_effort"] = json!(e.word());
                     }
                 }
                 Service::DeepSeek => {
@@ -370,18 +392,35 @@ pub fn body(target: &Target, messages: &[Msg], opts: &Options) -> Value {
                     if let Some(t) = thinking {
                         b["thinking"] = json!({ "type": if t { "enabled" } else { "disabled" } });
                     }
+                    if let Some(e) = effort {
+                        b["reasoning_effort"] = json!(if e == Effort::Low { "low" } else { "high" });
+                    }
                 }
                 Service::OpenRouter => {
                     b["max_tokens"] = json!(max);
-                    if let Some(t) = thinking {
+                    // a level turns it on
+                    if let Some(e) = effort {
+                        b["reasoning"] = json!({ "effort": e.word() });
+                    } else if let Some(t) = thinking {
                         b["reasoning"] = json!({ "enabled": t });
                     }
                 }
                 Service::Google => {
                     b["max_tokens"] = json!(max);
-                    // on: the model's own level (Gemini 3 can't think less than its least)
+                    // on without a level: the model's own (Gemini 3 can't think less than its least)
                     if thinking == Some(false) {
                         b["reasoning_effort"] = json!("none");
+                    } else if let Some(e) = effort {
+                        b["reasoning_effort"] = json!(e.word());
+                    }
+                }
+                Service::Aliyun => {
+                    b["max_tokens"] = json!(max);
+                    if let Some(t) = thinking {
+                        b["enable_thinking"] = json!(t);
+                    }
+                    if opts.search {
+                        b["enable_search"] = json!(true);
                     }
                 }
                 Service::Anthropic => unreachable!("anthropic_body"),
@@ -466,6 +505,9 @@ pub async fn stream(target: Target, messages: Vec<Msg>, opts: Options, mut on: i
             if fixed_reasoning(&model.api_model) {
                 opts.thinking = None;
             }
+            if fixed_effort(&model.api_model) {
+                opts.effort = None;
+            }
             // a rate limit, a moment's outage or a dropped connection before anything was shown is
             // asked again (OpenRouter's upstream providers limit bursts: a tool exchange sends several
             // requests in a row)
@@ -475,19 +517,31 @@ pub async fn stream(target: Target, messages: Vec<Msg>, opts: Options, mut on: i
                 let mut retry_after = None;
                 let result = async {
                     let mut resp = send(&opts).await.map_err(|_| failure::NETWORK.to_string())?;
+                    if resp.status() == 400 && effort_sent(model, &opts) {
+                        // a level the model doesn't take: again at its own level
+                        opts.effort = None;
+                        resp = send(&opts).await.map_err(|_| failure::NETWORK.to_string())?;
+                        if resp.status() == 200 {
+                            remember(&FIXED_EFFORT, &model.api_model);
+                        }
+                    }
                     if resp.status() == 400 && switch_sent(model, &opts) {
                         // reasoning that can't be switched: again with the model's own setting
                         opts.thinking = None;
                         resp = send(&opts).await.map_err(|_| failure::NETWORK.to_string())?;
                         if resp.status() == 200 {
-                            remember_fixed_reasoning(&model.api_model);
+                            remember(&FIXED_REASONING, &model.api_model);
                         }
                     }
                     if resp.status() != 200 {
                         let status = resp.status().as_u16();
                         retry_after = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
+                        let text = if cfg!(test) || model.service == Service::Aliyun { resp.text().await.unwrap_or_default() } else { String::new() };
                         if cfg!(test) {
-                            eprintln!("[cloud] HTTP {status}: {}", resp.text().await.unwrap_or_default().chars().take(2000).collect::<String>());
+                            eprintln!("[cloud] HTTP {status}: {}", text.chars().take(2000).collect::<String>());
+                        }
+                        if status == 400 && inspected(&text) {
+                            return Err(failure::INSPECTED.to_string());
                         }
                         return Err(http_failure(status).to_string());
                     }
@@ -526,29 +580,49 @@ pub async fn stream(target: Target, messages: Vec<Msg>, opts: Options, mut on: i
 }
 
 /// The body carries a thinking switch a model set as 能开关 may still turn down (OpenRouter's
-/// `reasoning`, OpenAI's / Google's `reasoning_effort`, Anthropic's `disabled`): a 400 is worth
-/// asking again without it.
+/// `reasoning`, OpenAI's / Google's `reasoning_effort`, Anthropic's `disabled`, Aliyun's
+/// `enable_thinking`): a 400 is worth asking again without it.
 fn switch_sent(model: &CloudModel, opts: &Options) -> bool {
     model.thinking == Think::Switch
         && match model.service {
-            Service::OpenRouter => opts.thinking.is_some(),
+            Service::OpenRouter | Service::Aliyun => opts.thinking.is_some(),
             Service::OpenAi | Service::Google | Service::Anthropic => opts.thinking == Some(false),
             Service::DeepSeek => false,
         }
 }
 
-/// Cloud models that turned down a request for its thinking switch (this run of the app).
-static FIXED_REASONING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-
-fn fixed_reasoning(api_model: &str) -> bool {
-    FIXED_REASONING.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|m| m == api_model)
+/// The body carries a thinking level (every service but Aliyun has one).
+fn effort_sent(model: &CloudModel, opts: &Options) -> bool {
+    model.service != Service::Aliyun && effort_of(model, opts).is_some()
 }
 
-fn remember_fixed_reasoning(api_model: &str) {
-    let mut l = FIXED_REASONING.lock().unwrap_or_else(|e| e.into_inner());
+/// Aliyun's content check (`data_inspection_failed`; DataInspectionFailed on its own API).
+fn inspected(error_body: &str) -> bool {
+    // OpenRouter may pass on only Alibaba's words: "Upstream error from Alibaba: Output data may contain inappropriate content."
+    error_body.contains("data_inspection_failed") || error_body.contains("DataInspectionFailed") || error_body.contains("may contain inappropriate content")
+}
+
+/// Cloud models that turned down a request for its thinking switch / level (this run of the app).
+static FIXED_REASONING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static FIXED_EFFORT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn listed(list: &std::sync::Mutex<Vec<String>>, api_model: &str) -> bool {
+    list.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|m| m == api_model)
+}
+
+fn remember(list: &std::sync::Mutex<Vec<String>>, api_model: &str) {
+    let mut l = list.lock().unwrap_or_else(|e| e.into_inner());
     if !l.iter().any(|m| m == api_model) {
         l.push(api_model.to_string());
     }
+}
+
+fn fixed_reasoning(api_model: &str) -> bool {
+    listed(&FIXED_REASONING, api_model)
+}
+
+fn fixed_effort(api_model: &str) -> bool {
+    listed(&FIXED_EFFORT, api_model)
 }
 
 fn local_client(timeout: u64) -> Option<reqwest::Client> {
@@ -823,7 +897,11 @@ impl Parser {
             if cfg!(test) && cloud {
                 eprintln!("[cloud] error in the stream: {}", text.chars().take(2000).collect::<String>());
             }
-            // OpenRouter passes its upstream provider's status on (429: a burst limit)
+            // OpenRouter passes its upstream provider's status on (429: a burst limit), and Alibaba's
+            // content check (on the output too: it can come after the reasoning has begun)
+            if cloud && inspected(&text) {
+                return Err(failure::INSPECTED.into());
+            }
             let code = e["code"].as_u64().or_else(|| e["code"].as_str().and_then(|c| c.parse().ok())).map_or(500, |c| c as u16);
             return Err(if cloud { http_failure(code).into() } else { format!("本地模型报错：{}", e["message"].as_str().unwrap_or("未知错误")) });
         }
@@ -1012,6 +1090,10 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
         tokio::time::sleep(Duration::from_millis(300)).await;
         return Err("模拟的失败：模型回复意外中断。".into());
     }
+    // Alibaba's content check turns down a model that thinks, not one that doesn't (Pub2MD's backup)
+    if last.contains("审核测试") && thinking {
+        return Err(failure::INSPECTED.into());
+    }
     let system = messages.first().filter(|m| m.role == "system").map_or("", |m| m.content.as_str());
     let summary = system == super::context::SUMMARY_INSTRUCTIONS;
     let flat: String = last.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1033,6 +1115,8 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
         super::assist::mock_reply(system, last)
     } else if system.starts_with(super::assistants::translate::MARK) {
         super::assistants::translate::mock_reply(system, last)
+    } else if super::assistants::pub2md::prompts::is_mine(system) {
+        super::assistants::pub2md::prompts::mock_reply(system, last)
     } else if tools && last_msg.is_some_and(|m| m.role == "tool") {
         super::data::mock_answer(messages)
     } else if let Some(page) = last.split("【我正在看的页面】\n").nth(1).filter(|_| last_msg.is_some_and(|m| m.role == "user")) {
@@ -1071,6 +1155,7 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
     } else {
         MOCK_REPLY.into()
     };
+    let pub2md = super::assistants::pub2md::prompts::is_mine(system);
     let mut parts: Vec<(bool, &str)> = vec![];
     if thinking {
         parts.push((true, MOCK_REASONING));
@@ -1085,7 +1170,10 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
             on(if is_reasoning { Event::Reasoning(piece) } else { Event::Content(piece) });
             i += n;
             step += 1;
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            // Pub2MD's long replies come at once (its own progress shows the chunks)
+            if !pub2md {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
         }
     }
     let prompt: usize = messages.iter().map(|m| m.content.chars().count()).sum();
@@ -1168,6 +1256,10 @@ mod tests {
         // OpenRouter passes the upstream status on: a burst limit reads as one, and is asked again
         let (_, ok) = parse_all(Flavor::Cloud, &[b"data: {\"choices\":[],\"error\":{\"code\":429,\"message\":\"Provider returned error\"}}\n\n"]);
         assert_eq!(ok.unwrap_err(), failure::LIMITED);
+        let (_, ok) = parse_all(Flavor::Cloud, &[b"data: {\"choices\":[],\"error\":{\"code\":502,\"message\":\"Upstream error from Alibaba: <400> InternalError.Algo.DataInspectionFailed: Output data may contain inappropriate content.\"}}\n\n"]);
+        assert_eq!(ok.unwrap_err(), failure::INSPECTED);
+        let (_, ok) = parse_all(Flavor::Cloud, &[b"data: {\"choices\":[],\"error\":{\"code\":502,\"message\":\"Upstream error from Alibaba: Output data may contain inappropriate content.\",\"metadata\":{\"error_type\":\"provider_unavailable\"}}}\n\n"]);
+        assert_eq!(ok.unwrap_err(), failure::INSPECTED);
         assert!(transient(failure::LIMITED) && transient(failure::UNAVAILABLE) && transient(failure::NETWORK) && !transient(failure::REQUEST) && !transient(failure::UNAUTHORIZED));
         assert_eq!((backoff(0, None), backoff(5, None), backoff(0, Some(60)), backoff(1, Some(3))), (Duration::from_secs(2), Duration::from_secs(10), Duration::from_secs(20), Duration::from_secs(3)));
         // cloud needs a finish reason before [DONE]
@@ -1328,10 +1420,59 @@ mod tests {
         assert!(Think::Switch.allows(true) && Think::Switch.allows(false) && !Think::Never.allows(true) && !Think::Always.allows(false));
         assert!(Think::Always.thinks(false) && !Think::Never.thinks(true) && Think::Switch.thinks(true) && !Think::Switch.thinks(false));
         assert!(!fixed_reasoning("google/gemini-x"));
-        remember_fixed_reasoning("google/gemini-x");
-        remember_fixed_reasoning("google/gemini-x");
-        assert!(fixed_reasoning("google/gemini-x") && !fixed_reasoning("anthropic/claude-x"));
+        remember(&FIXED_REASONING, "google/gemini-x");
+        remember(&FIXED_REASONING, "google/gemini-x");
+        assert!(fixed_reasoning("google/gemini-x") && !fixed_reasoning("anthropic/claude-x") && !fixed_effort("google/gemini-x"));
         assert_eq!(FIXED_REASONING.lock().unwrap().iter().filter(|m| *m == "google/gemini-x").count(), 1);
+    }
+
+    #[test]
+    fn effort_in_each_services_words_only_when_thinking() {
+        let model = |service, thinking| CloudModel { id: "x".into(), name: "X".into(), api_model: "api-x".into(), service, context_window: 131_072, max_output_tokens: 8192, thinking };
+        let sent = |service, thinking, o: &Options| body(&Target::Cloud { model: model(service, thinking), key: "k".into() }, &[Msg::new("user", "hi")], o);
+        let at = |e| Options { thinking: Some(true), effort: Some(e), ..Default::default() };
+        let high = at(Effort::High);
+        assert_eq!(sent(Service::OpenAi, Think::Switch, &high)["reasoning_effort"], "high");
+        assert_eq!(sent(Service::Google, Think::Always, &at(Effort::Medium))["reasoning_effort"], "medium");
+        assert_eq!(sent(Service::OpenRouter, Think::Switch, &at(Effort::Low))["reasoning"], json!({ "effort": "low" }));
+        let ds = sent(Service::DeepSeek, Think::Switch, &at(Effort::Medium));
+        assert_eq!((ds["thinking"]["type"].as_str(), ds["reasoning_effort"].as_str()), (Some("enabled"), Some("high"))); // no medium there
+        assert_eq!(sent(Service::DeepSeek, Think::Always, &at(Effort::Low))["reasoning_effort"], "low");
+        let a = body(&Target::Cloud { model: claude("claude-opus-5-5", Think::Always), key: "k".into() }, &[Msg::new("user", "hi")], &high);
+        assert_eq!((a["thinking"]["type"].as_str(), a["output_config"]["effort"].as_str()), (Some("adaptive"), Some("high")));
+        // a model's own level when none is asked
+        assert!(sent(Service::OpenAi, Think::Switch, &Options { thinking: Some(true), ..Default::default() }).get("reasoning_effort").is_none());
+        assert!(body(&Target::Cloud { model: claude("claude-opus-5-5", Think::Always), key: "k".into() }, &[Msg::new("user", "hi")], &Options::default()).get("output_config").is_none());
+        // no level when it doesn't think this time
+        let off = Options { thinking: Some(false), effort: Some(Effort::High), ..Default::default() };
+        assert_eq!(sent(Service::OpenAi, Think::Switch, &off)["reasoning_effort"], "none");
+        assert_eq!(sent(Service::OpenRouter, Think::Switch, &off)["reasoning"], json!({ "enabled": false }));
+        assert!(sent(Service::DeepSeek, Think::Never, &high).get("reasoning_effort").is_none());
+        let c = body(&Target::Cloud { model: claude("claude-sonnet-5", Think::Switch), key: "k".into() }, &[Msg::new("user", "hi")], &off);
+        assert_eq!((c["thinking"]["type"].as_str(), c.get("output_config")), (Some("disabled"), None));
+        assert!(effort_sent(&model(Service::OpenAi, Think::Switch), &high) && !effort_sent(&model(Service::OpenAi, Think::Switch), &off) && !effort_sent(&model(Service::OpenAi, Think::Never), &high));
+        // local models: the switch only
+        let local = body(&Target::Local { model: "m".into() }, &[Msg::new("user", "hi")], &high);
+        assert_eq!((local["chat_template_kwargs"]["enable_thinking"].as_bool(), local.get("reasoning_effort")), (Some(true), None));
+    }
+
+    #[test]
+    fn aliyun_has_the_switch_only_and_its_content_check_is_said() {
+        let model = |thinking| CloudModel { id: "q".into(), name: "Qwen".into(), api_model: "qwen3.8-max".into(), service: Service::Aliyun, context_window: 262_144, max_output_tokens: 32_768, thinking };
+        let sent = |thinking, o: &Options| body(&Target::Cloud { model: model(thinking), key: "sk-1".into() }, &[Msg::new("user", "hi")], o);
+        let b = sent(Think::Switch, &Options { thinking: Some(true), effort: Some(Effort::High), max_tokens: Some(1000), ..Default::default() });
+        assert_eq!((b["model"].as_str(), b["max_tokens"].as_i64(), b["enable_thinking"].as_bool()), (Some("qwen3.8-max"), Some(1000), Some(true)));
+        assert!(b.get("reasoning_effort").is_none() && b.get("reasoning").is_none() && b.get("thinking").is_none());
+        assert_eq!(sent(Think::Switch, &Options { thinking: Some(false), ..Default::default() })["enable_thinking"], false);
+        assert!(sent(Think::Always, &Options { thinking: Some(false), ..Default::default() }).get("enable_thinking").is_none());
+        assert!(sent(Think::Switch, &Options::default()).get("enable_thinking").is_none() && sent(Think::Switch, &Options::default()).get("enable_search").is_none());
+        assert_eq!(sent(Think::Switch, &Options { search: true, ..Default::default() })["enable_search"], true);
+        assert!(!b.to_string().contains("sk-1"));
+        let on = Options { thinking: Some(true), effort: Some(Effort::High), ..Default::default() };
+        assert!(switch_sent(&model(Think::Switch), &on) && !effort_sent(&model(Think::Switch), &on));
+        assert!(inspected(r#"{"error":{"code":"data_inspection_failed","message":"Input data may contain inappropriate content."}}"#));
+        assert!(inspected(r#"{"code":"DataInspectionFailed"}"#) && !inspected(r#"{"error":{"code":"invalid_parameter_error"}}"#));
+        assert!(!rejected(failure::INSPECTED) && !transient(failure::INSPECTED));
     }
 
     fn claude(api_model: &str, thinking: Think) -> CloudModel {
@@ -1388,7 +1529,7 @@ mod tests {
             Msg::tool("toolu_1", "两件"),
             Msg::tool("toolu_2", ""),
         ];
-        let opts = Options { max_tokens: Some(500_000), thinking: Some(true), tools: tools.clone(), no_calls: false };
+        let opts = Options { max_tokens: Some(500_000), thinking: Some(true), effort: None, search: false, tools: tools.clone(), no_calls: false };
         let b = body(&Target::Cloud { model: claude("claude-opus-5-5", Think::Always), key: "sk-ant".into() }, &msgs, &opts);
         assert_eq!((b["model"].as_str(), b["max_tokens"].as_i64(), b["stream"].as_bool()), (Some("claude-opus-5-5"), Some(131_072), Some(true)));
         assert_eq!(b["system"], "说中文\n\n较早的对话摘要");

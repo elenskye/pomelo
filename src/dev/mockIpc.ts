@@ -2056,6 +2056,12 @@ const pky = {
   cloud: [
     { id: "deepseek-flash", name: "DeepSeek Flash", apiModel: "deepseek-flash", service: "deepSeek", contextWindow: 1048576, maxOutputTokens: 8192, thinking: "switch" },
     { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", apiModel: "deepseek-v4-pro", service: "deepSeek", contextWindow: 1048576, maxOutputTokens: 8192, thinking: "switch" },
+    // a long list across providers (the menus fold it by provider)
+    { id: "gpt-6-1-sol", name: "GPT-6.1 Sol", apiModel: "gpt-6.1-sol", service: "openAI", contextWindow: 1048576, maxOutputTokens: 32768, thinking: "switch" },
+    { id: "haiku-5-5", name: "Haiku 5.5", apiModel: "claude-haiku-5-5", service: "anthropic", contextWindow: 262144, maxOutputTokens: 32768, thinking: "switch" },
+    { id: "qwen-max", name: "Qwen3.8 Max", apiModel: "qwen/qwen3.8-max-0902", service: "openRouter", contextWindow: 1000000, maxOutputTokens: 32768, thinking: "switch" },
+    { id: "qwen-flash", name: "Qwen3.8 Flash", apiModel: "qwen/qwen3.8-flash", service: "openRouter", contextWindow: 1000000, maxOutputTokens: 32768, thinking: "switch" },
+    { id: "glm-flashx", name: "GLM-5.3 FlashX", apiModel: "z-ai/glm-5.3-flashx", service: "openRouter", contextWindow: 1048576, maxOutputTokens: 32768, thinking: "always" },
   ] as { id: string; name: string; apiModel: string; service: string; contextWindow: number; maxOutputTokens: number; thinking: string }[],
   keys: new Set<string>(),
   sessions: [] as PSession[],
@@ -2201,7 +2207,7 @@ const pStatus = () => ({
   rerank: pSvcStatus("rerank"),
   selection: pky.cloud.some((m) => `cloud:${m.id}` === pky.selection) ? pky.selection : "local",
   cloud: pky.cloud,
-  keys: (["openRouter", "deepSeek", "openAI", "anthropic", "google"] as const).map((s) => ({ service: s, name: { openRouter: "OpenRouter", deepSeek: "DeepSeek", openAI: "OpenAI", anthropic: "Anthropic", google: "Google" }[s], saved: pky.keys.has(s) })),
+  keys: (["openRouter", "deepSeek", "openAI", "anthropic", "google", "aliyun"] as const).map((s) => ({ service: s, name: { openRouter: "OpenRouter", deepSeek: "DeepSeek", openAI: "OpenAI", anthropic: "Anthropic", google: "Google", aliyun: "Aliyun" }[s], saved: pky.keys.has(s) })),
   generating: pky.runs.size > 0,
   active: [...pky.runs.values()].map((r) => ({ run: r.id, session: r.session, kind: r.kind, model: r.model, reading: r.reading ?? null, queued: !!r.queued })),
   unseen: pky.sessions.filter((s) => s.unseen).length,
@@ -2281,6 +2287,149 @@ const pTr = {
   running: false,
   status: null as string | null,
   timer: 0,
+};
+// ---- Pub2MD (assistants/pub2md/): a document at a time, simulated step by step; 「失败测试」 in a file
+// name stops at its third chunk once (继续 goes on); `&pub2md=keys` shows the Mathpix keys as in the real app ----
+type P2Settings = { steps: "extract" | "clean" | "translate"; md: boolean; englishOnly: boolean; worker: string | null; workerLevel: string; supervisor: string | null; supervisorLevel: string; backup: string; parallel: number; folder: string | null; lang: string; style: string; domain: string; prompt: string; web: boolean | null; refine: boolean; skip: string[]; formats: string[] };
+type P2Recent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
+type P2Job = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null; tick: number; steps: "extract" | "clean" | "translate"; md: boolean; text: boolean; cleaned: number; translated: number; failed?: boolean; read?: boolean };
+const p2 = {
+  settings: { steps: "translate", md: false, englishOnly: false, worker: null, workerLevel: "off", supervisor: null, supervisorLevel: "high", backup: "cloud:deepseek-flash", parallel: 4, folder: null, lang: "enZh", style: "general", domain: "general", prompt: "", web: null, refine: false, skip: ["front", "acknowledgments", "references", "appendix"], formats: ["docx"] } as P2Settings,
+  recent: [] as P2Recent[],
+  queue: [] as ({ kind: "new"; name: string } | { kind: "resume"; folder: string })[],
+  current: null as P2Job | null,
+  paused: new Map<string, P2Job>(),
+  mathpix: false,
+  timer: 0,
+};
+let p2Picks = 0;
+const p2Mock = new URLSearchParams(location.search).get("pub2md") !== "keys";
+const p2Folder = () => p2.settings.folder ?? "/Users/mock/Downloads";
+const P2_STYLES: [string, string][] = [["general", "通用"], ["academic", "学术"], ["literary", "文学"], ["news", "新闻"]];
+const P2_DOMAINS: [string, string][] = [["general", "通用"], ["public", "公共管理"], ["math", "数学"], ["cs", "计算机"]];
+const p2View = () => ({ settings: p2.settings, recent: p2.recent, queue: p2.queue.map((q) => (q.kind === "new" ? q.name : q.folder.split("/").pop()!)), current: p2.current && { ...p2.current }, mathpix: p2.mathpix, mock: p2Mock, folder: p2Folder(), styles: P2_STYLES, domains: P2_DOMAINS, webDefault: false, tavily: false });
+const p2Recent = (r: P2Recent) => {
+  p2.recent = [r, ...p2.recent.filter((x) => x.folder !== r.folder)].slice(0, 10);
+};
+/** The documents the paths will be: [name, files]. */
+const p2Docs = (paths: string[]): [string, string[]][] => {
+  const ext = (p: string) => (p.split(".").pop() ?? "").toLowerCase();
+  const images = paths.filter((p) => ["png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif"].includes(ext(p))).sort();
+  const names = p2Group(paths);
+  const docs = paths.filter((p) => !images.includes(p));
+  return [...docs.map((p, i) => [names[i], [p]] as [string, string[]]), ...(images.length ? [[names[names.length - 1], images] as [string, string[]]] : [])];
+};
+const p2Group = (paths: string[]): string[] => {
+  const base = (p: string) => p.split("/").pop() ?? p;
+  const ext = (p: string) => (base(p).split(".").pop() ?? "").toLowerCase();
+  const images = paths.filter((p) => ["png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif"].includes(ext(p))).sort();
+  const docs = paths.filter((p) => ["pdf", "docx", "doc", "md", "mmd", "txt"].includes(ext(p)));
+  const other = paths.filter((p) => !images.includes(p) && !docs.includes(p));
+  if (other.length) throw `放不进来：${other.map(base).join("、")}（只收 PDF、Word、图片和 MD、MMD、TXT）`;
+  const stem = (p: string) => (["md", "mmd", "txt"].includes(ext(p)) ? base(p) : base(p).replace(/\.[^.]+$/, ""));
+  return [...docs.map(stem), ...(images.length ? [images.length > 1 ? `${stem(images[0])} 等 ${images.length} 张` : stem(images[0])] : [])];
+};
+const p2Next = () => {
+  if (p2.current || !p2.queue.length) return;
+  const w = p2.queue.shift()!;
+  if (w.kind === "resume") {
+    const job = p2.paused.get(w.folder);
+    if (!job) return p2Next();
+    p2.paused.delete(w.folder);
+    p2.current = { ...job, step: "整理…" };
+  } else {
+    let folder = `${p2Folder()}/${w.name} · 2026-10-21`;
+    for (let n = 2; p2.recent.some((r) => r.folder === folder); n++) folder = `${p2Folder()}/${w.name} · 2026-10-21 (${n})`;
+    const models = `Worker：${p2.settings.worker ?? "小拾现在选的"}（${p2.settings.workerLevel === "off" ? "不思考" : "思考"}）　Supervisor：${p2.settings.supervisor ?? "小拾现在选的"}（思考 · 高）${p2.settings.backup ? "　备用：DeepSeek Flash" : ""}`;
+    const text = /\.(md|mmd|txt)$/.test(w.name);
+    const steps = text ? "translate" : p2.settings.steps;
+    p2.current = { name: w.name.replace(/\.(md|mmd|txt)$/, ""), folder: folder.replace(/\.(md|mmd|txt) ·/, " ·"), step: "准备上传…", chunks: 0, done: 0, workerRequests: 0, supervisorRequests: 0, elapsed: 0, models: steps !== "extract" ? models : null, tick: text ? 3 : 0, steps, md: p2.settings.md || text, text, cleaned: 0, translated: 0 };
+  }
+  const c = p2.current;
+  p2Recent({ name: c.name, folder: c.folder, at: "2026-10-21 10:00", state: "running", message: null, outputs: [] });
+  p2.timer = window.setInterval(p2Tick, 350);
+};
+const p2End = (state: P2Recent["state"], message: string | null, outputs: string[] = []) => {
+  const c = p2.current!;
+  window.clearInterval(p2.timer);
+  if (state !== "done") p2.paused.set(c.folder, { ...c });
+  p2Recent({ name: c.name, folder: c.folder, at: "2026-10-21 10:00", state, message, outputs });
+  p2.current = null;
+  p2Next();
+};
+const p2Tick = () => {
+  const c = p2.current;
+  if (!c) return;
+  c.tick += 1;
+  c.elapsed = Math.floor(c.tick * 0.35) + 1;
+  if (c.tick <= 3) return (c.step = `Mathpix 识别中（模拟）${c.tick}/3 页`);
+  const raw = c.text ? [] : ["原文.mmd", "assets", "Mathpix 原始结果.zip"];
+  if (c.steps === "extract") return p2End("done", null, [raw[0], ...p2Converted([raw[0]]), ...raw.slice(1), "工作日志.md"]);
+  if (c.tick === 4 && !c.text) return (c.step = "画原页图…");
+  if (c.tick <= 5) {
+    c.step = "Supervisor 审定切块…";
+    c.supervisorRequests += c.steps === "translate" ? 2 : 1; // and the term list beside it
+    c.tick = 5;
+    return;
+  }
+  if (c.chunks === 0) c.chunks = 5;
+  const translate = c.steps === "translate";
+  if (c.name.includes("失败测试") && c.done === 2 && !c.failed) {
+    c.workerRequests += 2;
+    c.failed = true;
+    return p2End("failed", "第 3 块（原文第 3～4 页）整理：请求失败：模拟的失败：模型回复意外中断。");
+  }
+  if (c.cleaned < c.chunks && !c.text) {
+    c.cleaned += 1;
+    c.workerRequests += 1;
+  } else c.cleaned = c.chunks;
+  if (translate && c.translated < c.cleaned - (c.text ? 0 : 1)) {
+    c.translated += 1;
+    c.workerRequests += 1;
+  } else if (translate && c.cleaned === c.chunks && c.translated < c.chunks) {
+    c.translated += 1;
+    c.workerRequests += 1;
+  }
+  c.done = translate ? c.translated : c.cleaned;
+  if (c.read) return p2End("done", null, p2Outputs(c, translate, raw));
+  c.step = translate ? `整理 ${c.cleaned}/${c.chunks} · 翻译 ${c.translated}/${c.chunks}` : `整理 ${c.cleaned}/${c.chunks}`;
+  if (c.done < c.chunks) return;
+  if (translate) {
+    c.step = "通读…";
+    c.read = true;
+    c.supervisorRequests += 1;
+    return;
+  }
+  p2End("done", null, p2Outputs(c, translate, raw));
+};
+const P2_FORMAT_EXT: Record<string, string> = { docx: "docx", pdf: "pdf", latex: "tex.zip", html: "html.zip" };
+/** 另存为: each result in each picked format. */
+const p2Converted = (results: string[]) => results.flatMap((r) => p2.settings.formats.map((f) => `${r.replace(/\.(mmd|md)$/, "")}.${P2_FORMAT_EXT[f]}`));
+const p2Outputs = (c: P2Job, translate: boolean, raw: string[]) => {
+  const ext = c.md ? "md" : "mmd";
+  const results = [...(translate ? [`译文.${ext}`] : []), ...(c.text ? [] : [`整理稿.${ext}`])];
+  return [...results, ...(translate && p2.settings.lang === "enZh" ? ["术语表.md"] : []), ...p2Converted(results), ...raw, "工作日志.md"];
+};
+const P2_PREVIEW: Record<string, string> = {
+  译文: "\\section*{注意力就是一切}\n\n主流的序列转换模型基于复杂的循环或卷积神经网络。我们提出一种新的简单网络结构 Transformer，完全基于注意力机制 \\(\\operatorname{Attention}(Q, K, V)\\)。\n\n\\[\n\\operatorname{Attention}(Q, K, V)=\\operatorname{softmax}\\left(\\frac{Q K^{T}}{\\sqrt{d_{k}}}\\right) V\n\\]\n\n\\begin{tabular}{|l|c|c|}\n\\hline 层的类型 & 每层复杂度 & 顺序操作 \\\\\n\\hline 自注意力 & \\(O\\left(n^{2} \\cdot d\\right)\\) & \\(O(1)\\) \\\\\n\\hline 循环 & \\(O\\left(n \\cdot d^{2}\\right)\\) & \\(O(n)\\) \\\\\n\\hline\n\\end{tabular}\n\n![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAAB4CAIAAAAMrLyJAAABhElEQVR4nO3ToQ2AMAAAwU7HEExch2QTNBpRg4FPLrkB3vyY+wZEjc8LgNcMDGEGhrDHwNd5AD9nYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhbDkw0GJgCDMwhBkYwm6Oez/6qdHJNAAAAABJRU5ErkJggg==)\n\n图 1：模拟的插图\n\n<b>原文里的 HTML 不会被当成网页执行</b>",
+  整理稿: "\\section*{Attention Is All You Need}\n\nThe dominant sequence transduction models are based on complex recurrent or convolutional neural networks. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms \\(\\operatorname{Attention}(Q, K, V)\\).",
+  原文: "\\section*{Attention Is All You Need}\n\nThe dominant sequence transduction models are based on complex recurrent or convolutional neural networks.\n\n\\pagebreak",
+  术语表: "# 术语表 · Attention Is All You Need\n\n| 原文 | 译文 | 说明 |\n|---|---|---|\n| Transformer | Transformer | 模型名，不译 |\n| attention | 注意力 |  |",
+  工作日志: "# 工作日志 · Attention Is All You Need\n\n- 结果：完成\n- 另存为：Word\n\n## 经过\n\n- 10:00:01 开始",
+};
+const p2Prompts = (st: P2Settings): [string, string][] => {
+  if (st.steps === "extract") return [];
+  const style = P2_STYLES.find((x) => x[0] === st.style)?.[1] ?? "通用";
+  const domain = P2_DOMAINS.find((x) => x[0] === st.domain)?.[1] ?? "通用";
+  const wishes = `- 文体：${style}。\n- 领域：${domain}。${st.prompt.trim() ? `\n- 用户另外的要求：\n${st.prompt.trim()}` : ""}`;
+  const out: [string, string][] = [["Worker · 整理", `你在整理一份文档里的一块：Mathpix 从原文件识别出的文字（MMD）。（模拟的说明）\n格式：${st.md ? "Markdown" : "MMD"}`]];
+  if (st.steps === "translate") out.push(["Worker · 翻译", `把这一块从英文译成简体中文。（模拟的说明）\n${wishes}`]);
+  out.push(["Supervisor · 审定切块", "请审定切块。（模拟的说明）"]);
+  if (st.steps === "translate" && st.lang === "enZh") out.push(["Supervisor · 术语表", `先定一份术语表。${st.web ? "拿不准的可以联网查。" : "这次不联网。"}\n${wishes}`]);
+  out.push(["Supervisor · 出错排查", "程序的检查没通过，选一种做法。（模拟的说明）"]);
+  if (st.refine) out.push(["Supervisor · 精修", "只挑出有证据的问题，给出改法。（模拟的说明）"]);
+  if (st.steps === "translate") out.push(["Supervisor · 通读", "只找跨块的问题。（模拟的说明）"]);
+  return out;
 };
 const pTrView = () => ({ ...pTr.saved, running: pTr.running, status: pTr.running ? pTr.status : null, lists: { languages: P_LANGS.map(([code, name]) => ({ code, name })), groups: P_GROUPS } });
 const pTrChinese = (t: string) => {
@@ -4554,6 +4703,56 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     return pTrView();
   },
   picky_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
+  picky_pub2md: () => p2View(),
+  picky_pub2md_settings: (a) => {
+    p2.settings = { ...(a.settings as P2Settings), parallel: Math.min(8, Math.max(1, (a.settings as P2Settings).parallel)) };
+    return p2View();
+  },
+  picky_pub2md_group: (a) => p2Docs([...new Set(a.paths as string[])]).map(([name, files]) => ({ name, files })),
+  picky_pub2md_delete: (a) => {
+    const folder = String(a.folder);
+    const r = p2.recent.find((x) => x.folder === folder);
+    if (!r) throw "找不到这份文档";
+    if (r.state === "done") throw "做完的文档不在这里删";
+    if (p2.current?.folder === folder) throw "这份文档正在处理，先停止";
+    p2.recent = p2.recent.filter((x) => x.folder !== folder);
+    p2.paused.delete(folder);
+    p2.queue = p2.queue.filter((q) => !(q.kind === "resume" && q.folder === folder));
+    return p2View();
+  },
+  picky_pub2md_add: (a) => {
+    if (!p2Mock && !p2.mathpix) throw "先填上 Mathpix 的 App ID 和 App Key";
+    const names = p2Group(a.paths as string[]);
+    if (!names.length) throw "没有能处理的文件";
+    p2.queue.push(...names.map((name) => ({ kind: "new" as const, name })));
+    p2Next();
+    return p2View();
+  },
+  picky_pub2md_resume: (a) => {
+    const folder = String(a.folder);
+    if (!p2.paused.has(folder)) throw "找不到这份文档的中间结果，没法接着做";
+    if (!p2.queue.some((q) => q.kind === "resume" && q.folder === folder)) p2.queue.unshift({ kind: "resume", folder });
+    p2Next();
+    return p2View();
+  },
+  picky_pub2md_unqueue: (a) => (p2.queue.splice(Number(a.index), 1), p2View()),
+  picky_pub2md_stop: () => (p2.current && p2End("stopped", "已停止"), p2View()),
+  picky_pub2md_open: () => null,
+  picky_pub2md_preview: (a) => {
+    const r = p2.recent.find((x) => x.folder === a.folder);
+    const file = String(a.file);
+    if (!r || !r.outputs.includes(file) || !/\.(mmd|md)$/.test(file)) throw "这个文件不能预览";
+    return P2_PREVIEW[file.replace(/\.(mmd|md)$/, "")] ?? `# ${file}\n\n（模拟的预览）`;
+  },
+  picky_pub2md_prompts: (a) => p2Prompts(a.settings as P2Settings),
+  picky_pub2md_keys_save: (a) => {
+    const ok = (v: unknown) => String(v).trim() && !/[^\x21-\x7e]/.test(String(v).trim());
+    if (!ok(a.id)) throw "App ID 为空或格式不对";
+    if (!ok(a.key)) throw "App Key 为空或格式不对";
+    p2.mathpix = true;
+    return p2View();
+  },
+  picky_pub2md_keys_remove: () => ((p2.mathpix = false), p2View()),
   picky_kb_overview: () => ({ libraries: pKbLibs().map((l) => ({ id: l.id, name: l.name, sources: pkb.sources.filter((x) => x.libraryId === l.id).map(pKbView) })), error: null }),
   picky_kb_library_create: (a) => {
     const name = String(a.name).trim();
@@ -5436,7 +5635,10 @@ const handlers: Record<string, (a: Args) => unknown> = {
 
   "plugin:dialog|open": (a) => {
     const o = (a.options ?? {}) as { multiple?: boolean; title?: string; directory?: boolean; filters?: { extensions: string[] }[] };
+    if (o.directory && o.title === "存到") return "/Users/me/Documents/论文";
     if (o.directory) return o.title === "保存到" ? "/Users/me/Documents/报告" : `/Users/me/Documents/读书笔记${(pPickCount += 1) > 1 ? pPickCount : ""}`;
+    // Pub2MD: a paper, then one that fails at its third chunk, then two photos (one document)
+    if (o.title === "选择文件") return [["/mock/Attention Is All You Need.pdf"], ["/mock/失败测试.pdf"], ["/mock/IMG_0001.HEIC", "/mock/IMG_0002.jpg"], ["/mock/读书笔记.md"]][(p2Picks += 1) - 1 - 4 * Math.floor((p2Picks - 1) / 4)];
     if (o.title === "改文件") return "/Users/me/Documents/求职/简历.docx";
     if (o.title === "添加附件") return [`/mock/截图 ${(pPickCount += 1)}.png`, "/mock/发票.pdf"];
     if (!o.filters?.some((f) => f.extensions.includes("pdf"))) return "/mock/pomelo-import.json";

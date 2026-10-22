@@ -41,9 +41,14 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **真的网站文件夹只读**：只读文件、只用只读的 git 命令（status、log、diff、show）。提交、推送、拉取、切分支都由我做（在终端或点 Pomelo 的「发布」）。开发和测试用副本加本机的假远端（`site::mode`，规则同小拾），绝不往真的 GitHub 推。
 - 改网站项目里的代码和文档要我说开工；只改文件、不碰 git，改完我自己提交。
 
+## Pub2MD（旧项目）
+
+- Pub2MD 已经用 Rust 完整并入小拾（`picky/assistants/pub2md/`，需求见 `requirements.md` 的「Pub2MD」）。旧的 Python 项目 `~/Documents/GitHub/pub2md-agent` 只读、不运行，`.env` 里是真实的 Key，不读取、不输出；v0.6 验收后整个删掉（删前再问我）。
+
 ## 小拾（AI）
 
 - 小拾的数据只在 `picky.db`（自己的升级脚本和版本号）；不为小拾给 `pomelo.db` 加 migration。
+- **锁不能套着用**：`with_db` / `picky.with_db` 的闭包里不能再调用会自己上同一把锁的函数（比如 `picky.selection()`），锁不能重入，会卡死；同步命令跑在主线程上，一卡整个 App 不响应。页面反复调用、可能慢的命令写成 `async`。
 - **运行方式**由 `picky::mode` 决定：只有正式数据目录的打包版（或 `POMELO_REAL_MODELS=1`）是真实的；开发版、测试、设了 `POMELO_DATA_DIR` 的打包版都是模拟（模拟模型、假的流式服务、Key 在内存，不调 `llmctl.sh`、不连 8080 / 8081 / 8082 和云端、不读写钥匙串）。
 - **测试模型**：平时只用模拟的。真的本地模型和真接口照下面「验证方法」，用之前先问我；本地模型是云端的备用，平时也要用它测好。**云端模型平时由我自己在正式版里测**；我让你用云端测时，Key 放在我给的文件里（`POMELO_CLOUD_KEY_FILE`），测试代码从不读钥匙串。
 - **本地模型**：`~/Documents/LLM` 由你（Claude）维护：部署模型、整理脚本和清单、保持轻量。改之前说清楚改什么，下载或删除模型文件先问我；只用它自己的文件夹和 launchd 标签，改完在它的 `INSTALLATION.md` 里写现状。聊天模型的上下文：14B（及看不出大小的）最多 16K，9B 这样更小的最多 32K（`models.json`、`llmctl.sh`、Pomelo 都会拦；向量、重排模型不管）。某项功能超出本地模型的能力时，以我的需求为准保留，不降级。
@@ -53,6 +58,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **思考**：每次调用模型都传要不要思考（`Options.thinking`，谁看哪个开关见 `requirements.md`）；模型能不能做到看 `cloud::Think` 和模型清单，在 `provider.rs` 里处理；开思考时用 `Route::with_thinking` / `context::think_room` 多留回复长度。
 - **写数据**：模型只能提议，Rust 用模块自己的校验试写（在撤回的事务里）后存成卡片，我确认后才写，整张卡片一步 `with_undo`。
 - **插件库**（`picky/skills/`）：技能是 Rust 写的固定功能。发给 Wikidata / Open Library 的请求带着我在插件库填的联系邮箱（`picky.db` 偏好 `skills.contact`，不写进代码），别的地方不带。
+- **助手**（`assistants/`）：名字由我来定，新加的先问我（现在有 Translator、Pub2MD）。
 - **定时任务、今日简报、年度总结**：只读，不给写的工具；今日简报和年度总结也不给查数据的工具（Rust 先用 `data.rs` 读好）。开机自动启动（LaunchAgent）只有正式数据目录的打包版会登记：测试不要碰真实的登录项。
 - 模拟模型和 `mockIpc.ts` 都要能模拟查数据、提议写数据、定时任务、简报和年度总结；按意思搜用模拟的向量和重排，联网搜索、书单 / 影单检索用模拟的结果。
 
@@ -78,18 +84,18 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `src-tauri/src/search/` | `query.rs` 唯一的搜索入口（按字 / 按意思 / 合并后重排）、`mod.rs` ⌘K 的按字部分、`store.rs` search.db、`sources.rs` 每类记录进索引的字段、`text.rs` 分词分段（改了把 `RULES` 加一）、`vectors.rs` 向量检索、`indexer.rs` 后台同步 |
 | `src-tauri/src/picky/` 模型 | `mod.rs` 运行方式、状态、命令和后台循环；`runtime.rs` 本地模型和向量、重排服务（`llmctl.sh`，含模拟）；`catalog.rs` 模型清单；`cloud.rs` 云端模型、思考能力（`Think`）和 Key；`provider.rs` 流式连接（OpenAI 兼容和 Anthropic 两种接口，含模拟模型；发给本地模型的请求在这里排队）；`embed.rs` · `rerank.rs` 向量（8081）、重排（8082） |
 | `src-tauri/src/picky/` 对话 | `store.rs` picky.db 和升级脚本；`chat.rs` 对话、版本、生成和查数据的循环（每个对话一个生成位置：`Runs`）；`context.rs` 上下文预算和总结；`library.rs` 对话列表（项目、置顶、定时、私密、归档、拖动）；`instructions.rs` 四层指令和预设；`templates.rs`；`memory.rs` 记忆；`files.rs` · `pdf.rs` · `office.rs` · `reading.rs` · `index.rs` 附件、项目资料（Word、PowerPoint、表格和「查表」、网页、图片）、分段阅读、资料检索；`knowledge.rs` 知识库（库、文件夹和网页、扫描、建索引、检索；文件清单和向量在 search.db）；`work.rs` Work（保存为 Word、改文件和它的卡片），`word.rs` 写 Word、读 Word 段落、保留格式地改；`find.rs` 对话搜索；`export.rs`；`transfer.rs` 数据文件里的小拾部分；`storage.rs` 空间管理 |
-| `src-tauri/src/picky/` 能力 | `data.rs` 查 Pomelo 数据（每个模块的只读查询、读不读得到、简报和年度总结要读的）；`cite.rs` 出处和「搜索」「读整条」；`act/` 写数据的工具和确认卡片；`assist.rs` 润色、补全、一句话填好；`assistants/` 助手（`translate.rs` 翻译，`site.rs` 呦呦漫游的按中文起草英文版）；`skills/` 插件库（`works.rs` 书单 / 影单检索，`web.rs` 联网搜索，`files.rs` 读文件和长资料的目录、挑段落，`toolbox.rs` Word 工具箱、文本工具箱：改文件、新建 Word；查知识库在 `knowledge.rs`）；`schedule.rs` 定时任务；`brief.rs` 今日简报；`yearly.rs` 年度总结 |
+| `src-tauri/src/picky/` 能力 | `data.rs` 查 Pomelo 数据（每个模块的只读查询、读不读得到、简报和年度总结要读的）；`cite.rs` 出处和「搜索」「读整条」；`act/` 写数据的工具和确认卡片；`assist.rs` 润色、补全、一句话填好；`assistants/` 助手（`translate.rs` 翻译，`site.rs` 呦呦漫游的按中文起草英文版，`pub2md/` Pub2MD：`mathpix.rs` Mathpix，`source.rs` 放进来的文件，`mmd.rs` 读 MMD（块、页、切点、论文各部分），`chunk.rs` 切块和 Supervisor 审定，`check.rs` 程序检查，`prompts.rs` 提示词和模拟回答，`search.rs` 联网查术语（各家自带的搜索、Tavily），`script.rs` 简繁转换，`job.rs` 整个流程、继续、另存为、预览的图片、提示词页的说明、工作日志）；`skills/` 插件库（`works.rs` 书单 / 影单检索，`web.rs` 联网搜索，`files.rs` 读文件和长资料的目录、挑段落，`toolbox.rs` Word 工具箱、文本工具箱：改文件、新建 Word；查知识库在 `knowledge.rs`）；`schedule.rs` 定时任务；`brief.rs` 今日简报；`yearly.rs` 年度总结 |
 | `src-tauri/src/site/` | 呦呦漫游：`mod.rs` 运行方式、网站文件夹、副本、命令、预览窗口；`tools.rs` 找 git / gh / Node、跑外部程序；`server.rs` 网站的本地服务；`changes.rs` 改动清单和差异；`publish.rs` 发布、上线结果、最近发布；`yaml.rs` 读写文件开头的字段（写法和网站原有文件的 js-yaml 一样，`yaml_cases.rs` 是它生成的对照）；`doc.rs` 读写内容文件、JSON、指纹；`wander.rs` 作品；`now.rs` Now 和当下状态；`about.rs` 关于我；`career.rs` 职业页；`registry.rs` 资源库的登记；`terms.rs` 话题与类别、外部链接；`images.rs` 资源库：加文件（放进 `public/assets/`、压缩、复用同样的文件、自动登记）和给挑选用的列表 |
 | `src-tauri/src/` 其他 | `tray.rs` 菜单栏；`autostart.rs` 开机自动启动；`undo.rs` 撤销 / 重做（SQLite session，分 pomelo.db 和 picky.db）；`secure.rs` 钥匙串、Touch ID、剪贴板（测试里换成假的）；`transfer.rs` · `backup.rs` 导出导入、备份恢复；`db.rs` · `migrations/` 连接和升级脚本；`home.rs` 首页汇总 |
 | `src/app/` | `App.tsx` 外壳、⌘Z / ⌘K / ⌘J、每天的例行检查；`Sidebar.tsx`；`Search.tsx` 全局搜索；`pageContext.ts` 告诉小窗当前页面；`hidden.ts`；`modules.ts` |
 | `src/home/` | 首页；`BriefCard.tsx` 今日简报；`YearCard.tsx` 新年第一周的年度总结 |
 | `src/modules/<模块>/` | 各模块页面；书影共用 `src/shared/collection/`；`custom/` 五花八门、循序渐进的页面和新建对话框，`useAllModules` 是固定模块加建出来的模块 |
 | `src/modules/site/` | 呦呦漫游：`SitePage.tsx` 页面、入口和页签，`Publish.tsx` 发布页、确认框、进度，`Works.tsx` 作品列表，`WorkEditor.tsx` 作品编辑（字段、画廊、资源库），`Now.tsx` `About.tsx` `Career.tsx` `Assets.tsx`（资源库）`SiteData.tsx`（站点），`parts.tsx` 共用的（存取和 ⌘S、工具栏、正文和润色 / 按中文起草、行的上移下移、图片列表），`MdEditor.tsx` 边写边显示的 Markdown 正文，`api.ts` |
-| `src/modules/picky/` | `PickyPage.tsx` 小拾页；`ConversationList.tsx` 对话列表；`Transcript.tsx` · `markdown.ts` 消息区；`useChat.tsx` 小拾页和小窗共用的流式回复；`SideChat.tsx` 右侧小窗；`Composer.tsx` · `slots.ts` 输入框和「/」菜单；`Manage.tsx` 管理；`Schedules.tsx` 定时；`Plugins.tsx` 插件库；`Knowledge.tsx` 知识库（管理对话框、输入框按钮、项目选库）；`Work.tsx` 改文件、新建 Word 的卡片和保存为 Word；`Assist.tsx` 各模块面板里的润色、补全、一句话填好；`assistants/` 助手和它们的页面（`Translate.tsx`）；`Thinking.tsx` 输入框的思考按钮、模型能不能思考 |
+| `src/modules/picky/` | `PickyPage.tsx` 小拾页；`ConversationList.tsx` 对话列表；`Transcript.tsx` · `markdown.ts` 消息区；`useChat.tsx` 小拾页和小窗共用的流式回复；`SideChat.tsx` 右侧小窗；`Composer.tsx` · `slots.ts` 输入框和「/」菜单；`Manage.tsx` 管理；`Schedules.tsx` 定时；`Plugins.tsx` 插件库；`Knowledge.tsx` 知识库（管理对话框、输入框按钮、项目选库）；`Work.tsx` 改文件、新建 Word 的卡片和保存为 Word；`Assist.tsx` 各模块面板里的润色、补全、一句话填好；`assistants/` 助手和它们的页面（`Translate.tsx` Translator，`Pub2md.tsx` Pub2MD，`MmdPreview.tsx` 它的预览：mathpix-markdown-it 放进 sandbox 的 iframe）；`Thinking.tsx` 输入框的思考按钮、模型能不能思考 |
 | `src/settings/` | 设置页；`layout.tsx` 带 (?) 说明的行；`Picky.tsx` 小拾和云端模型；`Startup.tsx` 开机自动启动 |
 | `src/shared/` | `attachments/`（附件的小图、看大图、拖入和粘贴；`target.ts` 的 `useDropTarget` 也给呦呦漫游用）、`editable.ts`（边写边显示的输入框：文字和光标位置）、`Dropdown`、`DateInput`、`MonthInput`、`panel`（右侧面板）、`Modal`、`sortable`、`charts`、`settings`（记住界面状态）、`kinds/`、`feedback`、`dates`、`diff`、`InlineMd`、`open`（打开某条记录：页面用 `useOpenRequest` 接住）、`tags`（选项和类型的彩色标签、表格里点了就换） |
 | `src/dev/mockIpc.ts` | 浏览器测试用的模拟后端（新命令要加进来） |
-| `scripts/` | `install-app.sh` 安装正式版 |
+| `scripts/` | `install-app.sh` 安装正式版；`clean-build.sh` 清编译缓存 |
 
 ## 新增一个模块
 
@@ -110,17 +116,19 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `pnpm app:dev` | 运行开发版 |
 | `pnpm app:build` | 只打包，不安装 |
 | `pnpm app:install` | 打包并安装到「应用程序」，只在我同意时执行 |
+| `pnpm clean:build` | 清掉编译缓存 `src-tauri/target`（超过 20 GB 时 `check`、`app:dev`、`app:build`、`app:install` 和每次开会话的 hook 会自动清；别改回带调试信息的编译设置） |
 
 ## 验证方法
 
-- **界面**：用 Bash 后台跑 `pnpm dev`（预览面板没有「文稿」权限，自己启动不了），再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据）。仓库里改任何文件（文档也算）页面都会刷新、模拟数据清空，等结果时别动文件。参数：`&notes=prototype` 真实的 179 条笔记；`&vault=new|open`（默认锁着，测试主密码 `mock-master-1`）、`&touch=fail|none`；`&picky=ready` 一打开就有模拟的本地模型；`&kb=demo` 先放两个知识库；`&brief=fail|off` 今日简报；`&year=card` 首页任何一天都显示年度总结卡片；`&site=sandbox|missing|clean|big|ahead` 呦呦漫游（开发版还没副本、找不到文件夹、没有改动、有超大的文件、有没推的提交；commit 文本写「失败测试」「上线失败」得到检查没过 / 上线失败；「作品」里有三篇模拟作品，图片是按网址画的色块）；问题里写「滚动测试」「失败测试」得到长回复 / 失败；小拾选文件第二次多选拿到 xlsx、pptx、png，第一次是 pdf、md；想直接看某页用 `/?mock#/finance`。截图常慢一拍，关键结果用 JS 读页面确认；拖拽用 `left_click_drag` 测。
-- **真实窗口**：`pnpm app:build` 后 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"`，用 `screencapture -x` 截全屏看（我在用别的 App 时，新窗口可能被台前调度缩成左边的缩略图，不是 bug）；查数据用 `sqlite3` 看临时目录。测完 `pkill -f "target/release/bundle"`（别用 osascript quit，会连正式版一起关）并删掉这个 `.app`。**不要用 osascript 碰 System Events**（会弹「辅助功能」授权框），交互在浏览器里测。
+- **界面**：用 Bash 后台跑 `pnpm dev`（预览面板没有「文稿」权限，自己启动不了），再用 `.claude/launch.json` 的 `ui-mock` 打开 `http://localhost:1420/?mock`（内存里的模拟数据）。仓库里改任何文件（文档也算）页面都会刷新、模拟数据清空，等结果时别动文件。参数：`&notes=prototype` 真实的 179 条笔记；`&vault=new|open`（默认锁着，测试主密码 `mock-master-1`）、`&touch=fail|none`；`&picky=ready` 一打开就有模拟的本地模型；`&kb=demo` 先放两个知识库；`&brief=fail|off` 今日简报；`&year=card` 首页任何一天都显示年度总结卡片；`&site=sandbox|missing|clean|big|ahead` 呦呦漫游（开发版还没副本、找不到文件夹、没有改动、有超大的文件、有没推的提交；commit 文本写「失败测试」「上线失败」得到检查没过 / 上线失败；「作品」里有三篇模拟作品，图片是按网址画的色块）；问题里写「滚动测试」「失败测试」得到长回复 / 失败；`&pub2md=keys` Pub2MD 像正式版那样要填 Mathpix 的 Key，它的「选择文件…」依次拿到一篇论文、「失败测试」（第 3 块出错一次，能「继续」或「删除」）、两张照片、「读书笔记.md」（只翻译），选了先列在「待发送」，点「发送」才开始；小拾选文件第二次多选拿到 xlsx、pptx、png，第一次是 pdf、md；想直接看某页用 `/?mock#/finance`。截图常慢一拍，关键结果用 JS 读页面确认；拖拽用 `left_click_drag` 测。
+- **真实窗口**：新加或改了 Rust 命令的页面，除了 `?mock` 还要在真实窗口里点进去一次（`?mock` 不走 Rust）。`pnpm app:build` 后 `open -n --env POMELO_DATA_DIR=<临时目录> "src-tauri/target/release/bundle/macos/Pomelo OS.app"`，用 `screencapture -x` 截全屏看（我在用别的 App 时，新窗口可能被台前调度缩成左边的缩略图，不是 bug）；查数据用 `sqlite3` 看临时目录。测完 `pkill -f "target/release/bundle"`（别用 osascript quit，会连正式版一起关）并删掉这个 `.app`。**不要用 osascript 碰 System Events**（会弹「辅助功能」授权框），交互在浏览器里测；要在真实窗口里点，用电脑操作（computer use，会弹授权框由我同意），只授权「Pomelo OS」，点之前确认正式版没在运行。
 - **升级测试（装正式版前做）**：先在正式版二进制里 `grep -c -a` 各 migration 的特征 SQL，确定它在哪个版本（不要读真实数据目录；`picky.db` 的升级脚本也要查）；在临时目录里用 `sqlite3` 依次执行到那个版本的 migration、`PRAGMA user_version=<版本>`、插几条会被新 migration 改动的数据，再用上面的方法打开新打包的 App，检查版本号、`backups/` 里的「升级前」备份和数据。
 - **真的本地模型（先问我）**：`~/Documents/LLM/scripts/llmctl.sh start qwen359b`，等 `curl -sf 127.0.0.1:8080/health` 通了再跑，用完马上 `llmctl.sh stop`。
   - 小拾：`POMELO_REAL_LLM=1 POMELO_ASK='问题1|问题2>>追问' cargo test --manifest-path src-tauri/Cargo.toml real_local_model -- --ignored --nocapture`（导入文件加编的数据，在内存里；`POMELO_SHOW=1` 显示查到的原文，`POMELO_AS_CLOUD=1` 按云端的规则，`POMELO_SCHEDULED=1` 按定时任务只读）。一次跑一个问题、给个时限：Qwen3.5 9B 偶尔会想很久停不下来。
-  - 润色补全、一句话填好：`real_assist`、`real_quick`；今日简报：`real_brief`（`POMELO_TODAY` 换日期）；翻译助手：`real_translate`（`POMELO_TR_CASE=zh|keywords|long`，一次一个；`POMELO_THINK=0` 不思考，开思考时 9B 两句话也会想几分钟）；长资料补读：`real_read_file`（编的 60 章手册，`POMELO_ASK` 换问题）；Word / 文本工具箱：`real_toolbox`（临时文件夹里编的 Word、Markdown 等 15 种情况，打出调用、卡片和写入后读回的结果；`POMELO_TB_CASE=kb,table…` 挑几个，`POMELO_TB_DUMP=1` 只看读出来的段落；我同意用云端时把 `POMELO_REAL_LLM=1` 换成 `POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`，默认 DeepSeek，`POMELO_CLOUD_SERVICE=openrouter POMELO_CLOUD_MODEL=<模型>` 换 OpenRouter；`real_local_model` 也能这样用云端，只用编的数据）；知识库看图：`real_kb_image`（只能用云端，编一张带字的图）。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。
+  - 润色补全、一句话填好：`real_assist`、`real_quick`；今日简报：`real_brief`（`POMELO_TODAY` 换日期）；Translator：`real_translate`（`POMELO_TR_CASE=zh|keywords|long`，一次一个；`POMELO_THINK=0` 不思考，开思考时 9B 两句话也会想几分钟）；长资料补读：`real_read_file`（编的 60 章手册，`POMELO_ASK` 换问题）；Word / 文本工具箱：`real_toolbox`（临时文件夹里编的 Word、Markdown 等 15 种情况，打出调用、卡片和写入后读回的结果；`POMELO_TB_CASE=kb,table…` 挑几个，`POMELO_TB_DUMP=1` 只看读出来的段落；我同意用云端时把 `POMELO_REAL_LLM=1` 换成 `POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`，默认 DeepSeek，`POMELO_CLOUD_SERVICE=openrouter POMELO_CLOUD_MODEL=<模型>` 换 OpenRouter；`real_local_model` 也能这样用云端，只用编的数据）；知识库看图：`real_kb_image`（只能用云端，编一张带字的图）。`POMELO_CLOUD_SERVICE` 能选 deepseek、openrouter、openai、anthropic、google、aliyun。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。
   - 向量和重排：`llmctl.sh start embedding`（或 `rerank`）后跑 `real_embedding`、`real_rerank`，用完停；`real_services_start_and_stop`、`real_meaning_search`、`real_knowledge`（知识库：临时目录里编的文件夹，建索引、提问、改文件再问）自己启停（先确认都没在跑）。
 - **真接口**：书单 / 影单检索 `POMELO_REAL_WEB=1 cargo test real_works -- --ignored --nocapture`（示例书名，可以直接跑）；小拾的真模型测试加 `POMELO_REAL_WEB=1` 就用真检索；Tavily 要我的 Key，先问我。
+- **Pub2MD 真测（先说用量，我同意再测；Mathpix 按页收费）**：结果放 `~/Downloads/Pub2MD 测试/第 N 轮/`（过程放它的 `运行记录/`，汇总和模型对比写进 `测试记录.md`），Key 文件在 `~/Downloads/Pub2MD 测试/Key/`（v0.6 验收后删）。`cargo test --manifest-path src-tauri/Cargo.toml real_pub2md -- --ignored --exact picky::assistants::pub2md::job::tests::real_pub2md --nocapture`：真的 Mathpix 和云端模型走完整个流程，打出块数、请求次数、用时和每个模型的词元用量；开关（Worker、Supervisor、备用模型的 Key 文件和服务、几张图合成一份、几步、简繁、文体、另存为、思考、用上次的 Mathpix 结果不再上传）写在这个测试的注释里，思考关不掉的模型（OpenRouter 的 GLM-5.3）加 `POMELO_CLOUD_THINK=always`。跑的时候用 Monitor 盯着输出，出问题就改。查 Supervisor 的原始回答用 `real_pub2md_probe`（`POMELO_PROBE=terms|fix|plan|read`，开关同样在注释里，不用 Mathpix）。
 - **呦呦漫游**：开发版在页面上点「建副本」，从网站文件夹复制到开发数据目录的 `site-sandbox/`，推到旁边的假远端 `remote.git`；`?mock` 里是模拟的网站。下面的测试都是 `cargo test --manifest-path src-tauri/Cargo.toml <名字> -- --ignored --nocapture`，在临时副本上跑（真文件夹只读）：`real_site_sandbox` 整套发布（真的 `npm run qa`、提交、推到假远端）；`real_site_edit` 把每个作品和其余每一页读了又存（一个文件都不能变），再改遍各页，最后跑 `npm run qa`；`real_site_server` 用 Pomelo 启停真的本地服务；`real_site_read`（只读真文件夹）改动清单和用 gh 读的「最近发布」；`real_yaml_like_js_yaml`（只读真文件夹）全部内容文件和 js-yaml 逐字比对。小拾的帮忙（补全、按中文起草）用真的本地模型测：`POMELO_REAL_LLM=1` 跑 `real_site_draft`（编的作品，先问我）。真的推到 GitHub 只在正式版、由我点。
 - **搜索速度**：`cargo test --release --manifest-path src-tauri/Cargo.toml search_speed -- --ignored --nocapture`（20 万条编的数据：按字 0.1 秒内、按意思 0.3 秒内）。
 - **真实数据**：`POMELO_SEED_DB=<临时目录>/pomelo.db cargo test --manifest-path src-tauri/Cargo.toml seed_scratch_db -- --ignored` 生成含全部导入文件的临时数据库；`cargo test -- --ignored --skip seed_scratch_db` 跑真实导入文件的测试。

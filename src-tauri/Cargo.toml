@@ -31,7 +31,7 @@ objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAErro
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
 # 小拾: streaming from the local model (127.0.0.1) and the cloud services; tokio is already in the tree via tauri
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy", "json"] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "rt", "sync"] }
 tauri-plugin-autostart = "2"
 # 小拾 reads more files (v0.4.5): Excel / CSV, PowerPoint (a zip of XML), web pages (a Readability port)
 calamine = "0.36"
@@ -40,6 +40,8 @@ quick-xml = "0.42"
 dom_smoothie = "0.18"
 # 呦呦漫游 (v0.5): reads the website's front matter (written back by site/yaml.rs, as Keystatic's js-yaml does)
 yaml-rust2 = { version = "0.13", default-features = false }
+# Pub2MD (v0.6): 简繁互转 by OpenCC's dictionaries (pure Rust, built in; the model looks it over after)
+ferrous-opencc = "0.4"
 
 [profile.release]
 codegen-units = 1
@@ -47,3 +49,11 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Small build output (scripts/clean-build.sh wipes src-tauri/target past 20 GB): dependencies without
+# debug info, our own code with line tables only (backtraces keep file:line).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

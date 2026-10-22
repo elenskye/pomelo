@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 export type Mode = "real" | "mock";
 export type Readiness = "idle" | "loading" | "ready";
 export type Dot = "off" | "loading" | "ready" | "error";
-export type Service = "openRouter" | "deepSeek" | "openAI" | "anthropic" | "google";
+export type Service = "openRouter" | "deepSeek" | "openAI" | "anthropic" | "google" | "aliyun";
 
 export type LocalModel = { key: string; name: string; title: string; note: string | null; quant: string; alias: string; context: number; thinking: boolean; listed: boolean };
 
@@ -217,6 +217,52 @@ export type EditItem = { position: number; paragraph: number; before: string; af
 export type FileEdit = { runId: number; path: string; name: string; kind: "markdown" | "text" | "word" | "new-word"; total: number; state: "pending" | "written" | "cancelled"; error: string | null; items: EditItem[] };
 /** 翻译 (assistants/translate.rs): its settings (`model` null = 小拾现在选的; `keywords`: group → choice). */
 export type TranslateSettings = { source: string; target: string; model: string | null; thinking: boolean; prompt: string; keywords: Record<string, string> };
+/** Pub2MD (assistants/pub2md/): how hard a model thinks. */
+export type Level = "off" | "low" | "medium" | "high";
+export type Pub2mdPart = "front" | "abstract" | "body" | "conclusion" | "acknowledgments" | "references" | "appendix";
+export type Pub2mdFormat = "docx" | "pdf" | "latex" | "html";
+/** A document picked but not sent yet (images together are one). */
+export type Pub2mdStaged = { name: string; files: string[] };
+export type Pub2mdSettings = {
+  steps: "extract" | "clean" | "translate";
+  md: boolean;
+  englishOnly: boolean;
+  worker: string | null;
+  workerLevel: Level;
+  supervisor: string | null;
+  supervisorLevel: Level;
+  /** cloud:<id> asked when a content check turns a request down; "" = 不用. */
+  backup: string;
+  parallel: number;
+  folder: string | null;
+  /** 英文 → 简体中文 / 简体 → 繁体 / 繁体 → 简体 */
+  lang: "enZh" | "zhHant" | "hantZh";
+  style: string;
+  domain: string;
+  prompt: string;
+  /** 联网查术语; null = the Supervisor's service decides (`webDefault`). */
+  web: boolean | null;
+  refine: boolean;
+  /** Parts not translated (front: only the title is). */
+  skip: Pub2mdPart[];
+  /** 另存为 (Mathpix converts at the end). */
+  formats: Pub2mdFormat[];
+};
+export type Pub2mdRecent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
+export type Pub2mdProgress = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null };
+export type Pub2mdView = {
+  settings: Pub2mdSettings;
+  recent: Pub2mdRecent[];
+  queue: string[];
+  current: Pub2mdProgress | null;
+  mathpix: boolean;
+  mock: boolean;
+  folder: string;
+  styles: [string, string][];
+  domains: [string, string][];
+  webDefault: boolean;
+  tavily: boolean;
+};
 export type TranslateGroup = { key: string; name: string; choices: { key: string; label: string; says: string }[] };
 /** The last time (input, output, how it ended) and, while it runs, its status. */
 export type TranslateView = {
@@ -282,7 +328,7 @@ export type SummaryEvent = { kind: "done"; state: string; error: string | null }
 export type StoredFile = FileInfo & { bytes: number; messages: number; projectFiles: number; knowledge: number };
 export type StorageUsage = { dbBytes: number; filesBytes: number; files: StoredFile[]; strays: { name: string; bytes: number }[]; emptySessions: number };
 
-export const SERVICE_NAMES: Record<Service, string> = { openRouter: "OpenRouter", deepSeek: "DeepSeek", openAI: "OpenAI", anthropic: "Anthropic", google: "Google" };
+export const SERVICE_NAMES: Record<Service, string> = { openRouter: "OpenRouter", deepSeek: "DeepSeek", openAI: "OpenAI", anthropic: "Anthropic", google: "Google", aliyun: "Aliyun" };
 
 export const pickyApi = {
   info: () => invoke<PickyInfo>("picky_info"),
@@ -430,6 +476,26 @@ export const pickyApi = {
   /** Returns at once; poll `translate` while it runs. */
   translateRun: (input: string, settings: TranslateSettings) => invoke<TranslateView>("picky_translate_run", { input, settings }),
   translateStop: () => invoke<TranslateView>("picky_translate_stop"),
+  // ---- v0.6: 助手 · Pub2MD (assistants/pub2md/) ----
+  pub2md: () => invoke<Pub2mdView>("picky_pub2md"),
+  pub2mdSettings: (settings: Pub2mdSettings) => invoke<Pub2mdView>("picky_pub2md_settings", { settings }),
+  /** Picked or dropped files as the documents they will be; nothing starts. */
+  pub2mdGroup: (paths: string[]) => invoke<Pub2mdStaged[]>("picky_pub2md_group", { paths }),
+  /** 发送 (images together are one document); returns at once, poll `pub2md`. */
+  pub2mdAdd: (paths: string[]) => invoke<Pub2mdView>("picky_pub2md_add", { paths }),
+  pub2mdResume: (folder: string) => invoke<Pub2mdView>("picky_pub2md_resume", { folder }),
+  pub2mdUnqueue: (index: number) => invoke<Pub2mdView>("picky_pub2md_unqueue", { index }),
+  pub2mdStop: () => invoke<Pub2mdView>("picky_pub2md_stop"),
+  /** A document's folder, or one of its files. */
+  /** A stopped or failed document out of the list, its folder to the Trash. */
+  pub2mdDelete: (folder: string) => invoke<Pub2mdView>("picky_pub2md_delete", { folder }),
+  pub2mdOpen: (folder: string, file?: string) => invoke<void>("picky_pub2md_open", { folder, file: file ?? null }),
+  pub2mdKeysSave: (id: string, key: string) => invoke<Pub2mdView>("picky_pub2md_keys_save", { id, key }),
+  pub2mdKeysRemove: () => invoke<Pub2mdView>("picky_pub2md_keys_remove"),
+  /** An .mmd / .md output with its images inlined, for the preview. */
+  pub2mdPreview: (folder: string, file: string) => invoke<string>("picky_pub2md_preview", { folder, file }),
+  /** What the two models are told with these settings: [who · what, the rules]. */
+  pub2mdPrompts: (settings: Pub2mdSettings) => invoke<[string, string][]>("picky_pub2md_prompts", { settings }),
   // ---- v0.4.5 阶段 7: 知识库 (knowledge.rs) ----
   kbOverview: () => invoke<KbOverview>("picky_kb_overview"),
   kbLibraryCreate: (name: string) => invoke<number>("picky_kb_library_create", { name }),
@@ -526,6 +592,7 @@ export function usePickyUi<T>(key: string, fallback: T, valid: (v: unknown) => v
 }
 export const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 export const isNumbers = (v: unknown): v is number[] => Array.isArray(v) && v.every((x) => typeof x === "number");
+export const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 /** 定时任务 (rules in Rust schedule.rs). every: day | week | month; day: 周几 1–7 / 几号 1–31; at: "HH:MM";
  * model: local:<key> | cloud:<id> | null (= 小拾现在选的). next: "YYYY-MM-DD HH:MM" (null when off). */

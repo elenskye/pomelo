@@ -1,6 +1,7 @@
-//! Cloud models (OpenRouter, DeepSeek, OpenAI, Anthropic, Google), as in the old Picky:
+//! Cloud models (OpenRouter, DeepSeek, OpenAI, Anthropic, Google, Aliyun), as in the old Picky:
 //! - Requests go only to each service's fixed official HTTPS endpoint (provider.rs). Anthropic
-//!   speaks its own Messages API; Google its OpenAI-compatible endpoint; the rest chat completions.
+//!   speaks its own Messages API; Google and Aliyun (Qwen, the Beijing region: the user's account)
+//!   their OpenAI-compatible endpoints; the rest chat completions.
 //! - The model list (name, API model name, token limits) lives in picky.db `preferences`
 //!   (`cloud.models`; its presence, even `[]`, marks the defaults as seeded — deleted defaults stay
 //!   deleted). Keys never enter the database, backups, exports or logs: only the keychain
@@ -10,6 +11,8 @@
 //! - Mock mode keeps keys in memory.
 //! - Each model says whether it can think (`Think`; set by the user, default 能开关): only a 能开关 one
 //!   gets the service's thinking switch; the others are sent without it (provider.rs).
+//! - How hard a thinking model thinks (`Effort`, v0.6: 低 / 中 / 高) is asked per request; each
+//!   service gets its own words for it, and one with only a switch (Aliyun, local models) just thinks.
 
 use super::store::{pref_get, pref_set};
 use crate::modules::common::err;
@@ -32,10 +35,12 @@ pub enum Service {
     Anthropic,
     #[serde(rename = "google")]
     Google,
+    #[serde(rename = "aliyun")]
+    Aliyun,
 }
 
 impl Service {
-    pub const ALL: [Service; 5] = [Service::OpenRouter, Service::DeepSeek, Service::OpenAi, Service::Anthropic, Service::Google];
+    pub const ALL: [Service; 6] = [Service::OpenRouter, Service::DeepSeek, Service::OpenAi, Service::Anthropic, Service::Google, Service::Aliyun];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -44,6 +49,7 @@ impl Service {
             Service::OpenAi => "OpenAI",
             Service::Anthropic => "Anthropic",
             Service::Google => "Google",
+            Service::Aliyun => "Aliyun",
         }
     }
     /// The only place a key is ever sent.
@@ -54,6 +60,7 @@ impl Service {
             Service::OpenAi => "https://api.openai.com/v1",
             Service::Anthropic => "https://api.anthropic.com/v1",
             Service::Google => "https://generativelanguage.googleapis.com/v1beta/openai",
+            Service::Aliyun => "https://dashscope.aliyuncs.com/compatible-mode/v1",
         }
     }
     pub fn code(self) -> &'static str {
@@ -63,6 +70,7 @@ impl Service {
             Service::OpenAi => "openAI",
             Service::Anthropic => "anthropic",
             Service::Google => "google",
+            Service::Aliyun => "aliyun",
         }
     }
 }
@@ -93,6 +101,26 @@ impl Think {
     /// Thinking actually happens when `on` is asked for.
     pub fn thinks(self, on: bool) -> bool {
         self == Think::Always || (self == Think::Switch && on)
+    }
+}
+
+/// How hard to think when thinking (低 / 中 / 高); None in a request = the model's own level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+}
+
+impl Effort {
+    /// OpenAI's, Google's, OpenRouter's and Anthropic's word for it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+        }
     }
 }
 
@@ -384,6 +412,8 @@ mod tests {
     #[test]
     fn service_codes_match_picky() {
         assert_eq!(serde_json::to_string(&Service::OpenAi).unwrap(), "\"openAI\"");
+        assert_eq!((serde_json::to_string(&Service::Aliyun).unwrap(), Service::Aliyun.code(), Service::Aliyun.name()), ("\"aliyun\"".to_string(), "aliyun", "Aliyun"));
+        assert_eq!(serde_json::from_str::<Effort>("\"high\"").unwrap(), Effort::High);
         let m: CloudModel = serde_json::from_str(r#"{"id":"x","name":"X","apiModel":"x","service":"openRouter","contextWindow":131072,"maxOutputTokens":8192}"#).unwrap();
         assert_eq!(m.service, Service::OpenRouter);
     }

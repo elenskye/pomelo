@@ -4,7 +4,7 @@
 // reorder, edit, delete, add). Rules live in Rust (src-tauri/src/picky).
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { GripVertical, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
@@ -26,6 +26,7 @@ import {
 import { THINK_LABELS } from "@/modules/picky/Thinking";
 import { IssueNotice, ModelMenu, StatusDot } from "@/modules/picky/ModelMenu";
 import { searchApi } from "@/shared/searchApi";
+import { isStringArray, useSetting } from "@/shared/settings";
 import { useSortable } from "@/shared/sortable";
 import { Path, Row, Section } from "./layout";
 import { StorageRow } from "./PickyStorage";
@@ -129,7 +130,7 @@ function KeyRow(props: { service: Service; saved: boolean }) {
 
 const EMPTY: CloudModel = { id: "", name: "", apiModel: "", service: "deepSeek", contextWindow: 131072, maxOutputTokens: 8192, thinking: "switch" };
 
-function CloudModelDialog(props: { model: CloudModel; onClose: () => void }) {
+function CloudModelDialog(props: { model: CloudModel; onClose: () => void; onSaved?: (m: CloudModel) => void }) {
   const [m, setM] = useState(props.model);
   const [error, setError] = useState<string | null>(null);
   const refresh = useRefreshStatus();
@@ -139,6 +140,7 @@ function CloudModelDialog(props: { model: CloudModel; onClose: () => void }) {
     try {
       await pickyApi.cloudModelSave(m);
       void refresh();
+      props.onSaved?.(m);
       props.onClose();
     } catch (err) {
       setError(errorText(err));
@@ -195,7 +197,7 @@ function CloudModels(props: { status: PickyStatus }) {
           </Button>
         }
       >
-        {list.length === 0 ? <span className="text-muted-foreground">还没有</span> : <span className="block truncate">{list.map((m) => m.name).join("、")}</span>}
+        {list.length === 0 ? <span className="text-muted-foreground">还没有</span> : <span className="block truncate">{byService(list).map(([sv, ms]) => `${SERVICE_NAMES[sv]} ${ms.length}`).join(" · ")}</span>}
       </Row>
       {open && <CloudModelsDialog models={list} onClose={() => setOpen(false)} />}
     </>
@@ -204,14 +206,26 @@ function CloudModels(props: { status: PickyStatus }) {
 
 const k = (n: number) => (n % 1024 === 0 ? `${n / 1024}K` : n.toLocaleString());
 
-/** The cloud model list: drag a row to reorder (the model menu follows), edit, delete, add. */
+/** The models by provider, in the order the list first names each. */
+function byService(models: CloudModel[]): [Service, CloudModel[]][] {
+  return [...new Set(models.map((m) => m.service))].map((sv) => [sv, models.filter((m) => m.service === sv)]);
+}
+
+/** The cloud model list by provider (each folds; the open ones are remembered): drag a row to reorder within its provider (the model menu follows), edit, delete, add. */
 function CloudModelsDialog(props: { models: CloudModel[]; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [editing, setEditing] = useState<CloudModel | null>(null);
   const [confirm, confirmDialog] = useConfirm();
   const toast = useToast();
   const refresh = useRefreshStatus();
-  const sort = useSortable((order) => void pickyApi.cloudModelsReorder(order.map((i) => props.models[i].id)).then(refresh, (e) => toast(errorText(e), "error")));
+  const [shown, setShown] = useSetting<string[]>("picky.cloudGroups", [], isStringArray);
+  const toggle = (sv: Service, open: boolean) => setShown(open ? [...shown.filter((x) => x !== sv), sv] : shown.filter((x) => x !== sv));
+  // a provider's new order, its models keeping the places they had in the whole list
+  const reorder = (group: CloudModel[], order: number[]) => {
+    const next = order.map((i) => group[i]);
+    const ids = props.models.map((m) => (m.service === group[0].service ? next.shift()!.id : m.id));
+    void pickyApi.cloudModelsReorder(ids).then(refresh, (e) => toast(errorText(e), "error"));
+  };
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
@@ -238,26 +252,10 @@ function CloudModelsDialog(props: { models: CloudModel[]; onClose: () => void })
         </IconButton>
       </div>
       {/* sized by its rows (the dialog has only a max height), scrolling past it */}
-      <div ref={sort.listRef} className="-m-1 min-h-0 flex-auto overflow-y-auto p-1 px-3 py-2">
+      <div className="-m-1 min-h-0 flex-auto overflow-y-auto p-1 px-3 py-2">
         {props.models.length === 0 && <p className="px-2 py-6 text-center text-sm text-muted-foreground">还没有</p>}
-        {props.models.map((m, i) => (
-          <div key={m.id} {...sort.item(i)} className="rounded-control bg-popover">
-            <div {...sort.handle(i)} className="group flex items-center gap-3 rounded-control px-2 py-2 text-sm hover:bg-muted/70">
-              <GripVertical size={14} className="shrink-0 cursor-grab text-muted-foreground/60" />
-              <span className="shrink-0">{m.name}</span>
-              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {SERVICE_NAMES[m.service]} · <span className="font-mono">{m.apiModel}</span> · 上下文 {k(m.contextWindow)} · 回复 {k(m.maxOutputTokens)} · {THINK_LABELS[m.thinking]}
-              </span>
-              <span className="flex opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-                <IconButton label="编辑" onClick={() => setEditing(m)}>
-                  <Pencil size={14} strokeWidth={1.5} />
-                </IconButton>
-                <IconButton label="删除" danger onClick={() => void remove(m)}>
-                  <Trash2 size={14} strokeWidth={1.5} />
-                </IconButton>
-              </span>
-            </div>
-          </div>
+        {byService(props.models).map(([sv, ms]) => (
+          <CloudGroup key={sv} service={sv} models={ms} open={shown.includes(sv)} onToggle={(open) => toggle(sv, open)} onReorder={(order) => reorder(ms, order)} onEdit={setEditing} onRemove={(m) => void remove(m)} />
         ))}
       </div>
       <div className="border-t p-2">
@@ -265,9 +263,46 @@ function CloudModelsDialog(props: { models: CloudModel[]; onClose: () => void })
           <Plus size={14} /> 新增
         </button>
       </div>
-      {editing && <CloudModelDialog model={editing} onClose={() => setEditing(null)} />}
+      {editing && <CloudModelDialog model={editing} onClose={() => setEditing(null)} onSaved={(m) => toggle(m.service, true)} />}
       {confirmDialog}
     </dialog>
+  );
+}
+
+/** One provider's models: its heading folds them; a row drags within the provider. */
+function CloudGroup(props: { service: Service; models: CloudModel[]; open: boolean; onToggle: (open: boolean) => void; onReorder: (order: number[]) => void; onEdit: (m: CloudModel) => void; onRemove: (m: CloudModel) => void }) {
+  const sort = useSortable(props.onReorder);
+  return (
+    <div>
+      <button type="button" aria-expanded={props.open} onClick={() => props.onToggle(!props.open)} className="flex w-full items-center gap-1.5 rounded-control px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted/70">
+        {props.open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="text-foreground">{SERVICE_NAMES[props.service]}</span>
+        <span className="text-xs">{props.models.length}</span>
+      </button>
+      {props.open && (
+        <div ref={sort.listRef} className="pl-4">
+          {props.models.map((m, i) => (
+            <div key={m.id} {...sort.item(i)} className="rounded-control bg-popover">
+              <div {...sort.handle(i)} className="group flex items-center gap-3 rounded-control px-2 py-2 text-sm hover:bg-muted/70">
+                <GripVertical size={14} className="shrink-0 cursor-grab text-muted-foreground/60" />
+                <span className="shrink-0">{m.name}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  <span className="font-mono">{m.apiModel}</span> · 上下文 {k(m.contextWindow)} · 回复 {k(m.maxOutputTokens)} · {THINK_LABELS[m.thinking]}
+                </span>
+                <span className="flex opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+                  <IconButton label="编辑" onClick={() => props.onEdit(m)}>
+                    <Pencil size={14} strokeWidth={1.5} />
+                  </IconButton>
+                  <IconButton label="删除" danger onClick={() => props.onRemove(m)}>
+                    <Trash2 size={14} strokeWidth={1.5} />
+                  </IconButton>
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

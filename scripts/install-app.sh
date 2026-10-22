@@ -25,3 +25,4 @@ rm -rf "$DST"
 mv "$SRC" "$DST"
 codesign --verify --strict "$DST"
 echo "已安装：$DST"
+bash scripts/clean-build.sh --auto

@@ -1263,7 +1263,7 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
             _ => (true, tools.to_vec()),
         };
         let names: Vec<&str> = offered.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
-        let opts = Options { max_tokens: Some(window - used - cost), thinking: Some(request.thinking), tools: offered.clone(), no_calls: answer_now };
+        let opts = Options { max_tokens: Some(window - used - cost), thinking: Some(request.thinking), effort: None, search: false, tools: offered.clone(), no_calls: answer_now };
         let (result, r) = host.stream(messages.clone(), opts).await;
         if let Err(e) = result {
             if round == 0 && provider::rejected(&e) && r.content.is_empty() && r.reasoning.is_empty() {
@@ -2414,14 +2414,23 @@ pub(crate) mod tests {
     }
 
     /// A real cloud model for the opt-in tests: POMELO_CLOUD_KEY_FILE=<a file holding the key>
-    /// [POMELO_CLOUD_SERVICE=deepseek|openrouter] [POMELO_CLOUD_MODEL=<api model>]
+    /// [POMELO_CLOUD_SERVICE=deepseek|openrouter|openai|anthropic|google|aliyun] [POMELO_CLOUD_MODEL=<api model>]
     /// [POMELO_CLOUD_WINDOW=<context>] [POMELO_CLOUD_MAX_OUT=<max output>]. Never the keychain.
     pub(crate) fn cloud_target() -> Option<(Target, i64)> {
         let f = std::env::var("POMELO_CLOUD_KEY_FILE").ok()?;
         let key = std::fs::read_to_string(f).expect("the key file").trim().to_string();
         let mut m = crate::picky::cloud::defaults().remove(0);
-        if std::env::var("POMELO_CLOUD_SERVICE").as_deref() == Ok("openrouter") {
-            m.service = crate::picky::cloud::Service::OpenRouter;
+        use crate::picky::cloud::Service;
+        let service = match std::env::var("POMELO_CLOUD_SERVICE").as_deref() {
+            Ok("openrouter") => Some(Service::OpenRouter),
+            Ok("openai") => Some(Service::OpenAi),
+            Ok("anthropic") => Some(Service::Anthropic),
+            Ok("google") => Some(Service::Google),
+            Ok("aliyun") => Some(Service::Aliyun),
+            _ => None,
+        };
+        if let Some(s) = service {
+            m.service = s;
             (m.context_window, m.max_output_tokens) = (262_144, 32_768);
         }
         if let Ok(api) = std::env::var("POMELO_CLOUD_MODEL") {
@@ -2432,6 +2441,12 @@ pub(crate) mod tests {
         }
         if let Some(n) = std::env::var("POMELO_CLOUD_MAX_OUT").ok().and_then(|w| w.parse().ok()) {
             m.max_output_tokens = n;
+        }
+        // a model that can't stop thinking (GLM-5.3 on OpenRouter) or can't think
+        match std::env::var("POMELO_CLOUD_THINK").as_deref() {
+            Ok("always") => m.thinking = crate::picky::cloud::Think::Always,
+            Ok("never") => m.thinking = crate::picky::cloud::Think::Never,
+            _ => {}
         }
         let w = m.context_window;
         Some((Target::Cloud { model: m, key }, w))
