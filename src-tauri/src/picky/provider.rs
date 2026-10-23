@@ -161,6 +161,8 @@ pub struct Options {
     pub tools: Vec<Value>,
     /// With tools: forbid calls this time (the last round must answer).
     pub no_calls: bool,
+    /// Nothing will follow this request up (Pub2MD): Anthropic writes no cache (a write costs 25% more).
+    pub one_off: bool,
 }
 
 const LOCAL_URL: &str = "http://127.0.0.1:8080/v1/chat/completions";
@@ -216,13 +218,13 @@ pub(crate) fn http_failure(status: u16) -> &'static str {
 
 // ---------- Anthropic ----------
 
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// `thinking.block_binding` (keep going without the blocks a changed request no longer fits).
 const BETA_BINDING: &str = "thinking-binding-controls-2026-08-01";
 /// `fallbacks: "default"`: a classifier decline is answered by the model Anthropic picks.
-const BETA_FALLBACK: &str = "server-side-fallback-2026-07-01";
+pub(crate) const BETA_FALLBACK: &str = "server-side-fallback-2026-07-01";
 /// Models documented to take `fallbacks: "default"` on the Claude API.
-const FALLBACK_MODELS: &[&str] = &["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"];
+pub(crate) const FALLBACK_MODELS: &[&str] =&["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"];
 
 /// Thinking is on for this request (a 能开关 model unless asked not to; None = on, as the newer
 /// models' own default and as a model that turned `disabled` down needs).
@@ -307,7 +309,10 @@ fn anthropic_body(model: &CloudModel, messages: &[Msg], opts: &Options, max: i64
         }
     }
     flush(&mut out, &mut results);
-    let mut b = json!({ "model": model.api_model, "max_tokens": max, "messages": out, "stream": true, "cache_control": { "type": "ephemeral" } });
+    let mut b = json!({ "model": model.api_model, "max_tokens": max, "messages": out, "stream": true });
+    if !opts.one_off {
+        b["cache_control"] = json!({ "type": "ephemeral" });
+    }
     if !system.is_empty() {
         b["system"] = json!(system.join("\n\n"));
     }
@@ -647,7 +652,12 @@ async fn read_sse(mut resp: reqwest::Response, mut p: Parser, on: &mut (impl FnM
         let chunk = match resp.chunk().await {
             Ok(Some(c)) => c,
             Ok(None) => break,
-            Err(_) => return Err(p.flavor.cut().into()),
+            Err(e) => {
+                if cfg!(test) {
+                    eprintln!("[cloud] the stream broke off: {e:?}");
+                }
+                return Err(p.flavor.cut().into());
+            }
         };
         for e in p.push(&chunk)? {
             on(e);
@@ -658,6 +668,9 @@ async fn read_sse(mut resp: reqwest::Response, mut p: Parser, on: &mut (impl FnM
     }
     for e in p.finish()? {
         on(e);
+    }
+    if cfg!(test) && p.verdict().is_err() {
+        eprintln!("[cloud] the stream ended without a finish (done {}, finish seen {})", p.done, p.saw_finish);
     }
     p.verdict()
 }
@@ -1529,7 +1542,7 @@ mod tests {
             Msg::tool("toolu_1", "两件"),
             Msg::tool("toolu_2", ""),
         ];
-        let opts = Options { max_tokens: Some(500_000), thinking: Some(true), effort: None, search: false, tools: tools.clone(), no_calls: false };
+        let opts = Options { max_tokens: Some(500_000), thinking: Some(true), effort: None, search: false, tools: tools.clone(), no_calls: false, one_off: false };
         let b = body(&Target::Cloud { model: claude("claude-opus-5-5", Think::Always), key: "sk-ant".into() }, &msgs, &opts);
         assert_eq!((b["model"].as_str(), b["max_tokens"].as_i64(), b["stream"].as_bool()), (Some("claude-opus-5-5"), Some(131_072), Some(true)));
         assert_eq!(b["system"], "说中文\n\n较早的对话摘要");
@@ -1541,6 +1554,9 @@ mod tests {
         assert_eq!(m[4]["content"], json!([{ "type": "tool_result", "tool_use_id": "toolu_1", "content": "两件" }, { "type": "tool_result", "tool_use_id": "toolu_2" }]));
         assert_eq!(b["thinking"], json!({ "type": "adaptive", "display": "summarized", "block_binding": { "prefix_mismatch_behavior": "drop_block" } }));
         assert_eq!(b["fallbacks"], "default");
+        assert_eq!(b["cache_control"], json!({ "type": "ephemeral" }));
+        // a one-off request (Pub2MD) writes no cache
+        assert!(body(&Target::Cloud { model: claude("claude-opus-5-5", Think::Always), key: "k".into() }, &msgs, &Options { one_off: true, ..opts.clone() }).get("cache_control").is_none());
         assert_eq!(b["tools"], json!([{ "name": "pomelo_todo", "description": "查待办", "input_schema": tools[0]["function"]["parameters"] }]));
         assert!(b.get("tool_choice").is_none() && !b.to_string().contains("sk-ant"));
         assert_eq!(anthropic_betas(&claude("claude-opus-5-5", Think::Always), &opts), [BETA_BINDING, BETA_FALLBACK]);

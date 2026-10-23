@@ -238,7 +238,8 @@ export type Pub2mdSettings = {
   /** 英文 → 简体中文 / 简体 → 繁体 / 繁体 → 简体 */
   lang: "enZh" | "zhHant" | "hantZh";
   style: string;
-  domain: string;
+  /** 领域: several for an interdisciplinary text; none = 通用. */
+  domains: string[];
   prompt: string;
   /** 联网查术语; null = the Supervisor's service decides (`webDefault`). */
   web: boolean | null;

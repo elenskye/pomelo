@@ -190,9 +190,19 @@ pub fn blocks(mmd: &str) -> (Vec<Block>, usize) {
     (out, pages)
 }
 
-/// Ends a sentence (closing quotes / brackets / emphasis after it allowed).
+/// Ends a sentence (closing quotes / brackets / emphasis, and footnote marks like `\({ }^{2}\)`, after it allowed).
 fn ends_sentence(text: &str) -> bool {
-    let t = text.trim_end().trim_end_matches(['"', '”', '’', '\'', ')', '）', ']', '】', '*', '_', '}']);
+    let mut t = text.trim_end();
+    // a superscript footnote mark Mathpix writes after the full stop
+    while let Some(open) = t.ends_with("\\)").then(|| t.rfind("\\(")).flatten() {
+        let mark = &t[open..];
+        if mark.contains('^') && mark.chars().count() <= 24 {
+            t = t[..open].trim_end();
+        } else {
+            break;
+        }
+    }
+    let t = t.trim_end_matches(['"', '”', '’', '\'', ')', '）', ']', '】', '*', '_', '}']);
     t.chars().last().is_some_and(|c| ".!?。！？…;；".contains(c))
 }
 
@@ -225,7 +235,48 @@ pub fn cuttable(blocks: &[Block], i: usize) -> bool {
     if prev.kind == Kind::Paragraph && next.kind == Kind::Paragraph && !ends_sentence(&prev.text) {
         return false;
     }
-    true
+    !across_asides(blocks, i)
+}
+
+/// A page number, running head or footer Mathpix left as its own block: a short line first (or second)
+/// on its page, or last on it. (A running head like「Pargent et al.」ends like a sentence.)
+fn furniture(blocks: &[Block], j: usize) -> bool {
+    let b = &blocks[j];
+    let t = b.text.trim();
+    let short = b.kind == Kind::Paragraph && !t.contains('\n') && t.chars().count() <= 60;
+    let first = j == 0 || blocks[j - 1].end_page < b.page || (j >= 2 && blocks[j - 2].end_page < b.page);
+    let last = blocks.get(j + 1).is_some_and(|n| n.page > b.end_page);
+    short && (first || last)
+}
+
+/// Block `i` is inside a sentence that goes on over a page with page furniture or a figure, table,
+/// caption or footnote in between: both Workers would make the paragraph whole from the page images.
+fn across_asides(blocks: &[Block], i: usize) -> bool {
+    // the text at block j: a paragraph, or what Mathpix wrote right under a figure's \end{…}; None to step over
+    let text = |j: usize| -> Result<Option<&str>, ()> {
+        let b = &blocks[j];
+        if b.kind == Kind::Paragraph && !furniture(blocks, j) {
+            return Ok(Some(b.text.as_str()));
+        }
+        if !(furniture(blocks, j) || matches!(b.kind, Kind::Figure | Kind::Table | Kind::Caption | Kind::Footnote)) {
+            return Err(());
+        }
+        Ok(text_after_env(&b.text))
+    };
+    let prev = (i.saturating_sub(6)..i).rev().map(text).find(|t| !matches!(t, Ok(None)));
+    let next = (i..blocks.len().min(i + 6)).map(text).find(|t| !matches!(t, Ok(None)));
+    match (prev, next) {
+        (Some(Ok(Some(a))), Some(Ok(Some(b)))) => !ends_sentence(a) || starts_lower(b),
+        _ => false,
+    }
+}
+
+/// Text in a figure / table block after its environment ends (no blank line between them).
+fn text_after_env(text: &str) -> Option<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    let end = lines.iter().rposition(|l| l.trim_start().starts_with("\\end{"))?;
+    let start = text.lines().take(end + 1).map(|l| l.len() + 1).sum::<usize>().min(text.len());
+    Some(text[start..].trim()).filter(|t| !t.is_empty())
 }
 
 // ---------- parts of a paper ----------
@@ -508,6 +559,22 @@ In this work, we presented the Transformer.
             Block { kind: Kind::Math, text: "$$x$$".into(), page: 1, end_page: 1, level: 0 },
         ];
         assert!(!cuttable(&caption, 1) && cuttable(&caption, 2) && !cuttable(&caption, 3));
+        // a paragraph going on over a page, a page number, a running head and a figure in between (Pargent)
+        let over = "Body that ends here. \n\nDifferent types of resampling strategies. An important practical issue when using the holdout estimator\n\\pagebreak\n\n10\n\nPargent et al.\n\n\\begin{figure}\n\\includegraphics{a.jpg}\n\\caption{Fig. 3.}\n\\end{figure}\net al., 2021) typically suggest two thirds.\n\nNext paragraph.";
+        let (b, _) = blocks(over);
+        assert_eq!(b.iter().map(|b| b.kind).collect::<Vec<_>>(), [Kind::Paragraph, Kind::Paragraph, Kind::Paragraph, Kind::Paragraph, Kind::Figure, Kind::Paragraph]);
+        assert!(cuttable(&b, 1) && (2..=4).all(|i| !cuttable(&b, i)) && cuttable(&b, 5), "{b:?}");
+        assert_eq!(text_after_env(&b[4].text), Some("et al., 2021) typically suggest two thirds."));
+        // a figure whose own text (under \end{figure}) ends the sentence: a cut point after it
+        assert!(!across_asides(&b, 5) && cuttable(&b, 5));
+        assert!(ends_sentence("not the default in practice. \\({ }^{2}\\)") && ends_sentence("done.\\({ }^{1,2}\\)") && !ends_sentence("the value \\(x^{2}\\)"));
+        // the going-on as its own paragraph after the figure
+        let (b, _) = blocks(&over.replace("\\end{figure}\net al.", "\\end{figure}\n\net al."));
+        assert!((2..=5).all(|i| !cuttable(&b, i)) && cuttable(&b, 6), "{b:?}");
+        // the same page's text, a figure between whole sentences: still a cut point
+        let whole = "One sentence.\n\n\\begin{figure}\n\\includegraphics{a.jpg}\n\\end{figure}\n\nAnother one.";
+        let (b, _) = blocks(whole);
+        assert!(cuttable(&b, 1) && cuttable(&b, 2));
     }
 
     #[test]
@@ -545,4 +612,58 @@ In this work, we presented the Transformer.
         assert_eq!(counts("\\$5 and $x$").inline_math, 1);
     }
 
+    /// The cut points earlier real runs' 原文.mmd lose to `across_asides`, and the chunk starts of a run
+    /// that aren't cut points any more: POMELO_REPLAY=<folder of runs> [POMELO_REPLAY_JOB=<a document folder>]
+    #[test]
+    #[ignore]
+    fn replay_cut_points() {
+        let Ok(dir) = std::env::var("POMELO_REPLAY") else { return };
+        let mut files = vec![];
+        let mut stack = vec![std::path::PathBuf::from(dir)];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.file_name().is_some_and(|n| n == "原文.mmd") {
+                    files.push(p);
+                }
+            }
+        }
+        files.sort();
+        for f in &files {
+            let (b, _) = blocks(&std::fs::read_to_string(f).unwrap());
+            let lost: Vec<usize> = (1..b.len()).filter(|&i| across_asides(&b, i) && cuttable_before(&b, i)).collect();
+            eprintln!("[replay] {}：{} 块，{} 个切点，少了 {} 个", f.parent().unwrap().display(), b.len(), (0..b.len()).filter(|&i| cuttable(&b, i)).count(), lost.len());
+            for i in lost {
+                eprintln!("    第 {i} 块前：「{}」|「{}」", b[i - 1].text.chars().take(60).collect::<String>().replace('\n', " "), b[i].text.chars().take(60).collect::<String>().replace('\n', " "));
+            }
+        }
+        if let Ok(job) = std::env::var("POMELO_REPLAY_JOB") {
+            let folder = std::path::Path::new(&job);
+            let (b, _) = blocks(&std::fs::read_to_string(folder.join("原文.mmd")).unwrap());
+            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(folder.join(".pub2md/job.json")).unwrap()).unwrap();
+            for c in v["chunks"].as_array().unwrap() {
+                let s = c["chunk"]["start"].as_u64().unwrap() as usize;
+                if !cuttable(&b, s) {
+                    eprintln!("[replay] 那次的块从第 {s} 块开始，现在不能在这儿切：「{}」", b[s].text.chars().take(80).collect::<String>().replace('\n', " "));
+                } else if s > 0 && std::env::var("POMELO_REPLAY_SHOW").is_ok() {
+                    let tail: String = b[s - 1].text.chars().rev().take(70).collect::<Vec<_>>().into_iter().rev().collect();
+                    eprintln!("[replay] 第 {s} 块起：「…{}」|「{}」", tail.replace('\n', " "), b[s].text.chars().take(60).collect::<String>().replace('\n', " "));
+                }
+            }
+        }
+    }
+
+    /// The rules before `across_asides`.
+    fn cuttable_before(blocks: &[Block], i: usize) -> bool {
+        let (prev, next) = (&blocks[i - 1], &blocks[i]);
+        let figure = |k: Kind| matches!(k, Kind::Figure | Kind::Table);
+        !(matches!(prev.kind, Kind::Heading | Kind::Title)
+            || (figure(prev.kind) && next.kind == Kind::Caption)
+            || (prev.kind == Kind::Caption && figure(next.kind))
+            || (next.kind == Kind::Math && prev.kind == Kind::Paragraph)
+            || (next.kind == Kind::Paragraph && starts_lower(&next.text))
+            || (prev.kind == Kind::Paragraph && next.kind == Kind::Paragraph && !ends_sentence(&prev.text)))
+    }
 }

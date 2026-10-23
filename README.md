@@ -45,10 +45,9 @@
 - 本地模型：`~/Documents/LLM`（模型、清单 `config/models.json`、脚本 `scripts/llmctl.sh`）
 - 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`（别的 worktree 各用自己的，见 CLAUDE.md）
 - 原型和转换好的导入文件：`prototype/`（只在本机，不进 Git）
-- Pub2MD 的真测结果和测试用的 Key：`~/Downloads/Pub2MD 测试/`（v0.6 验收后删 Key）
+- Pub2MD 的真测结果和报告：`~/Downloads/Pub2MD 测试/`（你自己清理）
 
 ## 相关项目
 
 - 个人网站：`~/Documents/GitHub/personal-website`（独立项目，自己的文档和规则），在「呦呦漫游」里编辑和发布。
 - Seeker：`~/Documents/Seeker`（求职资料，不是 Git 仓库）；v0.7 把它的主体做成小拾的助手「Seeker」（数据在 `picky.db`），投石问路继续管投递。开发在 worktree `~/Documents/GitHub/pomelo-seeklo`（分支 `seeklo`）。
-- Pub2MD：已经并入小拾（助手）；旧的 Python 项目 `~/Documents/GitHub/pub2md-agent` 只当参考，v0.6 验收后删掉。

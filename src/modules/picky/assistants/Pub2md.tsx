@@ -3,9 +3,10 @@
 // Supervisor's model and thinking level, the backup model, 同时几块, 存到哪), the Mathpix keys (not in the mock), files picked
 // or dropped anywhere on the page (shown as the documents they will be, sent with 发送), the document at work (step, chunks, requests, time; 停止), what waits,
 // and the last 10 documents (an .mmd / .md result opens in the preview, other files and the folder with
-// their app; 继续 or 删除 a stopped one: its folder to the Trash). 提示词: the user's own paragraph, 文体 and 领域, and what each model is told.
+// their app; 继续 or 删除 a stopped one: its folder to the Trash), and at the bottom what it does and the model
+// pairs the real tests settled on (ABOUT, PAIRS). 提示词: the user's own paragraph, 文体 and 领域, and what each model is told.
 // The work goes on in Rust when the page is left: the page polls while something is at work.
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FileText, FolderOpen, X } from "lucide-react";
@@ -168,6 +169,7 @@ export function Pub2mdPage() {
           </section>
         )}
         <Recent data={data} onOpen={show} onResume={(f) => void pickyApi.pub2mdResume(f).then(set, fail)} onDelete={(r) => void remove(r)} />
+        <About />
       </div>
       {confirmDialog}
       {preview && shown && <PreviewDialog recent={shown} file={preview.file} onFile={(file) => setPreview({ ...preview, file })} onOpen={open} onClose={() => setPreview(null)} />}
@@ -393,6 +395,35 @@ function Current(props: { data: Pub2mdView; onStop: () => void; onOpen: (folder:
   );
 }
 
+const ABOUT = "PDF、Word、图片经 Mathpix 识别，分块整理、翻译成中文。Worker 逐块做；Supervisor 审定切块、定术语表、排查出错的块、通读全文，开精修时再逐块审一遍。";
+
+/** [用途, 搭配, 测出来的情况] — from the real tests (~/Downloads/Pub2MD 测试/测试记录.md). */
+const PAIRS: [string, string, string][] = [
+  ["日常", "GPT-6.1 Sol（思考 中）+ DeepSeek Flash", "35 页论文约 4 分钟、0.5 美元"],
+  ["Claude", "Claude Sonnet 5.5（思考 高）+ DeepSeek Flash", "Sonnet 5.5 要开高思考，通读才够细；比 Sol 贵约一半"],
+  ["精修", "交作业、交稿时开", "多改出漏译和意思偏差，费用约翻倍；日常阅读不必开"],
+  ["短论文", "Sol + GLM-5.3 FlashX（思考选「总是」）", "公式编号补得最全；长文慢、贵"],
+  ["备用模型", "DeepSeek Flash", "被内容审核拦下或请求一直失败时接手"],
+];
+
+function About() {
+  return (
+    <section aria-label="关于 Pub2MD" className="flex flex-col gap-2 border-t pt-4 text-xs text-muted-foreground">
+      <p>{ABOUT}</p>
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+        {PAIRS.map(([use, pair, note]) => (
+          <Fragment key={use}>
+            <span>{use}</span>
+            <span>
+              <span className="text-foreground">{pair}</span> · {note}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: string) => void; onResume: (folder: string) => void; onDelete: (r: Pub2mdRecent) => void }) {
   const items = props.data.recent.filter((r) => r.folder !== props.data.current?.folder);
   if (!items.length) return null;
@@ -434,9 +465,16 @@ function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: strin
 function PromptTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChange: (s: Pub2mdSettings, later?: boolean) => void }) {
   const s = props.settings;
   const told = useQuery({ queryKey: ["picky", "pub2md-prompts", JSON.stringify({ ...s, folder: null })], queryFn: () => pickyApi.pub2mdPrompts(s) });
-  const rows: { name: string; key: "style" | "domain"; choices: [string, string][] }[] = [
-    { name: "文体", key: "style", choices: props.data.styles },
-    { name: "领域", key: "domain", choices: props.data.domains },
+  // 文体: one; 领域: several (an interdisciplinary text), none = 通用
+  const rows: { name: string; many: boolean; choices: [string, string][]; on: (key: string) => boolean; pick: (key: string) => Pub2mdSettings }[] = [
+    { name: "文体", many: false, choices: props.data.styles, on: (k) => s.style === k, pick: (k) => ({ ...s, style: k }) },
+    {
+      name: "领域",
+      many: true,
+      choices: props.data.domains,
+      on: (k) => (k === "general" ? s.domains.length === 0 : s.domains.includes(k)),
+      pick: (k) => ({ ...s, domains: k === "general" ? [] : s.domains.includes(k) ? s.domains.filter((d) => d !== k) : [...s.domains, k] }),
+    },
   ];
   return (
     <div className="-m-1 mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-4 overflow-y-auto p-1 pb-6 text-sm">
@@ -446,18 +484,18 @@ function PromptTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChange
       </div>
       <div className="flex flex-col gap-2.5">
         {rows.map((g) => (
-          <div key={g.key} className="flex items-center gap-3">
+          <div key={g.name} className="flex items-center gap-3">
             <span className="w-20 shrink-0 text-muted-foreground">{g.name}</span>
-            <div role="radiogroup" aria-label={g.name} className="flex flex-wrap gap-1.5">
+            <div role={g.many ? "group" : "radiogroup"} aria-label={g.name} className="flex flex-wrap gap-1.5">
               {g.choices.map(([key, label]) => {
-                const on = s[g.key] === key;
+                const on = g.on(key);
                 return (
                   <button
                     key={key}
                     type="button"
-                    role="radio"
+                    role={g.many ? "checkbox" : "radio"}
                     aria-checked={on}
-                    onClick={() => props.onChange({ ...s, [g.key]: key })}
+                    onClick={() => props.onChange(g.pick(key))}
                     className={`rounded-control border px-2.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring ${on ? "border-primary bg-accent text-accent-foreground" : "hover:bg-muted"}`}
                   >
                     {label}

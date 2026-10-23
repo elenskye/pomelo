@@ -206,6 +206,49 @@ pub fn trim_copied(source: &str, output: &str) -> Option<(String, usize)> {
     (from < to).then(|| (output[from..to].trim().to_string(), a + blocks.len() - z))
 }
 
+/// The cleaned text without what it copied off a page image from the chunk just before or after, even one
+/// block (DeepSeek in Pargent: the next chunk's first paragraph cut where its page ends, the abstract's
+/// keywords, the chunk before's last lines): blocks before its first own text that the source hasn't but
+/// `before` (the source just before the chunk) has, and after its last own text that `after` has; its own
+/// figures there stay (DeepSeek put the next chunk's heading and paragraph above the chunk's last figure).
+/// The text kept and how many blocks went.
+pub fn trim_neighbors(source: &str, output: &str, before: &str, after: &str) -> Option<(String, usize)> {
+    let key = |t: &str| prose(t).chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+    let (own, prev, next) = (key(source), key(before), key(after));
+    let text = |b: &mmd::Block| matches!(b.kind, Kind::Paragraph | Kind::Heading | Kind::Caption | Kind::Footnote);
+    let probe = |b: &mmd::Block| key(&b.text).chars().take(24).collect::<String>();
+    let theirs = |b: &mmd::Block, other: &str| {
+        if text(b) {
+            let p = probe(b);
+            p.chars().count() >= 8 && !own.contains(&p) && other.contains(&p)
+        } else if b.kind == Kind::Figure {
+            let links: Vec<&str> = b.text.split(['(', ')', '{', '}']).filter(|t| t.starts_with("assets/") || t.starts_with("http")).collect();
+            !links.is_empty() && links.iter().all(|l| !source.contains(l) && (before.contains(l) || after.contains(l)))
+        } else {
+            false
+        }
+    };
+    let blocks = mmd::blocks(output).0;
+    // the chunk's own text: where its first and last are
+    let mine: Vec<usize> = (0..blocks.len()).filter(|&i| text(&blocks[i]) && own.contains(&probe(&blocks[i]))).collect();
+    let (first, last) = (mine.first().copied().unwrap_or(blocks.len()), mine.last().copied().unwrap_or(0));
+    let gone: Vec<usize> = (0..blocks.len()).filter(|&i| (i < first && theirs(&blocks[i], &prev)) || (i > last && theirs(&blocks[i], &next))).collect();
+    if gone.is_empty() || gone.len() == blocks.len() {
+        return None;
+    }
+    // cut the reply itself: the blocks kept, each from where it is in the reply, joined as they were
+    let mut kept = vec![];
+    let mut at = 0;
+    for (i, b) in blocks.iter().enumerate() {
+        let start = at + output[at..].find(b.text.as_str())?;
+        at = start + b.text.len();
+        if !gone.contains(&i) {
+            kept.push(&output[start..at]);
+        }
+    }
+    Some((kept.join("\n\n"), gone.len()))
+}
+
 /// The request's headings left in a result (ones the source hasn't).
 fn echoed(source: &str, output: &str) -> Option<Issue> {
     super::prompts::ECHOED.iter().find(|m| output.contains(*m) && !source.contains(*m)).map(|m| issue("echoed", format!("结果里混进了给模型的说明（{m}）")))
@@ -528,6 +571,19 @@ mod tests {
         assert!(foreign_headings("Acknowledgements We thank them.", "\\section*{Acknowledgements}\n\nWe thank them.").is_empty());
         // one foreign paragraph, or a fixed heading: left for the checks
         assert_eq!(trim_copied(&source, &format!("{source}\n\n{}", para(3))), None);
+        // … unless it is the next chunk's (its start, cut where the page ends) or the chunk before's
+        let next = format!("{}\n\n{}", para(3), para(4));
+        let cut_off: String = para(3).chars().take(50).collect();
+        assert_eq!(trim_neighbors(&source, &format!("{source}\n\n{cut_off}"), "", &next), Some((source.clone(), 1)));
+        assert_eq!(trim_neighbors(&source, &format!("Received 7/13/22; Revision accepted\n\n{source}\n\n{cut_off}"), "Keywords: ML\n\nReceived 7/13/22; Revision accepted", &next), Some((source.clone(), 2)));
+        // the next chunk's heading and paragraph put above the chunk's own last figure: the figure stays
+        let fig = "\\begin{figure}\n\\includegraphics{assets/own.jpg}\n\\caption{Fig. 7.}\n\\end{figure}";
+        let src_fig = format!("{source}\n\n{fig}");
+        let out = format!("{source}\n\n\\section*{{Practical Exercise 2}}\n\n{}\n\n{fig}", para(3));
+        assert_eq!(trim_neighbors(&src_fig, &out, "", &format!("\\section*{{Practical Exercise 2}}\n\n{next}")), Some((src_fig.clone(), 2)));
+        // a paragraph the source has too, or one nobody has (a rewording): kept
+        assert_eq!(trim_neighbors(&source, &source, &para(2), &para(1)), None);
+        assert_eq!(trim_neighbors(&source, &format!("{source}\n\n{}", para(7)), "", &next), None);
         assert_eq!(trim_copied(&source, &source.replace("3 Model", "3 Models")), None);
     }
 

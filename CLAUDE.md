@@ -49,10 +49,6 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **真的网站文件夹只读**：只读文件、只用只读的 git 命令（status、log、diff、show）。提交、推送、拉取、切分支都由我做（在终端或点 Pomelo 的「发布」）。开发和测试用副本加本机的假远端（`site::mode`，规则同小拾），绝不往真的 GitHub 推。
 - 改网站项目里的代码和文档要我说开工；只改文件、不碰 git，改完我自己提交。
 
-## Pub2MD（旧项目）
-
-- Pub2MD 已经用 Rust 完整并入小拾（`picky/assistants/pub2md/`，需求见 `requirements.md` 的「Pub2MD」）。旧的 Python 项目 `~/Documents/GitHub/pub2md-agent` 只读、不运行，`.env` 里是真实的 Key，不读取、不输出；v0.6 验收后整个删掉（删前再问我）。
-
 ## Seeker（v0.7 嵌入）
 
 - `~/Documents/Seeker` 是我的求职资料（简历和模板、经历档案、写作规则、招聘资料、证书原件），不是 Git 仓库，有自己的 `AGENTS.md`。v0.7 把它的主体做成小拾的助手「Seeker」，开发计划叫 Seeklo：进度和分工见 `docs/roadmap.md` 的「v0.7」，需求见 `requirements.md` 的「Seeker」。
@@ -142,7 +138,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
   - 润色补全、一句话填好：`real_assist`、`real_quick`；今日简报：`real_brief`（`POMELO_TODAY` 换日期）；Translator：`real_translate`（`POMELO_TR_CASE=zh|keywords|long`，一次一个；`POMELO_THINK=0` 不思考，开思考时 9B 两句话也会想几分钟）；长资料补读：`real_read_file`（编的 60 章手册，`POMELO_ASK` 换问题）；Word / 文本工具箱：`real_toolbox`（临时文件夹里编的 Word、Markdown 等 15 种情况，打出调用、卡片和写入后读回的结果；`POMELO_TB_CASE=kb,table…` 挑几个，`POMELO_TB_DUMP=1` 只看读出来的段落；我同意用云端时把 `POMELO_REAL_LLM=1` 换成 `POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`，默认 DeepSeek，`POMELO_CLOUD_SERVICE=openrouter POMELO_CLOUD_MODEL=<模型>` 换 OpenRouter；`real_local_model` 也能这样用云端，只用编的数据）；知识库看图：`real_kb_image`（只能用云端，编一张带字的图）。`POMELO_CLOUD_SERVICE` 能选 deepseek、openrouter、openai、anthropic、google、aliyun。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。
   - 向量和重排：`llmctl.sh start embedding`（或 `rerank`）后跑 `real_embedding`、`real_rerank`，用完停；`real_services_start_and_stop`、`real_meaning_search`、`real_knowledge`（知识库：临时目录里编的文件夹，建索引、提问、改文件再问）自己启停（先确认都没在跑）。
 - **真接口**：书单 / 影单检索 `POMELO_REAL_WEB=1 cargo test real_works -- --ignored --nocapture`（示例书名，可以直接跑）；小拾的真模型测试加 `POMELO_REAL_WEB=1` 就用真检索；Tavily 要我的 Key，先问我。
-- **Pub2MD 真测（先说用量，我同意再测；Mathpix 按页收费）**：结果放 `~/Downloads/Pub2MD 测试/第 N 轮/`（过程放它的 `运行记录/`，汇总和模型对比写进 `测试记录.md`），Key 文件在 `~/Downloads/Pub2MD 测试/Key/`（v0.6 验收后删）。`cargo test --manifest-path src-tauri/Cargo.toml real_pub2md -- --ignored --exact picky::assistants::pub2md::job::tests::real_pub2md --nocapture`：真的 Mathpix 和云端模型走完整个流程，打出块数、请求次数、用时和每个模型的词元用量；开关（Worker、Supervisor、备用模型的 Key 文件和服务、几张图合成一份、几步、简繁、文体、另存为、思考、用上次的 Mathpix 结果不再上传）写在这个测试的注释里，思考关不掉的模型（OpenRouter 的 GLM-5.3）加 `POMELO_CLOUD_THINK=always`。跑的时候用 Monitor 盯着输出，出问题就改。查 Supervisor 的原始回答用 `real_pub2md_probe`（`POMELO_PROBE=terms|fix|plan|read`，开关同样在注释里，不用 Mathpix）。
+- **Pub2MD 真测（先说用量，我同意再测；Mathpix 按页收费）**：Key 文件我给；结果放 `~/Downloads/Pub2MD 测试/第 N 轮/`（过程放 `运行记录/`，写进 `测试记录.md`）。`cargo test --manifest-path src-tauri/Cargo.toml real_pub2md -- --ignored --exact picky::assistants::pub2md::job::tests::real_pub2md --nocapture`：真的 Mathpix 和云端模型走完整个流程，打出块数、请求、用时和每个模型的词元用量；开关（各模型的 Key 文件、服务和思考，几张图合成一份，几步，文体和领域，精修，另存为，用上次的 Mathpix 结果，接着做停下的那份）写在测试注释里，思考关不掉的模型（OpenRouter 的 GLM-5.3）加 `POMELO_CLOUD_THINK=always`。跑的时候用 Monitor 边算费用边盯输出（到我给的上限就停），出问题就改。`real_pub2md_probe` 单问 Supervisor 一步（`POMELO_PROBE=terms|fix|plan|read|search`，不用 Mathpix）。改了切块或检查，用 `replay_cut_points`、`replay_neighbor_trim`、`replay_stray_traditional`（`POMELO_REPLAY=<以前的结果文件夹>`）拿真结果回放。
 - **呦呦漫游**：开发版在页面上点「建副本」，从网站文件夹复制到开发数据目录的 `site-sandbox/`，推到旁边的假远端 `remote.git`；`?mock` 里是模拟的网站。下面的测试都是 `cargo test --manifest-path src-tauri/Cargo.toml <名字> -- --ignored --nocapture`，在临时副本上跑（真文件夹只读）：`real_site_sandbox` 整套发布（真的 `npm run qa`、提交、推到假远端）；`real_site_edit` 把每个作品和其余每一页读了又存（一个文件都不能变），再改遍各页，最后跑 `npm run qa`；`real_site_server` 用 Pomelo 启停真的本地服务；`real_site_read`（只读真文件夹）改动清单和用 gh 读的「最近发布」；`real_yaml_like_js_yaml`（只读真文件夹）全部内容文件和 js-yaml 逐字比对。小拾的帮忙（补全、按中文起草）用真的本地模型测：`POMELO_REAL_LLM=1` 跑 `real_site_draft`（编的作品，先问我）。真的推到 GitHub 只在正式版、由我点。
 - **搜索速度**：`cargo test --release --manifest-path src-tauri/Cargo.toml search_speed -- --ignored --nocapture`（20 万条编的数据：按字 0.1 秒内、按意思 0.3 秒内）。
 - **真实数据**：`POMELO_SEED_DB=<临时目录>/pomelo.db cargo test --manifest-path src-tauri/Cargo.toml seed_scratch_db -- --ignored` 生成含全部导入文件的临时数据库；`cargo test -- --ignored --skip seed_scratch_db` 跑真实导入文件的测试。

@@ -2290,11 +2290,11 @@ const pTr = {
 };
 // ---- Pub2MD (assistants/pub2md/): a document at a time, simulated step by step; 「失败测试」 in a file
 // name stops at its third chunk once (继续 goes on); `&pub2md=keys` shows the Mathpix keys as in the real app ----
-type P2Settings = { steps: "extract" | "clean" | "translate"; md: boolean; englishOnly: boolean; worker: string | null; workerLevel: string; supervisor: string | null; supervisorLevel: string; backup: string; parallel: number; folder: string | null; lang: string; style: string; domain: string; prompt: string; web: boolean | null; refine: boolean; skip: string[]; formats: string[] };
+type P2Settings = { steps: "extract" | "clean" | "translate"; md: boolean; englishOnly: boolean; worker: string | null; workerLevel: string; supervisor: string | null; supervisorLevel: string; backup: string; parallel: number; folder: string | null; lang: string; style: string; domains: string[]; prompt: string; web: boolean | null; refine: boolean; skip: string[]; formats: string[] };
 type P2Recent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
 type P2Job = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null; tick: number; steps: "extract" | "clean" | "translate"; md: boolean; text: boolean; cleaned: number; translated: number; failed?: boolean; read?: boolean };
 const p2 = {
-  settings: { steps: "translate", md: false, englishOnly: false, worker: null, workerLevel: "off", supervisor: null, supervisorLevel: "high", backup: "cloud:deepseek-flash", parallel: 4, folder: null, lang: "enZh", style: "general", domain: "general", prompt: "", web: null, refine: false, skip: ["front", "acknowledgments", "references", "appendix"], formats: ["docx"] } as P2Settings,
+  settings: { steps: "translate", md: false, englishOnly: false, worker: null, workerLevel: "off", supervisor: null, supervisorLevel: "high", backup: "cloud:deepseek-flash", parallel: 4, folder: null, lang: "enZh", style: "general", domains: [], prompt: "", web: null, refine: false, skip: ["front", "acknowledgments", "references", "appendix"], formats: ["docx"] } as P2Settings,
   recent: [] as P2Recent[],
   queue: [] as ({ kind: "new"; name: string } | { kind: "resume"; folder: string })[],
   current: null as P2Job | null,
@@ -2420,7 +2420,8 @@ const P2_PREVIEW: Record<string, string> = {
 const p2Prompts = (st: P2Settings): [string, string][] => {
   if (st.steps === "extract") return [];
   const style = P2_STYLES.find((x) => x[0] === st.style)?.[1] ?? "通用";
-  const domain = P2_DOMAINS.find((x) => x[0] === st.domain)?.[1] ?? "通用";
+  const names = P2_DOMAINS.filter((x) => st.domains.includes(x[0])).map((x) => x[1]);
+  const domain = names.length > 1 ? `交叉学科（${names.join("、")}）` : (names[0] ?? "通用");
   const wishes = `- 文体：${style}。\n- 领域：${domain}。${st.prompt.trim() ? `\n- 用户另外的要求：\n${st.prompt.trim()}` : ""}`;
   const out: [string, string][] = [["Worker · 整理", `你在整理一份文档里的一块：Mathpix 从原文件识别出的文字（MMD）。（模拟的说明）\n格式：${st.md ? "Markdown" : "MMD"}`]];
   if (st.steps === "translate") out.push(["Worker · 翻译", `把这一块从英文译成简体中文。（模拟的说明）\n${wishes}`]);

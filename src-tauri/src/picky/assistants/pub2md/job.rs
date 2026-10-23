@@ -120,7 +120,8 @@ pub struct Job {
     pub english_only: bool,
     pub lang: Lang,
     pub style: String,
-    pub domain: String,
+    #[serde(alias = "domain", deserialize_with = "super::domains_of")]
+    pub domains: Vec<String>,
     pub prompt: String,
     pub web: Option<bool>,
     pub refine: bool,
@@ -261,7 +262,7 @@ fn prepare(st: &AppState, settings: &Settings, what: &Waiting) -> Result<(PathBu
                 english_only: settings.english_only,
                 lang: settings.lang,
                 style: settings.style.clone(),
-                domain: settings.domain.clone(),
+                domains: settings.domains.clone(),
                 prompt: settings.prompt.clone(),
                 web: settings.web,
                 refine: settings.refine,
@@ -718,7 +719,8 @@ async fn ask(route: &Route, level: Level, system: String, user: String, images: 
     let mut msg = Msg::new("user", &user);
     msg.images = images;
     let (mut out, mut cut) = (String::new(), false);
-    let opts = Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), ..Default::default() };
+    // each chunk's request is its own: no cache to write
+    let opts = Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, ..Default::default() };
     provider::stream(route.target.clone(), vec![Msg::new("system", &system), msg], opts, |e| match e {
         Event::Content(t) => out.push_str(&t),
         Event::Finished(r) => cut = r == "length",
@@ -750,7 +752,7 @@ fn by_backup(what: &str, m: &Models) -> String {
 
 /// The draft, reviewed by the Supervisor when the text (or its outline) fits its window.
 pub async fn plan(report: &Report, folder: &Path, job: &mut Job, blocks: &[Block], m: &Models) -> Result<(), String> {
-    let (worker, sup, level) = (&m.worker, &m.sup, reading_level(m.sl));
+    let (worker, sup, level) = (&m.worker, &m.sup, m.sl);
     let parts = mmd::parts(blocks);
     let budget = Budget::for_window(worker.window, TARGET);
     let draft = chunk::draft(blocks, &parts, budget);
@@ -952,7 +954,7 @@ fn tail(text: &str) -> String {
 }
 
 fn wishes(job: &Job) -> String {
-    prompts::wishes(&job.style, &job.domain, &job.prompt)
+    prompts::wishes(&job.style, &job.domains, &job.prompt)
 }
 
 /// The text cut to about `room` tokens (and whether it was cut).
@@ -988,13 +990,6 @@ fn terms_task(job: &Job, text: &str, m: &Models, lookup: Lookup) -> impl std::fu
         });
         Finished::Terms(r, backup.is_some())
     }
-}
-
-/// The cut and the read-through read the text over more than they think: 高 took 4 minutes on The
-/// Economist's 3 pages for the cut 中 made in one, and 1–4 minutes for the read-through's one fix 中 made in
-/// 43 seconds. At most 中.
-fn reading_level(level: Level) -> Level {
-    if level == Level::High { Level::Medium } else { level }
 }
 
 /// Picking terms and their usual renderings needs knowledge more than long thought: at most 低.
@@ -1225,6 +1220,38 @@ async fn ask_fix(ctx: &Ctx, k: usize, n: usize, part: Part, cuts: Option<&[usize
     }
 }
 
+/// After a failed Worker request: wait and ask again (15 s, then 45 s: the three requests that stopped
+/// Pargent broke off within the same three minutes on OpenRouter), then the backup model, then stop.
+enum Again {
+    Wait(Duration),
+    Backup(String),
+    Stop,
+}
+
+fn again<'a>(e: &str, tries: &mut usize, route: &Route, backup: &mut Option<&'a Route>, m: &'a Models) -> Again {
+    // the key, the credit or the request itself: asking again won't help
+    let hopeless = [provider::failure::UNAUTHORIZED, provider::failure::CREDITS].contains(&e) || provider::rejected(e);
+    if !hopeless && *tries < 2 {
+        let secs = if matches!(route.target, Target::Mock { .. }) { 0 } else { [15, 45][*tries] };
+        *tries += 1;
+        return Again::Wait(Duration::from_secs(secs));
+    }
+    match m.backup_for(route).filter(|_| backup.is_none()) {
+        Some(b) => {
+            *backup = Some(b);
+            *tries = 2;
+            Again::Backup(b.name.clone())
+        }
+        None => Again::Stop,
+    }
+}
+
+/// The source just before a chunk and just after it (8 blocks each): what its page images also show.
+fn neighbor_text(blocks: &[Block], c: &Chunk) -> (String, String) {
+    let around = |start: usize, end: usize| chunk::source_text(blocks, &Chunk { start, end, ..Default::default() }, false);
+    (around(c.start.saturating_sub(8), c.start), around(c.end, (c.end + 8).min(blocks.len())))
+}
+
 /// 整理 one chunk: the Worker, the checks, the Supervisor when they fail.
 async fn clean_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, before: String, prior_fixes: u32) -> Outcome {
     let started = Instant::now();
@@ -1232,9 +1259,10 @@ async fn clean_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, before: String, 
     let m = &ctx.models;
     let marked = chunk::source_text(&blocks, &c, true);
     let plain = chunk::source_text(&blocks, &c, false);
+    let neighbors = neighbor_text(&blocks, &c);
     let pages = chunk::pages(&blocks, &c);
     let mut o = Outcome::new(c.start, Stage::Clean, prior_fixes);
-    let (mut hint, mut think, mut retried, mut backup, mut roomier): (Option<String>, bool, bool, Option<&Route>, bool) = (None, false, false, None, false);
+    let (mut hint, mut think, mut tries, mut backup, mut roomier): (Option<String>, bool, usize, Option<&Route>, bool) = (None, false, 0, None, false);
     o.res = loop {
         let (route, level) = if let Some(b) = backup { (b, m.wl) } else if o.by_supervisor { (&m.sup, m.sl) } else if think { (&m.worker, Level::High) } else { (&m.worker, m.wl) };
         let images = page_images(&ctx, route, chunk::image_pages(&blocks, &c));
@@ -1251,16 +1279,26 @@ async fn clean_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, before: String, 
                 o.notes.push(format!("整理被阿里云的内容审核拦下，这一块改用备用模型 {}", backup.map_or("", |b| b.name.as_str())));
                 continue;
             }
-            Err(e) if !retried => {
-                retried = true;
-                o.notes.push(format!("整理的请求失败（{e}），自动再试一次"));
-                continue;
-            }
-            Err(e) => break Res::Stop(format!("请求失败：{e}")),
+            Err(e) => match again(&e, &mut tries, route, &mut backup, m) {
+                Again::Wait(s) => {
+                    o.notes.push(format!("整理的请求失败（{e}），{} 秒后再试", s.as_secs()));
+                    tokio::time::sleep(s).await;
+                    continue;
+                }
+                Again::Backup(b) => {
+                    o.notes.push(format!("整理的请求又失败了（{e}），这一块改用备用模型 {b}"));
+                    continue;
+                }
+                Again::Stop => break Res::Stop(format!("请求失败：{e}")),
+            },
         };
         let (output, made_up) = prompts::drop_made_up_images(&plain, prompts::money(&plain, prompts::cleaned(&text)));
         if made_up > 0 {
             o.notes.push(format!("整理结果里有 {made_up} 张原文没有的图（模型编的地址），程序删掉了"));
+        }
+        let (output, links) = prompts::drop_made_up_links(&plain, output);
+        if links > 0 {
+            o.notes.push(format!("整理结果里有 {links} 个原文没有的链接，程序只留了文字"));
         }
         // thinking took the whole reply (a model that won't stop thinking): more room, no Supervisor
         if output.trim().is_empty() && cut && !roomier {
@@ -1268,6 +1306,14 @@ async fn clean_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, before: String, 
             o.notes.push("整理的回复长度被思考用完了，没写出结果，多留空间再试一次".into());
             continue;
         }
+        // even one block copied off a page image from the chunk just before or after
+        let output = match check::trim_neighbors(&plain, &output, &neighbors.0, &neighbors.1) {
+            Some((kept, n)) => {
+                o.notes.push(format!("结果头尾有照原页图抄来的前后块的内容，程序删掉了 {n} 段"));
+                kept
+            }
+            None => output,
+        };
         let mut issues = check::check(&plain, &output, cut);
         if !ctx.md {
             issues.extend(check::heading_style(&plain, &output));
@@ -1335,7 +1381,7 @@ async fn translate_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, source: Stri
         None => None,
     };
     let title_only = c.part == Part::Front && ctx.title_only;
-    let (mut hint, mut think, mut retried, mut backup, mut roomier): (Option<String>, bool, bool, Option<&Route>, bool) = (None, false, false, None, false);
+    let (mut hint, mut think, mut tries, mut backup, mut roomier): (Option<String>, bool, usize, Option<&Route>, bool) = (None, false, 0, None, false);
     o.res = loop {
         let (route, level) = if let Some(b) = backup { (b, m.wl) } else if o.by_supervisor { (&m.sup, m.sl) } else if think { (&m.worker, Level::High) } else { (&m.worker, m.wl) };
         let (system, user) = match &draft {
@@ -1359,14 +1405,36 @@ async fn translate_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, source: Stri
                 o.notes.push(format!("翻译被阿里云的内容审核拦下，这一块改用备用模型 {}", backup.map_or("", |b| b.name.as_str())));
                 continue;
             }
-            Err(e) if !retried => {
-                retried = true;
-                o.notes.push(format!("翻译的请求失败（{e}），自动再试一次"));
-                continue;
-            }
-            Err(e) => break Res::Stop(format!("请求失败：{e}")),
+            Err(e) => match again(&e, &mut tries, route, &mut backup, m) {
+                Again::Wait(s) => {
+                    o.notes.push(format!("翻译的请求失败（{e}），{} 秒后再试", s.as_secs()));
+                    tokio::time::sleep(s).await;
+                    continue;
+                }
+                Again::Backup(b) => {
+                    o.notes.push(format!("翻译的请求又失败了（{e}），这一块改用备用模型 {b}"));
+                    continue;
+                }
+                Again::Stop => break Res::Stop(format!("请求失败：{e}")),
+            },
         };
-        let output = prompts::money(&source, prompts::cleaned(&text));
+        let (output, links) = prompts::drop_made_up_links(&source, prompts::money(&source, prompts::cleaned(&text)));
+        if links > 0 {
+            o.notes.push(format!("译文里有 {links} 个原文没有的链接，程序只留了文字"));
+        }
+        let mut output = output;
+        if title_only && keep_authors(&source, &mut output) {
+            o.notes.push("译文里的作者和单位被译了，程序换回了原文".into());
+        }
+        // a traditional character now and then in an English → 简体 translation (DeepSeek's 「中東」)
+        let output = match script::simplified(&output) {
+            Ok(simple) if ctx.lang == Lang::EnZh && draft.is_none() && simple != output => {
+                let n = output.chars().zip(simple.chars()).filter(|(a, b)| a != b).count();
+                o.notes.push(format!("译文里混进了 {n} 个繁体字，程序换成了简体字"));
+                simple
+            }
+            _ => output,
+        };
         // thinking took the whole reply (a model that won't stop thinking): more room, no Supervisor
         if output.trim().is_empty() && cut && !roomier {
             roomier = true;
@@ -1420,7 +1488,7 @@ async fn review_one(ctx: Arc<Ctx>, c: Chunk, stage: Stage, source: String, outpu
     let images = if translating { vec![] } else { page_images(&ctx, &m.sup, pages) };
     o.requests += 1;
     ctx.count(true);
-    let asked = ask_sup(m, m.sl, prompts::review_system(translating), prompts::review_message(&source, &output), images, context::estimate(&output) / 2 + 2000).await;
+    let asked = ask_sup(m, m.sl, prompts::review_system(translating, ctx.md), prompts::review_message(&source, &output), images, context::estimate(&output) / 2 + 2000).await;
     if let Ok((_, _, true)) = asked {
         o.requests += 1;
         ctx.count(true);
@@ -1429,7 +1497,15 @@ async fn review_one(ctx: Arc<Ctx>, c: Chunk, stage: Stage, source: String, outpu
     let text = match asked.map(|(reply, cut, _)| (reply, cut)) {
         Ok((reply, cut)) => match prompts::fixes_in(&reply) {
             Some(fixes) => {
-                let (t, skipped) = prompts::apply(&output, &fixes);
+                // MMD's \\section*{} turned into a # heading (Sonnet did): the heading style must not change
+                let (fixes, restyled): (Vec<_>, Vec<_>) = fixes.into_iter().partition(|f| ctx.md || !prompts::to_markdown_heading(f));
+                if !restyled.is_empty() {
+                    o.notes.push(format!("{}：{} 处要把 MMD 的标题改成 # 写法，没改", stage.name(), restyled.len()));
+                }
+                let (mut t, skipped) = prompts::apply(&output, &fixes);
+                if translating && c.part == Part::Front && ctx.title_only && keep_authors(&source, &mut t) {
+                    o.notes.push(format!("{}改了不翻的作者和单位，程序换回了原文", stage.name()));
+                }
                 let not = if skipped.is_empty() { String::new() } else { format!("，{} 处没对上原话", skipped.len()) };
                 let what: Vec<String> = fixes.iter().filter(|f| !skipped.contains(f)).map(|f| if f.why.trim().is_empty() { format!("「{}」→「{}」", f.find, f.replace) } else { format!("「{}」→「{}」（{}）", f.find, f.replace, f.why.trim()) }).collect();
                 let what = if what.is_empty() { String::new() } else { format!("：{}", what.join("；")) };
@@ -1449,6 +1525,39 @@ async fn review_one(ctx: Arc<Ctx>, c: Chunk, stage: Stage, source: String, outpu
     o.res = Res::Done(text);
     o.seconds = started.elapsed().as_secs();
     o
+}
+
+/// The parts left untranslated, as the page says them.
+fn kept_parts(job: &Job) -> Vec<&'static str> {
+    job.skip.iter().map(|p| if *p == Part::Front { "作者和单位" } else { p.name() }).collect()
+}
+
+/// `find` is inside the text's \author{…} (left untranslated with 作者和单位).
+fn in_author(text: &str, find: &str) -> bool {
+    let (Some((start, end)), Some(at)) = (author_span(text), text.find(find)) else { return false };
+    at >= start && at < end
+}
+
+/// Where the text's \author{…} is (to its closing brace).
+fn author_span(text: &str) -> Option<(usize, usize)> {
+    let start = text.find("\\author{")?;
+    let mut depth = 0;
+    let end = text[start..].char_indices().find_map(|(i, c)| {
+        depth += match c { '{' => 1, '}' => -1, _ => 0 };
+        (c == '}' && depth == 0).then_some(start + i + 1)
+    });
+    Some((start, end.unwrap_or(text.len())))
+}
+
+/// 作者和单位 left untranslated: the translation's \author{…} put back as the source has it (DeepSeek
+/// translated the affiliations against the request). Whether it changed anything.
+fn keep_authors(source: &str, output: &mut String) -> bool {
+    let (Some((a, b)), Some((c, d))) = (author_span(source), author_span(output)) else { return false };
+    if source[a..b] == output[c..d] {
+        return false;
+    }
+    output.replace_range(c..d, &source[a..b]);
+    true
 }
 
 /// 通读: the Supervisor reads the translation (in windows when it doesn't fit) for what spans chunks;
@@ -1471,7 +1580,8 @@ async fn read_through(report: &Report, folder: &Path, job: &mut Job, m: &Models)
         windows.last_mut().unwrap().push(k);
     }
     let terms = terms_lines(job.terms.as_deref().unwrap_or(&[]), None);
-    let (mut applied, mut skipped, mut read_n) = (vec![], 0, 0);
+    let kept = kept_parts(job);
+    let (mut applied, mut skipped, mut read_n) = (vec![], vec![], 0);
     for w in &windows {
         let text: String = w.iter().map(|k| format!("⟦第 {} 块⟧\n{}\n\n", k + 1, read(job.chunks[*k].chunk.start))).collect();
         let left = check::leftovers(&text);
@@ -1482,7 +1592,7 @@ async fn read_through(report: &Report, folder: &Path, job: &mut Job, m: &Models)
         read_n += 1;
         job.supervisor_requests += 1;
         report.counts(job);
-        let asked = ask_sup(m, reading_level(m.sl), prompts::read_system(), prompts::read_message(&terms, &text, &left), vec![], 4000).await;
+        let asked = ask_sup(m, m.sl, prompts::read_system(), prompts::read_message(&terms, &text, &left, &kept), vec![], 4000).await;
         if let Ok((_, _, true)) = asked {
             job.supervisor_requests += 1;
             job.read_notes.push(by_backup("通读", m));
@@ -1502,21 +1612,28 @@ async fn read_through(report: &Report, folder: &Path, job: &mut Job, m: &Models)
         };
         for f in fixes {
             let hits: Vec<usize> = w.iter().copied().filter(|k| !f.find.is_empty() && read(job.chunks[*k].chunk.start).contains(&f.find)).collect();
-            let start = match hits.as_slice() {
-                [k] if read(job.chunks[*k].chunk.start).matches(&f.find).count() == 1 && f.find != f.replace => job.chunks[*k].chunk.start,
-                _ => {
-                    skipped += 1;
-                    continue;
-                }
+            let why_not = match hits.as_slice() {
+                _ if f.find == f.replace => Some("没有改动"),
+                [] => Some("哪块都没有这句原话"),
+                [k] if read(job.chunks[*k].chunk.start).matches(&f.find).count() > 1 => Some("这句原话出现了好几次"),
+                [k] if job.skip.contains(&Part::Front) && job.chunks[*k].chunk.part == Part::Front && in_author(&read(job.chunks[*k].chunk.start), &f.find) => Some("是不翻的作者和单位"),
+                [_] => None,
+                _ => Some("这句原话出现了好几次"),
             };
+            if let Some(why) = why_not {
+                skipped.push(format!("没改：「{}」（{why}）", f.find.chars().take(40).collect::<String>().replace('\n', " ")));
+                continue;
+            }
+            let start = job.chunks[hits[0]].chunk.start;
             let text = read(start).replacen(&f.find, &f.replace, 1);
             std::fs::write(chunk_file(folder, start, "tr"), text).map_err(|e| format!("没能写中间结果：{e}"))?;
             applied.push(if f.why.trim().is_empty() { format!("「{}」→「{}」", f.find, f.replace) } else { format!("「{}」→「{}」（{}）", f.find, f.replace, f.why.trim()) });
         }
     }
-    let not = if skipped > 0 { format!("，{skipped} 处没对上原话没改") } else { String::new() };
+    let not = if skipped.is_empty() { String::new() } else { format!("，{} 处没改", skipped.len()) };
     job.read_notes.insert(0, if read_n > 0 { format!("读了 {read_n} 段，改了 {} 处{not}", applied.len()) } else if job.chunks.len() > 1 { "每篇文章只有一块，也没有漏译的英文词，不用通读".into() } else { "只有一块，也没有漏译的英文词，不用通读".into() });
     job.read_notes.extend(applied);
+    job.read_notes.extend(skipped);
     job.read_through = true;
     event(job, "通读完了");
     save(folder, job)
@@ -1821,7 +1938,7 @@ pub fn prompts_shown(s: &Settings, web: bool) -> Vec<(String, String)> {
         return out;
     }
     let translate = s.steps == Steps::Translate;
-    let w = prompts::wishes(&s.style, &s.domain, &s.prompt);
+    let w = prompts::wishes(&s.style, &s.domains, &s.prompt);
     let (from, to) = s.lang.says();
     let mut add = |who: &str, text: String| out.push((who.to_string(), prompts::unmarked(&text).to_string()));
     add("Worker · 整理", prompts::worker_system(s.md, s.english_only, Part::Body, true));
@@ -1835,7 +1952,7 @@ pub fn prompts_shown(s: &Settings, web: bool) -> Vec<(String, String)> {
     }
     add("Supervisor · 出错排查", prompts::fix_system(false, s.md));
     if s.refine {
-        add("Supervisor · 精修", prompts::review_system(translate));
+        add("Supervisor · 精修", prompts::review_system(translate, s.md));
     }
     if translate {
         add("Supervisor · 通读", prompts::read_system());
@@ -1867,8 +1984,8 @@ pub fn log(job: &Job, how: &str) -> String {
     if translating {
         let (from, to) = job.lang.says();
         let pick = |list: &[(&'static str, &'static str, &'static str)], k: &str| -> &'static str { list.iter().find(|x| x.0 == k).map_or("", |x| x.1) };
-        let skip: Vec<&str> = job.skip.iter().map(|p| if *p == Part::Front { "作者和单位" } else { p.name() }).collect();
-        s.push_str(&format!("- 翻译：{from} → {to}；文体 {}；领域 {}；不翻：{}\n", pick(super::STYLES, &job.style), pick(super::DOMAINS, &job.domain), if skip.is_empty() { "无".to_string() } else { skip.join("、") }));
+        let skip = kept_parts(job);
+        s.push_str(&format!("- 翻译：{from} → {to}；文体 {}；领域 {}；不翻：{}\n", pick(super::STYLES, &job.style), super::domain_names(&job.domains), if skip.is_empty() { "无".to_string() } else { skip.join("、") }));
         if !job.prompt.trim().is_empty() {
             s.push_str(&format!("- 自己写的要求：{}\n", job.prompt.trim()));
         }
@@ -2020,7 +2137,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(work_dir(dir)).unwrap();
         let (blocks, pages) = mmd::blocks(text);
         let s = Settings::default();
-        let job = Job { name: "测试".into(), kind: Some(Kind::Pdf), steps, extracted: true, pages, started: "2026-10-21 10:00".into(), style: s.style, domain: s.domain, skip: s.skip, ..Default::default() };
+        let job = Job { name: "测试".into(), kind: Some(Kind::Pdf), steps, extracted: true, pages, started: "2026-10-21 10:00".into(), style: s.style, domains: s.domains, skip: s.skip, ..Default::default() };
         (job, Arc::new(blocks))
     }
 
@@ -2105,6 +2222,12 @@ pub(crate) mod tests {
         let translated = job.chunks.iter().filter(|c| c.tr == State::Done).count();
         assert_eq!((job.supervisor_requests, job.worker_requests as usize), (3, job.chunks.len() + translated));
         assert!(job.read_through && job.read_notes[0].starts_with("读了 1 段，改了 0 处"));
+        // the authors and affiliations kept as they are: no fix there (Sol translated one)
+        let front = "\\title{\n机器学习教程\n}\n\n\\author{\nF. Pargent \\({ }^{1}\\) \\\\\n\\({ }^{1}\\) Department Psychology, LMU Munich\n}\n\n摘要。";
+        assert!(in_author(front, "Department Psychology, LMU Munich") && !in_author(front, "摘要") && !in_author(front, "机器学习教程"));
+        let mut tr = front.replace("Department Psychology, LMU Munich", "慕尼黑大学心理学系");
+        assert!(keep_authors(front, &mut tr) && tr == front && !keep_authors(front, &mut tr));
+        assert!(prompts::read_message("", "译文", &[], &kept_parts(&job)).contains("【照原文不翻的部分】作者和单位、致谢、参考文献、附录"));
         // an article a chunk: nothing across chunks to read
         let asked = job.supervisor_requests;
         let mut each = Job { read_through: false, read_notes: vec![], ..job.clone() };
@@ -2193,11 +2316,21 @@ pub(crate) mod tests {
         job.planned = true;
         let e = run_mock(&dir, &mut job, &blocks, models(1)).unwrap_err();
         assert!(e.starts_with("第 2 块") && e.contains("请求失败"), "{e}");
-        assert_eq!((job.chunks[0].state, job.chunks[1].state, job.chunks[1].requests), (State::Done, State::Pending, 2));
-        assert!(job.chunks[1].notes[0].contains("自动再试一次"));
+        assert_eq!((job.chunks[0].state, job.chunks[1].state, job.chunks[1].requests), (State::Done, State::Pending, 3));
+        assert!(job.chunks[1].notes[0].contains("秒后再试") && job.chunks[1].notes[1].contains("秒后再试"));
         // 继续 picks up the saved job: only the second chunk is left
         assert_eq!(load_job(&dir).unwrap().chunks.iter().filter(|c| c.state == State::Pending).count(), 1);
         assert!(log(&job, "出错停下").contains("还没做完"));
+        // with a backup model: it gets one go before the stop
+        let dir = crate::db::tests::temp_dir("pub2md-stop-backup");
+        let (mut job, blocks) = job_for(&dir, text, Steps::Clean);
+        job.chunks = vec![new_chunk(&job, &blocks, Chunk { start: 1, end: 3, part: Part::Body, article: 1, note: String::new() })];
+        job.planned = true;
+        let mut m = models(1);
+        m.backup = Some(Route { model: "local:backup".into(), name: "备用".into(), ..mock(32_768) });
+        assert!(run_mock(&dir, &mut job, &blocks, m).is_err());
+        assert_eq!(job.chunks[0].requests, 4);
+        assert!(job.chunks[0].notes[2].contains("改用备用模型 备用"), "{:?}", job.chunks[0].notes);
     }
 
     /// A PDF and two photos through every step but the routes (mock Mathpix, mock models).
@@ -2300,6 +2433,7 @@ pub(crate) mod tests {
     ///   [POMELO_LANG=enzh|hant|hans (简体 → 繁体 / 繁体 → 简体)] [POMELO_STYLE=news…] [POMELO_DOMAIN=cs…]
     ///   [POMELO_WORKER_LEVEL=…] [POMELO_SUP_LEVEL=off|low|medium|high (else 关 / 高)] [POMELO_FORMATS=docx,pdf,tex,html (另存为, by Mathpix)]
     ///   [POMELO_PUB2MD_EARLIER=<an earlier output folder of the same file: its Mathpix result, nothing uploaded>]
+    ///   [POMELO_PUB2MD_RESUME=<a stopped run's document folder: 继续 from where it stopped, with the models given here>]
     ///   cargo test real_pub2md -- --ignored --nocapture
     /// Leaves the results and the work log in the folder (a temp one by default) and prints where, the requests,
     /// the time and each model's tokens (用量).
@@ -2321,7 +2455,9 @@ pub(crate) mod tests {
         let (worker, sup, backup) = real_routes(target, window);
         let paths: Vec<PathBuf> = file.split('|').map(PathBuf::from).collect();
         let base = std::env::var("POMELO_PUB2MD_OUT").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("pomelo-pub2md-real"));
-        let folder = unique_dir(&base, &source::name_of(&paths));
+        // 继续: a stopped run's folder goes on where it stopped, as the page's button does
+        let resume = std::env::var("POMELO_PUB2MD_RESUME").ok().map(PathBuf::from);
+        let folder = resume.clone().unwrap_or_else(|| unique_dir(&base, &source::name_of(&paths)));
         std::fs::create_dir_all(work_dir(&folder)).unwrap();
         let kind = source::kind_of(&paths);
         let steps = match std::env::var("POMELO_STEPS").as_deref() {
@@ -2338,7 +2474,11 @@ pub(crate) mod tests {
         };
         let formats: Vec<Format> = std::env::var("POMELO_FORMATS").unwrap_or_default().split(',').map(str::trim).filter(|f| !f.is_empty()).filter_map(|f| [Format::Docx, Format::Pdf, Format::Latex, Format::Html].into_iter().find(|x| x.key().starts_with(f))).collect();
         let var = |v: &str, or: String| std::env::var(v).unwrap_or(or);
-        let mut job = Job { name: source::name_of(&paths), sources: paths.iter().map(|p| p.display().to_string()).collect(), kind: Some(kind), steps, lang, formats, started: clock("%Y-%m-%d %H:%M"), style: var("POMELO_STYLE", d.style), domain: var("POMELO_DOMAIN", d.domain), skip: d.skip, web, refine: std::env::var("POMELO_REFINE").as_deref() == Ok("1"), ..Default::default() };
+        let mut job = Job { name: source::name_of(&paths), sources: paths.iter().map(|p| p.display().to_string()).collect(), kind: Some(kind), steps, lang, formats, started: clock("%Y-%m-%d %H:%M"), style: var("POMELO_STYLE", d.style), domains: std::env::var("POMELO_DOMAIN").map(|v| v.split(',').map(|d| d.trim().to_string()).collect()).unwrap_or(d.domains), skip: d.skip, web, refine: std::env::var("POMELO_REFINE").as_deref() == Ok("1"), ..Default::default() };
+        if resume.is_some() {
+            job = load_job(&folder).unwrap();
+            event(&mut job, "继续");
+        }
         let (wl, sl) = (level_var("POMELO_WORKER_LEVEL", Level::Off), level_var("POMELO_SUP_LEVEL", Level::High));
         job.models = format!("Worker：{}（{}）　Supervisor：{}（{}）{}", api(&worker.target), wl.name(), api(&sup.target), sl.name(), backup.as_ref().map_or(String::new(), |b| format!("　备用：{}", api(&b.target))));
         let parallel = std::env::var("POMELO_PARALLEL").ok().and_then(|p| p.parse().ok()).unwrap_or(4);
@@ -2350,9 +2490,9 @@ pub(crate) mod tests {
         let started = Instant::now();
         let m = Models { worker, sup, wl, sl, parallel, backup };
         let result: Result<Vec<String>, String> = tauri::async_runtime::block_on(async {
-            if kind == Kind::Text {
+            if kind == Kind::Text && !job.extracted {
                 take_text(&folder, &mut job)?;
-            } else {
+            } else if !job.extracted {
                 let earlier = std::env::var("POMELO_PUB2MD_EARLIER").ok().map(|f| {
                     // its downloaded text too (with Mathpix's links), as a first run has it
                     let _ = std::fs::create_dir_all(work_dir(&folder).join("mathpix"));
@@ -2370,15 +2510,17 @@ pub(crate) mod tests {
             let text = std::fs::read_to_string(original(&folder, &job)).map_err(|e| e.to_string())?;
             let blocks = Arc::new(mmd::blocks(&text).0);
             let mut set = JoinSet::new();
-            if needs_terms(&job) {
+            if needs_terms(&job) && job.terms.is_none() {
                 let lookup = search::lookup(job.web, &m.sup, None);
                 eprintln!("[pub2md] 术语表：{lookup:?}");
                 set.spawn(terms_task(&job, &text, &m, lookup));
                 job.supervisor_requests += 1;
             }
-            plan(&say, &folder, &mut job, &blocks, &m).await?;
+            if !job.planned {
+                plan(&say, &folder, &mut job, &blocks, &m).await?;
+            }
             work(&say, &folder, &mut job, &blocks, &m, set).await?;
-            if steps == Steps::Translate {
+            if job.steps == Steps::Translate && !job.read_through {
                 read_through(&say, &folder, &mut job, &m).await?;
             }
             let mut written = assemble(&folder, &job)?;
@@ -2388,11 +2530,12 @@ pub(crate) mod tests {
             }
             Ok(written)
         });
-        job.elapsed = started.elapsed().as_secs();
+        job.elapsed += started.elapsed().as_secs();
         let how = match &result {
             Ok(_) => "完成".to_string(),
             Err(e) => format!("出错停下：{e}"),
         };
+        let _ = save(&folder, &job);
         std::fs::write(folder.join(LOG), log(&job, &how)).unwrap();
         eprintln!("[pub2md] {how}；{} 块；请求 Worker {} · Supervisor {}；用时 {}\n[pub2md] {}", job.chunks.len(), job.worker_requests, job.supervisor_requests, duration(job.elapsed), folder.display());
         for (route, n, prompt, completion) in USED.lock().unwrap().iter() {
@@ -2442,7 +2585,8 @@ pub(crate) mod tests {
 
     /// What the Supervisor really answers to the term list and to a failed check (raw: reasoning size,
     /// the reply, why it ended), on an earlier run's 原文.mmd; no Mathpix.
-    ///   POMELO_PUB2MD_MMD=<原文.mmd> POMELO_CLOUD_KEY_FILE=… POMELO_SUP_…=… [POMELO_PROBE=terms|fix|plan|read] [POMELO_PROBE_PAGES=<.pub2md/pages>] [POMELO_SUP_LEVEL=off|low|medium|high]
+    ///   POMELO_PUB2MD_MMD=<原文.mmd> POMELO_CLOUD_KEY_FILE=… POMELO_SUP_…=… [POMELO_PROBE=terms|fix|plan|read|search] [POMELO_PROBE_PAGES=<.pub2md/pages>] [POMELO_SUP_LEVEL=off|low|medium|high]
+    ///   (search: the term list through search::ask, the Supervisor's service searching)
     #[test]
     #[ignore]
     fn real_pub2md_probe() {
@@ -2455,6 +2599,19 @@ pub(crate) mod tests {
         let (from, to) = job.lang.says();
         let mut asks = vec![];
         let probe = std::env::var("POMELO_PROBE").unwrap_or_default();
+        if probe == "search" {
+            // the term list as the job asks it, looking up with the Supervisor's own search
+            let level = terms_level(level);
+            let system = prompts::terms_system(from, to, &wishes(&job), true);
+            let user = prompts::terms_message(&job.name, &fit(&text, 20_000).0, false);
+            let started = Instant::now();
+            let r = tauri::async_runtime::block_on(search::ask(&sup, level, &system, &user, reply_room(&sup, 8000, level), &Lookup::Native));
+            eprintln!("[probe] 术语表（联网）：用时 {} 秒，{}", started.elapsed().as_secs(), r.as_ref().map_or_else(|e| format!("出错：{e}"), |(t, how)| format!("{how}，回答 {} 字，读出 {} 条", t.chars().count(), terms_in(t).map_or(0, |(t, _)| t.len()))));
+            if let Ok((t, _)) = r {
+                eprintln!("[probe] 回答：\n{t}\n[probe] ——");
+            }
+            return;
+        }
         if probe == "plan" {
             let parts = mmd::parts(&blocks);
             let budget = Budget::for_window(window, TARGET);
@@ -2464,7 +2621,7 @@ pub(crate) mod tests {
         }
         if probe == "read" {
             // POMELO_PUB2MD_MMD is the translation here, its chunks marked ⟦第 k 块⟧
-            asks.push(("通读", prompts::read_system(), prompts::read_message("", &text, &check::leftovers(&text)), reply_room(&sup, 4000, level), vec![], level));
+            asks.push(("通读", prompts::read_system(), prompts::read_message("", &text, &check::leftovers(&text), &[]), reply_room(&sup, 4000, level), vec![], level));
         }
         if probe.is_empty() || probe == "terms" {
             asks.push(("术语表", prompts::terms_system(from, to, &wishes(&job), false), prompts::terms_message(&job.name, &fit(&text, 20_000).0, false), reply_room(&sup, 8000, terms_level(level)), vec![], terms_level(level)));
@@ -2497,6 +2654,46 @@ pub(crate) mod tests {
                 eprintln!("[probe] 回答：\n{content}\n[probe] ——");
             }
         });
+    }
+
+    /// What trim_neighbors takes off earlier real runs' 整理 results: POMELO_REPLAY=<folder of runs>
+    #[test]
+    #[ignore]
+    fn replay_neighbor_trim() {
+        let Ok(dir) = std::env::var("POMELO_REPLAY") else { return };
+        let mut folders = vec![];
+        let mut stack = vec![PathBuf::from(dir)];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.join(".pub2md/job.json").is_file() {
+                    folders.push(p.clone());
+                }
+                if p.is_dir() && !p.ends_with(".pub2md") {
+                    stack.push(p);
+                }
+            }
+        }
+        folders.sort();
+        let (mut chunks, mut hits) = (0, 0);
+        for f in &folders {
+            let (Ok(job), Ok(text)) = (load_job(f), std::fs::read_to_string(f.join(ORIGINAL))) else { continue };
+            let blocks = mmd::blocks(&text).0;
+            for c in &job.chunks {
+                let Ok(out) = std::fs::read_to_string(chunk_file(f, c.chunk.start, "out")) else { continue };
+                if c.chunk.end > blocks.len() {
+                    continue;
+                }
+                chunks += 1;
+                let (before, after) = neighbor_text(&blocks, &c.chunk);
+                if let Some((kept, n)) = check::trim_neighbors(&chunk::source_text(&blocks, &c.chunk, false), &out, &before, &after) {
+                    hits += 1;
+                    let gone: Vec<String> = mmd::blocks(&out).0.into_iter().filter(|b| !kept.contains(&b.text)).map(|b| b.text.chars().take(90).collect::<String>().replace('\n', "⏎")).collect();
+                    eprintln!("[replay] {} · 从第 {} 块起：删 {n} 段\n    {}", f.file_name().unwrap().to_string_lossy(), c.chunk.start, gone.join("\n    "));
+                }
+            }
+        }
+        eprintln!("[replay] {} 份、{chunks} 块，{hits} 块会删", folders.len());
     }
 
     #[test]

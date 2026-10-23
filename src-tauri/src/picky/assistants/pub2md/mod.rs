@@ -132,6 +132,31 @@ pub const DOMAINS: &[(&str, &str, &str)] = &[
 ];
 pub const PROMPT_CHARS: usize = 2000;
 
+/// 领域 is several for an interdisciplinary text (none = 通用); saves and jobs from before had one, as a string.
+pub fn domains_of<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    })
+}
+
+/// The known ones, in DOMAINS' order, once each (通用 is none).
+pub fn known_domains(domains: &[String]) -> Vec<String> {
+    DOMAINS.iter().filter(|x| x.0 != "general" && domains.iter().any(|d| d == x.0)).map(|x| x.0.to_string()).collect()
+}
+
+/// 领域 as the page and the log say it.
+pub fn domain_names(domains: &[String]) -> String {
+    let names: Vec<&str> = DOMAINS.iter().filter(|x| x.0 != "general" && domains.iter().any(|d| d == x.0)).map(|x| x.1).collect();
+    if names.is_empty() { DOMAINS[0].1.to_string() } else { names.join("、") }
+}
+
 /// What the results are also turned into (by Mathpix).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,9 +210,10 @@ pub struct Settings {
     /// None = 下载.
     pub folder: Option<String>,
     pub lang: Lang,
-    /// STYLES / DOMAINS keys.
+    /// STYLES / DOMAINS keys (领域: several, none = 通用).
     pub style: String,
-    pub domain: String,
+    #[serde(alias = "domain", deserialize_with = "domains_of")]
+    pub domains: Vec<String>,
     /// The user's own paragraph (both models see it).
     pub prompt: String,
     /// 联网查术语; None = on when the Supervisor's service has its own search (search.rs).
@@ -215,7 +241,7 @@ impl Default for Settings {
             folder: None,
             lang: Lang::EnZh,
             style: "general".into(),
-            domain: "general".into(),
+            domains: vec![],
             prompt: String::new(),
             web: None,
             refine: false,
@@ -238,9 +264,7 @@ pub fn checked(mut s: Settings) -> Result<Settings, String> {
     if !STYLES.iter().any(|x| x.0 == s.style) {
         s.style = "general".into();
     }
-    if !DOMAINS.iter().any(|x| x.0 == s.domain) {
-        s.domain = "general".into();
-    }
+    s.domains = known_domains(&s.domains);
     if s.prompt.chars().count() > PROMPT_CHARS {
         return Err(format!("自己写的要求最多 {PROMPT_CHARS} 字"));
     }
@@ -774,6 +798,15 @@ mod tests {
         assert!(checked(Settings { worker: Some("x".into()), ..Default::default() }).is_err());
         assert!(checked(Settings { folder: Some("/no/such/folder".into()), ..Default::default() }).is_err());
         assert_eq!((Level::Medium.effort(), Level::Off.thinking()), (Some(Effort::Medium), false));
+        // 领域: several, in the page's order; a save from before (one, as a string) still reads
+        let s = checked(Settings { domains: vec!["cs".into(), "general".into(), "public".into(), "cs".into(), "nope".into()], ..Default::default() }).unwrap();
+        assert_eq!((s.domains.clone(), domain_names(&s.domains), domain_names(&[])), (vec!["public".to_string(), "cs".to_string()], "公共管理、计算机".to_string(), "通用".to_string()));
+        let old: Settings = serde_json::from_str(r#"{"style":"academic","domain":"cs"}"#).unwrap();
+        assert_eq!((old.domains, old.style.as_str(), old.supervisor_level), (vec!["cs".to_string()], "academic", Level::High));
+        let saved: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        assert_eq!(saved.domains, s.domains);
+        let job: job::Job = serde_json::from_str(r#"{"name":"旧的","domain":"math"}"#).unwrap();
+        assert_eq!(job.domains, ["math"]);
         let c = memory_db();
         for i in 0..12 {
             set_recent(&c, &format!("/f{i}"), |r| r.name = format!("文档 {i}")).unwrap();

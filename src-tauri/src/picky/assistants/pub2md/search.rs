@@ -3,7 +3,8 @@
 //! - DeepSeek: its Search / Fetch APIs (api.deepseek.com/v1/tools/…, the same key) as tools Rust runs;
 //! - Aliyun: `enable_search` on the chat request (Qwen searches by itself);
 //! - OpenAI: the Responses API with the `web_search` tool;
-//! - Anthropic: the Messages API with the `web_search` server tool (a paused turn is sent on);
+//! - Anthropic: the Messages API with the `web_search` / `web_fetch` server tools (newest set it takes,
+//!   dynamic filtering; a paused turn is sent on; `fallbacks` as in provider.rs);
 //! - Google: generateContent with `google_search`;
 //! - anything else (OpenRouter, local models): Tavily when its key is saved, else no lookup.
 //! The OpenAI / Anthropic / Google calls aren't streamed (one answer: the JSON term list).
@@ -65,7 +66,7 @@ fn client() -> Result<reqwest::Client, String> {
 
 /// One request (with `lookup`); the reply and how it searched (for the log).
 pub async fn ask(route: &Route, level: Level, system: &str, user: &str, max: i64, lookup: &Lookup) -> Result<(String, String), String> {
-    let plain = || Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), ..Default::default() };
+    let plain = || Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, ..Default::default() };
     match (lookup, &route.target) {
         (Lookup::Off, _) => Ok((stream_text(route, system, user, plain()).await?, "没联网查".into())),
         (Lookup::Tavily(key), _) => {
@@ -79,7 +80,7 @@ pub async fn ask(route: &Route, level: Level, system: &str, user: &str, max: i64
             }
             Service::Aliyun => Ok((stream_text(route, system, user, Options { search: true, ..plain() }).await?, "用了 Qwen 自带的搜索".into())),
             Service::OpenAi => openai(model, key, system, user, level, max, &route.name).await.map(|(t, n)| (t, format!("用 OpenAI 自带的搜索查了 {n} 次"))),
-            Service::Anthropic => anthropic(model, key, system, user, level, max).await.map(|(t, n)| (t, format!("用 Claude 自带的搜索查了 {n} 次"))),
+            Service::Anthropic => anthropic(model, key, system, user, level, max, &route.name).await.map(|(t, n, f)| (t, if f > 0 { format!("用 Claude 自带的搜索查了 {n} 次、读了 {f} 个网页") } else { format!("用 Claude 自带的搜索查了 {n} 次") })),
             Service::Google => google(model, key, system, user, level, max).await.map(|(t, n)| (t, format!("用 Gemini 自带的搜索查了 {n} 次"))),
             Service::OpenRouter => Ok((stream_text(route, system, user, plain()).await?, "没联网查".into())),
         },
@@ -249,44 +250,113 @@ async fn openai(model: &CloudModel, key: &str, system: &str, user: &str, level: 
     Ok((text, searches))
 }
 
-/// Anthropic: the Messages API with the `web_search` server tool.
-async fn anthropic(model: &CloudModel, key: &str, system: &str, user: &str, level: Level, max: i64) -> Result<(String, usize), String> {
-    let url = format!("{}/messages", Service::Anthropic.base_url());
-    let mut tool = "web_search_20260209";
-    let mut messages = vec![json!({ "role": "user", "content": user })];
-    let (mut text, mut searches) = (String::new(), 0);
-    for _ in 0..5 {
-        let mut body = json!({ "model": model.api_model, "max_tokens": max, "system": system, "messages": messages, "tools": [{ "type": tool, "name": "web_search", "max_uses": 8 }] });
-        if thinks(model, level) {
-            body["thinking"] = json!({ "type": "adaptive" });
-            if let Some(e) = level.effort() {
-                body["output_config"] = json!({ "effort": e.word() });
-            }
+/// Anthropic's web tools, newest first; a model that turns a set down (400) gets the next. Dynamic
+/// filtering (`_20260209` on: code Claude runs trims what it reads) and the results that code used left
+/// out of the response (`_20260318`), then the basic pair, then search alone (an org without web fetch).
+const CLAUDE_TOOLS: [(&str, Option<&str>, bool); 4] = [("web_search_20260318", Some("web_fetch_20260318"), true), ("web_search_20260209", Some("web_fetch_20260209"), false), ("web_search_20250305", Some("web_fetch_20250910"), false), ("web_search_20250305", None, false)];
+
+fn claude_tools(set: usize) -> Value {
+    let (search, fetch, excluded) = CLAUDE_TOOLS[set];
+    let mut tools = vec![json!({ "type": search, "name": "web_search", "max_uses": 8 })];
+    // reading a page found (only URLs already in the conversation), a few, each cut to ~8K tokens
+    if let Some(f) = fetch {
+        tools.push(json!({ "type": f, "name": "web_fetch", "max_uses": 4, "max_content_tokens": 8000 }));
+    }
+    if excluded {
+        for t in &mut tools {
+            t["response_inclusion"] = json!("excluded");
         }
-        let req = || client().map(|c| c.post(&url).header("x-api-key", key).header("anthropic-version", "2023-06-01"));
-        let (mut status, mut v) = post(req()?, &body).await?;
-        if status == 400 && tool == "web_search_20260209" {
-            // an older model: the basic search tool
-            tool = "web_search_20250305";
-            body["tools"] = json!([{ "type": tool, "name": "web_search", "max_uses": 8 }]);
-            (status, v) = post(req()?, &body).await?;
+    }
+    json!(tools)
+}
+
+fn claude_body(model: &CloudModel, system: &str, messages: &[Value], level: Level, max: i64, set: usize) -> Value {
+    let mut body = json!({ "model": model.api_model, "max_tokens": max, "system": system, "messages": messages, "tools": claude_tools(set), "cache_control": { "type": "ephemeral" } });
+    if thinks(model, level) {
+        body["thinking"] = json!({ "type": "adaptive" });
+        if let Some(e) = level.effort() {
+            body["output_config"] = json!({ "effort": e.word() });
         }
-        if status != 200 {
-            return Err(provider::http_failure(status).into());
-        }
+    }
+    if provider::FALLBACK_MODELS.contains(&model.api_model.as_str()) {
+        body["fallbacks"] = json!("default");
+    }
+    body
+}
+
+/// The answer in a turn's responses: the text after the last tool result (what came before was said on
+/// the way), all of it when nothing follows; and the searches and pages read.
+fn claude_reply(responses: &[Value]) -> (String, i64, i64) {
+    let (mut all, mut tail, mut searches, mut fetches) = (String::new(), String::new(), 0, 0);
+    for v in responses {
         for b in v["content"].as_array().into_iter().flatten() {
             match b["type"].as_str() {
-                Some("text") => text.push_str(b["text"].as_str().unwrap_or("")),
-                Some("server_tool_use") if b["name"] == "web_search" => searches += 1,
+                Some("text") => {
+                    let t = b["text"].as_str().unwrap_or("");
+                    all.push_str(t);
+                    tail.push_str(t);
+                }
+                Some(t) if t.ends_with("_tool_result") => tail.clear(),
                 _ => {}
             }
         }
-        if v["stop_reason"] != "pause_turn" {
-            return Ok((text, searches));
-        }
-        messages.push(json!({ "role": "assistant", "content": v["content"].clone() }));
+        let used = &v["usage"]["server_tool_use"];
+        searches += used["web_search_requests"].as_i64().unwrap_or(0);
+        fetches += used["web_fetch_requests"].as_i64().unwrap_or(0);
     }
-    Ok((text, searches))
+    (if tail.trim().is_empty() { all } else { tail }, searches, fetches)
+}
+
+/// Anthropic: the Messages API with the `web_search` and `web_fetch` server tools; a paused turn is sent
+/// back as it is (and its code container) until it ends.
+async fn anthropic(model: &CloudModel, key: &str, system: &str, user: &str, level: Level, max: i64, _who: &str) -> Result<(String, i64, i64), String> {
+    let url = format!("{}/messages", Service::Anthropic.base_url());
+    let fallback = provider::FALLBACK_MODELS.contains(&model.api_model.as_str());
+    let req = || {
+        client().map(|c| {
+            let r = c.post(&url).header("x-api-key", key).header("anthropic-version", provider::ANTHROPIC_VERSION);
+            if fallback { r.header("anthropic-beta", provider::BETA_FALLBACK) } else { r }
+        })
+    };
+    let mut messages = vec![json!({ "role": "user", "content": user })];
+    let (mut set, mut container, mut responses) = (0, None::<String>, vec![]);
+    for _ in 0..6 {
+        let (status, v) = loop {
+            let mut body = claude_body(model, system, &messages, level, max, set);
+            if let Some(c) = &container {
+                body["container"] = json!(c);
+            }
+            let (status, v) = post(req()?, &body).await?;
+            if status == 400 && responses.is_empty() && set + 1 < CLAUDE_TOOLS.len() {
+                set += 1;
+                continue;
+            }
+            break (status, v);
+        };
+        if status != 200 {
+            return Err(provider::http_failure(status).into());
+        }
+        #[cfg(test)]
+        {
+            let u = &v["usage"];
+            let input = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].iter().filter_map(|k| u[*k].as_i64()).sum::<i64>();
+            super::job::tests::used(_who, input, u["output_tokens"].as_i64().unwrap_or(0));
+        }
+        let paused = v["stop_reason"] == "pause_turn";
+        if v["stop_reason"] == "refusal" {
+            return Err(provider::failure::RESPONSE.into());
+        }
+        container = v["container"]["id"].as_str().map(str::to_string).or(container);
+        messages.push(json!({ "role": "assistant", "content": v["content"].clone() }));
+        responses.push(v);
+        if !paused {
+            break;
+        }
+    }
+    let (text, searches, fetches) = claude_reply(&responses);
+    #[cfg(test)]
+    eprintln!("[用量] 联网 {searches} 次，读网页 {fetches} 次（{}）", CLAUDE_TOOLS[set].0);
+    Ok((text, searches, fetches))
 }
 
 /// Google: generateContent with `google_search`.
@@ -338,5 +408,26 @@ mod tests {
         let mock = Route { target: Target::Mock { thinking: false }, model: "local:mock".into(), name: "M".into(), window: 8192, think: Think::Switch };
         assert_eq!(lookup(Some(true), &mock, tavily), Lookup::Off);
         assert!(Runner::DeepSeek("k".into()).tools().len() == 2 && Runner::Tavily("k".into()).tools().len() == 1);
+    }
+
+    #[test]
+    fn claude_searches_and_reads_pages() {
+        let newest = claude_tools(0);
+        assert_eq!(newest[0], json!({ "type": "web_search_20260318", "name": "web_search", "max_uses": 8, "response_inclusion": "excluded" }));
+        assert_eq!(newest[1], json!({ "type": "web_fetch_20260318", "name": "web_fetch", "max_uses": 4, "max_content_tokens": 8000, "response_inclusion": "excluded" }));
+        assert!(claude_tools(1)[1]["type"] == "web_fetch_20260209" && claude_tools(1)[1].get("response_inclusion").is_none());
+        assert_eq!(claude_tools(3).as_array().unwrap().len(), 1);
+        let sonnet = CloudModel { id: "s".into(), name: "Sonnet".into(), api_model: "claude-sonnet-5-5".into(), service: Service::Anthropic, context_window: 1_048_576, max_output_tokens: 131_072, thinking: Think::Switch };
+        let msgs = [json!({ "role": "user", "content": "全文" })];
+        let b = claude_body(&sonnet, "定术语表", &msgs, Level::Low, 8000, 0);
+        assert!(b["fallbacks"] == "default" && b["thinking"]["type"] == "adaptive" && b["output_config"]["effort"] == "low" && b["cache_control"]["type"] == "ephemeral");
+        let old = CloudModel { api_model: "claude-sonnet-4-5".into(), ..sonnet };
+        let b = claude_body(&old, "定术语表", &msgs, Level::Off, 8000, 2);
+        assert!(b.get("fallbacks").is_none() && b.get("thinking").is_none() && b["tools"][0]["type"] == "web_search_20250305");
+        // what Claude said on the way is left out; the searches and pages are the usage's
+        let paused = json!({ "content": [{ "type": "text", "text": "我先查一下。" }, { "type": "server_tool_use", "name": "web_search" }, { "type": "web_search_tool_result", "content": [] }], "usage": { "server_tool_use": { "web_search_requests": 2 } } });
+        let done = json!({ "content": [{ "type": "web_fetch_tool_result" }, { "type": "text", "text": "{\"terms\":" }, { "type": "text", "text": "[]}" }], "usage": { "server_tool_use": { "web_search_requests": 1, "web_fetch_requests": 1 } } });
+        assert_eq!(claude_reply(&[paused.clone(), done]), ("{\"terms\":[]}".to_string(), 3, 1));
+        assert_eq!(claude_reply(&[paused]).0, "我先查一下。");
     }
 }

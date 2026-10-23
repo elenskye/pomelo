@@ -1263,7 +1263,7 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
             _ => (true, tools.to_vec()),
         };
         let names: Vec<&str> = offered.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
-        let opts = Options { max_tokens: Some(window - used - cost), thinking: Some(request.thinking), effort: None, search: false, tools: offered.clone(), no_calls: answer_now };
+        let opts = Options { max_tokens: Some(window - used - cost), thinking: Some(request.thinking), effort: None, search: false, tools: offered.clone(), no_calls: answer_now, one_off: false };
         let (result, r) = host.stream(messages.clone(), opts).await;
         if let Err(e) = result {
             if round == 0 && provider::rejected(&e) && r.content.is_empty() && r.reasoning.is_empty() {
