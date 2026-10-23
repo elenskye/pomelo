@@ -6,7 +6,7 @@
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
 //! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 小拾
-//! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db); v11 = no 定时任务 (picky keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型.
+//! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db); v11 = no 定时任务 (picky keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (picky `seeker`).
 //! All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
@@ -25,7 +25,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 18;
+pub const FORMAT_VERSION: u32 = 19;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -580,7 +580,7 @@ mod tests {
 
         // spot checks on the imported side
         let v = without_time(&text2);
-        assert_eq!(v["formatVersion"], 18);
+        assert_eq!(v["formatVersion"], FORMAT_VERSION);
         let made = v["modules"]["todo"]["groups"][0]["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "整理摘抄").unwrap().clone();
         assert_eq!(made["fromNote"], v["modules"]["notes"]["notes"][0]["createdAt"]);
         assert_eq!(v["modules"]["custom"][0]["items"][0]["values"], json!({"平台": "Switch", "评分": 5, "玩过": "2025"}));

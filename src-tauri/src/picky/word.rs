@@ -1389,6 +1389,147 @@ pub fn edit_docx(data: &[u8], edits: &[(usize, String)]) -> Result<Vec<u8>, Stri
     Ok(w.finish().map_err(|e| e.to_string())?.into_inner())
 }
 
+// ---------- Seeker: a resume from the user's template ----------
+
+/// The template's paragraphs (None: an empty one, not to be chosen). Only plain paragraphs: a table,
+/// content control, field, text box, image or section break in the body is refused.
+pub fn resume_template_items(data: &[u8]) -> Result<Vec<Option<String>>, String> {
+    let doc = read_docx(data)?;
+    if doc.items.iter().all(|p| p.plain.trim().is_empty()) {
+        return Err("模板里没有文字".into());
+    }
+    for p in &doc.items {
+        let why = if p.is_table() { Some("表格") } else { p.fixed.filter(|f| *f != "空段").or(p.keep.filter(|k| matches!(*k, "图片" | "分节符"))) };
+        if let Some(why) = why {
+            return Err(format!("模板里有{why}，请换一份只用段落排版的模板"));
+        }
+    }
+    Ok(doc.items.iter().map(|p| (!p.plain.trim().is_empty()).then(|| p.plain.clone())).collect())
+}
+
+/// How a template paragraph looks: its properties, a typed bullet before the text, and per column
+/// (split by tabs) the run properties of its first character, of its first plain and first bold one.
+struct Look {
+    ppr: String,
+    prefix: Option<(String, String)>,
+    cols: Vec<Column>,
+    bold: Option<String>,
+}
+
+#[derive(Default, Clone)]
+struct Column {
+    first: String,
+    first_bold: bool,
+    plain: Option<String>,
+    bold: Option<String>,
+}
+
+fn look(doc: &Docx, item: &Item) -> Look {
+    let rpr_of = |run: usize| item.runs.get(run).map_or((String::new(), false), |r| (r.rpr.map_or(String::new(), |(a, b)| doc.xml[a..b].to_string()), r.flags.b));
+    let chars: Vec<(char, Option<usize>)> = item.plain.chars().zip(item.slots.iter()).map(|(c, s)| (c, if let Slot::Text(n, _) = s { Some(item.nodes[*n].run) } else { None })).collect();
+    let mut i = chars.iter().take_while(|c| c.0.is_whitespace() && c.0 != '\t').count();
+    let mut prefix = None;
+    if let Some(&(_, Some(run))) = chars.get(i).filter(|c| matches!(c.0, '•' | '●' | '▪' | '◦' | '·' | '‣' | '-' | '–')) {
+        let n = chars[i + 1..].iter().take_while(|c| c.0 == ' ' || c.0 == '\u{3000}' || c.0 == '\t').count();
+        if n > 0 {
+            prefix = Some((chars[i..=i + n].iter().map(|c| c.0).collect::<String>().replace('\t', " "), rpr_of(run).0));
+            i += n + 1;
+        }
+    }
+    let mut cols = vec![Column::default()];
+    let mut started = false;
+    let mut bold = None;
+    for &(c, run) in &chars[i..] {
+        if c == '\t' {
+            cols.push(Column::default());
+            started = false;
+            continue;
+        }
+        let (Some(run), false) = (run, c.is_whitespace()) else { continue };
+        let (rpr, b) = rpr_of(run);
+        let col = cols.last_mut().unwrap();
+        if !started {
+            (col.first, col.first_bold, started) = (rpr.clone(), b, true);
+        }
+        if b {
+            col.bold.get_or_insert_with(|| rpr.clone());
+            bold.get_or_insert(rpr);
+        } else {
+            col.plain.get_or_insert(rpr);
+        }
+    }
+    Look { ppr: item.ppr.map_or(String::new(), |(a, b)| doc.xml[a..b].to_string()), prefix, cols, bold }
+}
+
+fn text_run(rpr: &str, text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    format!(r#"<w:r>{rpr}<w:t xml:space="preserve">{}</w:t></w:r>"#, esc(text))
+}
+
+/// A paragraph like `look` with `text`: tabs and line breaks as theirs, a column's look per column;
+/// with `**粗体**` marks, the marked parts bold and the rest plain.
+fn styled(look: &Look, text: &str) -> String {
+    let bold_on = Flags { b: true, ..Default::default() };
+    let mut runs = String::new();
+    if let Some((prefix, rpr)) = &look.prefix {
+        runs.push_str(&text_run(rpr, prefix));
+    }
+    for (l, line) in text.split('\n').enumerate() {
+        if l > 0 {
+            runs.push_str("<w:r><w:br/></w:r>");
+        }
+        for (n, part) in line.split('\t').enumerate() {
+            if n > 0 {
+                runs.push_str("<w:r><w:tab/></w:r>");
+            }
+            let col = look.cols.get(n).or(look.cols.last()).cloned().unwrap_or_default();
+            let marked = part.contains("**");
+            let plain = col.plain.clone().unwrap_or_else(|| if col.first_bold { run_props(&col.first, bold_on, Flags::default()) } else { col.first.clone() });
+            let bold = col.bold.clone().or(look.bold.clone()).unwrap_or_else(|| run_props(&col.first, Flags::default(), bold_on));
+            for (k, piece) in part.split("**").enumerate() {
+                let rpr = match (marked, k % 2 == 1) {
+                    (true, true) => &bold,
+                    (true, false) => &plain,
+                    // unmarked: a column all in one look keeps it; a mixed one (小标题 + 正文) is its 正文
+                    (false, _) if col.bold.is_some() && col.plain.is_some() => &plain,
+                    (false, _) => &col.first,
+                };
+                runs.push_str(&text_run(rpr, piece));
+            }
+        }
+    }
+    format!("<w:p>{}{runs}</w:p>", look.ppr)
+}
+
+/// The template with its body replaced by `lines` (template paragraph, text), each written like
+/// that paragraph; page setup, styles, numbering, headers and every other part stay as they are.
+pub fn resume_from_template(data: &[u8], lines: &[(usize, String)]) -> Result<Vec<u8>, String> {
+    resume_template_items(data)?;
+    let doc = read_docx(data)?;
+    let mut body = String::new();
+    for (index, text) in lines {
+        let item = doc.items.get(*index).filter(|p| !p.plain.trim().is_empty()).ok_or("模板刚刚改过，请重新选择")?;
+        body.push_str(&styled(&look(&doc, item), text));
+    }
+    let (first, last) = (doc.items.first().ok_or("模板里没有文字")?, doc.items.last().ok_or("模板里没有文字")?);
+    let mut xml = doc.xml.clone();
+    xml.replace_range(first.range.0..last.range.1, &body);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|_| bad())?;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..zip.len() {
+        let name = zip.name_for_index(i).ok_or_else(bad)?.map_err(|_| bad())?.to_string();
+        if name == DOCUMENT {
+            writer.start_file(name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).map_err(|e| e.to_string())?;
+            writer.write_all(xml.as_bytes()).map_err(|e| e.to_string())?;
+        } else {
+            writer.raw_copy_file(zip.by_index_raw(i).map_err(|_| bad())?).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(writer.finish().map_err(|e| e.to_string())?.into_inner())
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -1582,5 +1723,63 @@ pub mod tests {
             Op::Del(_) => None,
         }).collect();
         assert_eq!(rebuilt, "abXdeYf");
+    }
+
+    /// A one-page resume template like the user's (fictional placeholders): centred name, contact
+    /// line, ruled section title, 教育抬头 with a right tab, grey note, bullet with a bold 小标题,
+    /// 经历抬头 with three tab stops (time and name bold), a body-level bookmark, page setup.
+    pub fn resume_template_docx() -> Vec<u8> {
+        let numbering = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering {W}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#);
+        let bold = "<w:rPr><w:b/></w:rPr>";
+        let tab = "<w:r><w:tab/></w:r>";
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="36"/></w:rPr><w:t>[姓名]</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:color w:val="555555"/></w:rPr><w:t>[联系电话] · [电子邮箱] · [所在城市]</w:t></w:r></w:p><w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r>{bold}<w:t>教育背景</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="10466"/></w:tabs></w:pPr><w:r>{bold}<w:t>[学校名称] · [专业名称]</w:t></w:r>{tab}<w:r><w:t>20XX.XX - 20XX.XX</w:t></w:r></w:p><w:p><w:r><w:rPr><w:color w:val="777777"/></w:rPr><w:t>[学历或学位] · [学院名称]；[主修课程]</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r>{bold}<w:t>编程开发：</w:t></w:r><w:r><w:t>[技术一]、[技术二]</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="3000"/><w:tab w:val="left" w:pos="6500"/><w:tab w:val="right" w:pos="10466"/></w:tabs></w:pPr><w:r>{bold}<w:t>20XX.XX - 20XX.XX</w:t></w:r>{tab}<w:r>{bold}<w:t>[项目名称]</w:t></w:r>{tab}<w:r><w:t>[本人角色]</w:t></w:r>{tab}<w:r><w:t>[地点]</w:t></w:r></w:p><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>"#
+        );
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, text) in [("[Content_Types].xml", CONTENT_TYPES), ("_rels/.rels", RELS), ("word/document.xml", document.as_str()), ("word/numbering.xml", numbering.as_str())] {
+            w.start_file(name, opts).unwrap();
+            w.write_all(text.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn a_resume_takes_each_template_paragraph_its_tab_stops_and_column_looks() {
+        let data = resume_template_docx();
+        let items = resume_template_items(&data).unwrap();
+        assert_eq!(items.len(), 8);
+        assert_eq!(items[3].as_deref(), Some("[学校名称] · [专业名称]\t20XX.XX - 20XX.XX"));
+        assert_eq!(items[7], None);
+        let lines: Vec<(usize, String)> = [
+            (0, "张三"),
+            (1, "a@example.com · 138 0000 0000"),
+            (2, "教育背景"),
+            (3, "示例大学 · 计算机\t2022.09 - 2026.06"),
+            (4, "本科；主修课程：数据结构"),
+            (5, "**编程开发**：Python、Rust"),
+            (5, "没有小标题 & <一条>"),
+            (6, "2025.01 - 至今\t示例项目\t独立开发\t北京"),
+            (6, "2024.07 - 2024.08\t示例公司\t\t"),
+        ]
+        .into_iter()
+        .map(|(i, t)| (i, t.to_string()))
+        .collect();
+        let out = resume_from_template(&data, &lines).unwrap();
+        let shown: Vec<String> = read_docx(&out).unwrap().items.into_iter().map(|i| i.text).collect();
+        assert_eq!(shown, ["**张三**", "a@example.com · 138 0000 0000", "**教育背景**", "**示例大学 · 计算机\t**2022.09 - 2026.06", "本科；主修课程：数据结构", "- **编程开发**：Python、Rust", "- 没有小标题 & <一条>", "**2025.01 - 至今\t示例项目\t**独立开发\t北京", "**2024.07 - 2024.08\t示例公司\t\t**"]);
+        // (a tab has no look of its own: the bold marks read across it)
+        let xml = document_xml(&out).unwrap();
+        for kept in [r#"<w:jc w:val="center"/>"#, "<w:pBdr>", r#"<w:tab w:val="left" w:pos="6500"/>"#, r#"<w:color w:val="777777"/>"#, r#"<w:numId w:val="1"/>"#, r#"<w:pgSz w:w="11906""#, r#"<w:sz w:val="36"/>"#] {
+            assert!(xml.contains(kept), "{kept}");
+        }
+        assert!(!xml.contains("[项目名称]") && !xml.contains("_GoBack"));
+        // the numbering part comes along untouched
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
+        assert!(z.by_name("word/numbering.xml").is_ok());
+        // a paragraph not in the template (any more)
+        assert!(resume_from_template(&data, &[(7, "x".into())]).is_err());
+        // tables, fields: refused
+        assert!(resume_template_items(&sample_docx()).unwrap_err().contains("表格"));
     }
 }

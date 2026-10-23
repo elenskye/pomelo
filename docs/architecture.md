@@ -186,4 +186,4 @@ App 本体约 7 MB，运行内存约 85 MB；导入全部现有数据后 `pomelo
 - **云端 Key**：只在钥匙串（和插件库的 Key 同一组），界面只显示「已保存」；不进数据库、备份、导出和日志。
 - **空间管理**：算数据库和 `picky-files/` 的大小，列出每份副本被谁用着；删副本只删文件、留下记录（「文件已删除」）。
 - **开机自动启动**（`autostart.rs`）：Tauri 的 autostart 插件写一个带 `--hidden` 的 LaunchAgent，不用 AppleScript。带 `--hidden` 打开时，窗口第一次画出来之前就藏起来。开关存在设置里（默认开），每次打开时让登录项跟着开关；只有正式数据目录的打包版会登记。
-- **Seeker**（`~/Documents/Seeker`，简历和面试材料）在 Pomelo 外面，投石问路只记里面文件的位置。v0.7 把它的主体做成小拾的助手「Seeker」：数据在 `picky.db`，Pomelo 记住这个文件夹、从里面导入和导出（需求见 requirements.md 的「Seeker」，做法等第一轮写完再补进这里）。
+- **Seeker**（`picky/assistants/seeker.rs` 和 `seeker/`）：资料、草稿、版本都在 `picky.db`。页面打字停一下就自动存（`seekerDraft.ts` 排队，结构操作前先存完），每次保存一步撤销。导入只读 `transfer/` 里认得的 Markdown，按「来源 + 版本号」对上以前导入的。模型每次只调一次、没有工具，回答按编号检查后给差异，确认才写。Word 照用户模板写（`word.rs`：每部分复制模板里对应那一段的段落属性、制表位和每一栏的字体，正文整个换掉，纸张、样式、编号等其他部分原样），在系统临时文件夹里用 LibreOffice（独立配置、最多 90 秒）转 PDF、PDFKit 数页数；另存用同一份 docx、只新建文件，文件和快照要么都成要么都不留。开发版打不开真的 Seeker 文件夹。岗位关联先读 `pomelo.db` 再锁 `picky.db`，不嵌套。

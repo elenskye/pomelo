@@ -5,6 +5,8 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { nextOnOrAfter } from "@/modules/finance/money";
 import { excerpt, tagSpans } from "@/modules/notes/NoteBody";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
+import type { SeekerWorkspace } from "@/modules/picky/assistants/seekerApi";
+import { seekerHandlers, seekerMock } from "./seekerMock";
 
 type Args = Record<string, unknown>;
 type Row = Record<string, unknown> & { id: number; title: string; status: string };
@@ -483,13 +485,15 @@ const doneItems = (from: string, to: string) => {
 // another one — 小拾's card — folds into it).
 type Snap = { label: string; before: string; after: string };
 const snapState = () =>
-  JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, vItems: vt.items, vCats: vt.cats, courses, lessons, tpls, tripRows, tplItems, tripItems, books: colls.books?.rows(), films: colls.films?.rows() });
+  JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker: seekerMock.workspace, vItems: vt.items, vCats: vt.cats, courses, lessons, tpls, tripRows, tplItems, tripItems, books: colls.books?.rows(), films: colls.films?.rows() });
 const loadState = (s: string) => {
+  let seeker: SeekerWorkspace;
   let vItems: VRow[];
   let vCats: VCat[];
   let books: Row[] | undefined;
   let films: Row[] | undefined;
-  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, vItems, vCats, courses, lessons, tpls, tripRows, tplItems, tripItems, books, films } = JSON.parse(s));
+  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker, vItems, vCats, courses, lessons, tpls, tripRows, tplItems, tripItems, books, films } = JSON.parse(s));
+  seekerMock.workspace = seeker;
   vt.items = vItems;
   vt.cats = vCats;
   if (books) colls.books.set(books);
@@ -1047,6 +1051,7 @@ type JRow = {
   resume: string | null; note: string | null; followedOn: string | null; steps: JStep[]; createdAt: string; updatedAt: string;
 };
 let jb = { statuses: [] as JStatus[], jobs: [] as JRow[] };
+seekerMock.job = (id) => jb.jobs.find((j) => j.id === id);
 (
   [["想投", "wish"], ["已投递", "applied"], ["网申测评 / 笔试", "active"], ["面试", "active"], ["Offer", "got"], ["已接受", "got"], ["被拒", "closed"]] as const
 ).forEach(([name, stage], i) => jb.statuses.push({ id: nextId++, name, stage, sortOrder: i + 1 }));
@@ -4704,6 +4709,8 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     return pTrView();
   },
   picky_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
+  // reading, settings and the Word export itself aren't undone (as in Rust)
+  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_template", "picky_seeker_template_read", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_import_preview", "picky_seeker_output_preview", "picky_seeker_output_save", "picky_seeker_output_discard"].includes(key) ? handler : undoable(key === "picky_seeker_job_link" ? "关联 Seeker 导出" : "编辑 Seeker", handler)])),
   picky_pub2md: () => p2View(),
   picky_pub2md_settings: (a) => {
     p2.settings = { ...(a.settings as P2Settings), parallel: Math.min(8, Math.max(1, (a.settings as P2Settings).parallel)) };
@@ -5637,6 +5644,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
   "plugin:dialog|open": (a) => {
     const o = (a.options ?? {}) as { multiple?: boolean; title?: string; directory?: boolean; filters?: { extensions: string[] }[] };
     if (o.directory && o.title === "存到") return "/Users/me/Documents/论文";
+    if (o.title === "选择 Seeker 文件夹") return "/mock/Seeker";
+    if (o.title === "选择中文简历模板") return "/mock/Seeker/cv/cn/简历模板.docx";
     if (o.directory) return o.title === "保存到" ? "/Users/me/Documents/报告" : `/Users/me/Documents/读书笔记${(pPickCount += 1) > 1 ? pPickCount : ""}`;
     // Pub2MD: a paper, then one that fails at its third chunk, then two photos (one document)
     if (o.title === "选择文件") return [["/mock/Attention Is All You Need.pdf"], ["/mock/失败测试.pdf"], ["/mock/IMG_0001.HEIC", "/mock/IMG_0002.jpg"], ["/mock/读书笔记.md"]][(p2Picks += 1) - 1 - 4 * Math.floor((p2Picks - 1) / 4)];

@@ -175,13 +175,13 @@ pub fn redo_last(state: State<AppState>) -> Result<UndoResult, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::db::tests::memory_db;
     use crate::modules::todo;
     use serde_json::json;
 
-    fn step(c: &Connection, h: &mut History, label: &str, f: impl FnOnce(&Connection) -> Result<(), String>) {
+    pub(crate) fn step(c: &Connection, h: &mut History, label: &str, f: impl FnOnce(&Connection) -> Result<(), String>) {
         let ((), cs) = record(c, f).unwrap();
         if let Some(b) = cs {
             h.push(Store::Pomelo, label, b);

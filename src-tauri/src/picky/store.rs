@@ -30,6 +30,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 17, name: "knowledge", sql: include_str!("../../migrations/picky/0017_knowledge.sql") },
     Migration { version: 18, name: "work", sql: include_str!("../../migrations/picky/0018_work.sql") },
     Migration { version: 19, name: "toolboxes", sql: include_str!("../../migrations/picky/0019_toolboxes.sql") },
+    Migration { version: 20, name: "seeker", sql: include_str!("../../migrations/picky/0020_seeker.sql") },
 ];
 
 pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";

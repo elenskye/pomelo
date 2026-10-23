@@ -43,11 +43,11 @@
 
 - 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`picky.db` 小拾，`attachments/` 笔记、任务、目标的附件，`picky-files/` 小拾的附件和资料，`backups/` 每日备份，`search.db` 搜索索引，删了自动重建）
 - 本地模型：`~/Documents/LLM`（模型、清单 `config/models.json`、脚本 `scripts/llmctl.sh`）
-- 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`（别的 worktree 各用自己的，见 CLAUDE.md）
+- 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`（另开 worktree 时各用自己的，见 CLAUDE.md）
 - 原型和转换好的导入文件：`prototype/`（只在本机，不进 Git）
 - Pub2MD 的真测结果和报告：`~/Downloads/Pub2MD 测试/`（你自己清理）
 
 ## 相关项目
 
 - 个人网站：`~/Documents/GitHub/personal-website`（独立项目，自己的文档和规则），在「呦呦漫游」里编辑和发布。
-- Seeker：`~/Documents/Seeker`（求职资料，不是 Git 仓库）；v0.7 把它的主体做成小拾的助手「Seeker」（数据在 `picky.db`），投石问路继续管投递。开发在 worktree `~/Documents/GitHub/pomelo-seeklo`（分支 `seeklo`）。
+- Seeker：`~/Documents/Seeker`（求职资料，不是 Git 仓库）；它的主体是小拾的助手「Seeker」（数据在 `picky.db`，从 `transfer/` 导入，导出的 Word 存回 `cv/cn/`），投石问路继续管投递。
