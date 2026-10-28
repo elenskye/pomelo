@@ -73,6 +73,10 @@
   --module-progress: #7d7a2a;
   --module-vault: #64748b;
   --module-picky: #c96e28;
+  --module-seeker: #b5527a;
+  --module-translate: #3b8fb0;
+  --module-pub2md: #6f62a8;
+  --module-rater: #b0414e;
 
   /* Charts: categorical slots in fixed order (validated: dataviz validate_palette.js, light on #ffffff,
      dark on #292724); single-series charts use --chart-1. Text never wears these colors. */
@@ -222,3 +226,11 @@
     }
   }
 }
+
+/* Rater 卡片：点一下翻面（两面叠在同一格，高度取两面里高的那面） */
+.rater-flip { perspective: 1400px; }
+.rater-flip-inner { display: grid; transform-style: preserve-3d; transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.rater-flip-inner.flipped { transform: rotateY(180deg); }
+.rater-flip-face { grid-area: 1 / 1; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.rater-flip-back { transform: rotateY(180deg); }
+@media (prefers-reduced-motion: reduce) { .rater-flip-inner { transition: none; } }

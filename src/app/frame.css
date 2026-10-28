@@ -1,0 +1,82 @@
+/* The frame (docs/design.md「外框」): the pomelo's faces and the 柚子瓣. Tokens from index.css. */
+
+/* the paper's stitching: a column of dots down its left edge */
+.paper::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18px;
+  bottom: 18px;
+  width: 6px;
+  border-radius: 0 4px 4px 0;
+  background: repeating-linear-gradient(var(--border) 0 10px, transparent 10px 22px);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ---------- the pomelo (168-unit view box, centre 84, 84) ---------- */
+.pm { display: block; overflow: visible; }
+.pm .face * { fill: none; stroke: #9d5d36; stroke-width: 4.6; stroke-linecap: round; stroke-linejoin: round; }
+.pm .face .fill { fill: #9d5d36; stroke: none; }
+.pm .face .hl { fill: #fff; stroke: none; }
+.pm .pb, .pm .leaf, .pm .eyes, .pm .x-dots circle, .pm .x-spark, .pm .x-badge, .pm .x-z text { transform-box: view-box; }
+.pm .pb { transform-origin: 84px 84px; }
+.pm .leaf { transform-origin: 86px 34px; }
+.pm .eyes { transform-origin: 84px 77px; }
+.f-idle .pb { animation: pm-breathe 3.6s ease-in-out infinite; }
+.f-thinking .leaf { animation: pm-sway 1.6s ease-in-out infinite; }
+.f-thinking .eyes { animation: pm-blink 3.2s infinite; }
+.f-thinking .x-dots circle { animation: pm-float 1.8s ease-in-out infinite; }
+.f-thinking .x-dots circle + circle { animation-delay: 0.5s; }
+.f-success .pb { animation: pm-bounce 0.75s ease-out 2; }
+.f-success .x-spark { transform-origin: 84px 84px; animation: pm-flash 1.1s ease-out 2; }
+.f-error .pb { animation: pm-shake 0.42s ease-in-out 2; }
+.f-error .x-badge { transform-origin: 136px 35px; animation: pm-pop 0.35s ease-out; }
+.f-wink .pb { animation: pm-tilt 0.5s ease-out; }
+.f-wow .pb { animation: pm-jump 0.5s ease-out; }
+.f-sleepy .pb { animation: pm-breathe 5s ease-in-out infinite; }
+.f-sleepy .x-z text { animation: pm-float 2.6s ease-in-out infinite; }
+.f-sleepy .x-z text + text { animation-delay: 1.1s; }
+.f-worried .pb { animation: pm-breathe 4.5s ease-in-out infinite; }
+@keyframes pm-breathe { 50% { transform: scale(1.04); } }
+@keyframes pm-sway { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(9deg); } }
+@keyframes pm-blink { 0%, 88%, 100% { transform: scaleY(1); } 93% { transform: scaleY(0.15); } }
+@keyframes pm-float { 0% { transform: translateY(8px); opacity: 0; } 35% { opacity: 1; } 100% { transform: translateY(-10px); opacity: 0; } }
+@keyframes pm-bounce { 0%, 100% { transform: translateY(0); } 30% { transform: translateY(-12px) scale(1.02, 0.98); } 55% { transform: translateY(0) scale(1.05, 0.94); } 78% { transform: translateY(-4px); } }
+@keyframes pm-flash { 0% { opacity: 0; transform: scale(0.5); } 35% { opacity: 1; transform: scale(1.12); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes pm-shake { 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
+@keyframes pm-pop { 0% { transform: scale(0); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }
+@keyframes pm-tilt { 50% { transform: rotate(-10deg) scale(1.06); } }
+@keyframes pm-jump { 40% { transform: translateY(-10px) scale(1.06); } }
+
+.pm-bubble { animation: pm-bubble 0.2s ease-out; }
+@keyframes pm-bubble { from { transform: translateY(-4px) scale(0.96); opacity: 0; } }
+
+/* ---------- 柚子瓣 ---------- */
+.bloom {
+  background: color-mix(in srgb, var(--background) 62%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  animation: bloom-fade 0.2s ease-out;
+}
+/* grows out of the pomelo once, when it opens; edits inside redraw it in place */
+.flower { transform: scale(var(--k, 1)); animation: bloom-grow 0.38s cubic-bezier(0.2, 0.9, 0.3, 1.12); }
+.bloom.closing { animation: bloom-unfade 0.18s ease-in forwards; }
+.bloom.closing .flower { animation: bloom-shrink 0.18s ease-in forwards; }
+@keyframes bloom-fade { from { opacity: 0; } }
+@keyframes bloom-unfade { to { opacity: 0; } }
+@keyframes bloom-grow { from { transform: translate(var(--fx, 0), var(--fy, 0)) scale(calc(var(--k, 1) * 0.05)) rotate(-50deg); opacity: 0.3; } }
+@keyframes bloom-shrink { to { transform: translate(var(--fx, 0), var(--fy, 0)) scale(calc(var(--k, 1) * 0.05)) rotate(-40deg); opacity: 0; } }
+.flower .rind { fill: none; stroke: #e7bf55; stroke-width: 12; opacity: 0.45; }
+.flower .pith { fill: var(--card); stroke: var(--border); stroke-width: 1; }
+.flower .wedge { stroke: var(--background); stroke-width: 6; stroke-linejoin: round; transition: filter 0.12s; }
+.flower .wedge.over { filter: brightness(0.92) saturate(1.6); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pm *, .flower, .bloom { animation: none !important; }
+}
+
+.paper, .sheet { box-shadow: 0 8px 24px rgba(43, 40, 36, 0.12); }
+@media (prefers-color-scheme: dark) {
+  .paper, .sheet { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+}

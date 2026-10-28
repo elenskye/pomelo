@@ -206,10 +206,8 @@ export const Composer = forwardRef<
   };
 
   const marks = slots(text);
-  const menuOptions: DropdownOption<number>[] = [
-    ...props.templates.filter((t) => t.pinned).map((t) => ({ value: t.id, label: t.title, group: "置顶" })),
-    ...props.templates.filter((t) => !t.pinned).map((t) => ({ value: t.id, label: t.category ? `${t.title}（${t.category}）` : t.title, group: "全部" })),
-  ];
+  // the button: the pinned ones only (「/」 finds every template)
+  const menuOptions: DropdownOption<number>[] = props.templates.filter((t) => t.pinned).map((t) => ({ value: t.id, label: t.title }));
 
   return (
     <div className="relative">

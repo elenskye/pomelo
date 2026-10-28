@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 共 42 张表，当前版本 30；小拾的数据在单独的 `picky.db`（版本 20），搜索索引在 `search.db`（版本 2）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
+`pomelo.db` 共 42 张表，当前版本 30；小拾的数据在单独的 `picky.db`（版本 26），搜索索引在 `search.db`（版本 2）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
 
 ## 通用约定
 
@@ -25,7 +25,7 @@
 
 **kinds**（能自己增删改的类型）：`module`、`name`（同模块不重名，最多 20 字）、`sort_order`。记录里只存 `kind_id`，删类型后记录变「未分类」。各模块：`books`（虚构、非虚构、漫画、其他）、`films`（电影、剧集、动漫）、`drawing`（正课、DLC 跟画、LIVE 辅导）、`packing`（重要物品、随身、护理、兴趣）、`fin_out` 支出分类、`fin_in` 收入分类、`job_channel` 投递渠道；每个循序渐进模块一组（`progress/编号`，一开始是空的）。
 
-**settings**：`key`、`value`（JSON）：界面状态（`ui.module_hidden` 隐藏的模块、`ui.module_order` 侧栏顺序、`ui.sidebar_collapsed` 等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）。不进撤销。
+**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和小拾也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页等；v0.7 以前的 `ui.module_order` 侧栏顺序、`ui.sidebar_collapsed` 不再用）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）。不进撤销。
 
 ## 附件
 
@@ -144,7 +144,7 @@
 | **progress_courses** | `module_id`、`name`（同模块不重复）、`note`、`sort_order` |
 | **progress_lessons** | `course_id`、`code`、`kind_id` 类型（`kinds.module` = `progress/编号`；空 = 未分类）、`title`、`status`（`todo` / `doing` / `done`）、`finished_month`、`note`、`sort_order` |
 
-每个模块的键是 `list/编号` 或 `progress/编号`：侧栏顺序、隐藏、「发给云端」、搜索结果、循序渐进的类型列表都按它。
+每个模块的键是 `list/编号` 或 `progress/编号`：模块坞的分类和顺序、隐藏、「发给云端」、搜索结果、循序渐进的类型列表都按它。
 
 ## 芝麻开门
 
@@ -167,11 +167,15 @@
 
 **Seeker**（助手；正文都是 JSON，字段见 `picky/assistants/seeker.rs` 和 `seeker/` 各文件）：
 
-- **seeker_settings**（只有一行）：记住的文件夹（只记位置，导入预览时才读）、`options`（选材模型、审查润色模型、思考、纯开发岗、允许发云端）、`template`（模板的位置、七个部分各对应模板里的哪一段、当时的段落文字，文件变了就要重选）。不进撤销。
-- **seeker_draft**（只有一行）：当前草稿 `body`（姓名、页首字段、章节 → 经历 → 要点、JD；经历记着来自哪条素材的哪一版、选了哪些要点）和「修改差异」比较的 `baseline`。所有块的编号不空、不重复。
-- **seeker_records**：资料（素材、基本信息、事实和经历档案、写作规则、个人范例、网申）；`source` 是从 `transfer/` 导入的来源（`路径#标题:第几个`，唯一），`revision` 每次保存加一，保存时要和打开时的一样。**seeker_record_history**：每次改或删之前的样子。
-- **seeker_versions**：确认的简历版本，不再改。
-- **seeker_exports**：每次成功导出的快照（正文、模板设置、文件位置、页数、渲染器、时间），不再改、不进撤销。**seeker_job_exports**：导出和岗位的关联（岗位按编号和创建时间认，记下当时的岗位和 JD），每个岗位只有一份「本次使用」；删导出时一起删。
+- **seeker_settings**（只有一行）：记住的文件夹（只记位置，导入预览时才读）、`options`（选材模型、审查润色模型、思考、纯开发岗、允许发云端、页面显示的语言 `lang`）、`template` 和 `template_en`（中文、英文模板各一份：模板的位置、各部分对应模板里的哪一段（第二行联系方式、教育抬头、说明、Summary、空行可不用；空行要对应一个空段）、当时的段落文字，文件变了就要重选）。不进撤销。
+- **seeker_draft**（每种语言一行，键 `lang` 是 `cn` 或 `en`）：当前草稿 `body`（语言、英文的 Resume / CV `form`、姓名、页首字段、章节 → 经历 → 要点、JD、为哪个岗位做的 `job`（编号和创建时间，可没有）；经历记着来自哪条素材的哪一版、选了哪些要点；Summary 是分类「摘要」的一节，一段经历，正文在说明里）和「修改差异」比较的 `baseline`。所有块的编号不空、不重复。
+- **seeker_records**：资料，一条一小块：素材（`material`：分类、名称、角色、时间、地点、概览、技术栈 `stack`、要点；英文还有「摘要」「证书」两类）、基本信息（`profile`：字段）、已确认事实（`fact`：分组、事项、口径）和经历档案（`fact`，分组「经历档案」：Markdown 正文，`material`、`materialEn` 是它挂的中文、英文素材）、写作规则（`rule`：用途、小节标题、正文）、有效个人约定（`decision`：用途、名称、内容）、个人范例、网申；`lang` 是语言（素材、基本信息：`cn` 或 `en`；规则、约定、范例还能是空 = 中英共用；事实、档案、网申总是两边共用；以前的都算中文）；`enabled` 是「用于选材 / 发给模型」；`source` 是从 `transfer/` 导入的来源（`路径#标题:第几个`，唯一），`revision` 每次保存加一，保存时要和打开时的一样。**seeker_record_history**：每次改或删之前的样子。
+- **seeker_versions**：确认的简历版本（正文里带着语言），不再改。
+- **seeker_exports**：每次成功导出的快照（正文、模板设置、文件位置、时间；以前的还带着页数和渲染器，不再用），不再改、不进撤销。**seeker_job_exports**：导出和岗位的关联（岗位按编号和创建时间认，记下当时的岗位和 JD），每个岗位只有一份「本次使用」；删导出时一起删。
+- **rater_questions**（Rater 的题库，字段见 `picky/assistants/rater.rs`）：一道题一行，正文是 JSON：类别（简历题 / 通用题 / 突击题）、问题、答案、标签、挂的 Seeker 素材（简历题）、岗位（突击题：编号、创建时间和当时的名字）、改自哪道题；`revision` 每次保存加一，保存时要和打开时的一样。秒数不存，读的时候算。**rater_question_history**：每次改或删之前的样子。Rater 的规则是 `seeker_records` 里用途「题库维护」「面试」的规则，三个题库 SKILL 的工作流是用途「简历题」「通用题」「突击题」的规则和个人约定（没有就用程序自带的）。
+- **rater_rounds**（卡片练习，字段见 `picky/assistants/rater/practice.rs`）：一轮一行，正文是 JSON：出卡方式（自己挑 / 按 JD / 随机）、按 JD 的岗位和小拾的说明、开始和结束时间、小拾的点评（总评、说得好、讲不清的、每张打了字的卡一条），和每张卡：哪道题（追问卡记它追问的那道）、当时的问题、类别、是不是追问卡和参考答案、存进题库后的题目编号、会 / 不熟和时间、打的字、追问过没有。没结束的一轮只能有一个。每道题的练习记录（会几次、不熟几次、最近一次、最后连着会了几次）不存，读题库时从各轮算：上次「不熟」的排在下一轮最前，连着两次「会」的排最后。
+- **rater_interviews**（面试，字段见 `picky/assistants/rater/interview.rs`）：一份准备或一次复盘一行，`kind` 是 `prep` / `review`，挂在投石问路的岗位上（`job_id` + `job_created_at`，和 Seeker 记岗位一样），正文是 JSON。准备：岗位（当时的名字）、用的简历、面试语言、形式、本次要求、挑的题（题目编号）、可能的追问（参考答案，存进题库后记题目编号）、速查卡（Markdown）、小拾的说明和模型。复盘：日期、轮次、形式、结果、每个问题（我的回答、面试官的反应）、整体反馈、我的判断，和「对照」的结果（对照的哪份准备、总评、准备到的和没准备到的（问题序号 + 说明）、建议的题、提议的个人约定和加进规则后的资料编号）。
+- **seeker_job_companies**：我给岗位手动选的公司资料（`knowledge/` 下的文件夹名，空 = 不用；岗位按编号和创建时间认）；没有这一行就按公司名自动对上。能撤销。`knowledge/` 本身是知识库里的一个文件夹（`kb_sources`），不另存。
 
 **preferences**（`key`、`value` JSON，不进撤销；API Key 不在这里，只在钥匙串）：
 
@@ -185,6 +189,8 @@
 | `brief.enabled` · `brief.model` · `brief.thinking` | 今日简报的开关（默认开）、模型（空 = 跟着小拾）、思考（默认开） |
 | `assistant.pub2md` | Pub2MD 的设置（做哪几步、格式、另存为、语言、文体、领域、自己写的要求、两个模型和思考、精修、联网查术语、不翻的部分、存到哪）和最近 10 份（名字、文件夹、状态、输出的文件、源文件的指纹、提取日期和图片在 Mathpix 的链接） |
 | `assistant.translate` | Translator 的上一次：设置（源语言、目标语言、模型、思考、自己写的提示词、关键词）和原文、译文、怎么结束的、用的模型 |
+| `rater.options` | Rater 补题、润色、挑卡、追问、点评、准备面试、复盘对照用的模型和思考开关 |
+| `rater.word_folder` | 速查卡「另存 Word」上次存的文件夹 |
 | `work.folder` | 「保存为 Word」上次存到的文件夹（不在了就是「文稿」） |
 | `ui.*` | 上次打开的对话、列表收起、收起的项目、归档展开、开着的助手 |
 
@@ -212,7 +218,7 @@
 
 **run_passages**：一次回复检索到的段落（当时的文字和标签；知识库的另记 `kb_source`、`kb_path`、`kb_library` 当时的库名）。**run_memories**：用到的记忆（当时的文字和日期）。
 
-**cards**（确认卡片，一条回复一张）：`run_id`、`state`（`pending` / `confirmed` / `cancelled`）、`decided_at`。**card_items**：`position`、`tool`、`module`、`title` 一行摘要、`fields` 卡片上的各项（名称、改前、改后）、`input` 确认时交给模块的操作、`checked`、`record_kind` · `record_id` · `record_parent` · `record_day` 写进去的是哪条、`options` · `chosen` 候选和选了哪条、`record_before` 改之前那条的指纹（记录不见了或变回原样就显示「已撤销」）。
+**cards**（确认卡片，一条回复一张）：`run_id`、`state`（`pending` / `confirmed` / `cancelled`）、`decided_at`。**card_items**：`position`、`tool`、`module`、`title` 一行摘要、`fields` 卡片上的各项（名称、改前、改后）、`input` 确认时交给模块的操作、`checked`、`record_kind` · `record_id` · `record_parent` · `record_day` 写进去的是哪条、`options` · `chosen` 候选和选了哪条、`record_before` 改之前那条的指纹（记录不见了或变回原样就显示「已撤销」）。Rater 的题（`tool` 是三个题库技能、`module` 是 `rater`）：`input` 是那道题本身（新题版本号 0，改答案带着原来的版本号），写进去后 `record_kind` 是 `rater`、`record_id` 是题目在 `rater_questions` 里的行号，题不在了就是「已撤销」。
 
 ### 附件、资料、记忆
 
@@ -236,7 +242,7 @@
 
 **schedules**：`name`（必填，最多 30 字）、`prompt` 要做什么（必填，最多 2000 字）、`every`（`day` / `week` / `month` / `year`）、`day`（每周 1～7；每月、每年 1～31，没有那天就是最后一天）、`month`（每年 1～12）、`at`（`HH:MM`，本地时间）、`model`（`local:<key>` / `cloud:<id>`，空 = 跟着小拾）、`thinking`（默认开）、`enabled`、`builtin`（`weekly` / `monthly` / `yearly`；删了不再加回来）、`sort_order`、`since` 从什么时候起算（新建、改时间、重新打开时设成那一刻）。能 ⌘Z。**schedule_state**：`last_slot` 上次跑到哪个时间（`YYYY-MM-DD HH:MM`），不进撤销。
 
-**briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
+**briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块、`mood` 当天的心情（`calm` / `busy` / `good` / `worry`，从简报最后一行「心情：…」取出来，正文里不留；没有就空）。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
 
 **month_summaries**（每月小结，只给年度总结用）：`month`、`content`、`fingerprint`（读的记录和写法的指纹，没变就直接用）、`model` · `model_name`。**run_month_notes**：一次年度总结用到的每月小结（照抄一份）。**year_runs**：一次年度总结写的是哪一年。后两张删对话时一起删。
 
@@ -252,19 +258,19 @@
 
 ## 数据文件（导出 / 导入）
 
-JSON，当前格式版本 19；旧版本的文件都能导入（转换写在 `transfer.rs` 和各模块里）。
+JSON，当前格式版本 25（19 开始带 Seeker，20 加了草稿的岗位和岗位的公司资料，21 资料多了技术栈、档案挂钩和个人约定，22 加了英文：英文草稿、英文模板、资料的语言，23 加了 Rater 的题库，24 加了卡片练习，25 加了面试的准备和复盘；更早的文件里资料都算中文，SEEKER.md 来的规则算中英共用）；旧版本的文件都能导入（转换写在 `transfer.rs` 和各模块里）。
 
 | 部分 | 内容 |
 |---|---|
 | `format` · `formatVersion` · `exportedAt` · `appVersion` | `pomelo-export`、格式版本、导出时间、App 版本 |
 | `kinds` | 各模块的类型名称，按顺序 |
 | `modules` | `books` · `films`（含 `rereads`）、`drawing`（课程套课节）、`packing`（模板和出行各套物品）、`todo`（分组套目标和任务，任务套子任务和 `logs`，转自笔记的带 `fromNote`）、`finance`、`jobs`（状态列表和投递，投递套 `steps`）、`notes`（引用写成对方的 `createdAt`；`tags` 是标签设置）、`days`（生日套 `gifts`）、`custom`（每个自己建的模块：模板、名称、图标、叫法，套字段和条目（值按字段名存），或类型列表和课程、课节（课节的 `kind` 写类型名）） |
-| `picky` | `globalInstructions`、`projects`、`presets`、`templates`、`memories`（用项目名称关联）、`schedules`（不带它们写的对话）、`seeker`（Seeker 的全部：文件夹和设置、草稿、资料和历史、确认版本、模板、导出快照和岗位关联） |
+| `picky` | `globalInstructions`、`projects`、`presets`、`templates`、`memories`（用项目名称关联）、`schedules`（不带它们写的对话）、`seeker`（Seeker 的全部：文件夹和设置、中英草稿、资料和历史、确认版本、中英模板、导出快照和岗位关联、岗位的公司资料）、`rater`（Rater 的题库、题目的历史、卡片练习的各轮、面试的准备和复盘） |
 
 - 记录之间用**名称**关联，不用编号；顺序就是列表顺序；创建、修改时间都带上。笔记、任务、目标的附件写成 `attachments: [{ name, sha256 }]`：导入时有同样内容的文件就挂上，没有就记成「不在这台 Mac 上」。
 - 导入时文件里有哪个模块就替换哪个（连同它的类型），没有的不动；任何一条不合格就整个不导入。`custom` 整个替换，编号重新分配。
 - 小拾的部分：全局指令、模板、记忆、定时任务整个替换（定时任务按名称对上原来的，写的对话还连着，从导入那一刻起算，选的云端模型这里没有就改成跟着小拾）；项目和预设按名称更新或新增。
-- Seeker 整个替换（文件里没有 `seeker` 就不动）；记着的文件位置只是文字，导入时不读也不建文件。投石问路导入后岗位编号会变，对不上的关联留着快照，要重新关联。
+- Seeker 整个替换（文件里没有 `seeker` 就不动），Rater 也一样（没有 `rater` 就不动；更早的文件没有卡片练习或面试的，导入时这部分不动）；记着的文件位置只是文字，导入时不读也不建文件。投石问路导入后岗位编号会变，对不上的关联留着快照，要重新关联。
 - 芝麻开门、知识库不在数据文件里。
 
 ## 版本记录
@@ -303,5 +309,11 @@ JSON，当前格式版本 19；旧版本的文件都能导入（转换写在 `tr
 | 18 | 改文件：问题要改的文件、回复提的改动 |
 | 19 | 附件记下原文件在哪（`artifacts.source_path`，Word 工具箱、文本工具箱用） |
 | 20 | Seeker：设置、草稿、资料和历史、确认版本、导出和岗位关联 |
+| 21 | 今日简报的心情（`briefs.mood`） |
+| 22 | Seeker：岗位手动选的公司资料（`seeker_job_companies`） |
+| 23 | Seeker 英文简历：草稿改成每种语言一行（原来的算中文）、英文模板一列、SEEKER.md 来的规则改成中英共用 |
+| 24 | Rater 的题库：题目和题目的历史 |
+| 25 | Rater 的卡片练习：一轮一行（`rater_rounds`） |
+| 26 | Rater 的面试：准备和复盘（`rater_interviews`） |
 
 **search.db**：1 是搜索索引；2 加知识库（`kb_docs`、`kb_chunks`）。

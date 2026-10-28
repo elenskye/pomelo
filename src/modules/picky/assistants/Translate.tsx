@@ -12,6 +12,7 @@ import { Button, Segmented, TextArea } from "@/shared/ui";
 import { pickyApi, usePickyStatus, type TranslateSettings, type TranslateView } from "../api";
 import { useModels } from "../Schedules";
 import { thinkOf } from "../Thinking";
+import { useSubPage } from "@/app/subpage";
 
 export const TRANSLATE_KEY = ["picky", "translate"];
 const AUTO = "auto";
@@ -20,7 +21,7 @@ const ZH_EN = "zh-en";
 export function TranslatePage() {
   const qc = useQueryClient();
   const toast = useToast();
-  const [tab, setTab] = useState<"translate" | "prompt">("translate");
+  const [tab, setTab] = useSubPage<"translate" | "prompt">("translate");
   const view = useQuery({ queryKey: TRANSLATE_KEY, queryFn: pickyApi.translate, refetchInterval: (q) => (q.state.data?.running ? 300 : false) });
   const data = view.data;
   const [input, setInput] = useState<string | null>(null);

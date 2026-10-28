@@ -1,11 +1,20 @@
-//! The user's records: 简历素材 (material: category 教育 / 技能 / 项目 / 工作…), 基本信息 (profile:
-//! fields), 已确认事实 and 经历档案 (fact), 写作规则 (rule: category 共用准则 / 素材润色 / 整体审查 picks
-//! which model task reads it), 个人范例 (example), 网申资料 (application: never a resume candidate).
+//! The user's records, one small item each (v0.7 阶段 ② 改进: rules and facts by section / line):
+//! - 素材 page: 简历素材 (material: category 教育 / 技能 / 项目 / 工作…; `stack` 技术栈), 基本信息 (profile: fields).
+//! - 档案 page: 已确认事实 (fact: category = its group, title 事项, text 口径) and 经历档案 (fact, category
+//!   经历档案: a Markdown body; `material` = the material it is about).
+//! - 规则 page: 写作规则 (rule: one section; category 共用准则 / 素材润色 / 整体审查 / 写作规则 = which model task
+//!   reads it, 写作规则: every task), 有效个人约定 (decision: category likewise, title 名称, text 内容), 个人范例 (example).
+//! - 网申 page: 网申资料 (application: never a resume candidate).
+//! Languages (阶段 ③): `lang` is `cn` or `en` for materials and 基本信息, `cn` / `en` / "" (both) for
+//! rules, 约定 and 范例; facts, 经历档案 and 网申 are both languages' whatever it says. A 经历档案 hangs on a
+//! Chinese material (`material`) and an English one (`material_en`).
 //! Saving checks the revision the user started from; the replaced version goes to the history.
 use super::*;
 use crate::modules::common::Tx;
 
-pub const KINDS: [&str; 6] = ["material", "profile", "fact", "rule", "example", "application"];
+pub const KINDS: [&str; 7] = ["material", "profile", "fact", "rule", "decision", "example", "application"];
+/// A 技术栈 line's point id (chosen like a point; in a resume by default only for 纯开发岗).
+pub const STACK: &str = "技术栈";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -21,6 +30,13 @@ pub struct Record {
     pub location: String,
     pub points: Vec<Point>,
     pub fields: Vec<HeaderField>,
+    /// A material's 技术栈 (项目, 工作).
+    pub stack: String,
+    /// A 经历档案's material (its id), its English material.
+    pub material: Option<String>,
+    pub material_en: Option<String>,
+    /// `cn`, `en`, or "" (both languages; rules, 约定, 范例).
+    pub lang: String,
     /// `<path under transfer/>#<title>:<n>` for an imported one: a later import matches it.
     pub source: Option<String>,
     pub revision: i64,
@@ -29,9 +45,30 @@ pub struct Record {
 
 impl Default for Record {
     fn default() -> Self {
-        Self { id: String::new(), kind: "material".into(), category: "项目".into(), title: String::new(), text: String::new(), time: String::new(), role: String::new(), location: String::new(), points: vec![], fields: vec![], source: None, revision: 0, enabled: true }
+        Self { id: String::new(), kind: "material".into(), category: "项目".into(), title: String::new(), text: String::new(), time: String::new(), role: String::new(), location: String::new(), points: vec![], fields: vec![], stack: String::new(), material: None, material_en: None, lang: "cn".into(), source: None, revision: 0, enabled: true }
     }
 }
+
+impl Record {
+    /// What can be chosen for a resume: the 技术栈 line (as the point `STACK`), then the points.
+    pub fn choosable(&self) -> Vec<Point> {
+        let label = if self.lang == "en" { "Tech Stack: " } else { "技术栈：" };
+        let stack = (!self.stack.trim().is_empty()).then(|| Point { id: STACK.into(), text: format!("{label}{}", self.stack.trim()) });
+        stack.into_iter().chain(self.points.iter().filter(|p| !(p.id == STACK && !self.stack.trim().is_empty())).cloned()).collect()
+    }
+
+    pub fn is_dossier(&self) -> bool {
+        self.kind == "fact" && self.category == "经历档案"
+    }
+
+    /// Whether a task in `lang` uses it.
+    pub fn for_lang(&self, lang: &str) -> bool {
+        SHARED.contains(&self.kind.as_str()) || self.lang.is_empty() || self.lang == lang
+    }
+}
+
+/// Kinds that are both languages' whatever their `lang` says.
+pub const SHARED: [&str; 2] = ["fact", "application"];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -41,6 +78,8 @@ pub struct Settings {
     pub thinking: bool,
     pub cloud_allowed: bool,
     pub developer_role: bool,
+    /// The language the page shows (`en`; else Chinese); 投石问路's 「做简历」 uses it.
+    pub lang: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +141,9 @@ pub fn validate_record(r: &Record) -> Result<(), String> {
     if !KINDS.contains(&r.kind.as_str()) {
         return Err("未知的资料类型".into());
     }
+    if !(super::LANGS.contains(&r.lang.as_str()) || (r.lang.is_empty() && !["material", "profile"].contains(&r.kind.as_str()))) {
+        return Err("资料的语言不对".into());
+    }
     let mut ids = HashSet::new();
     if r.points.iter().map(|p| &p.id).chain(r.fields.iter().map(|f| &f.id)).any(|id| id.is_empty() || !ids.insert(id)) {
         return Err("资料中有重复或空的内容编号".into());
@@ -135,6 +177,15 @@ pub fn put(c: &Connection, input: &Record) -> Result<(), String> {
     Ok(())
 }
 
+/// Removes a record; its last version goes to the history.
+pub fn delete(c: &Connection, id: &str) -> Result<(), String> {
+    let tx = Tx::begin(c)?;
+    let body: String = tx.query_row("SELECT body FROM seeker_records WHERE id = ?1", [id], |r| r.get(0)).map_err(|_| "这条资料已经删除了".to_string())?;
+    tx.execute("INSERT INTO seeker_record_history (record_id, body) VALUES (?1, ?2)", params![id, body]).map_err(err)?;
+    tx.execute("DELETE FROM seeker_records WHERE id = ?1", [id]).map_err(err)?;
+    tx.commit()
+}
+
 pub fn replace(c: &Connection, catalog: &Catalog) -> Result<(), String> {
     for r in &catalog.records {
         validate_record(r)?;
@@ -161,11 +212,7 @@ pub async fn picky_seeker_record_save(state: State<'_, AppState>, record: Record
 #[tauri::command]
 pub async fn picky_seeker_record_delete(state: State<'_, AppState>, id: String) -> Result<Workspace, String> {
     state.with_picky_undo("删除 Seeker 资料", |c| {
-        let tx = Tx::begin(c)?;
-        let body: String = tx.query_row("SELECT body FROM seeker_records WHERE id = ?1", [&id], |r| r.get(0)).map_err(|_| "这条资料已经删除了".to_string())?;
-        tx.execute("INSERT INTO seeker_record_history (record_id, body) VALUES (?1, ?2)", params![id, body]).map_err(err)?;
-        tx.execute("DELETE FROM seeker_records WHERE id = ?1", [&id]).map_err(err)?;
-        tx.commit()?;
+        delete(c, &id)?;
         read(c)
     })
 }

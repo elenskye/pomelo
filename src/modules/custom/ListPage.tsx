@@ -1,11 +1,12 @@
 // 五花八门: one made list (route list/:id). Table of 名称 + the fields shown in it: click a header to sort
-// (asc → desc → back), search 名称 and words, one filter (单选 / 多选 options, 勾选, 评分); unsorted and
+// (asc → desc → back), search 名称 and words, a filter per field (单选 / 多选 options, 勾选, 评分; all of
+// them at once); unsorted and
 // unfiltered rows drag into order. 勾选, 评分 and 单选 / 多选 (colored tags, shared/tags.tsx) change right
 // in the table; a row opens the panel. Header ⋯:
 // 改名和图标 · 管理字段 · 删除. Rules: lists.rs.
 import { useMemo, useState, type MouseEvent } from "react";
 import { Navigate, useParams } from "react-router";
-import { ArrowDown, ArrowUp, Check, Ellipsis, ExternalLink, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Ellipsis, ExternalLink, Plus } from "lucide-react";
 import { usePageContext } from "@/app/pageContext";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
@@ -62,27 +63,22 @@ function compare(f: Field | "name", a: Item, b: Item): number {
   }
 }
 
-/** "all", "f<id>=<option>", "f<id>=yes|no" (勾选), "f<id>>=<n>" (评分). */
-type Filter = string;
+/** Per field id: an option, "yes" / "no" (勾选) or ">=<n>" (评分). */
+type Filters = Record<string, string>;
 
-function filterOptions(fields: Field[]) {
-  const out: { value: Filter; label: string; group?: string }[] = [{ value: "all", label: "全部" }];
-  for (const f of fields) {
-    if (f.type === "select" || f.type === "multi") out.push(...f.options.map((o) => ({ value: `f${f.id}=${o}`, label: o, group: f.name })));
-    if (f.type === "check") out.push({ value: `f${f.id}=yes`, label: "是", group: f.name }, { value: `f${f.id}=no`, label: "否", group: f.name });
-    if (f.type === "rating") out.push(...[5, 4, 3].map((n) => ({ value: `f${f.id}>=${n}`, label: n === 5 ? "5 星" : `${n} 星以上`, group: f.name })));
-  }
-  return out;
+/** The choices of a field that can filter (none: it can't). */
+function choices(f: Field): { value: string; label: string }[] {
+  if (f.type === "select" || f.type === "multi") return f.options.map((o) => ({ value: o, label: o }));
+  if (f.type === "check") return [{ value: "yes", label: "是" }, { value: "no", label: "否" }];
+  if (f.type === "rating") return [5, 4, 3].map((n) => ({ value: `>=${n}`, label: n === 5 ? "5 星" : `${n} 星以上` }));
+  return [];
 }
 
-function passes(it: Item, filter: Filter): boolean {
-  if (filter === "all") return true;
-  const m = /^f(\d+)(>=|=)(.*)$/.exec(filter);
-  if (!m) return true;
-  const v = it.values[m[1]];
-  if (m[2] === ">=") return typeof v === "number" && v >= Number(m[3]);
-  if (m[3] === "yes" || m[3] === "no") return (v === true) === (m[3] === "yes");
-  return Array.isArray(v) ? v.includes(m[3]) : v === m[3];
+function passes(it: Item, field: Field, choice: string): boolean {
+  const v = it.values[field.id];
+  if (choice.startsWith(">=")) return typeof v === "number" && v >= Number(choice.slice(2));
+  if (field.type === "check") return (v === true) === (choice === "yes");
+  return Array.isArray(v) ? v.includes(choice) : v === choice;
 }
 
 function Cell(props: { f: Field; item: Item; onSet: (v: Value | null) => void }) {
@@ -189,24 +185,25 @@ function ListView(props: { list: Custom }) {
   const [confirm, confirmDialog] = useConfirm();
   const panel = usePanelSelection<number | "new">();
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filters, setFilters] = useState<Filters>({});
   const [sort, setSort] = useState<Sort>(null);
   const [dialog, setDialog] = useState<"rename" | "fields" | null>(null);
   useOpenRequest((h) => {
     if (h.kind === "list_item") {
-      setFilter("all");
+      setFilters({});
       setQ("");
       void panel.request(h.id);
     }
   });
   usePageKeys({ onNew: () => void panel.request("new"), onEscape: panel.selection !== null ? () => void panel.request(null) : undefined });
-  const options = filterOptions(fields);
-  const activeFilter = options.some((o) => o.value === filter) ? filter : "all";
+  const filterable = fields.filter((f) => choices(f).length > 0);
+  // the ones still valid (a field or option may have gone)
+  const active = filterable.flatMap((f) => { const c = choices(f).find((x) => x.value === filters[f.id]); return c ? [{ field: f, choice: c }] : []; });
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const hit = (it: Item) => !needle || [it.name, ...fields.map((f) => valueText(f, it.values[f.id]))].some((t) => t.toLowerCase().includes(needle));
-    const xs = items.filter((it) => hit(it) && passes(it, activeFilter));
+    const xs = items.filter((it) => hit(it) && active.every((a) => passes(it, a.field, a.choice.value)));
     if (!sort) return xs;
     const f = sort.field === "name" ? "name" : fields.find((x) => x.id === sort.field);
     if (!f) return xs;
@@ -216,13 +213,12 @@ function ListView(props: { list: Custom }) {
       if (empty(a) !== empty(b)) return empty(a) ? 1 : -1;
       return sort.desc ? compare(f, b, a) : compare(f, a, b);
     });
-  }, [items, fields, q, activeFilter, sort]);
+  }, [items, fields, q, active, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const editing = typeof panel.selection === "number" ? items.find((i) => i.id === panel.selection) : undefined;
-  const filterLabel = options.find((o) => o.value === activeFilter);
-  const filterText = [activeFilter !== "all" && filterLabel ? `${filterLabel.group}：${filterLabel.label}` : null, q.trim() ? `搜「${q.trim()}」` : null].filter(Boolean).join(" · ") || null;
+  const filterText = [...active.map((a) => `${a.field.name}：${a.choice.label}`), q.trim() ? `搜「${q.trim()}」` : null].filter(Boolean).join(" · ") || null;
   usePageContext({ module: list.key, filter: filterText, record: editing ? { kind: "list_item", id: editing.id, label: `${list.name}：${editing.name}` } : null });
-  const canDrag = !sort && activeFilter === "all" && !q.trim();
+  const canDrag = !sort && !active.length && !q.trim();
 
   const del = async () => {
     const ok = await confirm({ title: `删除「${list.name}」？`, message: items.length > 0 ? `里面的 ${items.length} 条也会一起删掉。` : undefined, confirmLabel: "删除", danger: true });
@@ -262,7 +258,25 @@ function ListView(props: { list: Custom }) {
           <div className="w-56">
             <SearchInput value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索" aria-label="搜索" />
           </div>
-          {options.length > 1 && <Dropdown<Filter> ariaLabel="筛选" value={activeFilter} onChange={setFilter} options={options} menuMaxHeight={360} />}
+          {filterable.map((f) => {
+            const on = active.find((a) => a.field.id === f.id);
+            return (
+              <Dropdown<string>
+                key={f.id}
+                ariaLabel={`按「${f.name}」筛选`}
+                value={on?.choice.value ?? ""}
+                onChange={(v) => setFilters((x) => ({ ...x, [f.id]: v }))}
+                options={[{ value: "", label: "全部" }, ...choices(f)]}
+                menuMaxHeight={360}
+                renderTrigger={(_, open) => (
+                  <>
+                    <span className={on ? "" : "text-muted-foreground"}>{on ? `${f.name}：${on.choice.label}` : f.name}</span>
+                    <ChevronDown size={14} className={`text-muted-foreground transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+                  </>
+                )}
+              />
+            );
+          })}
           <div className="flex-1" />
           <Button variant="primary" onClick={() => void panel.request("new")}>
             <Plus size={14} /> 新条目

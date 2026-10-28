@@ -29,7 +29,7 @@ const LAST = "ui.side_session";
 const isId = (v: unknown): v is number | null => v === null || typeof v === "number";
 const RECENT = 8;
 
-export function SideChat(props: { context: PageContext | null; floating: boolean; onClose: () => void }) {
+export function SideChat(props: { context: PageContext | null; floating: boolean; ask?: { text: string; n: number } | null; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const status = usePickyStatus().data;
@@ -123,6 +123,19 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
       () => qc.invalidateQueries({ queryKey: messagesKey(current) }),
       (e) => toast(errorText(e), "error"),
     );
+  // a question from the 柚子瓣: asked in a new conversation
+  const [asking, setAsking] = useState<string | null>(null);
+  useEffect(() => {
+    if (!props.ask) return;
+    setSessionId(null);
+    setAsking(props.ask.text);
+  }, [props.ask?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (asking == null || current != null || busy) return;
+    setAsking(null);
+    void send(asking);
+  });
+
   const saveRemember = async (entries: string[], project: number | null, localOnly: boolean) => {
     const rest = capture?.remainder ?? "";
     await pickyApi.remember(entries, project, localOnly, current);
@@ -145,9 +158,9 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
   return (
     <aside
       aria-label="小拾"
-      className={`flex w-[380px] shrink-0 flex-col border-l bg-background ${props.floating ? "absolute inset-y-0 right-0 z-20 shadow-2xl" : ""}`}
+      className={`flex w-[380px] shrink-0 flex-col overflow-hidden rounded-[14px] border bg-background ${props.floating ? "absolute inset-y-3.5 right-4 z-20 shadow-2xl" : "sheet relative mr-4 ml-1"}`}
     >
-      <header data-tauri-drag-region className="flex h-16 shrink-0 items-end gap-1.5 px-4 pb-3">
+      <header className="flex h-14 shrink-0 items-end gap-1.5 px-4 pb-3">
         <Bird size={16} strokeWidth={1.75} className="mb-1.5 shrink-0" style={{ color: "var(--module-picky)" }} />
         <Dropdown<number | null>
           ariaLabel="切换对话"

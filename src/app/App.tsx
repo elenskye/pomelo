@@ -6,10 +6,17 @@ import { errorText, useToast } from "@/shared/feedback";
 import { api, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
 import { IDLE_MS, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "@/modules/vault/api";
+import { usePickyStatus } from "@/modules/picky/api";
+import { Bloom } from "./Bloom";
+import { DragChip } from "./drag";
 import { useHiddenModules } from "./hidden";
+import { IndexTabs } from "./IndexTabs";
 import { usePublishedContext, type PageContext } from "./pageContext";
+import { reportProblem, useJobWatch } from "./Pomelo";
 import { SearchBox } from "./Search";
-import { Sidebar } from "./Sidebar";
+import { TabsProvider } from "./tabs";
+import { TopBar } from "./TopBar";
+import "./frame.css";
 
 // 小拾's 小窗 brings the Markdown / formula libraries: loaded the first time it opens
 const SideChat = lazy(() => import("@/modules/picky/SideChat").then((m) => ({ default: m.SideChat })));
@@ -72,7 +79,7 @@ function useDailyChores(enabled: boolean) {
       api
         .backupDaily()
         .then((b) => b && qc.invalidateQueries({ queryKey: ["backups"] }))
-        .catch(() => {});
+        .catch((e) => reportProblem(`备份没成功：${errorText(e)}`));
     };
     window.addEventListener("focus", check);
     document.addEventListener("visibilitychange", check);
@@ -173,6 +180,15 @@ function useSearchKey(enabled: boolean, open: () => void) {
 }
 
 export function App() {
+  return (
+    <TabsProvider>
+      <Shell />
+    </TabsProvider>
+  );
+}
+
+/** The frame (requirements「界面外框」): the top bar, the paper with the page, the 索引签, the 小窗 and the 柚子瓣. */
+function Shell() {
   const info = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
   const ok = !!info.data && !info.data.startupError;
   const [searching, setSearching] = useState(false);
@@ -181,6 +197,7 @@ export function App() {
   useUndoKeys(ok);
   useVaultIdleLock(ok);
   useSearchKey(ok, openSearch);
+  useJobWatch();
   // 小拾's 小窗: not on the 小拾 page, not when 小拾 is hidden
   const [hidden] = useHiddenModules();
   const path = useLocation().pathname;
@@ -192,23 +209,56 @@ export function App() {
   const published = usePublishedContext();
   const context = path.startsWith("/vault") ? null : (published ?? routeContext(path));
   const chat = chatUsable && chatOpen;
+  const unseen = (usePickyStatus().data?.unseen ?? 0) > 0;
+  /** The 柚子瓣, grown from the pomelo. */
+  const [bloom, setBloom] = useState<HTMLElement | null>(null);
+  /** A question from the 柚子瓣 for the 小窗. */
+  const [ask, setAsk] = useState<{ text: string; n: number } | null>(null);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (
-    <div className="relative flex h-full">
-      <Sidebar isDev={info.data?.isDev} onSearch={ok ? openSearch : undefined} onChat={chatUsable ? toggleChat : undefined} chatOpen={chat} />
-      <main
-        className="relative flex min-w-0 flex-1 flex-col overflow-y-auto"
-        // editors on the right edge make room for a floating 小窗
-        style={chat && floating ? ({ "--chat-float": "380px" } as React.CSSProperties) : undefined}
-      >
-        {ok && <Outlet />}
-      </main>
-      {chat && (
-        <Suspense fallback={null}>
-          <SideChat context={context} floating={floating} onClose={() => setChatOpen(false)} />
-        </Suspense>
-      )}
+    <div className="flex h-full flex-col bg-sidebar">
+      <TopBar
+        isDev={info.data?.isDev}
+        bloomOpen={!!bloom}
+        onPomelo={(el) => setBloom((b) => (b ? null : el))}
+        onSearch={ok ? openSearch : undefined}
+        onChat={chatUsable ? toggleChat : undefined}
+        chatOpen={chat}
+        unseen={unseen}
+      />
+      <div className="relative flex min-h-0 flex-1 py-3.5 pl-4">
+        <main className="paper relative z-[2] flex min-w-0 flex-1 flex-col overflow-hidden rounded-[14px_4px_4px_14px] border bg-background">
+          <div
+            className="relative flex min-h-0 flex-1 flex-col overflow-y-auto"
+            // editors on the right edge make room for a floating 小窗
+            style={chat && floating ? ({ "--chat-float": "380px" } as React.CSSProperties) : undefined}
+          >
+            {ok && <Outlet />}
+          </div>
+        </main>
+        <IndexTabs unseen={unseen} />
+        {chat && (
+          <Suspense fallback={null}>
+            <SideChat context={context} floating={floating} ask={ask} onClose={() => setChatOpen(false)} />
+          </Suspense>
+        )}
+        {bloom && ok && (
+          <Bloom
+            anchor={bloom}
+            onClose={() => setBloom(null)}
+            onAsk={
+              ok && !hidden.includes("picky") && !path.startsWith("/picky")
+                ? (text) => {
+                    setChatOpen(true);
+                    setAsk((a) => ({ text, n: (a?.n ?? 0) + 1 }));
+                  }
+                : null
+            }
+          />
+        )}
+      </div>
+      <DragChip />
       {searching && <SearchBox onClose={() => setSearching(false)} />}
     </div>
   );

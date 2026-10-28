@@ -1,18 +1,28 @@
-//! Importing the Seeker folder's `transfer/` (Bear-style Markdown, read only): the user previews,
-//! picks per item (a source imported before: file version or keep the current one), confirms.
-//! Files and what they become (by path; anything else is listed as skipped):
-//! - `cn-modules/<n> - 基本信息.md` → 基本信息 (`- 姓名：…` lines), `… 网申.md` → 网申资料, `教育 / 技能 / 项目 / 工作` → materials of that category.
-//!   A material file is blocks split by `---`: a bold line, then lines up to the bullets, then
-//!   `- ` / `* ` bullets (`**小标题**：…` kept). 项目: bold = role, next line `名称：概览`; others:
-//!   bold = name, next line = role. A `YYYY.MM - YYYY.MM　地点` line is time and place; a `技术栈：`
-//!   line becomes a point. A file of bullets only (技能) is one record titled by its heading.
-//! - `rules/cn-modules.md` → rule 素材润色, `rules/cn-resume.md` → rule 整体审查, `SEEKER.md` → rule
-//!   共用准则, `FACTS.md` → fact 已确认事实, `projects/*.md` → fact 经历档案: one record per file.
-//! - English (`en-modules/`, `rules/en-*`), the question bank and archives are left for later.
-//! A record's source is `<path>#<title>:<n>` (n: the how-many-th block with that title), so a later
-//! import matches it though blocks move; point ids come from the bullet's 小标题 when it has one.
+//! Importing the Seeker folder's `transfer/` (Markdown, read only; Pomelo is where the user keeps the
+//! records afterwards): the user previews, picks per item (a source imported before: file version or
+//! keep the current one; one the files don't have any more: remove it), confirms. One undo step.
+//! A file's text before its first `## ` is a note about the file and isn't imported.
+//! - `cn-modules/<n> - 基本信息.md` → 基本信息 (`- 姓名：…` lines); `… 网申.md` → 网申资料 (a `## ` per
+//!   answer); `教育 / 技能 / 项目 / 工作` → materials: a `## 名称` per entry, then field lines
+//!   `- 角色：` (or 职位 / 专业 / 学历) `- 时间：` `- 地点：` `- 概览：` (or 说明) `- 技术栈：`, then the points
+//!   (`- **小标题**：…`). A file without `## ` (技能) is one material titled by its heading.
+//! - `SEEKER.md` (共用准则), `rules/cn-modules.md` (素材润色), `rules/cn-resume.md` (整体审查) → a rule per
+//!   `## ` section (a first line `用于：…` sets the task); a section named 「有效个人约定」 → a decision
+//!   per bullet (`- **名称**：内容`).
+//! - `FACTS.md` → a fact per bullet (`- **事项**：口径`), its `## ` group as the category.
+//! - `projects/*.md` → 经历档案 (one each; lines `- 素材：名称` before its first `## ` link it to that
+//!   Chinese and / or English material).
+//! - English (阶段 ③, same shapes): `en-modules/` Summary (a `## ` per version, its text), Contact
+//!   (基本信息), Skills, Education, Projects, Experience, Certifications (like 技能: points only);
+//!   `rules/en-modules.md` (素材润色), `rules/en-resume.md` (整体审查). SEEKER.md, FACTS.md, projects/
+//!   are both languages'.
+//! - `rules/qbank.md` (题库维护) and `rules/interview.md` (面试): Rater's rules, a rule per `## ` section
+//!   like the others (rater.rs `RULES`). Archives aren't imported.
+//! A record's source is `<path>#<title>:<n>` (n: the how-many-th with that title in the file), so a
+//! later import matches it though items move; point ids come from the bullet's 小标题.
 use super::{catalog::Record, *};
 use crate::modules::common::Tx;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -24,6 +34,8 @@ pub struct ImportItem {
 #[derive(Serialize)]
 pub struct Preview {
     pub items: Vec<ImportItem>,
+    /// Imported before, not in the files any more.
+    pub gone: Vec<Record>,
     pub skipped: Vec<String>,
 }
 
@@ -43,55 +55,72 @@ fn collect(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-/// What a file under transfer/ becomes: (kind, category), or why it's left out.
-pub fn classify(path: &str) -> Result<(&'static str, &'static str), &'static str> {
+/// What a file under transfer/ becomes: (what kind of file, the category, the language; "" = both),
+/// or why it's left out.
+pub fn classify(path: &str) -> Result<(&'static str, &'static str, &'static str), &'static str> {
     let lower = path.to_lowercase();
     let name = lower.rsplit('/').next().unwrap_or(&lower);
     if !(name.ends_with(".md") || name.ends_with(".txt")) {
         return Err("只导入 Markdown 和文本");
     }
-    if lower.starts_with("en-modules/") || lower.starts_with("rules/en-") {
-        return Err("英文资料以后再导入");
-    }
-    if name.contains("qbank") || name.contains("题库") {
-        return Err("面试题库以后再导入");
-    }
     if name.contains("归档") || name.contains("archive") {
         return Err("归档的不导入");
     }
+    if lower.starts_with("en-modules/") {
+        let kind = if name.contains("summary") {
+            ("material", "摘要")
+        } else if name.contains("contact") {
+            ("profile", "基本信息")
+        } else if name.contains("skill") {
+            ("material", "技能")
+        } else if name.contains("educat") {
+            ("material", "教育")
+        } else if name.contains("project") {
+            ("material", "项目")
+        } else if name.contains("experience") || name.contains("work") || name.contains("intern") {
+            ("material", "工作")
+        } else if name.contains("certif") {
+            ("material", "证书")
+        } else {
+            return Err("不认识的素材文件");
+        };
+        return Ok((kind.0, kind.1, "en"));
+    }
+    match lower.as_str() {
+        "rules/en-modules.md" => return Ok(("rule", "素材润色", "en")),
+        "rules/en-resume.md" => return Ok(("rule", "整体审查", "en")),
+        "rules/qbank.md" => return Ok(("rule", crate::picky::assistants::rater::RULES[0], "cn")),
+        "rules/interview.md" => return Ok(("rule", crate::picky::assistants::rater::RULES[1], "cn")),
+        "seeker.md" => return Ok(("rule", "共用准则", "")),
+        "facts.md" => return Ok(("facts", "", "")),
+        _ if lower.starts_with("projects/") => return Ok(("dossier", "经历档案", "")),
+        _ => {}
+    }
     Ok(if lower.starts_with("cn-modules/") {
         if name.contains("网申") {
-            ("application", "网申")
+            ("application", "网申", "")
         } else if name.contains("基本信息") {
-            ("profile", "基本信息")
+            ("profile", "基本信息", "cn")
         } else if name.contains("教育") {
-            ("material", "教育")
+            ("material", "教育", "cn")
         } else if name.contains("技能") {
-            ("material", "技能")
+            ("material", "技能", "cn")
         } else if name.contains("项目") {
-            ("material", "项目")
+            ("material", "项目", "cn")
         } else if name.contains("工作") || name.contains("实习") {
-            ("material", "工作")
+            ("material", "工作", "cn")
         } else {
             return Err("不认识的素材文件");
         }
     } else if lower == "rules/cn-modules.md" {
-        ("rule", "素材润色")
+        ("rule", "素材润色", "cn")
     } else if lower == "rules/cn-resume.md" {
-        ("rule", "整体审查")
-    } else if lower == "seeker.md" {
-        ("rule", "共用准则")
-    } else if lower == "facts.md" {
-        ("fact", "已确认事实")
-    } else if lower.starts_with("projects/") {
-        ("fact", "经历档案")
+        ("rule", "整体审查", "cn")
     } else {
         return Err("不是要导入的资料");
     })
 }
 
-/// The file's `# 标题` without its number (「4 - 项目经历」 → 项目经历), and the lines after it
-/// without Bear tags (`#职业/中文简历`).
 fn split_heading<'a>(path: &str, text: &'a str) -> (String, Vec<&'a str>) {
     let stem = Path::new(path).file_stem().unwrap_or_default().to_string_lossy().into_owned();
     let mut title = None;
@@ -110,7 +139,7 @@ fn split_heading<'a>(path: &str, text: &'a str) -> (String, Vec<&'a str>) {
         lines.push(line);
     }
     let title = title.unwrap_or(stem);
-    let bare = title.split_once(" - ").filter(|(n, _)| n.trim().chars().all(|c| c.is_ascii_digit())).map_or(title.as_str(), |(_, t)| t).trim().to_string();
+    let bare = title.split_once('-').filter(|(n, rest)| (1..=2).contains(&n.trim().len()) && n.trim().chars().all(|c| c.is_ascii_digit()) && !rest.trim().is_empty()).map_or(title.as_str(), |(_, t)| t).trim().to_string();
     (bare, lines)
 }
 
@@ -119,28 +148,23 @@ fn bullet(line: &str) -> Option<&str> {
     t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("• ")).map(str::trim)
 }
 
-fn bold_line(line: &str) -> Option<&str> {
-    let t = line.trim();
-    t.strip_prefix("**").and_then(|x| x.strip_suffix("**")).filter(|x| !x.contains("**")).map(str::trim)
-}
 
-/// `2026.06 - 2026.07　新加坡` → (time, place); None if the line doesn't start with a date.
-fn time_line(line: &str) -> Option<(String, String)> {
-    let words: Vec<&str> = line.split(char::is_whitespace).filter(|w| !w.is_empty()).collect();
-    if !words.first()?.starts_with(|c: char| c.is_ascii_digit()) {
-        return None;
-    }
-    let n = words.iter().take_while(|w| w.starts_with(|c: char| c.is_ascii_digit()) || matches!(**w, "-" | "–" | "—" | "~" | "至" | "至今")).count();
-    Some((words[..n].join(" "), words[n..].join(" ")))
+/// `**名称**：内容` → (名称, 内容); else None.
+fn labelled(text: &str) -> Option<(String, String)> {
+    let rest = text.strip_prefix("**")?;
+    let (label, after) = rest.split_once("**")?;
+    let after = after.trim_start();
+    let body = after.strip_prefix('：').or_else(|| after.strip_prefix(':')).unwrap_or(after);
+    let label = label.trim().trim_end_matches(['：', ':']).trim();
+    (!label.is_empty()).then(|| (label.to_string(), body.trim().to_string()))
 }
 
 /// Points with ids from their 小标题 (`**智能管线**：…` → `智能管线`), else from their place.
 fn points(lines: &[String]) -> Vec<Point> {
     let mut out: Vec<Point> = vec![];
     for text in lines {
-        let label = text.strip_prefix("**").and_then(|t| t.split_once("**")).map(|(l, _)| l.trim().to_string()).filter(|l| !l.is_empty()).or_else(|| text.starts_with("技术栈").then(|| "技术栈".to_string()));
-        let id = match label {
-            Some(l) if !out.iter().any(|p| p.id == l) => l,
+        let id = match labelled(text).map(|(l, _)| l) {
+            Some(l) if !out.iter().any(|p| p.id == l) && l != catalog::STACK => l,
             _ => format!("{}", out.len() + 1),
         };
         out.push(Point { id, text: text.clone() });
@@ -148,83 +172,70 @@ fn points(lines: &[String]) -> Vec<Point> {
     out
 }
 
-fn block_record(category: &str, title_of_file: &str, block: &[&str]) -> Option<Record> {
-    let mut lines = block.iter().map(|l| l.trim_end()).filter(|l| !l.trim().is_empty()).peekable();
-    let bold = lines.peek().and_then(|l| bold_line(l)).map(str::to_string);
-    if bold.is_some() {
-        lines.next();
-    }
-    let mut r = Record { kind: "material".into(), category: category.into(), ..Default::default() };
-    let (mut extra, mut bullets, mut tail) = (vec![], vec![], vec![]);
+/// `## ` sections: (heading, lines). What comes before the first one is the file's note.
+fn sections<'a>(lines: &[&'a str]) -> Vec<(String, Vec<&'a str>)> {
+    let mut out: Vec<(String, Vec<&str>)> = vec![];
     for line in lines {
-        if let Some(b) = bullet(line) {
-            bullets.push(b.to_string());
-        } else if !bullets.is_empty() {
-            tail.push(line.trim().to_string());
-        } else if let Some((time, place)) = time_line(line).filter(|_| r.time.is_empty()) {
-            (r.time, r.location) = (time, place);
-        } else if line.trim().starts_with("技术栈") {
-            bullets.push(line.trim().to_string());
-        } else {
-            extra.push(line.trim().to_string());
-        }
-    }
-    let mut extra = extra.into_iter();
-    match (bold, category) {
-        (Some(role), "项目") => {
-            r.role = role;
-            let first = extra.next().unwrap_or_default();
-            match first.split_once('：').or_else(|| first.split_once(':')) {
-                Some((name, note)) => (r.title, r.text) = (name.trim().into(), note.trim().into()),
-                None => r.title = first,
+        match line.trim().strip_prefix("## ") {
+            Some(h) => out.push((h.trim().to_string(), vec![])),
+            None => {
+                if let Some(last) = out.last_mut() {
+                    last.1.push(line);
+                }
             }
         }
-        (Some(name), _) => {
-            r.title = name;
-            r.role = extra.next().unwrap_or_default();
-        }
-        (None, _) => r.title = title_of_file.into(),
     }
-    let rest: Vec<String> = extra.chain(tail).collect();
-    if !rest.is_empty() {
-        r.text = [r.text.clone()].into_iter().chain(rest).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
-    }
-    if r.title.is_empty() {
-        r.title = title_of_file.into();
-    }
-    r.points = points(&bullets);
-    (!r.points.is_empty() || !r.text.is_empty() || !r.time.is_empty()).then_some(r)
+    out
 }
 
-/// The records a file holds (sources not set yet).
-pub fn parse(path: &str, kind: &str, category: &str, text: &str) -> Vec<Record> {
-    let (title, lines) = split_heading(path, text);
-    match kind {
-        "material" | "application" => {
-            let mut blocks: Vec<Vec<&str>> = vec![vec![]];
-            for line in lines {
-                let t = line.trim();
-                let starts = bold_line(t).is_some() && blocks.last().is_some_and(|b| b.iter().any(|l| bullet(l).is_some()));
-                if t.chars().all(|c| c == '-') && t.len() >= 3 || starts {
-                    blocks.push(vec![]);
-                    if t.starts_with('-') {
-                        continue;
-                    }
-                }
-                blocks.last_mut().unwrap().push(line);
-            }
-            let mut out: Vec<Record> = blocks.iter().filter_map(|b| block_record(category, &title, b)).collect();
-            if kind == "application" {
-                for r in &mut out {
-                    // an answer is its text: the bullets read as lines
-                    r.kind = kind.into();
-                    let body = r.points.drain(..).map(|p| p.text).collect::<Vec<_>>();
-                    r.text = [std::mem::take(&mut r.text)].into_iter().chain(body).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
-                    (r.time, r.role, r.location) = Default::default();
-                }
-            }
-            out
+fn block(lines: &[&str]) -> String {
+    lines.join("\n").trim().to_string()
+}
+
+/// A material: field lines (`- 角色：…`) up to the first point, then the points.
+fn material(category: &str, title: &str, lines: &[&str]) -> Record {
+    let mut r = Record { kind: "material".into(), category: category.into(), title: title.into(), ..Default::default() };
+    let (mut bullets, mut text) = (vec![], vec![]);
+    for line in lines.iter().filter(|l| !l.trim().is_empty()) {
+        let Some(b) = bullet(line) else {
+            text.push(line.trim().to_string());
+            continue;
+        };
+        let field = bullets.is_empty().then(|| b.split_once('：').or_else(|| b.split_once(':'))).flatten();
+        match field.map(|(k, v)| (k.trim(), v.trim().to_string())) {
+            Some(("角色" | "职位" | "专业" | "学历", v)) => r.role = v,
+            Some(("时间", v)) => r.time = v,
+            Some(("地点", v)) => r.location = v,
+            Some(("概览" | "说明", v)) => text.insert(0, v),
+            Some(("技术栈", v)) => r.stack = v,
+            _ => bullets.push(b.to_string()),
         }
+    }
+    r.text = text.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
+    r.points = points(&bullets);
+    r
+}
+
+/// The records a file holds (sources not set yet), each with the materials it names (经历档案).
+pub fn parse(path: &str, kind: &str, category: &str, text: &str) -> Vec<(Record, Vec<String>)> {
+    let (title, lines) = split_heading(path, text);
+    let plain = |r: Record| (r, vec![]);
+    match kind {
+        "material" => {
+            let parts = sections(&lines);
+            if parts.is_empty() {
+                let r = material(category, &title, &lines);
+                return if r.points.is_empty() && r.text.is_empty() && r.stack.is_empty() { vec![] } else { vec![plain(r)] };
+            }
+            parts.iter().map(|(h, body)| plain(material(category, h, body))).collect()
+        }
+        "application" => sections(&lines)
+            .into_iter()
+            .map(|(h, body)| {
+                let text = body.iter().map(|l| bullet(l).unwrap_or(l.trim())).collect::<Vec<_>>().join("\n").trim().to_string();
+                plain(Record { kind: kind.into(), category: category.into(), title: h, text, ..Default::default() })
+            })
+            .collect(),
         "profile" => {
             let mut r = Record { kind: kind.into(), category: category.into(), title, ..Default::default() };
             for line in lines {
@@ -233,12 +244,54 @@ pub fn parse(path: &str, kind: &str, category: &str, text: &str) -> Vec<Record> 
                     r.fields.push(HeaderField { id: format!("f{}", r.fields.len() + 1), label: label.trim().into(), value: value.trim().into(), visible: true });
                 }
             }
-            if r.fields.is_empty() { vec![] } else { vec![r] }
+            if r.fields.is_empty() { vec![] } else { vec![plain(r)] }
         }
-        _ => {
-            let body = lines.join("\n").trim().to_string();
-            if body.is_empty() { vec![] } else { vec![Record { kind: kind.into(), category: category.into(), title, text: body, ..Default::default() }] }
+        "rule" => {
+            let mut out = vec![];
+            for (h, body) in sections(&lines) {
+                if h.contains("个人约定") {
+                    for b in body.iter().filter_map(|l| bullet(l)) {
+                        let (name, text) = labelled(b).unwrap_or_else(|| (b.chars().take(12).collect(), b.to_string()));
+                        out.push(plain(Record { kind: "decision".into(), category: category.into(), title: name, text, ..Default::default() }));
+                    }
+                    continue;
+                }
+                let first = body.iter().position(|l| !l.trim().is_empty());
+                let used = first.and_then(|i| body[i].trim().strip_prefix("用于：").map(|u| (i, u.trim().to_string())));
+                let (category, body) = match used {
+                    Some((i, u)) if !u.is_empty() => (u, &body[i + 1..]),
+                    _ => (category.to_string(), &body[..]),
+                };
+                let text = block(body);
+                if !text.is_empty() {
+                    out.push(plain(Record { kind: "rule".into(), category, title: h, text, ..Default::default() }));
+                }
+            }
+            out
         }
+        "facts" => {
+            let mut out = vec![];
+            for (group, body) in sections(&lines) {
+                for b in body.iter().filter_map(|l| bullet(l)) {
+                    let (name, text) = labelled(b).unwrap_or_else(|| (b.chars().take(12).collect(), b.to_string()));
+                    out.push(plain(Record { kind: "fact".into(), category: group.clone(), title: name, text, ..Default::default() }));
+                }
+            }
+            out
+        }
+        "dossier" => {
+            let mut links = vec![];
+            let mut body = vec![];
+            for line in &lines {
+                match bullet(line).and_then(|b| b.strip_prefix("素材：")).filter(|_| !body.iter().any(|l: &&str| l.trim().starts_with("## "))) {
+                    Some(name) => links.push(name.trim().to_string()),
+                    None => body.push(*line),
+                }
+            }
+            let text = block(&body);
+            if text.is_empty() { vec![] } else { vec![(Record { kind: "fact".into(), category: category.into(), title, text, ..Default::default() }, links)] }
+        }
+        _ => vec![],
     }
 }
 
@@ -250,10 +303,11 @@ pub fn preview(root: &Path, current: &[Record]) -> Result<Preview, String> {
     let mut files = vec![];
     collect(root, &mut files)?;
     files.sort();
-    let mut out = Preview { items: vec![], skipped: vec![] };
+    let mut out = Preview { items: vec![], gone: vec![], skipped: vec![] };
+    let mut all: Vec<(Record, Vec<String>, Option<Record>)> = vec![];
     for path in files {
         let relative = path.strip_prefix(root).map_err(err)?.to_string_lossy().into_owned();
-        let (kind, category) = match classify(&relative) {
+        let (kind, category, lang) = match classify(&relative) {
             Ok(k) => k,
             Err(why) => {
                 out.skipped.push(format!("{relative}：{why}"));
@@ -268,26 +322,38 @@ pub fn preview(root: &Path, current: &[Record]) -> Result<Preview, String> {
             out.skipped.push(format!("{relative}：不是 UTF-8 文本"));
             continue;
         };
-        let mut seen = std::collections::HashMap::<String, usize>::new();
-        for mut incoming in parse(&relative, kind, category, &text) {
+        let mut seen = HashMap::<String, usize>::new();
+        for (mut incoming, links) in parse(&relative, kind, category, &text) {
             let n = seen.entry(incoming.title.clone()).or_default();
             *n += 1;
             let source = format!("{relative}#{}:{n}", incoming.title);
             let current = current.iter().find(|r| r.source.as_deref() == Some(source.as_str())).cloned();
+            incoming.lang = lang.into();
             match &current {
-                // the file's text, keeping what the user set here (kind, category, on / off)
-                Some(old) => {
-                    (incoming.id, incoming.revision, incoming.kind, incoming.category, incoming.enabled) = (old.id.clone(), old.revision, old.kind.clone(), old.category.clone(), old.enabled);
-                }
+                // the file's text, keeping what the user set here (category, language, on / off, links)
+                Some(old) => (incoming.id, incoming.revision, incoming.category, incoming.lang, incoming.enabled, incoming.material, incoming.material_en) = (old.id.clone(), old.revision, old.category.clone(), old.lang.clone(), old.enabled, old.material.clone(), old.material_en.clone()),
                 None => incoming.id = workflow::id()?,
             }
             incoming.source = Some(source);
-            if current.as_ref().is_some_and(|old| *old == incoming) {
-                continue; // unchanged
-            }
-            out.items.push(ImportItem { incoming, current });
+            all.push((incoming, links, current));
         }
     }
+    // a 经历档案 names its materials: ones in these files, else ones already here (by language)
+    let materials: Vec<(String, String, String)> = all.iter().map(|(r, _, _)| r).chain(current.iter()).filter(|r| r.kind == "material").map(|r| (r.title.clone(), r.id.clone(), r.lang.clone())).collect();
+    for (incoming, links, current) in all.iter_mut() {
+        for name in links.iter() {
+            match materials.iter().find(|(t, _, _)| t == name) {
+                Some((_, id, lang)) if lang == "en" => incoming.material_en = Some(id.clone()),
+                Some((_, id, _)) => incoming.material = Some(id.clone()),
+                None => {}
+            }
+        }
+        if current.as_ref() != Some(incoming) {
+            out.items.push(ImportItem { incoming: incoming.clone(), current: current.clone() });
+        }
+    }
+    let sources: std::collections::HashSet<&str> = all.iter().filter_map(|(r, _, _)| r.source.as_deref()).collect();
+    out.gone = current.iter().filter(|r| r.source.as_deref().is_some_and(|s| !sources.contains(s))).cloned().collect();
     Ok(out)
 }
 
@@ -302,14 +368,22 @@ pub async fn picky_seeker_import_preview(state: State<'_, AppState>) -> Result<P
     tauri::async_runtime::spawn_blocking(move || preview(&folder.join("transfer"), &records)).await.map_err(err)?
 }
 
+/// Saves the chosen items and removes the chosen gone ones (their last version stays in the history).
+pub fn confirm(c: &Connection, records: &[Record], remove: &[String]) -> Result<(), String> {
+    let tx = Tx::begin(c)?;
+    for record in records {
+        catalog::put(&tx, record)?;
+    }
+    for id in remove {
+        catalog::delete(&tx, id)?;
+    }
+    tx.commit()
+}
+
 #[tauri::command]
-pub async fn picky_seeker_import_confirm(state: State<'_, AppState>, records: Vec<Record>) -> Result<Workspace, String> {
+pub async fn picky_seeker_import_confirm(state: State<'_, AppState>, records: Vec<Record>, remove: Vec<String>) -> Result<Workspace, String> {
     state.with_picky_undo("导入 Seeker 资料", |c| {
-        let tx = Tx::begin(c)?;
-        for record in &records {
-            catalog::put(&tx, record)?;
-        }
-        tx.commit()?;
+        confirm(c, &records, &remove)?;
         read(c)
     })
 }

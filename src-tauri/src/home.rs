@@ -1,5 +1,5 @@
 //! 首页 (simple version): one read-only summary over the modules, so the page (and later AI) asks once.
-//! Modules hidden in 设置 → 侧栏 are passed in and left out (their parts are None / skipped).
+//! Modules hidden in the 模块坞 are passed in and left out (their parts are None / skipped).
 //! 芝麻开门 never appears. 今天的待办 isn't here: the page uses todo_agenda (same list as 一步一步 → 今天).
 //! - 今年: 读完 / 看完 = books / films finished this year (their 完成时间, or a 重读 / 重看 in this year),
 //!   each counted once; 画完 = lessons done with a 完成时间 in this year; 完成 = what 回看 counts for

@@ -3,13 +3,14 @@ import type { LucideIcon } from "lucide-react";
 import { Search } from "lucide-react";
 import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from "react";
 
-export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; right?: ReactNode }) {
+export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
   const Icon = props.icon;
   return (
     <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between gap-4 px-8 pb-3">
       <h1 className="pointer-events-none flex shrink-0 items-center gap-2 text-[22px] font-bold whitespace-nowrap">
         {Icon && <Icon size={22} strokeWidth={1.75} style={{ color: props.color }} />}
         {props.title}
+        {props.badge}
       </h1>
       <div className="min-w-0 text-right">{props.right}</div>
     </header>

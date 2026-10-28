@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";
 import { KindManager } from "@/shared/kinds/KindManager";
 import { useOpenRequest } from "@/shared/open";
@@ -17,7 +18,7 @@ type View = "table" | "stats";
 
 export default function JobsPage() {
   const m = moduleById("jobs");
-  const [view, setView] = useState<View>("table");
+  const [view, setView] = useSubPage<View>("jobs");
   const { data: jobs = [] } = useJobs();
   const panel = usePanelSelection<number | "new">();
   const [managing, setManaging] = useState<"statuses" | "channels" | null>(null);

@@ -4,7 +4,7 @@
 //!   and derived numbers are the pages' (jobs::stats, finance::assets / totals, todo::agenda …); only
 //!   the wording for the model is here. Results are compact Chinese text cut to the room left in the
 //!   window ("还有 N 条没列出"); the records shown are kept so the answer can link them.
-//! - Never read: 芝麻开门 (no tool exists) and modules hidden in 设置 → 侧栏 (no tool offered; a call
+//! - Never read: 芝麻开门 (no tool exists) and modules hidden in the 模块坞 (no tool offered; a call
 //!   anyway is refused). For a cloud model, modules not allowed to go to the cloud (设置 → 小拾,
 //!   `data.cloud`; default 钱来钱往 local only) are refused with the sentence the answer starts with.
 //! - 五花八门 / 循序渐进: one tool each (`pomelo_lists`, `pomelo_progress`) for every module made from
@@ -59,6 +59,10 @@ pub const HELP_ONLY: &[Module] = &[Module { key: "site", label: "呦呦漫游", 
 
 /// The `module` of what a skill (skills/) brought from the web.
 pub const WEB: &str = "web";
+/// Seeker and Rater (assistants, read by the 「Seeker 资料」 skill): each hidden on its own, both for a
+/// cloud model only when Seeker's 「允许发给云端」 is on (`access_for` adds SEEKER to `cloud_allowed`).
+pub const SEEKER: &str = "seeker";
+pub const RATER: &str = "rater";
 
 fn module(key: &str) -> Option<&'static Module> {
     MODULES.iter().chain(HELP_ONLY).find(|m| m.key == key)
@@ -101,7 +105,7 @@ pub fn set_cloud(conn: &Connection, key: &str, allowed: bool, made: &[Made]) -> 
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Access {
-    /// Modules hidden in 设置 → 侧栏 (pomelo.db `ui.module_hidden`).
+    /// Modules hidden in the 模块坞 (pomelo.db `ui.module_hidden`).
     pub hidden: Vec<String>,
     /// The answer comes from a cloud model.
     pub cloud: bool,
@@ -133,7 +137,7 @@ pub enum Blocked {
     Cloud,
 }
 
-/// Modules hidden in 设置 → 侧栏 (pomelo.db).
+/// Modules hidden in the 模块坞 (pomelo.db).
 pub fn hidden(pomelo: &Connection) -> Vec<String> {
     crate::settings::get(pomelo, HIDDEN_KEY).ok().flatten().and_then(|v| serde_json::from_value::<Vec<String>>(v).ok()).unwrap_or_default()
 }
@@ -169,6 +173,9 @@ impl Access {
         module == "picky" || self.check_key(module)
     }
     fn check_key(&self, key: &str) -> bool {
+        if key == SEEKER || key == RATER {
+            return !self.hidden.iter().any(|h| h == key) && (!self.cloud || self.cloud_allowed.iter().any(|a| a == SEEKER));
+        }
         match (custom::parse_key(key), Template::parse(key)) {
             (Some(_), _) => self.check_made(key).is_ok(),
             // a result about several made modules: all of them must be readable
@@ -381,12 +388,12 @@ pub struct Answer {
     pub records: Vec<Rec>,
 }
 
-struct Row {
+pub(crate) struct Row {
     text: String,
     rec: Option<Rec>,
 }
 
-fn row(text: String) -> Row {
+pub(crate) fn row(text: String) -> Row {
     Row { text, rec: None }
 }
 
@@ -396,25 +403,25 @@ struct Section {
 }
 
 /// A view's result before cutting: the head always goes, rows while they fit.
-struct Found {
+pub(crate) struct Found {
     label: String,
     head: Vec<String>,
     sections: Vec<Section>,
 }
 
 impl Found {
-    fn new(label: String, head: Vec<String>) -> Found {
+    pub(crate) fn new(label: String, head: Vec<String>) -> Found {
         Found { label, head, sections: vec![] }
     }
     fn section(mut self, title: &str, rows: Vec<Row>) -> Found {
         self.sections.push(Section { title: title.into(), rows });
         self
     }
-    fn rows(self, rows: Vec<Row>) -> Found {
+    pub(crate) fn rows(self, rows: Vec<Row>) -> Found {
         self.section("", rows)
     }
 
-    fn render(self, budget: i64) -> (String, Vec<Rec>) {
+    pub(crate) fn render(self, budget: i64) -> (String, Vec<Rec>) {
         let est = super::context::estimate;
         let mut out: Vec<String> = self.head.clone();
         let mut used: i64 = out.iter().map(|l| est(l) + 1).sum();
@@ -455,7 +462,7 @@ pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, toda
     };
     match access.check(m) {
         Err(Blocked::Hidden) => {
-            return Answer { module: Some(m.key.into()), label: format!("{} · 已隐藏，没看", m.label), state: "blocked", text: format!("没有查：{}在侧栏里隐藏了，小拾不读它的数据。", m.label), records: vec![] }
+            return Answer { module: Some(m.key.into()), label: format!("{} · 已隐藏，没看", m.label), state: "blocked", text: format!("没有查：{}在模块坞里隐藏了，小拾不读它的数据。", m.label), records: vec![] }
         }
         Err(Blocked::Cloud) => {
             let sentence = cloud_sentence(&[m.label]);
@@ -1778,7 +1785,7 @@ fn made_run(conn: &Connection, access: &Access, t: Template, arguments: &str, to
     let readable: Vec<&Made> = mine.iter().copied().filter(|m| access.check_made(&m.key).is_ok()).collect();
     let answer = |state: &'static str, l: String, text: String| Answer { module: Some(t.as_str().into()), label: l, state, text, records: vec![] };
     if mine.is_empty() {
-        return answer("blocked", format!("{label} · 没有能读的"), format!("没有查：还没有用{label}建的模块，或者都在侧栏里隐藏了。"));
+        return answer("blocked", format!("{label} · 没有能读的"), format!("没有查：还没有用{label}建的模块，或者都在模块坞里隐藏了。"));
     }
     let sentence = cloud_sentence(&refused);
     if readable.is_empty() {

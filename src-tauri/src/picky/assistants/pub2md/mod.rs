@@ -399,6 +399,12 @@ pub struct Live {
     inner: Mutex<Inner>,
 }
 
+/// Documents being done or waiting (the 模块坞's live text).
+pub fn busy(live: &Live) -> usize {
+    let g = live.lock();
+    usize::from(g.job.is_some()) + g.queue.len()
+}
+
 impl Live {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())

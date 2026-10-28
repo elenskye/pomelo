@@ -3,7 +3,7 @@
 // by module; below them 意思相近 (v0.4: by meaning, a moment later, without what words found). ↑↓ move,
 // ↩ opens (navigate with the hit; the page opens the record), Esc closes.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useTabs } from "./tabs";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { Search as SearchIcon, Sparkles } from "lucide-react";
 import { errorText } from "@/shared/feedback";
@@ -27,7 +27,7 @@ function detail(h: Hit): string | null {
 export function SearchBox(props: { onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
+  const tabs = useTabs();
   const [hidden] = useHiddenModules();
   const modules = useAllModules();
   const [text, setText] = useState("");
@@ -60,7 +60,7 @@ export function SearchBox(props: { onClose: () => void }) {
 
   const open = (h: Hit) => {
     props.onClose();
-    void navigate(`/${h.module}`, { state: { open: h } });
+    tabs.open(`/${h.module}`, { open: h });
   };
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {

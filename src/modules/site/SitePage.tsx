@@ -6,10 +6,10 @@ import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
-import { useSetting } from "@/shared/settings";
 import { Button, EmptyState, PageHeader, Segmented } from "@/shared/ui";
 import { OVERVIEW_KEY, siteApi, useHistory, useOverview, type Overview } from "./api";
 import { AboutPage } from "./About";
@@ -139,7 +139,7 @@ export default function SitePage() {
   const { data: o } = useOverview();
   const ok = !!o && !o.problem;
   const { data: history } = useHistory(ok);
-  const [tab, setTab] = useSetting<Tab>("ui.site_tab", "publish", (v): v is Tab => TABS.some((t) => t.value === v));
+  const [tab, setTab] = useSubPage<Tab>("site", "ui.site_tab");
   const dirty = useRef(false);
   const [confirm, confirmDialog] = useConfirm();
   const guard = {

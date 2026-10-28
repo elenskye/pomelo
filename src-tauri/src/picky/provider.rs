@@ -1149,7 +1149,7 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
     } else if last.contains(super::skills::SEARCHED_FIRST) {
         "这是开发版的**模拟回答**：网上搜到的里，最相关的是这几条[1][2]。".into()
     } else if system.starts_with(super::brief::MARK) {
-        "这是开发版的**模拟简报**：今天有几件待办要做，记得看看过期的那几件；有一份投递该跟进了。最近的笔记里常提到读书。".into()
+        "这是开发版的**模拟简报**：今天有几件待办要做，记得看看过期的那几件；有一份投递该跟进了。最近的笔记里常提到读书。\n心情：很忙".into()
     } else if system.starts_with(super::yearly::MONTH_MARK) {
         format!("模拟要点：这个月的记录约 {} 字。", last.chars().count())
     } else if system.starts_with(super::yearly::PIECE_MARK) {

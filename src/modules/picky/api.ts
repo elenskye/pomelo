@@ -624,6 +624,8 @@ export type Brief = {
   modelName: string | null;
   leftOut: string[];
   phase: "starting" | "writing" | null;
+  /** calm | busy | good | worry: the pomelo's face for the day. */
+  mood: string | null;
 };
 export const BRIEF_KEY = ["picky", "brief"];
 export const useBrief = (enabled = true) =>

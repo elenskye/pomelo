@@ -1,7 +1,10 @@
 //! 小拾's part of the Pomelo data file (「设置 → 导出 / 导入」, module `picky`, from format version
 //! 11): the global instructions, projects (name, background instructions, whether they use global
 //! memories), purpose presets, templates, memories (sharing by project name) and, from 12, 定时任务
-//! (from 13 with 思考; before: on), and from 19 the Seeker workspace (seeker.rs; replaced whole).
+//! (from 13 with 思考; before: on), and from 19 the Seeker workspace (seeker.rs; replaced whole; from 20 with
+//! the draft's job and the jobs' 公司资料 choices; from 21 records with 技术栈, 档案 links and 个人约定; from
+//! 22 the English draft, template and records, older ones: `seeker::from_before_english`), and from 23
+//! Rater's question bank (rater.rs; replaced whole).
 //! Conversations (also the ones schedules wrote), files and indexes stay out (they live in picky.db
 //! and its backups).
 //! Import replaces the global instructions, templates and memories; projects and presets are
@@ -11,7 +14,7 @@
 //! selection.
 //! Export → import into an empty picky.db → export gives the same record (see test).
 
-use super::assistants::seeker;
+use super::assistants::{rater, seeker};
 use super::store::NOW;
 use super::{instructions, memory, schedule, templates};
 use crate::modules::common::{err, Tx};
@@ -110,6 +113,9 @@ pub struct PickyRecord {
     /// From format 19; an older file leaves Seeker as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seeker: Option<seeker::Workspace>,
+    /// From format 23 (its practice rounds from 24); an older file leaves Rater as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rater: Option<rater::Bank>,
     #[serde(default)]
     pub global_instructions: String,
     #[serde(default)]
@@ -127,7 +133,7 @@ pub struct PickyRecord {
 
 impl PickyRecord {
     pub fn len(&self) -> usize {
-        self.projects.len() + self.presets.len() + self.templates.len() + self.memories.len() + self.schedules.as_ref().map_or(0, Vec::len) + self.seeker.as_ref().map_or(0, seeker::Workspace::len)
+        self.projects.len() + self.presets.len() + self.templates.len() + self.memories.len() + self.schedules.as_ref().map_or(0, Vec::len) + self.seeker.as_ref().map_or(0, seeker::Workspace::len) + self.rater.as_ref().map_or(0, rater::Bank::len)
     }
 }
 
@@ -142,7 +148,8 @@ pub fn export(conn: &Connection) -> Result<PickyRecord, String> {
     let mut mems = memory::list(conn)?;
     mems.reverse(); // oldest first
     Ok(PickyRecord {
-        seeker: Some(seeker::Workspace { warnings: vec![], choices: vec![], ..seeker::read(conn)? }),
+        seeker: Some(seeker::Workspace { choices: vec![], ..seeker::read(conn)?.without_warnings() }),
+        rater: Some(rater::export(conn)?),
         global_instructions: instructions::global(conn)?,
         presets: instructions::presets(conn)?.into_iter().map(|p| PresetRec { name: p.name, content: p.content }).collect(),
         templates: templates::list(conn)?.into_iter().map(|t| TemplateRec { title: t.title, category: t.category, body: t.body, pinned: t.pinned }).collect(),
@@ -170,7 +177,7 @@ pub fn export(conn: &Connection) -> Result<PickyRecord, String> {
 
 /// Checked before anything is written.
 pub fn validate(r: &PickyRecord) -> Result<(), String> {
-    if let Some(draft) = r.seeker.as_ref().and_then(|s| s.draft.as_ref()) {
+    for draft in r.seeker.iter().flat_map(|s| [&s.cn.draft, &s.en.draft]).flatten() {
         seeker::validate(draft)?;
     }
     let names: Vec<&str> = r.projects.iter().map(|p| p.name.trim()).collect();
@@ -204,7 +211,7 @@ pub fn validate(r: &PickyRecord) -> Result<(), String> {
 /// What an import would replace or update.
 pub fn count(conn: &Connection) -> Result<i64, String> {
     let base: i64 = conn.query_row("SELECT (SELECT count(*) FROM projects) + (SELECT count(*) FROM presets) + (SELECT count(*) FROM templates) + (SELECT count(*) FROM memories) + (SELECT count(*) FROM schedules)", [], |r| r.get(0)).map_err(err)?;
-    Ok(base + seeker::read(conn)?.len() as i64)
+    Ok(base + seeker::read(conn)?.len() as i64 + rater::read(conn)?.len() as i64)
 }
 
 pub fn replace(conn: &Connection, r: &PickyRecord) -> Result<usize, String> {
@@ -269,6 +276,9 @@ pub fn replace(conn: &Connection, r: &PickyRecord) -> Result<usize, String> {
     }
     if let Some(workspace) = &r.seeker {
         seeker::replace(&tx, workspace)?;
+    }
+    if let Some(bank) = &r.rater {
+        rater::replace(&tx, bank)?;
     }
     tx.commit()?;
     Ok(r.len())

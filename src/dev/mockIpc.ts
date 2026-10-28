@@ -485,15 +485,21 @@ const doneItems = (from: string, to: string) => {
 // another one — 小拾's card — folds into it).
 type Snap = { label: string; before: string; after: string };
 const snapState = () =>
-  JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker: seekerMock.workspace, vItems: vt.items, vCats: vt.cats, courses, lessons, tpls, tripRows, tplItems, tripItems, books: colls.books?.rows(), films: colls.films?.rows() });
+  JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker: seekerMock.workspace, rater: seekerMock.rater, practice: seekerMock.practice, interviews: seekerMock.interviews, vItems: vt.items, vCats: vt.cats, courses, lessons, tpls, tripRows, tplItems, tripItems, books: colls.books?.rows(), films: colls.films?.rows() });
 const loadState = (s: string) => {
   let seeker: SeekerWorkspace;
+  let rater: typeof seekerMock.rater;
+  let practice: typeof seekerMock.practice;
+  let interviews: typeof seekerMock.interviews;
   let vItems: VRow[];
   let vCats: VCat[];
   let books: Row[] | undefined;
   let films: Row[] | undefined;
-  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker, vItems, vCats, courses, lessons, tpls, tripRows, tplItems, tripItems, books, films } = JSON.parse(s));
+  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker, rater, practice, interviews, vItems, vCats, courses, lessons, tpls, tripRows, tplItems, tripItems, books, films } = JSON.parse(s));
   seekerMock.workspace = seeker;
+  seekerMock.rater = rater;
+  seekerMock.practice = practice ?? [];
+  seekerMock.interviews = interviews ?? { preps: [], reviews: [] };
   vt.items = vItems;
   vt.cats = vCats;
   if (books) colls.books.set(books);
@@ -1052,6 +1058,7 @@ type JRow = {
 };
 let jb = { statuses: [] as JStatus[], jobs: [] as JRow[] };
 seekerMock.job = (id) => jb.jobs.find((j) => j.id === id);
+seekerMock.wrap = (label, f) => undoable(label, () => f())({}) as ReturnType<typeof f>;
 (
   [["想投", "wish"], ["已投递", "applied"], ["网申测评 / 笔试", "active"], ["面试", "active"], ["Offer", "got"], ["已接受", "got"], ["被拒", "closed"]] as const
 ).forEach(([name, stage], i) => jb.statuses.push({ id: nextId++, name, stage, sortOrder: i + 1 }));
@@ -1937,6 +1944,34 @@ function similarMock(q: string, modules: string[] = [], limit = 8) {
     .sort((a, b) => b.score - a.score || b.d.hit.id - a.d.hit.id)
     .slice(0, limit)
     .map((x) => ({ ...x.d.hit, snippet: x.d.hay.replace(/\s+/g, " ").slice(0, 60), score: x.score }));
+}
+
+// ---- 模块坞的实时小字: mirrors dock.rs loosely ----
+function dockLiveMock() {
+  const today = mockToday();
+  const out: Record<string, string> = {};
+  const due = tTasks.filter((t) => !t.done && t.dueDate !== null && t.dueDate <= today).length;
+  if (due) out.todo = `今天 ${due} 件`;
+  const shelf = (rows: Row[], doing: string, todo: string, unit: string) => {
+    const a = rows.filter((r) => r.status === "doing").length, b = rows.filter((r) => r.status === "todo").length;
+    return a ? `${doing} ${a} ${unit}` : b ? `${todo} ${b} ${unit}` : null;
+  };
+  const b = shelf(handlers.books_list({}) as Row[], "在读", "想读", "本");
+  if (b) out.books = b;
+  const f = shelf(handlers.films_list({}) as Row[], "在看", "想看", "部");
+  if (f) out.films = f;
+  if (lessons.length) out.drawing = `${lessons.filter((l) => l.status === "done").length} / ${lessons.length} 节`;
+  const trip = tripRows.filter((t) => t.departOn && t.departOn >= today).sort((x, y) => x.departOn!.localeCompare(y.departOn!))[0];
+  if (trip) out.packing = `${trip.name} ${trip.departOn!.slice(5, 7)} / ${trip.departOn!.slice(8)}`;
+  const jobs = handlers.jobs_list({}) as ReturnType<typeof jobOut>[];
+  const follow = jobs.filter((j) => j.followUp).length;
+  if (follow) out.jobs = `该跟进 ${follow}`;
+  else if (jobs.length) out.jobs = `共 ${jobs.length} 个`;
+  out.vault = vStatus().state === "open" ? "已打开" : "已锁上";
+  out.translate = "中英互译";
+  if (seekerMock.workspace.draft || seekerMock.workspace.en?.draft) out.seeker = "有草稿";
+  if (seekerMock.rater.questions.length) out.rater = `${seekerMock.rater.questions.length} 道题`;
+  return out;
 }
 
 // ---- 首页: mirrors home.rs loosely ----
@@ -3283,6 +3318,10 @@ const P_SKILLS: PSkillDef[] = [
   { key: "files", name: "读文件", tool: "pomelo_file", summary: "读这个问题带的附件和项目资料：看目录、按段号读、按字找。资料太长放不下时，先给小拾目录和按问题挑出的段落，它再用这个读需要的部分。", detail: "只读这个问题已经带上的文件（存在小拾里的那份），不碰别的文件；读到的段落标出处。不发到别处：内容随这个问题发给你选的模型。", keys: [], auto: true },
   { key: "kb", name: "查知识库", tool: "pomelo_kb", summary: "小拾觉得需要时自己查知识库：这个对话选的库，没选就是项目选的，再没有就是全部。按问题找相关的段落，也能列出库里有哪些文件、整篇读某个文件（看目录、按段读、按字找）。查到的标出处。", detail: "和输入框的「知识库」按钮并存：按钮按下时每个问题都先查一遍；这个技能让小拾没按时也能查，或者换个说法再查。用云端模型时不查不发给云端的文件夹。", keys: [], auto: true },
   { key: "word", name: "Word 工具箱", tool: "pomelo_word", summary: "小拾觉得需要时自己用：改 Word 文件（文字，加粗、斜体、下划线，标题、列表，加段、删段），或者新建一个 Word。改的都放进确认卡片，你勾选后点「写入文件」才写；新建的你点「保存」才存。", detail: "只改这个问题的附件（从访达拖进来或点选的，改的是原文件）和知识库里的 Word 文件，不碰别的文件；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。", keys: [], auto: true },
+  { key: "seeker", name: "Seeker 资料", tool: "pomelo_seeker", summary: "小拾觉得需要时自己查你的求职资料：Seeker 的简历素材、现在的中英文简历草稿、确认过的版本、导出过的 Word，和 Rater 的面试题库、卡片练习的记录。只读，不改任何资料。", detail: "停用（不发给模型）的素材不读；Seeker 的规则、档案、网申不读。用云端模型时，只有 Seeker 设置里「允许发给云端」开着才读（Rater 也照它）；Seeker 或 Rater 在模块坞里隐藏了就不读它。", keys: [], auto: true },
+  { key: "qbank_resume", name: "题库 · 简历题", tool: "pomelo_qbank_resume", summary: "按简历上的经历出面试官会追问的题，配好口述稿答案；也能给已有的一道简历题重写答案。读选的经历（不说就是简历草稿里的）和挂着的经历档案。", detail: "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。", keys: [], auto: true },
+  { key: "qbank_general", name: "题库 · 通用题", tool: "pomelo_qbank_general", summary: "出自我介绍、为什么投、优缺点、行为题、职业规划、反问这类通用题，配好口述稿答案；读基本信息、已确认事实和经历一览。", detail: "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。", keys: [], auto: true },
+  { key: "qbank_job", name: "题库 · 突击题", tool: "pomelo_qbank_job", summary: "按投石问路里一个岗位的 JD 和公司资料出突击题，也把已有的简历题、通用题按这家公司改写（记着改自哪道，原题不动）。", detail: "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。", keys: [], auto: true },
   { key: "text", name: "文本工具箱", tool: "pomelo_text", summary: "小拾觉得需要时自己用：改 Markdown 和纯文本文件（改段、删段），改的放进确认卡片，你勾选后点「写入文件」才写。", detail: "只改这个问题的附件（改的是原文件）和知识库里的这类文件，保留原来的换行和编码；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。", keys: [], auto: true },
 ];
 const pSwitch = (key: string) => pky.skills.get(key) ?? { enabled: true, auto: P_SKILLS.find((s) => s.key === key)?.auto ?? false };
@@ -3986,7 +4025,7 @@ const pBrief = { enabled: new URLSearchParams(location.search).get("brief") !== 
 const pBriefOut = () => {
   const day = toYmd(new Date());
   const r = pBrief.days.get(day);
-  return { enabled: pBrief.enabled, model: pBrief.model, thinking: pBrief.thinking, day, content: r?.content ?? "", state: r?.state ?? "none", error: r?.error ?? null, modelName: r?.modelName ?? null, leftOut: r?.leftOut ?? [], phase: r?.state === "writing" ? pBrief.phase : null };
+  return { enabled: pBrief.enabled, model: pBrief.model, thinking: pBrief.thinking, day, content: r?.content ?? "", state: r?.state ?? "none", error: r?.error ?? null, modelName: r?.modelName ?? null, leftOut: r?.leftOut ?? [], phase: r?.state === "writing" ? pBrief.phase : null, mood: r?.content ? (new URLSearchParams(location.search).get("mood") ?? "busy") : null };
 };
 window.setInterval(() => {
   if (pScheduleRunning != null) return;
@@ -4418,7 +4457,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     const todo = picks.map((p) => {
       const it = c.items.find((i) => i.position === p.position);
       if (!it) throw "卡片里没有这一条";
-      if (hidden.includes(it.module)) throw `${P_MODULES.find((m) => m[0] === it.module)![1]}已在侧栏里隐藏，不能记`;
+      if (hidden.includes(it.module)) throw `${P_MODULES.find((m) => m[0] === it.module)![1]}已在模块坞里隐藏，不能记`;
       if (!it.options) return { it, op: it.op, choice: null as PChoice | null, k: null as number | null };
       if (p.option == null) throw `第 ${p.position + 1} 条还没选是哪一条`;
       const choice = it.options[p.option];
@@ -4710,7 +4749,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
   },
   picky_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
   // reading, settings and the Word export itself aren't undone (as in Rust)
-  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_template", "picky_seeker_template_read", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_import_preview", "picky_seeker_output_preview", "picky_seeker_output_save", "picky_seeker_output_discard"].includes(key) ? handler : undoable(key === "picky_seeker_job_link" ? "关联 Seeker 导出" : "编辑 Seeker", handler)])),
+  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_rater", "picky_rater_interviews", "picky_rater_prep", "picky_rater_review_compare", "picky_rater_prep_word_place", "picky_rater_prep_word", "picky_seeker_files", "picky_seeker_cv_text", "picky_rater_practice", "picky_rater_round", "picky_rater_pick", "picky_rater_follow", "picky_rater_comment", "picky_rater_seconds", "picky_rater_suggest", "picky_rater_defaults", "picky_rater_options", "picky_rater_options_set", "picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_template", "picky_seeker_template_read", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_import_preview", "picky_seeker_output_save", "picky_seeker_knowledge", "picky_seeker_knowledge_add", "picky_seeker_job_company"].includes(key) ? handler : undoable(key === "picky_rater_prep_save" ? "改速查卡" : key === "picky_rater_prep_keep" ? "追问存进题库" : key === "picky_rater_review_save" ? "记复盘" : key === "picky_rater_review_keep" ? "复盘的题存进题库" : key === "picky_rater_review_rule" ? "复盘的约定加进规则" : key === "picky_rater_interview_delete" ? "删除面试记录" : key === "picky_rater_add" ? "补题" : key === "picky_rater_round_start" ? "开始练习" : key === "picky_rater_mark" ? "练习" : key === "picky_rater_stop" ? "停下练习" : key === "picky_rater_round_delete" ? "删除这一轮" : key === "picky_rater_keep" ? "追问存进题库" : key === "picky_rater_save" ? "保存题目" : key === "picky_rater_delete" ? "删除题目" : key === "picky_seeker_job_link" ? "关联 Seeker 导出" : key === "picky_seeker_use_job" ? "为岗位做简历" : key === "picky_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
   picky_pub2md: () => p2View(),
   picky_pub2md_settings: (a) => {
     p2.settings = { ...(a.settings as P2Settings), parallel: Math.min(8, Math.max(1, (a.settings as P2Settings).parallel)) };
@@ -5396,6 +5435,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...siteAssistHandlers,
   ...pageHandlers,
   home_overview: (a) => homeMock((a.hidden as string[]) ?? []),
+  dock_live: () => dockLiveMock(),
   // v0.4 search (query.rs): the mock answers every way with ⌘K's word matches
   search_query: (a) => {
     const r = a.request as { text: string; way: string; limit?: number };
@@ -5646,6 +5686,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (o.directory && o.title === "存到") return "/Users/me/Documents/论文";
     if (o.title === "选择 Seeker 文件夹") return "/mock/Seeker";
     if (o.title === "选择中文简历模板") return "/mock/Seeker/cv/cn/简历模板.docx";
+    if (o.title === "选择英文简历模板") return "/mock/Seeker/cv/en/resume-template.docx";
     if (o.directory) return o.title === "保存到" ? "/Users/me/Documents/报告" : `/Users/me/Documents/读书笔记${(pPickCount += 1) > 1 ? pPickCount : ""}`;
     // Pub2MD: a paper, then one that fails at its third chunk, then two photos (one document)
     if (o.title === "选择文件") return [["/mock/Attention Is All You Need.pdf"], ["/mock/失败测试.pdf"], ["/mock/IMG_0001.HEIC", "/mock/IMG_0002.jpg"], ["/mock/读书笔记.md"]][(p2Picks += 1) - 1 - 4 * Math.floor((p2Picks - 1) / 4)];

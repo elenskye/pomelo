@@ -867,7 +867,7 @@ fn scan_now(app: &AppHandle) -> Result<Vec<i64>, String> {
 }
 
 /// Scans, then builds one source (it was just added or asked to be rebuilt), starting 8081.
-fn scan_and_build(app: &AppHandle, source: i64) {
+pub(crate) fn scan_and_build(app: &AppHandle, source: i64) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         scan(&app).await;
@@ -888,15 +888,21 @@ pub struct Hit {
 }
 
 /// The `keep` passages of `sources` (made with `model`) most like `question`, scoring ≥ `min`.
+#[cfg(test)]
 pub fn similar(search: &Connection, sources: &[i64], model: &str, question: &[f32], keep: usize, min: f32) -> Result<Vec<Hit>, String> {
+    similar_under(search, sources, model, question, keep, min, "")
+}
+
+/// `similar` among the files whose path (relative to their folder) starts with `prefix` ("": all).
+pub fn similar_under(search: &Connection, sources: &[i64], model: &str, question: &[f32], keep: usize, min: f32, prefix: &str) -> Result<Vec<Hit>, String> {
     if sources.is_empty() || keep == 0 {
         return Ok(vec![]);
     }
     let q = vectors::quantize(question);
     let mut st = search
-        .prepare(&format!("SELECT d.source_id, d.path, k.segment, k.label, k.content, k.vector FROM kb_chunks k JOIN kb_docs d ON d.id = k.doc_id WHERE d.model = ?1 AND d.source_id IN ({}) ORDER BY d.id, k.ordinal", id_list(sources)))
+        .prepare(&format!("SELECT d.source_id, d.path, k.segment, k.label, k.content, k.vector FROM kb_chunks k JOIN kb_docs d ON d.id = k.doc_id WHERE d.model = ?1 AND substr(d.path, 1, length(?2)) = ?2 AND d.source_id IN ({}) ORDER BY d.id, k.ordinal", id_list(sources)))
         .map_err(err)?;
-    let mut rows = st.query([model]).map_err(err)?;
+    let mut rows = st.query([model, prefix]).map_err(err)?;
     let mut hits: Vec<Hit> = vec![];
     while let Some(r) = rows.next().map_err(err)? {
         let blob: Vec<u8> = r.get(5).map_err(err)?;
@@ -929,6 +935,11 @@ fn passage(h: &Hit, scope: &Scope) -> Passage {
 
 /// Passages for a question; an error means 8081 couldn't be used.
 pub async fn retrieve(app: &AppHandle, question: &str, scope: &Scope) -> Result<Vec<Passage>, String> {
+    retrieve_under(app, question, scope, "").await
+}
+
+/// `retrieve` among the files under `prefix` (a sub-folder like "seek-lenovo/"; Seeker's 公司资料).
+pub async fn retrieve_under(app: &AppHandle, question: &str, scope: &Scope, prefix: &str) -> Result<Vec<Passage>, String> {
     if scope.sources.is_empty() {
         return Ok(vec![]);
     }
@@ -937,11 +948,11 @@ pub async fn retrieve(app: &AppHandle, question: &str, scope: &Scope) -> Result<
     let model = embed::prepare(app).await?;
     let q = embed::embed(&st.picky.runtime, &model, &[question.to_string()], Input::PassageQuery).await.map_err(String::from)?.pop().ok_or("向量服务没有返回问题的向量。")?;
     let ids: Vec<i64> = scope.ids().into_iter().collect();
-    let pool: Vec<Passage> = st.search.with_db(|c| similar(c, &ids, &model.key, &q, index::POOL, index::POOL_MIN))?.iter().map(|h| passage(h, scope)).collect();
+    let pool: Vec<Passage> = st.search.with_db(|c| similar_under(c, &ids, &model.key, &q, index::POOL, index::POOL_MIN, prefix))?.iter().map(|h| passage(h, scope)).collect();
     // v0.4: the rerank model picks from a wider pool; without it, similarity alone
     match super::rerank::pick(app, question, &pool, |p| format!("{}\n{}", p.label, p.content), index::LIMIT).await {
         Some(picked) => Ok(picked),
-        None => Ok(st.search.with_db(|c| similar(c, &ids, &model.key, &q, index::LIMIT, index::MIN_SCORE))?.iter().map(|h| passage(h, scope)).collect()),
+        None => Ok(st.search.with_db(|c| similar_under(c, &ids, &model.key, &q, index::LIMIT, index::MIN_SCORE, prefix))?.iter().map(|h| passage(h, scope)).collect()),
     }
 }
 
@@ -1598,6 +1609,9 @@ pub mod tests {
         let p = passage(&hits[0], &sc);
         assert_eq!((p.label.as_str(), p.kb.as_ref().unwrap().path.as_str(), p.kb.as_ref().unwrap().library.as_str()), ("租房.md · 押金", "租房.md", "生活"));
         assert!(similar(&s, &[f], "another-model", &embed::mock_vector("押金"), 6, 0.1).unwrap().is_empty());
+        // only under a sub-folder (Seeker's 公司资料)
+        assert!(similar_under(&s, &[f], &model, &embed::mock_vector("押金怎么退"), 6, 0.1, "别的公司/").unwrap().is_empty());
+        assert_eq!(similar_under(&s, &[f], &model, &embed::mock_vector("押金怎么退"), 6, 0.1, "租房").unwrap()[0].label, "押金");
 
         // touched without new bytes: only marked current; an edit keeps the unchanged passage's vector
         let first: Vec<u8> = s.query_row("SELECT vector FROM kb_chunks WHERE doc_id = ?1 AND label = '周末'", [good.id], |r| r.get(0)).unwrap();

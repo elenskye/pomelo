@@ -379,7 +379,7 @@ pub fn refused(access: &Access, tool: &str, arguments: &str) -> Option<Answer> {
     let m = data::MODULES.iter().find(|m| m.key == module)?;
     let label = label_of(tool, module, None);
     if access.hidden.iter().any(|h| h == module) {
-        return Some(Answer { module: Some(m.key.into()), label: format!("提议{label} · 已隐藏"), state: "blocked", text: format!("没有提议：{}在侧栏里隐藏了，小拾不改它的数据。", m.label), records: vec![] });
+        return Some(Answer { module: Some(m.key.into()), label: format!("提议{label} · 已隐藏"), state: "blocked", text: format!("没有提议：{}在模块坞里隐藏了，小拾不改它的数据。", m.label), records: vec![] });
     }
     if !access.allows(module) {
         return Some(Answer {

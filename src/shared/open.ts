@@ -31,7 +31,8 @@ export function useOpenRequest(onOpen: (hit: Hit) => void) {
   const hit = (location.state as { open?: Hit } | null)?.open;
   useEffect(() => {
     if (!hit) return;
-    onOpen(hit);
+    // cleared first: opening may move to another of the module's pages (`/finance/assets`)
     void navigate(location.pathname, { replace: true, state: null });
+    onOpen(hit);
   }, [hit]); // eslint-disable-line react-hooks/exhaustive-deps
 }

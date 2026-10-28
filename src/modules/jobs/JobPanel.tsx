@@ -16,6 +16,7 @@ import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { SidePanel } from "@/shared/panel";
 import { Button, Field, IconButton, TextArea, TextInput } from "@/shared/ui";
 import { CHANNELS, jobLabel, useJobMutations, useStatuses, type Job, type Status } from "./api";
+import { JobInterviews } from "./Interviews";
 import { JobSeekerExports } from "./SeekerExports";
 
 type DraftStep = { statusId: number; done: boolean; doneOn: string };
@@ -325,6 +326,7 @@ export function JobPanel(props: {
       <OpenableInput label="JD 链接" value={d.link} onChange={(v) => set("link", v)} />
       <OpenableInput label="简历" file value={d.resume} onChange={(v) => set("resume", v)} />
       {j && <JobSeekerExports job={j} disabled={dirty} />}
+      {j && <JobInterviews job={j} disabled={dirty} />}
       <Field label="备注">
         <Polish module="jobs" value={d.note} onChange={(v) => set("note", v)}>
           <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} className={filled.cls("note")} />

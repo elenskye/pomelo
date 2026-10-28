@@ -9,6 +9,7 @@ import { api } from "@/shared/ipc";
 import { Modal } from "@/shared/Modal";
 import { Button, Field, TextArea } from "@/shared/ui";
 import { ACTION_LABEL, OVERVIEW_KEY, SITE_KEY, siteApi, sizeText, useChanges, whenText, type Change, type Changes, type Diff, type History, type Job, type Overview, type Published } from "./api";
+import { watchJob } from "@/app/Pomelo";
 
 const rowClass = "flex w-full items-baseline gap-3 border-b px-4 py-2.5 text-left text-sm last:border-b-0";
 
@@ -132,6 +133,10 @@ function PublishDialog(props: { changes: Changes; onClose: () => void; onStarted
     setSending(true);
     try {
       props.onStarted(await siteApi.publish(message, token));
+      // the pomelo says it if it fails after this page is left
+      watchJob("site", () =>
+        siteApi.overview().then((o) => (!o.job || o.job.state === "running" ? null : o.job.state === "failed" ? `${o.job.step === "deploy" ? "网站没上线" : "发布没成功"}：${o.job.error ?? "看呦呦漫游的发布页"}` : "")),
+      );
     } catch (err) {
       setError(errorText(err));
       setSending(false);

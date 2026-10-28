@@ -967,7 +967,11 @@ pub(crate) fn access_for(app: &AppHandle, route: &Route) -> Option<(data::Access
     let st = app.state::<AppState>();
     let (hidden, today, made) = st.with_db(|c| Ok((data::hidden(c), crate::modules::todo::today(c)?, data::made(c)))).ok()?;
     let keys: Vec<String> = made.iter().map(|m| m.key.clone()).collect();
-    let allowed = st.picky.with_db(|c| Ok(data::cloud_allowed(c, &keys))).ok()?;
+    let mut allowed = st.picky.with_db(|c| Ok(data::cloud_allowed(c, &keys))).ok()?;
+    // Seeker and Rater go to the cloud only when Seeker allows it
+    if st.picky.with_db(|c| super::assistants::seeker::cloud_allowed(c)).unwrap_or(false) {
+        allowed.push(data::SEEKER.into());
+    }
     Some((data::Access { hidden, cloud: route.model.starts_with("cloud:"), cloud_allowed: allowed, made }, today))
 }
 
@@ -981,6 +985,9 @@ pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: St
     if read_only {
         offered.retain(|s| !s.writes);
     }
+    // 「Seeker 资料」: not when both Seeker and Rater are hidden; the 题库 SKILLs not when Rater is
+    offered.retain(|s| s.key != skills::SEEKER || [data::SEEKER, data::RATER].iter().any(|m| !access.hidden.iter().any(|h| h == m)));
+    offered.retain(|s| skills::qbank::category(s.tool).is_none() || !access.hidden.iter().any(|h| h == data::RATER));
     let reads_files = offered.iter().any(|s| s.key == skills::FILES);
     let mut tools = data::tools(&access);
     tools.extend(extra);
@@ -1204,6 +1211,19 @@ impl Host for AppHost<'_> {
                 a
             }
             name if act::is_act(name) => self.propose(call).await,
+            name if skills::qbank::category(name).is_some() => {
+                let a = skills::qbank::run(self.app, &self.access, self.shared.run_id, name, &call.arguments).await;
+                if let Ok(Some(card)) = self.app.state::<AppState>().picky.with_db(|c| act::card_of(c, self.shared.run_id)) {
+                    let _ = self.shared.channel.send(StreamEvent::Card { card });
+                }
+                a
+            }
+            skills::SEEKER_TOOL => self
+                .app
+                .state::<AppState>()
+                .picky
+                .with_db(|c| Ok(skills::seeker::run(c, self.app.state::<AppState>().picky.mode, &self.access, &call.arguments, budget)))
+                .unwrap_or_else(|e| data::Answer { module: None, label: "Seeker 资料 · 没读成".into(), state: "failed", text: format!("没读成：{e}"), records: vec![] }),
             name if skills::is_tool(name) => {
                 let before = self.sources.0.len();
                 let a = skills::run(self.app, &mut self.sources, name, &call.arguments, budget).await;
@@ -1241,7 +1261,7 @@ impl Host for AppHost<'_> {
 #[allow(clippy::too_many_arguments)]
 async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], forced: &[String], question: &str, cost: i64, counter: &Counter, request: &Request, mut messages: Vec<Msg>, window: i64, mut used: i64) -> Result<(), String> {
     let (mut round, mut position) = (0usize, 0usize);
-    let writes: Vec<serde_json::Value> = tools.iter().filter(|t| t["function"]["name"].as_str().is_some_and(|n| act::is_act(n) || skills::toolbox::is_tool(n))).cloned().collect();
+    let writes: Vec<serde_json::Value> = tools.iter().filter(|t| t["function"]["name"].as_str().is_some_and(|n| act::is_act(n) || skills::toolbox::is_tool(n) || skills::qbank::category(n).is_some())).cloned().collect();
     // 联网 asked for: the question searched first, the results after it
     if forced.iter().any(|f| f == skills::WEB_TOOL) {
         let q: String = question.trim().chars().take(300).collect();
@@ -1963,6 +1983,12 @@ pub(crate) mod tests {
                 cite::READ => cite::read_with(&self.access, &self.sources, &call.arguments, budget, |_, kind, id| {
                     data::record_text(&self.pomelo, data::tests::TODAY, &data::PageRef { kind: kind.into(), id }).map(|(_, t, _)| t)
                 }),
+                // the SKILL itself is tested in rater/qbank.rs: here what the conversation asked for, as if carded
+                name if skills::qbank::category(name).is_some() => data::Answer { module: Some(data::RATER.into()), label: format!("题库 · {}（测试）", skills::qbank::category(name).unwrap_or_default()), state: "ok", text: format!("已放进确认卡片（测试，没真的出题）：{}。回答里简单说出了哪些、请用户在卡片里确认。", call.arguments), records: vec![] },
+                skills::SEEKER_TOOL => match &self.picky {
+                    Some(p) => skills::seeker::run(p, crate::picky::Mode::Mock, &self.access, &call.arguments, budget),
+                    None => data::Answer { module: None, label: "Seeker 资料 · 没有".into(), state: "failed", text: "没有资料".into(), records: vec![] },
+                },
                 // POMELO_REAL_WEB=1: real book / film lookups (web search stays mocked)
                 name if skills::is_tool(name) => {
                     let reach = skills::works::Reach { tmdb: std::env::var("POMELO_TMDB_TOKEN").ok(), contact: std::env::var("POMELO_CONTACT").ok() };
@@ -2657,7 +2683,8 @@ pub(crate) mod tests {
         let pomelo = crate::db::tests::memory_db();
         let mut h = TestHost::new(pomelo, data::Access::default());
         h.greedy = true;
-        ask(&mut h, "随便").unwrap();
+        // room for every round (the limit is what's tested, not the window)
+        ask_in(&mut h, "随便", context::MOCK_WINDOW * 2).unwrap();
         assert_eq!(h.requests.len(), data::MAX_ROUNDS + 2);
         assert!(h.requests[..data::MAX_ROUNDS].iter().all(|(_, o)| !o.no_calls && !o.tools.is_empty()));
         // each round's reasoning blocks go back with its calls (OpenRouter: Gemini's thought signatures)
@@ -2667,7 +2694,7 @@ pub(crate) mod tests {
         // turned away), then the answer
         let last_call = &h.requests[data::MAX_ROUNDS].1;
         let names: Vec<&str> = last_call.tools.iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
-        assert!(!last_call.no_calls && names.iter().all(|n| act::is_act(n) || skills::toolbox::is_tool(n)) && names.contains(&skills::toolbox::WORD_TOOL), "{names:?}");
+        assert!(!last_call.no_calls && names.iter().all(|n| act::is_act(n) || skills::toolbox::is_tool(n) || skills::qbank::category(n).is_some()) && names.contains(&skills::toolbox::WORD_TOOL), "{names:?}");
         assert!(h.requests[data::MAX_ROUNDS + 1].1.no_calls);
         let rec = h.recorded.borrow();
         assert_eq!(rec.iter().map(|r| r.0).collect::<Vec<_>>(), [0, 1, 2, 3, 4]);

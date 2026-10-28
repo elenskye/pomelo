@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { ChartPie, Landmark, ReceiptText, type LucideIcon } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { useSubPage } from "@/app/subpage";
 import { useOpenRequest, type Hit } from "@/shared/open";
 import { PageHeader } from "@/shared/ui";
 import { AssetsView } from "./AssetsView";
@@ -17,7 +18,7 @@ const VIEWS: { id: View; label: string; icon: LucideIcon }[] = [
 
 export default function FinancePage() {
   const m = moduleById("finance");
-  const [view, setView] = useState<View>("entries");
+  const [view, setView] = useSubPage<View>("finance");
   // 全局搜索: switch to the view that has it; the view opens the record
   const [focus, setFocus] = useState<Hit | null>(null);
   useOpenRequest((h) => {

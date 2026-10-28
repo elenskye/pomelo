@@ -1391,7 +1391,7 @@ pub fn edit_docx(data: &[u8], edits: &[(usize, String)]) -> Result<Vec<u8>, Stri
 
 // ---------- Seeker: a resume from the user's template ----------
 
-/// The template's paragraphs (None: an empty one, not to be chosen). Only plain paragraphs: a table,
+/// The template's paragraphs (None: a blank one, only for the blank line). Only plain paragraphs: a table,
 /// content control, field, text box, image or section break in the body is refused.
 pub fn resume_template_items(data: &[u8]) -> Result<Vec<Option<String>>, String> {
     let doc = read_docx(data)?;
@@ -1503,26 +1503,65 @@ fn styled(look: &Look, text: &str) -> String {
     format!("<w:p>{}{runs}</w:p>", look.ppr)
 }
 
+/// The package's relationships without its thumbnail (a picture of the template's first page that
+/// Finder and Quick Look would show instead of the resume), and the thumbnail's part name.
+fn without_thumbnail(rels: &str) -> (String, Option<String>) {
+    let (mut out, mut part, mut rest) = (String::new(), None, rels);
+    while let Some(i) = rest.find("<Relationship ") {
+        out.push_str(&rest[..i]);
+        let close = rest[i..].find('>').map_or(rest.len(), |e| i + e + 1);
+        let end = if rest[..close].ends_with("/>") { close } else { rest[i..].find("</Relationship>").map_or(close, |e| i + e + "</Relationship>".len()) };
+        let element = &rest[i..end];
+        if element.contains("/metadata/thumbnail\"") {
+            part = element.split("Target=\"").nth(1).and_then(|t| t.split('"').next()).map(|t| t.trim_start_matches('/').to_string());
+        } else {
+            out.push_str(element);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    (out, part)
+}
+
 /// The template with its body replaced by `lines` (template paragraph, text), each written like
-/// that paragraph; page setup, styles, numbering, headers and every other part stay as they are.
+/// that paragraph; page setup, styles, numbering, headers and every other part stay as they are
+/// (only the template's thumbnail goes).
 pub fn resume_from_template(data: &[u8], lines: &[(usize, String)]) -> Result<Vec<u8>, String> {
     resume_template_items(data)?;
     let doc = read_docx(data)?;
     let mut body = String::new();
     for (index, text) in lines {
-        let item = doc.items.get(*index).filter(|p| !p.plain.trim().is_empty()).ok_or("模板刚刚改过，请重新选择")?;
+        let item = doc.items.get(*index).ok_or("模板刚刚改过，请重新选择")?;
+        if item.plain.trim().is_empty() {
+            // a blank line: that paragraph again (its properties and spaces, nothing else of it)
+            if !text.is_empty() || item.is_table() {
+                return Err("模板刚刚改过，请重新选择".into());
+            }
+            let ppr = item.ppr.map_or("", |(a, b)| &doc.xml[a..b]);
+            let rpr = item.runs.first().and_then(|r| r.rpr).map_or("", |(a, b)| &doc.xml[a..b]);
+            body.push_str(&format!("<w:p>{ppr}{}</w:p>", text_run(rpr, &item.plain)));
+            continue;
+        }
         body.push_str(&styled(&look(&doc, item), text));
     }
     let (first, last) = (doc.items.first().ok_or("模板里没有文字")?, doc.items.last().ok_or("模板里没有文字")?);
     let mut xml = doc.xml.clone();
     xml.replace_range(first.range.0..last.range.1, &body);
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|_| bad())?;
+    let rels = {
+        let mut text = String::new();
+        zip.by_name("_rels/.rels").ok().map(|mut f| f.read_to_string(&mut text)).transpose().map_err(|_| bad())?;
+        without_thumbnail(&text)
+    };
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let name = zip.name_for_index(i).ok_or_else(bad)?.map_err(|_| bad())?.to_string();
-        if name == DOCUMENT {
-            writer.start_file(name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).map_err(|e| e.to_string())?;
-            writer.write_all(xml.as_bytes()).map_err(|e| e.to_string())?;
+        if rels.1.as_deref() == Some(name.as_str()) {
+            continue;
+        }
+        if name == DOCUMENT || (name == "_rels/.rels" && rels.1.is_some()) {
+            writer.start_file(name.as_str(), zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).map_err(|e| e.to_string())?;
+            writer.write_all(if name == DOCUMENT { xml.as_bytes() } else { rels.0.as_bytes() }).map_err(|e| e.to_string())?;
         } else {
             writer.raw_copy_file(zip.by_index_raw(i).map_err(|_| bad())?).map_err(|e| e.to_string())?;
         }
@@ -1726,14 +1765,34 @@ pub mod tests {
     }
 
     /// A one-page resume template like the user's (fictional placeholders): centred name, contact
-    /// line, ruled section title, 教育抬头 with a right tab, grey note, bullet with a bold 小标题,
-    /// 经历抬头 with three tab stops (time and name bold), a body-level bookmark, page setup.
+    /// line (「  ·  」), a second one for links, ruled section title, 教育抬头 with a right tab, grey
+    /// note, bullet with a bold 小标题, 经历抬头 with three tab stops (time and name bold), a body-level
+    /// bookmark, page setup, and a thumbnail of the template (dropped from the resume).
     pub fn resume_template_docx() -> Vec<u8> {
         let numbering = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering {W}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#);
         let bold = "<w:rPr><w:b/></w:rPr>";
         let tab = "<w:r><w:tab/></w:r>";
         let document = format!(
-            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="36"/></w:rPr><w:t>[姓名]</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:color w:val="555555"/></w:rPr><w:t>[联系电话] · [电子邮箱] · [所在城市]</w:t></w:r></w:p><w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r>{bold}<w:t>教育背景</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="10466"/></w:tabs></w:pPr><w:r>{bold}<w:t>[学校名称] · [专业名称]</w:t></w:r>{tab}<w:r><w:t>20XX.XX - 20XX.XX</w:t></w:r></w:p><w:p><w:r><w:rPr><w:color w:val="777777"/></w:rPr><w:t>[学历或学位] · [学院名称]；[主修课程]</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r>{bold}<w:t>编程开发：</w:t></w:r><w:r><w:t>[技术一]、[技术二]</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="3000"/><w:tab w:val="left" w:pos="6500"/><w:tab w:val="right" w:pos="10466"/></w:tabs></w:pPr><w:r>{bold}<w:t>20XX.XX - 20XX.XX</w:t></w:r>{tab}<w:r>{bold}<w:t>[项目名称]</w:t></w:r>{tab}<w:r><w:t>[本人角色]</w:t></w:r>{tab}<w:r><w:t>[地点]</w:t></w:r></w:p><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>"#
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="36"/></w:rPr><w:t>[姓名]</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:color w:val="555555"/></w:rPr><w:t>[联系电话]  ·  [电子邮箱]  ·  [所在城市]</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="60"/></w:pPr><w:r><w:rPr><w:color w:val="555555"/></w:rPr><w:t>GitHub：[主页地址]</w:t></w:r></w:p><w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r>{bold}<w:t>教育背景</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="10466"/></w:tabs></w:pPr><w:r>{bold}<w:t>[学校名称] · [专业名称]</w:t></w:r>{tab}<w:r><w:t>20XX.XX - 20XX.XX</w:t></w:r></w:p><w:p><w:r><w:rPr><w:color w:val="777777"/></w:rPr><w:t>[学历或学位] · [学院名称]；[主修课程]</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r>{bold}<w:t>编程开发：</w:t></w:r><w:r><w:t>[技术一]、[技术二]</w:t></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="3000"/><w:tab w:val="left" w:pos="6500"/><w:tab w:val="right" w:pos="10466"/></w:tabs></w:pPr><w:r>{bold}<w:t>20XX.XX - 20XX.XX</w:t></w:r>{tab}<w:r>{bold}<w:t>[项目名称]</w:t></w:r>{tab}<w:r><w:t>[本人角色]</w:t></w:r>{tab}<w:r><w:t>[地点]</w:t></w:r></w:p><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:bookmarkEnd w:id="0"/><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>"#
+        );
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        let rels = RELS.replace("</Relationships>", r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail" Target="docProps/thumbnail.jpeg"/></Relationships>"#);
+        for (name, text) in [("[Content_Types].xml", CONTENT_TYPES), ("_rels/.rels", rels.as_str()), ("word/document.xml", document.as_str()), ("word/numbering.xml", numbering.as_str()), ("docProps/thumbnail.jpeg", "not really a jpeg")] {
+            w.start_file(name, opts).unwrap();
+            w.write_all(text.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    /// An English resume template like the user's finished one (fictional text): name in caps, one
+    /// contact line, ruled caps section title, the summary, a blank paragraph, list bullets (numbering,
+    /// no typed bullet), 经历抬头 「role ⇥ dates」 (bold, right tab) and its plain second line.
+    pub fn resume_template_en_docx() -> Vec<u8> {
+        let numbering = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering {W}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl></w:abstractNum><w:num w:numId="2"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#);
+        let spacing = r#"<w:spacing w:line="236" w:lineRule="atLeast"/>"#;
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:caps/><w:sz w:val="36"/></w:rPr><w:t>[YOUR NAME]</w:t></w:r></w:p><w:p><w:pPr>{spacing}<w:jc w:val="center"/></w:pPr><w:r><w:t>[City] · [email] · [phone] · github.com/[you]</w:t></w:r></w:p><w:p><w:pPr><w:keepNext/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="0" w:color="000000"/></w:pBdr>{spacing}</w:pPr><w:r><w:rPr><w:b/><w:caps/></w:rPr><w:t>profile summary</w:t></w:r></w:p><w:p><w:pPr>{spacing}</w:pPr><w:r><w:t>[Student who builds things.]</w:t></w:r></w:p><w:p><w:pPr>{spacing}</w:pPr><w:r><w:rPr><w:rFonts w:eastAsia="Times New Roman"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r></w:p><w:p><w:pPr><w:keepNext/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr>{spacing}<w:ind w:left="330" w:hanging="304"/></w:pPr><w:r><w:t>[Area]: [skill], [skill]</w:t></w:r></w:p><w:p><w:pPr><w:keepNext/><w:tabs><w:tab w:val="right" w:pos="10770"/></w:tabs>{spacing}</w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>[Role]</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:tab/><w:t>[Mon YYYY - Mon YYYY]</w:t></w:r></w:p><w:p><w:pPr><w:keepNext/>{spacing}</w:pPr><w:r><w:t>[Product]: [what it is]</w:t></w:r></w:p><w:p/><w:sectPr><w:pgSz w:w="12225" w:h="15810"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>"#
         );
         let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let opts = zip::write::SimpleFileOptions::default();
@@ -1745,40 +1804,62 @@ pub mod tests {
     }
 
     #[test]
+    fn an_english_resume_keeps_the_list_numbering_and_copies_the_blank_line() {
+        let data = resume_template_en_docx();
+        let items = resume_template_items(&data).unwrap();
+        assert_eq!((items.len(), items[4].as_deref(), items[6].as_deref()), (9, None, Some("[Role]\t[Mon YYYY - Mon YYYY]")));
+        let lines: Vec<(usize, String)> = [(0, "LIN XIAOYOU"), (1, "Shanghai · a@example.com"), (2, "Profile Summary"), (3, "Data student."), (4, ""), (2, "Skills"), (5, "**Programming**: Python"), (5, "Plain line"), (4, ""), (6, "Sole Developer\tMar 2026 - Present"), (7, "Pomelo Notes: Notes Tool")].into_iter().map(|(i, t)| (i, t.to_string())).collect();
+        let out = resume_from_template(&data, &lines).unwrap();
+        let doc = read_docx(&out).unwrap();
+        let shown: Vec<&str> = doc.items.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(shown, ["**LIN XIAOYOU**", "Shanghai · a@example.com", "**Profile Summary**", "Data student.", " ", "**Skills**", "- **Programming**: Python", "- Plain line", " ", "**Sole Developer\tMar 2026 - Present**", "Pomelo Notes: Notes Tool"]);
+        // the blank line is that paragraph again: its properties and its space, nothing else
+        assert!(doc.xml.contains(r#"<w:p><w:pPr><w:spacing w:line="236" w:lineRule="atLeast"/></w:pPr><w:r><w:rPr><w:rFonts w:eastAsia="Times New Roman"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r></w:p>"#));
+        assert_eq!(doc.xml.matches(r#"<w:numId w:val="2"/>"#).count(), 2);
+        // text on a blank paragraph, or a blank line on one with text, is refused
+        assert!(resume_from_template(&data, &[(4, "x".into())]).is_err());
+        assert!(resume_from_template(&data, &[(8, String::new())]).is_ok());
+    }
+
+    #[test]
     fn a_resume_takes_each_template_paragraph_its_tab_stops_and_column_looks() {
         let data = resume_template_docx();
         let items = resume_template_items(&data).unwrap();
-        assert_eq!(items.len(), 8);
-        assert_eq!(items[3].as_deref(), Some("[学校名称] · [专业名称]\t20XX.XX - 20XX.XX"));
-        assert_eq!(items[7], None);
+        assert_eq!(items.len(), 9);
+        assert_eq!(items[4].as_deref(), Some("[学校名称] · [专业名称]\t20XX.XX - 20XX.XX"));
+        assert_eq!(items[8], None);
         let lines: Vec<(usize, String)> = [
             (0, "张三"),
-            (1, "a@example.com · 138 0000 0000"),
-            (2, "教育背景"),
-            (3, "示例大学 · 计算机\t2022.09 - 2026.06"),
-            (4, "本科；主修课程：数据结构"),
-            (5, "**编程开发**：Python、Rust"),
-            (5, "没有小标题 & <一条>"),
-            (6, "2025.01 - 至今\t示例项目\t独立开发\t北京"),
-            (6, "2024.07 - 2024.08\t示例公司\t\t"),
+            (1, "a@example.com  ·  138 0000 0000"),
+            (2, "个人网站：https://example.com"),
+            (3, "教育背景"),
+            (4, "示例大学 · 计算机\t2022.09 - 2026.06"),
+            (5, "本科；主修课程：数据结构"),
+            (6, "**编程开发**：Python、Rust"),
+            (6, "没有小标题 & <一条>"),
+            (7, "2025.01 - 至今\t示例项目\t独立开发\t北京"),
+            (7, "2024.07 - 2024.08\t示例公司\t\t"),
         ]
         .into_iter()
         .map(|(i, t)| (i, t.to_string()))
         .collect();
         let out = resume_from_template(&data, &lines).unwrap();
         let shown: Vec<String> = read_docx(&out).unwrap().items.into_iter().map(|i| i.text).collect();
-        assert_eq!(shown, ["**张三**", "a@example.com · 138 0000 0000", "**教育背景**", "**示例大学 · 计算机\t**2022.09 - 2026.06", "本科；主修课程：数据结构", "- **编程开发**：Python、Rust", "- 没有小标题 & <一条>", "**2025.01 - 至今\t示例项目\t**独立开发\t北京", "**2024.07 - 2024.08\t示例公司\t\t**"]);
+        assert_eq!(shown, ["**张三**", "a@example.com  ·  138 0000 0000", "个人网站：https://example.com", "**教育背景**", "**示例大学 · 计算机\t**2022.09 - 2026.06", "本科；主修课程：数据结构", "- **编程开发**：Python、Rust", "- 没有小标题 & <一条>", "**2025.01 - 至今\t示例项目\t**独立开发\t北京", "**2024.07 - 2024.08\t示例公司\t\t**"]);
         // (a tab has no look of its own: the bold marks read across it)
         let xml = document_xml(&out).unwrap();
         for kept in [r#"<w:jc w:val="center"/>"#, "<w:pBdr>", r#"<w:tab w:val="left" w:pos="6500"/>"#, r#"<w:color w:val="777777"/>"#, r#"<w:numId w:val="1"/>"#, r#"<w:pgSz w:w="11906""#, r#"<w:sz w:val="36"/>"#] {
             assert!(xml.contains(kept), "{kept}");
         }
         assert!(!xml.contains("[项目名称]") && !xml.contains("_GoBack"));
-        // the numbering part comes along untouched
+        // the numbering part comes along untouched; the template's thumbnail and its relationship go
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
-        assert!(z.by_name("word/numbering.xml").is_ok());
+        assert!(z.by_name("word/numbering.xml").is_ok() && z.by_name("docProps/thumbnail.jpeg").is_err());
+        let mut rels = String::new();
+        z.by_name("_rels/.rels").unwrap().read_to_string(&mut rels).unwrap();
+        assert!(!rels.contains("thumbnail") && rels.contains("word/document.xml"), "{rels}");
         // a paragraph not in the template (any more)
-        assert!(resume_from_template(&data, &[(7, "x".into())]).is_err());
+        assert!(resume_from_template(&data, &[(8, "x".into())]).is_err());
         // tables, fields: refused
         assert!(resume_template_items(&sample_docx()).unwrap_err().contains("表格"));
     }

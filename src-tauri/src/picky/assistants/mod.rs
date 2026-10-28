@@ -7,6 +7,7 @@
 //! - Seeker keeps its workspace in its own picky.db tables, with undo and data-file export.
 
 pub mod pub2md;
+pub mod rater;
 pub mod seeker;
 pub mod site;
 pub mod translate;

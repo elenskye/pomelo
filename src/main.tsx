@@ -18,6 +18,9 @@ import ProgressPage from "@/modules/custom/ProgressPage";
 import VaultPage from "@/modules/vault/VaultPage";
 // 小拾 brings Markdown / highlighting / formulas: loaded when first opened
 const PickyPage = lazy(() => import("@/modules/picky/PickyPage"));
+// 小拾's 助手 as modules (v0.7)
+const AssistantModule = lazy(() => import("@/modules/picky/assistants"));
+import DockPage from "@/app/DockPage";
 import TodoPage from "@/modules/todo/TodoPage";
 import SettingsPage from "@/settings/SettingsPage";
 import { ToastProvider } from "@/shared/feedback";
@@ -46,15 +49,20 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="films" element={<FilmsPage />} />
             <Route path="drawing" element={<DrawingPage />} />
             <Route path="packing" element={<PackingPage />} />
-            <Route path="finance" element={<FinancePage />} />
-            <Route path="jobs" element={<JobsPage />} />
+            <Route path="finance/:sub?" element={<FinancePage />} />
+            <Route path="jobs/:sub?" element={<JobsPage />} />
             <Route path="notes" element={<NotesPage />} />
             <Route path="days" element={<DaysPage />} />
-            <Route path="site" element={<SitePage />} />
+            <Route path="site/:sub?" element={<SitePage />} />
             <Route path="list/:id" element={<ListPage />} />
             <Route path="progress/:id" element={<ProgressPage />} />
             <Route path="vault" element={<VaultPage />} />
             <Route path="picky" element={<Suspense fallback={null}><PickyPage /></Suspense>} />
+            <Route path="translate/:sub?" element={<Suspense fallback={null}><AssistantModule which="translate" /></Suspense>} />
+            <Route path="pub2md/:sub?" element={<Suspense fallback={null}><AssistantModule which="pub2md" /></Suspense>} />
+            <Route path="seeker/:sub?" element={<Suspense fallback={null}><AssistantModule which="seeker" /></Suspense>} />
+            <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
+            <Route path="dock" element={<DockPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

@@ -55,7 +55,6 @@ import { AttachmentLibrary, FileChip, FilesButton, ProjectFiles, WebDialog, open
 import { InstructionsButton, NO_SETTING } from "./Instructions";
 import { KnowledgeButton, KnowledgeDialog, useKnowledge } from "./Knowledge";
 import { ManageDialog, type ManageTab } from "./Manage";
-import { AssistantPage } from "./assistants";
 import { PluginsDialog, SkillChips, useAskedSkills } from "./Plugins";
 import { SchedulesDialog } from "./Schedules";
 import { MemoryButton, RememberDialog } from "./Memory";
@@ -64,13 +63,13 @@ import { IssueNotice, ModelMenu } from "./ModelMenu";
 import { ThinkingButton, useThinking } from "./Thinking";
 import { Transcript, type TranscriptHandle } from "./Transcript";
 import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "./useChat";
+import { useTabs } from "@/app/tabs";
 
 const asMessageFile = (f: FileInfo, label: string | null = null, fileId: number | null = null): MessageFile => ({ ...f, fileId, version: null, label });
 const EMPTY_QUESTION = "请总结这些附件。";
 
 const MESSAGES = messagesKey;
 const LAST = "ui.session";
-const ASSISTANT = "ui.assistant";
 const COLLAPSED = "ui.list_collapsed";
 
 export default function PickyPage() {
@@ -79,8 +78,7 @@ export default function PickyPage() {
   const status = usePickyStatus().data;
   const library = useLibrary();
   const [sessionId, setSessionId] = useState<number | null | undefined>(undefined); // undefined = not chosen yet
-  /** The 助手 whose page is open (instead of a conversation). */
-  const [assistant, setAssistant] = useState<string | null>(null);
+  const tabs = useTabs();
   /** A draft started inside a project. */
   const [draftProject, setDraftProject] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
@@ -129,10 +127,6 @@ export default function PickyPage() {
       .uiGet<number>(LAST)
       .catch(() => null)
       .then((last) => setSessionId(list.some((s) => s.id === last) ? last : (newest?.id ?? null)));
-    pickyApi
-      .uiGet<string>(ASSISTANT)
-      .catch(() => null)
-      .then((a) => setAssistant(typeof a === "string" ? a : null));
   }, [sessionId, lib]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = sessionId ?? null;
@@ -150,11 +144,6 @@ export default function PickyPage() {
     setSessionId(id);
     setDraftProject(null);
     if (id != null) pickyApi.uiSet(LAST, id).catch(() => {});
-    openAssistant(null);
-  };
-  const openAssistant = (key: string | null) => {
-    setAssistant(key);
-    pickyApi.uiSet(ASSISTANT, key).catch(() => {});
   };
   const { live, busyHere, run, shownWith, writing } = useLiveReply({ current, status, onSent: open, onStart: () => transcript.current?.toBottom() });
   const activeHere = activeIn(status, current);
@@ -420,7 +409,7 @@ export default function PickyPage() {
             <IconButton label={collapsed ? "展开对话列表" : "收起对话列表"} onClick={() => setCollapsed(!collapsed)}>
               <ListToggle size={16} strokeWidth={1.5} />
             </IconButton>
-            <Button disabled={!assistant && current == null && draftProject == null && !live} onClick={() => newChat()}>
+            <Button disabled={current == null && draftProject == null && !live} onClick={() => newChat()}>
               <SquarePen size={14} strokeWidth={1.5} /> 新对话
             </Button>
             {status && !status.error && <ModelMenu status={status} />}
@@ -440,9 +429,9 @@ export default function PickyPage() {
               lib && (
                 <ConversationList
                   library={lib}
-                  current={assistant ? null : current}
-                  assistant={assistant}
-                  onAssistant={openAssistant}
+                  current={current}
+                  assistant={null}
+                  onAssistant={(key) => tabs.open(`/${key}`)}
                   generating={writing}
                   onOpen={open}
                   onNewInProject={(p) => newChat(p)}
@@ -455,9 +444,6 @@ export default function PickyPage() {
                 />
               )
             ))}
-          {assistant ? (
-            <AssistantPage which={assistant} />
-          ) : (
             <div className="flex min-w-0 flex-1 flex-col pr-0">
               <Transcript
                 ref={transcript}
@@ -652,7 +638,6 @@ export default function PickyPage() {
                 </div>
               </div>
             </div>
-          )}
         </div>
       )}
       {plugins && <PluginsDialog onClose={() => setPlugins(false)} />}

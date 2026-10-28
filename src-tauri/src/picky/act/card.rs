@@ -2,12 +2,17 @@
 //! words fit several records keeps them all (`options`) until one is picked. Confirming writes the
 //! ticked items in one undoable step and records what got written (and an edited record's
 //! fingerprint before, to tell 已撤销 later); cancelling writes nothing. Each card is decided once.
+//! Rater's questions (the 题库 SKILLs, skills/qbank.rs; v0.7 阶段 ⑤) are items too: their input is the
+//! question; confirming writes them into picky.db as their own undo step (a card with both writes
+//! Pomelo's first, then Rater's); 已撤销 = the question is gone.
 
 use super::ops::{self, Op, Written};
 use super::{act, label_of, Field, Proposal};
 use crate::modules::common::{err, Tx};
 use crate::modules::todo;
+use crate::picky::assistants::rater::{self, Question};
 use crate::picky::data;
+use crate::picky::skills::qbank;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -86,6 +91,26 @@ pub fn add(conn: &Connection, run_id: i64, p: &Proposal) -> Result<usize, String
     Ok(n as usize + 1)
 }
 
+/// Adds one of Rater's questions (new, or with its new answer) to the reply's card; its 1-based number.
+pub fn add_rater(conn: &Connection, run_id: i64, tool: &str, title: &str, fields: &[Field], question: &Question) -> Result<usize, String> {
+    qbank::category(tool).ok_or("没有这个工具")?;
+    let tx = Tx::begin(conn)?;
+    tx.execute("INSERT OR IGNORE INTO cards (run_id) VALUES (?1)", [run_id]).map_err(err)?;
+    let n: i64 = tx.query_row("SELECT count(*) FROM card_items WHERE run_id = ?1", [run_id], |r| r.get(0)).map_err(err)?;
+    tx.execute("INSERT INTO card_items (run_id, position, tool, module, title, fields, input) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![run_id, n, tool, data::RATER, title, json(&fields)?, json(question)?]).map_err(err)?;
+    tx.commit()?;
+    Ok(n as usize + 1)
+}
+
+/// 「新简历题」 / 「改答案」
+fn rater_label(input: &str) -> String {
+    match serde_json::from_str::<Question>(input) {
+        Ok(q) if q.revision > 0 => "改答案".into(),
+        Ok(q) => format!("新{}", q.category),
+        Err(_) => "题目".into(),
+    }
+}
+
 fn json<T: Serialize>(v: &T) -> Result<String, String> {
     serde_json::to_string(v).map_err(err)
 }
@@ -109,20 +134,26 @@ pub fn card_of(conn: &Connection, run_id: i64) -> Result<Option<Card>, String> {
         .into_iter()
         .map(|(position, tool, module, title, fields, checked, kind, id, parent, day, input, options, chosen, before)| {
             let written = match (kind, id) {
+                // a question of Rater's: gone when it isn't in the bank any more (picky.db, this conn)
+                (Some(kind), Some(id)) if kind == RATER_KIND => Some(Written { module: module.clone(), gone: !conn.query_row("SELECT 1 FROM rater_questions WHERE rowid = ?1", [id], |_| Ok(())).is_ok(), kind, id, parent, day, before }),
                 (Some(kind), Some(id)) => Some(Written { module: module.clone(), kind, id, parent, day, gone: false, before }),
                 _ => None,
             };
-            let op: Option<Op> = serde_json::from_str(&input).ok();
+            let label = if qbank::category(&tool).is_some() { rater_label(&input) } else { label_of(&tool, &module, serde_json::from_str::<Op>(&input).ok().as_ref()) };
             let options = options.and_then(|o| serde_json::from_str::<Vec<Stored>>(&o).ok()).map(|v| v.into_iter().map(|s| CardOption { title: s.title, fields: s.fields }).collect());
-            CardItem { position, label: label_of(&tool, &module, op.as_ref()), tool, module, title, fields: serde_json::from_str(&fields).unwrap_or_default(), options, chosen, checked, written }
+            CardItem { position, label, tool, module, title, fields: serde_json::from_str(&fields).unwrap_or_default(), options, chosen, checked, written }
         })
         .collect();
     Ok(Some(Card { run_id, state, items }))
 }
 
-/// Marks written records that are gone, or (edits) back to how they were (pomelo.db).
+/// What a written Rater question is (its `record_id` is the question's rowid in picky.db).
+pub const RATER_KIND: &str = "rater";
+
+/// Marks written records that are gone, or (edits) back to how they were (pomelo.db; Rater's
+/// questions are worked out in `card_of`).
 pub fn mark_gone(pomelo: &Connection, card: &mut Card) {
-    for w in card.items.iter_mut().filter_map(|it| it.written.as_mut()) {
+    for w in card.items.iter_mut().filter_map(|it| it.written.as_mut()).filter(|w| w.kind != RATER_KIND) {
         let now = ops::fingerprint(pomelo, &w.kind, w.id);
         w.gone = now.is_none() || (w.before.is_some() && now == w.before);
     }
@@ -143,12 +174,17 @@ pub fn confirm(st: &AppState, run_id: i64, picks: &[Pick]) -> Result<Card, Strin
         rows.collect::<Result<Vec<_>, _>>().map_err(err)
     })?;
     let hidden = st.with_db(|c| Ok(data::hidden(c)))?;
-    // (position, op, chosen option)
+    // (position, op, chosen option); Rater's questions apart
     let mut todo_list: Vec<(i64, Op, Option<(i64, Stored)>)> = vec![];
+    let mut questions: Vec<(i64, Question)> = vec![];
     for pick in picks {
         let (_, tool, module, input, options) = stored.iter().find(|x| x.0 == pick.position).ok_or("卡片里没有这一条")?;
         if hidden.contains(module) {
-            return Err(format!("{}已在侧栏里隐藏，不能记", data::MODULES.iter().find(|m| m.key == module).map_or("这个模块", |m| m.label)));
+            return Err(format!("{}已在模块坞里隐藏，不能记", data::MODULES.iter().find(|m| m.key == module).map_or(if module == data::RATER { "Rater" } else { "这个模块" }, |m| m.label)));
+        }
+        if qbank::category(tool).is_some() {
+            questions.push((pick.position, serde_json::from_str(input).map_err(err)?));
+            continue;
         }
         act(tool).ok_or("没有这个工具")?;
         match options {
@@ -168,7 +204,7 @@ pub fn confirm(st: &AppState, run_id: i64, picks: &[Pick]) -> Result<Card, Strin
         }
         many => format!("小拾：卡片里的 {} 条", many.len()),
     };
-    let written: Vec<Written> = st.with_undo(&label, |c| {
+    let written: Vec<Written> = if todo_list.is_empty() { vec![] } else { st.with_undo(&label, |c| {
         let today = todo::today(c)?;
         let tx = Tx::begin(c)?;
         let mut out = vec![];
@@ -180,7 +216,26 @@ pub fn confirm(st: &AppState, run_id: i64, picks: &[Pick]) -> Result<Card, Strin
         }
         tx.commit()?;
         Ok(out)
-    })?;
+    })? };
+    let rater_written: Vec<(i64, i64)> = if questions.is_empty() {
+        vec![]
+    } else {
+        let label = match questions.as_slice() {
+            [(_, q)] if q.revision > 0 => "小拾：改答案".to_string(),
+            [(_, q)] => format!("小拾：新{}", q.category),
+            many => format!("小拾：{} 道题", many.len()),
+        };
+        st.with_picky_undo(&label, |c| {
+            let tx = Tx::begin(c)?;
+            let mut out = vec![];
+            for (pos, q) in &questions {
+                rater::put(&tx, q)?;
+                out.push((*pos, tx.query_row("SELECT rowid FROM rater_questions WHERE id = ?1", [&q.id], |r| r.get(0)).map_err(err)?));
+            }
+            tx.commit()?;
+            Ok(out)
+        })?
+    };
     st.picky.with_db(|c| {
         let tx = Tx::begin(c)?;
         tx.execute(&format!("UPDATE cards SET state = 'confirmed', decided_at = {} WHERE run_id = ?1", crate::picky::store::NOW), [run_id]).map_err(err)?;
@@ -198,6 +253,9 @@ pub fn confirm(st: &AppState, run_id: i64, picks: &[Pick]) -> Result<Card, Strin
                 )
                 .map_err(err)?;
             }
+        }
+        for (pos, rowid) in &rater_written {
+            tx.execute("UPDATE card_items SET checked = 1, record_kind = ?3, record_id = ?4 WHERE run_id = ?1 AND position = ?2", params![run_id, pos, RATER_KIND, rowid]).map_err(err)?;
         }
         tx.commit()?;
         card_of(c, run_id)?.ok_or_else(|| "找不到这张卡片".to_string())

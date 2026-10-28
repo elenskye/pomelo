@@ -6,6 +6,8 @@
 //! - Only: 今天的待办、快到期的（3 天内）和过期的；今天该提醒的日子（提前提醒的那几天和当天）；该跟进
 //!   的投递、在笔试面试的；最近两周的笔记里常在想什么. Rust reads them first (data.rs `brief_parts`, each part capped) and sends them in one request
 //!   (thinking as set, with room for it). It writes nothing but the brief.
+//! - Its last line gives the day's mood (轻松 / 很忙 / 有好消息 / 有烦心事 → calm / busy / good / worry),
+//!   kept in `briefs.mood` (not in the text) for the pomelo's face in the top bar; none = by the hour.
 //! - Model as 定时任务 (schedule.rs `route`): a stopped local model is started and stopped after (only
 //!   when it started it and nothing else is using it); another running local model is used; cloud
 //!   rules (modules not sent to cloud are left out and named under the card; hidden ones quietly).
@@ -52,6 +54,25 @@ pub struct Brief {
     pub left_out: Vec<String>,
     /// While writing: starting (the local model) | writing.
     pub phase: Option<&'static str>,
+    /// calm | busy | good | worry (the last good brief's).
+    pub mood: Option<String>,
+}
+
+/// The mood line's words and keys.
+const MOODS: [(&str, &str); 4] = [("轻松", "calm"), ("很忙", "busy"), ("有好消息", "good"), ("有烦心事", "worry")];
+
+/// The text without its last 「心情：…」 line, and that mood (a line the model got wrong stays as text).
+pub fn split_mood(text: &str) -> (String, Option<&'static str>) {
+    let trimmed = text.trim_end();
+    let (head, last) = trimmed.rsplit_once('\n').unwrap_or(("", trimmed));
+    let line: String = last.chars().filter(|c| !matches!(c, '*' | '「' | '」' | ' ' | '　' | '。')).collect();
+    let Some(word) = line.strip_prefix("心情").map(|r| r.trim_start_matches(['：', ':'])) else {
+        return (trimmed.to_string(), None);
+    };
+    match MOODS.iter().find(|(w, _)| *w == word) {
+        Some((_, key)) => (head.trim_end().to_string(), Some(key)),
+        None => (trimmed.to_string(), None),
+    }
 }
 
 static WRITING: AtomicBool = AtomicBool::new(false);
@@ -84,12 +105,13 @@ pub fn set_settings(conn: &Connection, enabled: bool, model: Option<&str>, think
 /// Today's brief as the card shows it. A row left `writing` by a quit app reads as failed.
 pub fn get(conn: &Connection, day: &str) -> Result<Brief, String> {
     let (enabled, model, thinking) = settings(conn);
-    let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = conn
-        .query_row("SELECT content, state, error, model_name, left_out FROM briefs WHERE day = ?1", [day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+    type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>);
+    let row: Option<Row> = conn
+        .query_row("SELECT content, state, error, model_name, left_out, mood FROM briefs WHERE day = ?1", [day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
         .optional()
         .map_err(err)?;
-    let mut b = Brief { enabled, model, thinking, day: day.into(), content: String::new(), state: "none".into(), error: None, model_name: None, left_out: vec![], phase: None };
-    if let Some((content, state, error, model_name, left_out)) = row {
+    let mut b = Brief { enabled, model, thinking, day: day.into(), content: String::new(), state: "none".into(), error: None, model_name: None, left_out: vec![], phase: None, mood: None };
+    if let Some((content, state, error, model_name, left_out, mood)) = row {
         let stale = state == "writing" && !writing();
         b = Brief {
             content,
@@ -97,6 +119,7 @@ pub fn get(conn: &Connection, day: &str) -> Result<Brief, String> {
             error: if stale { Some("上次没写完。".into()) } else { error },
             model_name,
             left_out: left_out.and_then(|l| serde_json::from_str(&l).ok()).unwrap_or_default(),
+            mood,
             ..b
         };
     }
@@ -120,10 +143,11 @@ fn mark_writing(conn: &Connection, day: &str) -> Result<(), String> {
     .map_err(err)
 }
 
-fn save_done(conn: &Connection, day: &str, content: &str, model: &str, model_name: &str, left_out: &[&str]) -> Result<(), String> {
+fn save_done(conn: &Connection, day: &str, text: &str, model: &str, model_name: &str, left_out: &[&str]) -> Result<(), String> {
+    let (content, mood) = split_mood(text);
     conn.execute(
-        &format!("UPDATE briefs SET content = ?2, state = 'done', error = NULL, model = ?3, model_name = ?4, left_out = ?5, updated_at = {NOW} WHERE day = ?1"),
-        params![day, content, model, model_name, serde_json::to_string(left_out).map_err(err)?],
+        &format!("UPDATE briefs SET content = ?2, state = 'done', error = NULL, model = ?3, model_name = ?4, left_out = ?5, mood = ?6, updated_at = {NOW} WHERE day = ?1"),
+        params![day, content, model, model_name, serde_json::to_string(left_out).map_err(err)?, mood],
     )
     .map(|_| ())
     .map_err(err)
@@ -154,6 +178,7 @@ pub fn prompt(parts: &[Part], today: &str, instructions: &str) -> Vec<Msg> {
          - 根据下面读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。\n\
          - 只写这{}件事：{}。没给的就一个字都不要提（比如没给笔记，就不要说笔记）。\n\
          - 提到具体的事照抄它的名称；不要编，也不要建议用户去记录什么。\n\
+         - 最后单独一行写今天的心情，只能是这四个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事（看今天的事多不多、有没有好消息或烦心的事）。\n\
          - 用户的指令只管语气：{}",
         ["零", "一", "两", "三", "四"][topics.len().min(4)],
         if topics.is_empty() { "（没有可读的数据，就写一句今天没什么要提醒的）".to_string() } else { topics.join("；") },
@@ -202,7 +227,7 @@ async fn write(app: &AppHandle, day: &str) -> Result<(), String> {
         let instructions = p.with_db(|c| super::instructions::global(c)).unwrap_or_default();
         let max = if thinking { MAX_TOKENS + super::context::think_room(route.window) } else { MAX_TOKENS };
         let (text, _) = ask(&route.target, prompt(&parts, &today, &instructions), max, thinking).await?;
-        if text.is_empty() {
+        if split_mood(&text).0.is_empty() {
             return Err("模型没有写出内容。".to_string());
         }
         p.with_db(|c| save_done(c, day, &text, &route.model, &route.name, &left_out))
@@ -288,9 +313,10 @@ mod tests {
         let b = get(&c, "2026-10-15").unwrap();
         assert_eq!((b.state.as_str(), b.error.as_deref()), ("failed", Some("上次没写完。")));
         assert!(needs(&b, false));
-        save_done(&c, "2026-10-15", "今天有两件事。", "local:x", "X", &["投石问路"]).unwrap();
+        save_done(&c, "2026-10-15", "今天有两件事。\n\n**心情：很忙**", "local:x", "X", &["投石问路"]).unwrap();
         let b = get(&c, "2026-10-15").unwrap();
         assert_eq!((b.state.as_str(), b.left_out.clone()), ("done", vec!["投石问路".to_string()]));
+        assert_eq!((b.content.as_str(), b.mood.as_deref()), ("今天有两件事。", Some("busy")));
         assert!(!needs(&b, false) && needs(&b, true));
         // a rewrite that fails keeps the text
         mark_writing(&c, "2026-10-15").unwrap();
@@ -329,6 +355,18 @@ mod tests {
         // the mock model answers it
         let (text, _) = tauri::async_runtime::block_on(ask(&provider::Target::Mock { thinking: false }, msgs, MAX_TOKENS, true)).unwrap();
         assert!(text.contains("模拟简报"));
+        assert_eq!(split_mood(&text).1, Some("busy"));
+    }
+
+    #[test]
+    fn the_mood_line_comes_off_the_text() {
+        assert_eq!(split_mood("今天很空。\n心情：轻松"), ("今天很空。".into(), Some("calm")));
+        assert_eq!(split_mood("好消息！\n\n心情: 有好消息。\n"), ("好消息！".into(), Some("good")));
+        assert_eq!(split_mood("一堆事。\n「心情：有烦心事」"), ("一堆事。".into(), Some("worry")));
+        // no line, or a mood it doesn't know: the text stays whole
+        assert_eq!(split_mood("今天没什么。"), ("今天没什么。".into(), None));
+        assert_eq!(split_mood("还行。\n心情：一般"), ("还行。\n心情：一般".into(), None));
+        assert_eq!(split_mood("心情：很忙"), ("".into(), Some("busy")));
     }
 
     /// The real brief on the local model (ask first), on the import files, today = 2026-10-12 or

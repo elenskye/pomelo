@@ -320,7 +320,7 @@ function CloudDataRow() {
       (e) => toast(errorText(e), "error"),
     );
   return (
-    <Row label="发给云端" help="选云端模型时，小拾只查选中的模块，查到的内容会发给那家服务；没选中的只给本地模型。芝麻开门和侧栏里隐藏的模块，小拾都不读。">
+    <Row label="发给云端" help="选云端模型时，小拾只查选中的模块，查到的内容会发给那家服务；没选中的只给本地模型。芝麻开门和模块坞里隐藏的模块，小拾都不读。">
       <div className="flex flex-wrap gap-1.5">
         {list.map((m) => (
           <button

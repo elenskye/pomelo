@@ -1,6 +1,6 @@
 //! The one search entry (⌘K, conversation search, 念念不忘 and 小拾 use it from v0.4 phase 3):
 //! a question, a scope and a way.
-//! - Scope: the modules / kinds asked for (all when empty), minus modules hidden in 设置 → 侧栏,
+//! - Scope: the modules / kinds asked for (all when empty), minus modules hidden in the 模块坞,
 //!   minus — for an answer going to a cloud model — modules not allowed there (picky/data.rs).
 //!   芝麻开门 is never in the index.
 //! - Words: every word must appear (text.rs); best FTS5 rank first, then the newest.

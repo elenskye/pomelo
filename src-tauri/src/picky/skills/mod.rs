@@ -14,9 +14,15 @@
 //!   conversation's 知识库, knowledge.rs), on and automatic by default, offered only where there is
 //!   something to read (`Ctx`); chat.rs runs them (they need the question). Writing files is not a tool:
 //!   the user saves a reply as Word and confirms changes to a file (work.rs).
+//! - v0.7 阶段 ④: 「Seeker 资料」 (seeker.rs) reads Seeker and Rater; on and automatic by default, not
+//!   offered when both are hidden; chat.rs runs it with the answer's `Access` (cloud, hidden).
+//! - v0.7 阶段 ⑤: the three 题库 SKILLs (qbank.rs; 简历题 / 通用题 / 突击题) propose questions for Rater:
+//!   they write (a card), so never for 定时任务; not offered when Rater is hidden.
 //! - Not a tool, ever: starting / stopping models, 芝麻开门, import / export, backups (act/).
 
 pub mod files;
+pub mod qbank;
+pub mod seeker;
 pub mod toolbox;
 pub mod web;
 pub mod works;
@@ -43,6 +49,12 @@ pub const KB: &str = "kb";
 pub const KB_TOOL: &str = "pomelo_kb";
 pub const WORD: &str = "word";
 pub const TEXT: &str = "text";
+pub const SEEKER: &str = "seeker";
+pub const SEEKER_TOOL: &str = seeker::TOOL;
+pub const QBANK_RESUME: &str = "qbank_resume";
+pub const QBANK_GENERAL: &str = "qbank_general";
+pub const QBANK_JOB: &str = "qbank_job";
+const QBANK_DETAIL: &str = "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。";
 const PREF: &str = "skills";
 /// The contact Wikidata / Open Library get (the user sets it in the 插件库).
 const CONTACT: &str = "skills.contact";
@@ -127,6 +139,46 @@ pub const SKILLS: &[Skill] = &[
         tool: toolbox::WORD_TOOL,
         summary: "小拾觉得需要时自己用：改 Word 文件（文字，加粗、斜体、下划线，标题、列表，加段、删段），或者新建一个 Word。改的都放进确认卡片，你勾选后点「写入文件」才写；新建的你点「保存」才存。",
         detail: "只改这个问题的附件（从访达拖进来或点选的，改的是原文件）和知识库里的 Word 文件，不碰别的文件；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。",
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: SEEKER,
+        name: "Seeker 资料",
+        tool: seeker::TOOL,
+        summary: "小拾觉得需要时自己查你的求职资料：Seeker 的简历素材、现在的中英文简历草稿、确认过的版本、导出过的 Word，和 Rater 的面试题库、卡片练习的记录。只读，不改任何资料。",
+        detail: "停用（不发给模型）的素材不读；Seeker 的规则、档案、网申不读。用云端模型时，只有 Seeker 设置里「允许发给云端」开着才读（Rater 也照它）；Seeker 或 Rater 在模块坞里隐藏了就不读它。",
+        keys: &[],
+        auto: true,
+        writes: false,
+    },
+    Skill {
+        key: QBANK_RESUME,
+        name: "题库 · 简历题",
+        tool: qbank::RESUME_TOOL,
+        summary: "按简历上的经历出面试官会追问的题，配好口述稿答案；也能给已有的一道简历题重写答案。读选的经历（不说就是简历草稿里的）和挂着的经历档案。",
+        detail: QBANK_DETAIL,
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: QBANK_GENERAL,
+        name: "题库 · 通用题",
+        tool: qbank::GENERAL_TOOL,
+        summary: "出自我介绍、为什么投、优缺点、行为题、职业规划、反问这类通用题，配好口述稿答案；读基本信息、已确认事实和经历一览。",
+        detail: QBANK_DETAIL,
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: QBANK_JOB,
+        name: "题库 · 突击题",
+        tool: qbank::JOB_TOOL,
+        summary: "按投石问路里一个岗位的 JD 和公司资料出突击题，也把已有的简历题、通用题按这家公司改写（记着改自哪道，原题不动）。",
+        detail: QBANK_DETAIL,
         keys: &[],
         auto: true,
         writes: true,
@@ -236,6 +288,8 @@ pub fn tools(skills: &[&Skill]) -> Vec<Value> {
                 BOOKS => ("按书名查作者、国家、类型、出版年（Wikidata、Open Library）。补书的信息、核对推荐的书时用，一次可以查几本。", json!({ "titles": titles("书名（中文名或原名），最多 5 个"), "author": s("作者（知道的话，帮着分辨同名的书）") }), vec!["titles"]),
                 FILMS => ("按名称查电影、剧集、动漫的导演、国家、类型、年份（Wikidata、TMDb、Jikan）。补影视的信息、核对推荐的片子时用，一次可以查几部。", json!({ "titles": titles("名称（中文名或原名），最多 5 个"), "director": s("导演（知道的话）") }), vec!["titles"]),
                 FILES => return files::tool(),
+                SEEKER => return seeker::tool(),
+                QBANK_RESUME | QBANK_GENERAL | QBANK_JOB => return qbank::tool(sk.tool),
                 WORD => return toolbox::tool(true),
                 TEXT => return toolbox::tool(false),
                 KB => (
@@ -270,9 +324,15 @@ pub fn instructions(skills: &[&Skill], forced: &[String]) -> String {
             FILES => "\n- 读文件（pomelo_file）：这个问题带的附件和项目资料；没有全部给你时先看目录，再按段号读需要的部分，用到的标出处。",
             WORD => "\n- Word 工具箱（pomelo_word）：用户要改 Word 文件时，read 读要改的部分，再调用 edit 把改好的整段文字放进确认卡片；要把写好的内容存成 Word 时用 create。只在回答里写改法不会进卡片：要改就一定调用 edit / create，它返回「已放进确认卡片」之后才能说放进去了；也不要说已经改好、已经存好（用户确认后才写）。只是问意见、没让改时不用 edit。",
             TEXT => "\n- 文本工具箱（pomelo_text）：用户要改 Markdown、纯文本文件时，read 之后调用 edit 提议改动，规矩同 Word 工具箱。",
+            QBANK_RESUME | QBANK_GENERAL | QBANK_JOB => "",
+            SEEKER => "\n- Seeker 资料（pomelo_seeker）：问到用户的简历、求职素材、确认过的简历版本、导出过的简历、面试题库和练习时用，只读；回答里引用原文，不要改写成新的事实。",
             KB => "\n- 查知识库（pomelo_kb）：问到用户自己的文件、文档里的内容时先 search；问有哪些文件时用 files；要读完整的一份时 outline 再 read，用到的标出处；问到图片时用 files 找、look 看；查不到就说没查到。",
             _ => "\n- 联网搜索（pomelo_web_search）：问到最近的事、你不知道或可能过时的事时用；可以换个说法再搜一次。",
         });
+    }
+    let qbank: Vec<String> = skills.iter().filter_map(|sk| qbank::category(sk.tool).map(|c| format!("{} {c}", sk.tool))).collect();
+    if !qbank.is_empty() {
+        s.push_str(&format!("\n- 题库（{}）：用户要出面试题、写或改答案时用，出的题进确认卡片，确认后才写进 Rater 题库；不要自己在回答里写一整套题代替它。", qbank.join("、")));
     }
     for f in forced.iter().filter_map(|f| skill(f)) {
         s.push_str(&if f.key == WEB {
@@ -351,7 +411,7 @@ pub async fn run(app: &AppHandle, sources: &mut Sources, tool: &str, arguments: 
 /// `run` with the mode and keys given (tests use the mock).
 pub async fn run_with(mock: bool, tavily: Option<String>, reach: works::Reach, sources: &mut Sources, tool: &str, arguments: &str, budget: i64) -> Answer {
     let args: Value = serde_json::from_str(arguments).unwrap_or(Value::Null);
-    let Some(sk) = by_tool(tool).filter(|s| s.key != FILES && s.key != KB) else { return answer("技能 · 没有这个技能".into(), "failed", "没有这个技能。".into()) };
+    let Some(sk) = by_tool(tool).filter(|s| ![FILES, KB, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB].contains(&s.key)) else { return answer("技能 · 没有这个技能".into(), "failed", "没有这个技能。".into()) };
     if sk.key == WEB {
         let q = args["query"].as_str().unwrap_or("").trim().to_string();
         if q.is_empty() {
@@ -557,6 +617,22 @@ pub fn mock_calls(question: &str, system: &str) -> Vec<(&'static str, Value)> {
             out.push(("pomelo_find_book", json!({ "titles": titles })));
         }
     }
+    // 「按柚子银行的 JD 出 5 道突击题」「补 3 道通用题」: the 题库 SKILLs (job: the words between 按 and 的)
+    if (q.contains('出') || q.contains('补')) && q.contains("道") && q.contains('题') {
+        let count: Option<u64> = q.split('道').next().map(|s| s.chars().rev().take_while(char::is_ascii_digit).collect::<Vec<_>>().into_iter().rev().collect::<String>()).and_then(|n| n.parse().ok());
+        let job = q.split_once('按').and_then(|(_, r)| r.split_once('的')).map(|(j, _)| j.trim().to_string()).filter(|j| !j.is_empty());
+        let (tool, mut args) = if q.contains("突击题") || q.contains("JD") {
+            (qbank::JOB_TOOL, json!({ "job": job.unwrap_or_default() }))
+        } else if q.contains("通用题") || q.contains("自我介绍") {
+            (qbank::GENERAL_TOOL, json!({}))
+        } else {
+            (qbank::RESUME_TOOL, json!({}))
+        };
+        if let Some(n) = count {
+            args["count"] = json!(n);
+        }
+        out.push((tool, args));
+    }
     out
 }
 
@@ -603,7 +679,7 @@ mod tests {
     fn tools_instructions_and_the_mock() {
         let all: Vec<&Skill> = SKILLS.iter().collect();
         let defs = tools(&all);
-        assert_eq!(defs.len(), 7);
+        assert_eq!(defs.len(), 11);
         assert!(defs.iter().any(|t| t["function"]["name"] == files::TOOL) && defs.iter().any(|t| t["function"]["name"] == KB_TOOL));
         // 读文件 / 查知识库 / 文本工具箱 only where the question has something for them; Word 工具箱 always
         // (it can also make a new document)
@@ -611,9 +687,9 @@ mod tests {
         let dir = crate::db::tests::temp_dir("skills-ctx");
         let p = crate::picky::Picky::init(&crate::paths::DataPaths::new(dir.to_path_buf()), &dir, crate::picky::Mode::Mock);
         let keys = |ctx| offered(&c, &p, &[], ctx).iter().map(|s| s.key).collect::<Vec<_>>();
-        assert_eq!(keys(Ctx::default()), [BOOKS, FILMS, WORD]);
-        assert_eq!(keys(Ctx { files: true, kb: true, text: true }), [BOOKS, FILMS, FILES, KB, WORD, TEXT]);
-        assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, TEXT])); // never for 定时任务
+        assert_eq!(keys(Ctx::default()), [BOOKS, FILMS, WORD, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
+        assert_eq!(keys(Ctx { files: true, kb: true, text: true }), [BOOKS, FILMS, FILES, KB, WORD, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB, TEXT]);
+        assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB, TEXT])); // never for 定时任务
         let text = instructions(&all, &[WEB.into(), BOOKS.into()]);
         assert!(text.contains("已经用问题先搜了一次") && text.contains("先调用 pomelo_find_book"));
         assert!(instructions(&[], &[]).is_empty());

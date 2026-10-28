@@ -19,6 +19,8 @@ import { pickyApi, usePickyStatus, type Level, type Pub2mdFormat, type Pub2mdPar
 import { modelOptions } from "../ModelMenu";
 import { useModels } from "../Schedules";
 import { thinkOf } from "../Thinking";
+import { useSubPage } from "@/app/subpage";
+import { watchJob } from "@/app/Pomelo";
 
 export const PUB2MD_KEY = ["picky", "pub2md"];
 const EXTENSIONS = ["pdf", "docx", "doc", "png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif", "md", "mmd", "txt", "markdown"];
@@ -54,6 +56,21 @@ function duration(s: number) {
   return `${Math.floor(s / 3600)} 小时 ${Math.floor((s / 60) % 60)} 分`;
 }
 
+/** Until the queue is done: a document that stopped on an error makes the pomelo say so. */
+const failKey = (r: Pub2mdRecent) => `${r.folder}|${r.at}|${r.message ?? ""}`;
+const watchPub2md = (start: Pub2mdView) => {
+  const seen = new Set(start.recent.filter((r) => r.state === "failed").map(failKey));
+  watchJob("pub2md", async () => {
+    const v = await pickyApi.pub2md();
+    const failed = v.recent.find((r) => r.state === "failed" && !seen.has(failKey(r)));
+    if (failed) {
+      seen.add(failKey(failed));
+      return `Pub2MD 没做完「${failed.name}」：${failed.message ?? "出错了"}`;
+    }
+    return v.current || v.queue.length ? null : "";
+  });
+};
+
 export function Pub2mdPage() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -63,7 +80,7 @@ export function Pub2mdPage() {
   useEffect(() => {
     if (data) setSettings((x) => x ?? data.settings);
   }, [data]);
-  const [tab, setTab] = useState<"work" | "prompt">("work");
+  const [tab, setTab] = useSubPage<"work" | "prompt">("pub2md");
   const [preview, setPreview] = useState<{ folder: string; file: string } | null>(null);
   const typing = useRef<ReturnType<typeof setTimeout>>(undefined);
   const set = (v: Pub2mdView) => qc.setQueryData(PUB2MD_KEY, v);
@@ -94,6 +111,7 @@ export function Pub2mdPage() {
       void pickyApi.pub2mdAdd(paths).then((v) => {
         set(v);
         setStaged([]);
+        watchPub2md(v);
       }, fail);
   };
   const remove = async (r: Pub2mdRecent) => {
@@ -168,7 +186,7 @@ export function Pub2mdPage() {
             ))}
           </section>
         )}
-        <Recent data={data} onOpen={show} onResume={(f) => void pickyApi.pub2mdResume(f).then(set, fail)} onDelete={(r) => void remove(r)} />
+        <Recent data={data} onOpen={show} onResume={(f) => void pickyApi.pub2mdResume(f).then((v) => (set(v), watchPub2md(v)), fail)} onDelete={(r) => void remove(r)} />
         <About />
       </div>
       {confirmDialog}

@@ -1,68 +1,326 @@
-import { useState } from "react";
-import { Copy, Plus, Trash2 } from "lucide-react";
+// Seeker's records by page (requirements「Seeker」; kinds in Rust catalog.rs): 素材 (基本信息, the materials by
+// category), 档案 (经历档案, 已确认事实 by group), 规则 (rules and 有效个人约定 by task, 个人范例), 网申. A
+// material, 档案, rule, 范例 or 网申 answer is a card that opens; a fact or 约定 is a row. Each edit goes
+// through RecordEditor (its kind's fields → 查看差异 → 确认保存, one undo step). 素材 and 规则 show the page's
+// language (规则 also the ones for both); 档案 and 网申 are both languages'.
+import { useState, type ReactNode } from "react";
+import { ChevronRight, Copy, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { InlineMd } from "@/shared/InlineMd";
 import { Modal } from "@/shared/Modal";
-import { Button, EmptyState, SearchInput, TextArea, TextInput } from "@/shared/ui";
+import { Button, EmptyState, Field, IconButton, SearchInput, Switch, TextArea, TextInput } from "@/shared/ui";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
+import { MarkdownView } from "../MarkdownView";
+import { PointEditor } from "./SeekerPoint";
+import { SeekerMaterialFiles } from "./SeekerFiles";
 import { SeekerDiff, recordText, when } from "./SeekerParts";
-import { seekerApi, type SeekerCatalog, type SeekerImport, type SeekerRecord, type SeekerWorkspace } from "./seekerApi";
+import { SUMMARY } from "./SeekerParts";
+import { RATER_USES } from "./raterApi";
+import { recordIn, seekerApi, type SeekerCatalog, type SeekerImport, type SeekerLang, type SeekerPoint, type SeekerRecord, type SeekerWorkspace } from "./seekerApi";
 
-export const KINDS = [{ value: "material", label: "简历素材" }, { value: "profile", label: "基本信息" }, { value: "fact", label: "已确认事实" }, { value: "rule", label: "写作规则" }, { value: "example", label: "个人范例" }, { value: "application", label: "网申资料" }];
-/** A rule's category says which model task reads it (Rust model.rs `context`). */
-const RULE_USES = [{ value: "共用准则", label: "共用准则" }, { value: "素材润色", label: "素材润色" }, { value: "整体审查", label: "整体审查（选材、审查）" }, { value: "写作规则", label: "所有任务" }];
 export type SeekerWrite = (action: () => Promise<SeekerWorkspace>) => Promise<boolean>;
+/** A rule's or 约定's category: which model task reads it (Rust model.rs `context`). */
+export const USES = [{ value: "共用准则", label: "共用准则" }, { value: "素材润色", label: "素材润色" }, { value: "整体审查", label: "选材和审查" }, { value: "写作规则", label: "所有任务" }];
+type Use = { value: string; label: string };
+const useLabel = (c: string, uses: Use[] = USES) => uses.find((u) => u.value === c)?.label ?? c;
+/** Rater's rules (题库维护, 面试) live with Seeker's records but show only on Rater's 规则 page. */
+const isRater = (r: SeekerRecord) => RATER_USES.some((u) => u.value === r.category) && ["rule", "decision"].includes(r.kind);
+const MATERIALS = ["教育", "技能", "项目", "工作"];
+/** English materials in the order of the resume (Rust workflow.rs `ORDER_EN`). */
+const MATERIALS_EN = [SUMMARY, "技能", "教育", "项目", "工作", "证书"];
+const materialsOf = (lang: string | undefined) => (lang === "en" ? MATERIALS_EN : MATERIALS);
+/** A rule's, 约定's or 范例's language. */
+const LANGS = [{ value: "cn", label: "中文" }, { value: "en", label: "English" }, { value: "", label: "中英共用" }];
+const NAMES = ["姓名", "Name"];
+const DOSSIER = "经历档案";
+export const STACK = "技术栈";
+/** What can be chosen for a resume: the 技术栈 line, then the points (catalog.rs `choosable`). */
+export function choosable(r: SeekerRecord): SeekerPoint[] {
+  const stack = r.stack?.trim();
+  return [...(stack ? [{ id: STACK, text: r.lang === "en" ? `Tech Stack: ${stack}` : `技术栈：${stack}` }] : []), ...r.points.filter((p) => !(stack && p.id === STACK))];
+}
+const roleLabel = (category: string) => (category === "教育" ? "专业" : category === "工作" ? "职位" : "角色");
+const blank = (kind: string, category: string, lang: string): SeekerRecord => ({ id: crypto.randomUUID(), kind, category, title: "", text: "", time: "", role: "", location: "", points: [], fields: [], stack: "", material: null, materialEn: null, lang, source: null, revision: 0, enabled: true });
+const matches = (r: SeekerRecord, q: string) => !q || [r.title, r.text, r.role, r.stack, r.category, ...r.points.map((p) => p.text), ...r.fields.map((f) => `${f.label}${f.value}`)].join("\n").toLowerCase().includes(q.toLowerCase());
 
-export function SeekerLibrary(props: { catalog: SeekerCatalog; kinds: string[]; busy: boolean; write: SeekerWrite; onPolish: (id: string) => void; aiBusy: boolean }) {
-  const [query, setQuery] = useState("");
+/** uses: the 用途 groups of the 规则 page (Rater passes its own; Seeker's leaves Rater's out). */
+/** defaults: a group's built-in text while it has no rules (Rater's SKILL workflows). */
+type PageProps = { lang: SeekerLang; catalog: SeekerCatalog; busy: boolean; write: SeekerWrite; aiBusy: boolean; onPolish: (id: string) => void; tools?: ReactNode; uses?: Use[]; defaults?: Record<string, string> };
+
+/** Editing, history and deleting, shared by the pages. */
+function useRecords(p: PageProps) {
   const [editing, setEditing] = useState<SeekerRecord | null>(null);
   const [past, setPast] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [confirm, confirmDialog] = useConfirm();
-  const toast = useToast();
-  const rows = props.catalog.records.filter((r) => props.kinds.includes(r.kind) && `${r.title}\n${r.text}\n${r.points.map((p) => p.text).join("\n")}`.toLowerCase().includes(query.toLowerCase()));
-  const create = () => setEditing({ id: crypto.randomUUID(), kind: props.kinds[0], category: props.kinds[0] === "application" ? "常见问答" : props.kinds[0] === "material" ? "项目" : "写作规则", title: "", text: "", time: "", role: "", location: "", points: [], fields: [], source: null, revision: 0, enabled: true });
-  return <div className="flex min-h-0 flex-1 flex-col gap-3 py-4">
-    <div className="flex gap-2"><SearchInput aria-label="搜索资料" value={query} onChange={(e) => setQuery(e.target.value)} /><Button disabled={props.busy} onClick={create}><Plus size={14} />新增</Button></div>
-    <div className="-m-1 flex-1 space-y-3 overflow-auto p-1">{!rows.length && <EmptyState title="暂无资料" />}{rows.map((r) => <article key={r.id} className="rounded-card border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-2"><strong className="mr-auto">{r.title}</strong><span className="text-xs text-muted-foreground">{r.kind === "rule" ? `用于${RULE_USES.find((u) => u.value === r.category)?.label ?? r.category}` : r.category}{r.enabled ? "" : " · 已停用"}</span><Button disabled={props.busy} onClick={() => setEditing(structuredClone(r))}>编辑</Button><Button variant="ghost" disabled={props.aiBusy || props.busy} onClick={() => props.onPolish(r.id)}>润色</Button><Button variant="ghost" onClick={() => setPast(r.id)}>历史</Button>
-        {r.kind === "application" && <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(r.text).then(() => toast("已复制"), (e) => toast(errorText(e), "error"))}><Copy size={14} />复制</Button>}
-        <Button variant="ghost-danger" disabled={props.busy} aria-label={`删除${r.title}`} onClick={async () => { if (await confirm({ title: "删除资料", message: `删除「${r.title}」？已有简历保留原文。`, danger: true })) void props.write(() => seekerApi.recordDelete(r.id)); }}><Trash2 size={14} /></Button>
-      </div>
-      <p className="mt-2 whitespace-pre-wrap text-sm">{r.text}</p>{r.points.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{r.points.map((p) => <li key={p.id}><InlineMd text={p.text} /></li>)}</ul>}
-      {r.fields.map((f) => <p key={f.id} className="text-sm">{f.label}：{f.value}</p>)}
-    </article>)}</div>
-    {editing && <RecordEditor initial={editing} kinds={props.kinds} busy={props.busy} write={props.write} close={() => setEditing(null)} />}
-    {past && <Modal wide title="资料历史" error={null} onClose={() => setPast(null)} onSubmit={(e) => { e.preventDefault(); setPast(null); }} submitLabel="完成"><div className="max-h-[55vh] space-y-4 overflow-auto">{props.catalog.revisions.filter((r) => r.recordId === past).map((r) => <div key={r.id}><p className="mb-2 text-xs text-muted-foreground">{when(r.savedAt)}</p><SeekerDiff before={recordText(r.body)} after={recordText(props.catalog.records.find((v) => v.id === past))} /><Button disabled={props.busy} onClick={() => { const current = props.catalog.records.find((v) => v.id === past); setEditing({ ...r.body, revision: current?.revision ?? 0 }); setPast(null); }}>以此版本编辑</Button></div>)}{!props.catalog.revisions.some((r) => r.recordId === past) && <p>还没有历史版本</p>}</div></Modal>}
+  const remove = async (r: SeekerRecord) => {
+    if (await confirm({ title: `删除「${r.title}」？`, message: "已有简历不受影响；它的历史里还留着这一版。", danger: true, confirmLabel: "删除" })) void p.write(() => seekerApi.recordDelete(r.id));
+  };
+  const toggle = (id: string) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const dialogs = <>
+    {editing && <RecordEditor initial={editing} catalog={p.catalog} busy={p.busy} write={p.write} uses={p.uses} close={() => setEditing(null)} />}
+    {past && <HistoryDialog id={past} catalog={p.catalog} busy={p.busy} close={() => setPast(null)} edit={(r) => { setEditing(r); setPast(null); }} />}
     {confirmDialog}
+  </>;
+  // new facts and 网申 are both languages'; everything else the page's
+  return { add: (kind: string, category: string, text = "", title = "") => setEditing({ ...blank(kind, category, ["fact", "application"].includes(kind) ? "" : p.lang), text, title }), edit: (r: SeekerRecord) => setEditing(structuredClone(r)), history: setPast, remove, open, toggle, dialogs };
+}
+type Records = ReturnType<typeof useRecords>;
+
+function Actions(props: { r: SeekerRecord; a: Records; p: PageProps; polish?: boolean; copy?: boolean }) {
+  const toast = useToast();
+  const { r, a, p } = props;
+  return <div className="flex shrink-0 items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+    {props.copy && <IconButton label="复制" onClick={() => void navigator.clipboard.writeText(r.text).then(() => toast("已复制"), (e) => toast(errorText(e), "error"))}><Copy size={14} /></IconButton>}
+    {props.polish && <IconButton label="润色" disabled={p.busy || p.aiBusy} onClick={() => p.onPolish(r.id)}><Sparkles size={14} /></IconButton>}
+    <IconButton label="编辑" disabled={p.busy} onClick={() => a.edit(r)}><Pencil size={14} /></IconButton>
+    <IconButton label="历史" onClick={() => a.history(r.id)}><History size={14} /></IconButton>
+    <IconButton label="删除" danger disabled={p.busy} onClick={() => void a.remove(r)}><Trash2 size={14} /></IconButton>
   </div>;
 }
 
-function RecordEditor(props: { initial: SeekerRecord; kinds: string[]; busy: boolean; write: SeekerWrite; close: () => void }) {
-  const [value, setValue] = useState(props.initial);
-  const [review, setReview] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return <Modal wide title={review ? "确认资料修改" : "编辑资料"} error={error} onClose={props.close} submitDisabled={props.busy || !value.title.trim()} submitLabel={review ? "确认保存" : "查看差异"} footerLeft={review ? <Button disabled={props.busy} onClick={() => setReview(false)}>返回编辑</Button> : undefined} onSubmit={(e) => { e.preventDefault(); if (!review) { setReview(true); return; } void props.write(() => seekerApi.recordSave(value)).then((ok) => ok ? props.close() : setError("未保存，请重试或重新打开当前资料")); }}>
-    {review ? <SeekerDiff before={props.initial.revision ? recordText(props.initial) : ""} after={recordText(value)} /> : <fieldset disabled={props.busy} className="-m-1 max-h-[58vh] space-y-3 overflow-auto p-1">
-      <div className="flex gap-3">{props.kinds.length > 1 && <label className="block space-y-1 text-sm"><span>类型</span><Dropdown ariaLabel="类型" value={value.kind} options={KINDS.filter((k) => props.kinds.includes(k.value))} onChange={(kind) => setValue({ ...value, kind, category: kind === "rule" ? "写作规则" : kind === "example" ? "个人范例" : value.category })} /></label>}
-        <label className="block space-y-1 text-sm"><span>{value.kind === "rule" ? "用于" : "分类"}</span>{value.kind === "rule" ? <Dropdown ariaLabel="用于" value={value.category} options={RULE_USES} onChange={(category) => setValue({ ...value, category })} /> : <TextInput value={value.category} onChange={(e) => setValue({ ...value, category: e.target.value })} />}</label></div>
-      <label className="block text-sm">名称<TextInput value={value.title} onChange={(e) => setValue({ ...value, title: e.target.value })} /></label>
-      {value.kind === "material" && <div className="grid grid-cols-3 gap-2">{(["time", "role", "location"] as const).map((key, i) => <label key={key} className="text-sm">{["时间", "角色", "地点"][i]}<TextInput value={value[key]} onChange={(e) => setValue({ ...value, [key]: e.target.value })} /></label>)}</div>}
-      {value.kind !== "profile" && <label className="block text-sm">{value.kind === "material" ? "说明" : "正文"}<TextArea rows={value.kind === "material" ? 2 : 8} value={value.text} onChange={(e) => setValue({ ...value, text: e.target.value })} /></label>}
-      {value.kind === "material" && <div className="space-y-2">{value.points.map((p, i) => <div key={p.id} className="flex gap-2"><TextArea aria-label={`要点 ${i + 1}`} rows={3} value={p.text} onChange={(e) => setValue({ ...value, points: value.points.map((v) => v.id === p.id ? { ...v, text: e.target.value } : v) })} /><Button variant="ghost-danger" aria-label="删除要点" onClick={() => setValue({ ...value, points: value.points.filter((v) => v.id !== p.id) })}><Trash2 size={14} /></Button></div>)}<Button onClick={() => setValue({ ...value, points: [...value.points, { id: crypto.randomUUID(), text: "" }] })}>增加要点</Button></div>}
-      {value.kind === "profile" && <div className="space-y-2">{value.fields.map((f) => <div key={f.id} className="flex gap-2"><TextInput aria-label="字段名" value={f.label} onChange={(e) => setValue({ ...value, fields: value.fields.map((v) => v.id === f.id ? { ...v, label: e.target.value } : v) })} /><TextInput aria-label="字段值" value={f.value} onChange={(e) => setValue({ ...value, fields: value.fields.map((v) => v.id === f.id ? { ...v, value: e.target.value } : v) })} /><Button variant="ghost-danger" onClick={() => setValue({ ...value, fields: value.fields.filter((v) => v.id !== f.id) })}>删除</Button></div>)}<Button onClick={() => setValue({ ...value, fields: [...value.fields, { id: crypto.randomUUID(), label: "", value: "", visible: true }] })}>增加字段</Button></div>}
-      <label className="flex gap-2 text-sm"><input type="checkbox" checked={value.enabled} onChange={(e) => setValue({ ...value, enabled: e.target.checked })} />用于选材或写作参考</label>
-    </fieldset>}
+function Frame(props: { query: string; setQuery: (q: string) => void; tools?: ReactNode; empty: boolean; children: ReactNode; dialogs: ReactNode; after?: ReactNode }) {
+  return <div className="flex min-h-0 flex-1 flex-col gap-4 pt-4">
+    <div className="flex items-center gap-2"><div className="w-64"><SearchInput aria-label="搜索资料" placeholder="搜索" value={props.query} onChange={(e) => props.setQuery(e.target.value)} /></div><span className="flex-1" />{props.tools}</div>
+    <div className="-m-1 min-h-0 flex-1 space-y-6 overflow-y-auto p-1 pb-6">{props.empty ? <EmptyState title={props.query ? "没有找到" : "还没有资料"} /> : props.children}{props.after}</div>
+    {props.dialogs}
+  </div>;
+}
+
+function Group(props: { title: string; onAdd?: () => void; addLabel?: string; children?: ReactNode }) {
+  return <section className="space-y-2">
+    <div className="flex h-7 items-center gap-1"><h3 className="text-sm font-bold">{props.title}</h3>{props.onAdd && <IconButton label={props.addLabel ?? `新增${props.title}`} onClick={props.onAdd}><Plus size={14} /></IconButton>}</div>
+    {props.children}
+  </section>;
+}
+
+/** A card that opens: its head, then (open) its body. */
+function Card(props: { r: SeekerRecord; a: Records; meta?: ReactNode; actions: ReactNode; children: ReactNode }) {
+  const open = props.a.open.has(props.r.id);
+  return <article className={`group rounded-card border bg-card ${props.r.enabled ? "" : "opacity-60"}`}>
+    <div className="flex items-center gap-2 py-1.5 pr-2 pl-3">
+      <button type="button" aria-expanded={open} onClick={() => props.a.toggle(props.r.id)} className="flex min-w-0 flex-1 items-center gap-2 rounded-control py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <ChevronRight size={14} className={`shrink-0 text-muted-foreground transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+        <span className="truncate font-medium">{props.r.title || "未命名"}</span>
+        {props.meta && <span className="min-w-0 truncate text-xs text-muted-foreground">{props.meta}</span>}
+        {!props.r.enabled && <span className="shrink-0 text-xs text-muted-foreground">已停用</span>}
+      </button>
+      {props.actions}
+    </div>
+    {open && <div className="border-t px-4 py-3 text-sm">{props.children}</div>}
+  </article>;
+}
+
+/** Rows of name + text (已确认事实, 有效个人约定). */
+function Rows(props: { rows: SeekerRecord[]; a: Records; p: PageProps; shared?: boolean }) {
+  if (!props.rows.length) return null;
+  return <div className="divide-y rounded-card border bg-card">{props.rows.map((r) => <div key={r.id} className={`group flex items-start gap-4 px-3 py-2 text-sm ${r.enabled ? "" : "opacity-60"}`}>
+    <span className="w-44 shrink-0 pt-1 font-medium">{r.title}{props.shared && r.lang === "" && <span className="ml-2 text-xs font-normal text-muted-foreground">中英共用</span>}</span>
+    <p className="min-w-0 flex-1 pt-1 break-words whitespace-pre-wrap"><InlineMd text={r.text} /></p>
+    <Actions r={r} a={props.a} p={props.p} />
+  </div>)}</div>;
+}
+
+const Markdown = ({ text }: { text: string }) => <MarkdownView source={text} className="text-sm" />;
+
+export function SeekerMaterials(p: PageProps) {
+  const a = useRecords(p);
+  const [query, setQuery] = useState("");
+  const records = p.catalog.records.filter((r) => (r.lang ?? "cn") === p.lang && matches(r, query));
+  const profiles = records.filter((r) => r.kind === "profile");
+  const materials = records.filter((r) => r.kind === "material");
+  const order = materialsOf(p.lang);
+  const categories = [...order, ...new Set(materials.map((r) => r.category).filter((c) => !order.includes(c)))];
+  const dossierOf = (id: string) => p.catalog.records.find((d) => d.kind === "fact" && d.category === DOSSIER && (d.material === id || d.materialEn === id));
+  return <Frame query={query} setQuery={setQuery} tools={p.tools} empty={!!query && !profiles.length && !materials.length} dialogs={a.dialogs}>
+    <Group title="基本信息" onAdd={profiles.length || query ? undefined : () => a.add("profile", "基本信息")}>
+      {profiles.map((r) => <Card key={r.id} r={r} a={a} meta={r.fields.find((f) => NAMES.includes(f.label))?.value} actions={<Actions r={r} a={a} p={p} />}>
+        <dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1">{r.fields.map((f) => <div key={f.id} className="contents"><dt className="text-muted-foreground">{f.label}</dt><dd className="break-all">{f.value}</dd></div>)}</dl>
+      </Card>)}
+    </Group>
+    {categories.map((c) => {
+      const rows = materials.filter((r) => r.category === c);
+      if (query && !rows.length) return null;
+      return <Group key={c} title={c} onAdd={() => a.add("material", c)}>
+        {rows.map((r) => {
+          const dossier = dossierOf(r.id);
+          return <Card key={r.id} r={r} a={a} meta={[r.role, r.time, r.location].filter(Boolean).join(" · ")} actions={<Actions r={r} a={a} p={p} polish />}>
+            <div className="space-y-2">
+              {r.text && <p className={`whitespace-pre-wrap ${r.category === SUMMARY ? "" : "text-muted-foreground"}`}>{r.text}</p>}
+              {r.stack && <p className="text-xs text-muted-foreground">技术栈：{r.stack}</p>}
+              {r.points.length > 0 && <ul className="list-disc space-y-1 pl-5">{r.points.map((pt) => <li key={pt.id}><InlineMd text={pt.text} /></li>)}</ul>}
+              {dossier && <p className="text-xs text-muted-foreground">经历档案：{dossier.title}</p>}
+            </div>
+          </Card>;
+        })}
+      </Group>;
+    })}
+  </Frame>;
+}
+
+export function SeekerDossiers(p: PageProps) {
+  const a = useRecords(p);
+  const [query, setQuery] = useState("");
+  const facts = p.catalog.records.filter((r) => r.kind === "fact" && matches(r, query));
+  const dossiers = facts.filter((r) => r.category === DOSSIER);
+  const groups = [...new Set(facts.filter((r) => r.category !== DOSSIER).map((r) => r.category))];
+  const title = (id: string | null | undefined) => p.catalog.records.find((r) => r.id === id && r.kind === "material")?.title;
+  const hung = (r: SeekerRecord) => [title(r.material), title(r.materialEn)].filter(Boolean).join(" · ");
+  return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<Button disabled={p.busy} onClick={() => a.add("fact", groups[0] ?? "个人事实")}><Plus size={14} />事实</Button></>} empty={!facts.length} dialogs={a.dialogs}>
+    {(dossiers.length > 0 || !query) && <Group title={DOSSIER} onAdd={() => a.add("fact", DOSSIER)}>
+      {dossiers.map((r) => <Card key={r.id} r={r} a={a} meta={hung(r) ? `素材：${hung(r)}` : "没挂素材"} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>)}
+    </Group>}
+    {groups.map((g) => <Group key={g} title={g} onAdd={() => a.add("fact", g)} addLabel={`在「${g}」里新增`}><Rows rows={facts.filter((r) => r.category === g)} a={a} p={p} /></Group>)}
+  </Frame>;
+}
+
+export function SeekerRules(p: PageProps) {
+  const a = useRecords(p);
+  const [query, setQuery] = useState("");
+  const own = p.uses ?? USES;
+  const rater = !!p.uses;
+  const records = p.catalog.records.filter((r) => ["rule", "decision", "example"].includes(r.kind) && recordIn(r, p.lang) && matches(r, query) && (rater ? own.some((u) => u.value === r.category) && r.kind !== "example" : !isRater(r)));
+  const shared = (r: SeekerRecord) => (r.lang === "" && !rater ? "中英共用" : undefined);
+  const uses = [...own.map((u) => u.value), ...new Set(records.filter((r) => r.kind !== "example").map((r) => r.category).filter((c) => !own.some((u) => u.value === c)))];
+  const examples = rater ? [] : records.filter((r) => r.kind === "example");
+  return <Frame query={query} setQuery={setQuery} tools={p.tools} empty={!!query && !records.length} dialogs={a.dialogs}>
+    {uses.map((u) => {
+      const rules = records.filter((r) => r.kind === "rule" && r.category === u);
+      const decisions = records.filter((r) => r.kind === "decision" && r.category === u);
+      if ((query || u === "写作规则") && !rules.length && !decisions.length) return null;
+      return <Group key={u} title={useLabel(u, own)} onAdd={() => a.add("rule", u)} addLabel={`在「${useLabel(u, own)}」里新增规则`}>
+        {rules.map((r) => <Card key={r.id} r={r} a={a} meta={shared(r)} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>)}
+        {!rules.length && p.defaults?.[u] && !query && <article className="rounded-card border border-dashed px-4 py-3 text-sm">
+          <div className="mb-2 flex items-center gap-2"><span className="mr-auto text-xs text-muted-foreground">程序自带的工作流</span><Button variant="ghost" disabled={p.busy} onClick={() => a.add("rule", u, p.defaults![u], "工作流")}><Pencil size={13} />改成我的</Button></div>
+          <Markdown text={p.defaults[u]} />
+        </article>}
+        {decisions.length > 0 && <p className="px-1 pt-1 text-xs text-muted-foreground">有效个人约定</p>}
+        <Rows rows={decisions} a={a} p={p} shared={!rater} />
+        <Button variant="ghost" className="text-muted-foreground" disabled={p.busy} onClick={() => a.add("decision", u)}><Plus size={13} />个人约定</Button>
+      </Group>;
+    })}
+    {!rater && (examples.length > 0 || !query) && <Group title="个人范例" onAdd={() => a.add("example", "个人范例")}>{examples.map((r) => <Card key={r.id} r={r} a={a} meta={shared(r)} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>)}</Group>}
+  </Frame>;
+}
+
+export function SeekerApplications(p: PageProps) {
+  const a = useRecords(p);
+  const [query, setQuery] = useState("");
+  const rows = p.catalog.records.filter((r) => r.kind === "application" && matches(r, query));
+  return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<Button disabled={p.busy} onClick={() => a.add("application", "网申")}><Plus size={14} />网申资料</Button></>} empty={!rows.length} dialogs={a.dialogs} after={<SeekerMaterialFiles />}>
+    <div className="space-y-2">{rows.map((r) => <Card key={r.id} r={r} a={a} meta={r.category !== "网申" ? r.category : undefined} actions={<Actions r={r} a={a} p={p} copy polish />}><p className="whitespace-pre-wrap">{r.text}</p></Card>)}</div>
+  </Frame>;
+}
+
+function HistoryDialog(props: { id: string; catalog: SeekerCatalog; busy: boolean; close: () => void; edit: (r: SeekerRecord) => void }) {
+  const current = props.catalog.records.find((v) => v.id === props.id);
+  const past = props.catalog.revisions.filter((r) => r.recordId === props.id);
+  return <Modal wide title="历史" error={null} onClose={props.close} onSubmit={(e) => { e.preventDefault(); props.close(); }} submitLabel="完成">
+    <div className="-m-1 max-h-[58vh] space-y-5 overflow-y-auto p-1">
+      {past.map((r) => <div key={r.id} className="space-y-2"><div className="flex items-center gap-2"><span className="mr-auto text-xs text-muted-foreground">{when(r.savedAt)}</span><Button variant="ghost" disabled={props.busy} onClick={() => props.edit({ ...r.body, revision: current?.revision ?? 0 })}>以这一版编辑</Button></div><SeekerDiff before={recordText(r.body)} after={recordText(current)} /></div>)}
+      {!past.length && <p className="text-sm text-muted-foreground">还没有历史</p>}
+    </div>
   </Modal>;
 }
 
-export function SeekerImportDialog(props: { preview: SeekerImport; busy: boolean; write: SeekerWrite; close: () => void }) {
-  const [items, setItems] = useState(props.preview.items);
-  const [chosen, setChosen] = useState(new Set(props.preview.items.filter((i) => !i.current).map((i) => i.incoming.id)));
+const KIND_TITLE: Record<string, string> = { material: "素材", profile: "基本信息", fact: "已确认事实", rule: "规则", decision: "个人约定", example: "个人范例", application: "网申资料" };
+
+/** One record's fields (by kind) → 查看差异 → 确认保存. */
+/** uses: the 用途 to choose from (Rater's rules: its own, Chinese only, no language to pick). */
+function RecordEditor(props: { initial: SeekerRecord; catalog: SeekerCatalog; busy: boolean; write: SeekerWrite; uses?: Use[]; close: () => void }) {
+  const uses = props.uses ?? USES;
+  const [v, setV] = useState(props.initial);
+  const [review, setReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  return <Modal wide title="导入预览" onClose={props.close} error={error} submitLabel={`确认导入 ${chosen.size} 项`} submitDisabled={props.busy || !chosen.size} onSubmit={(e) => { e.preventDefault(); void props.write(() => seekerApi.import(items.filter((i) => chosen.has(i.incoming.id)).map((i) => i.incoming))).then((ok) => ok ? props.close() : setError("导入未完成；若资料已变化，请重新预览")); }}>
-    <fieldset disabled={props.busy} className="-m-1 max-h-[60vh] space-y-5 overflow-auto p-1">{items.map((item, index) => <section key={item.incoming.id} className="space-y-2"><div className="flex items-center gap-2"><strong className="mr-auto text-sm">{item.incoming.title}</strong><label className="flex gap-1 text-sm"><input type="checkbox" checked={chosen.has(item.incoming.id)} onChange={() => setChosen((previous) => { const next = new Set(previous); if (next.has(item.incoming.id)) next.delete(item.incoming.id); else next.add(item.incoming.id); return next; })} />{item.current ? "采用文件版" : "导入"}</label></div>
-      <div className="flex gap-2"><Dropdown ariaLabel="导入类型" value={item.incoming.kind} options={KINDS} onChange={(kind) => setItems(items.map((v, i) => i === index ? { ...v, incoming: { ...v.incoming, kind } } : v))} /><TextInput aria-label="导入分类" value={item.incoming.category} onChange={(e) => setItems(items.map((v, i) => i === index ? { ...v, incoming: { ...v.incoming, category: e.target.value } } : v))} /></div>
-      <p className="break-all text-xs text-muted-foreground">{item.incoming.source}{item.current && !chosen.has(item.incoming.id) ? " · 保留当前版" : ""}</p><SeekerDiff before={recordText(item.current)} after={recordText(item.incoming)} />
-    </section>)}{!items.length && <p>没有可导入的正文</p>}{props.preview.skipped.length > 0 && <details><summary className="text-sm">未导入的文件（{props.preview.skipped.length}）</summary>{props.preview.skipped.map((s, i) => <p key={i} className="text-xs text-muted-foreground">{s}</p>)}</details>}</fieldset>
+  const set = (patch: Partial<SeekerRecord>) => setV((x) => ({ ...x, ...patch }));
+  const dossier = v.kind === "fact" && v.category === DOSSIER;
+  const name = dossier ? DOSSIER : KIND_TITLE[v.kind] ?? "资料";
+  const input = (label: string, key: "title" | "role" | "time" | "location" | "stack" | "category") => <Field label={label}><TextInput value={v[key] ?? ""} onChange={(e) => set({ [key]: e.target.value })} /></Field>;
+  const text = (label: string, rows: number) => <Field label={label}><TextArea rows={rows} value={v.text} onChange={(e) => set({ text: e.target.value })} /></Field>;
+  const use = <Field label="用于"><Dropdown ariaLabel="用于" value={v.category} options={uses.some((u) => u.value === v.category) ? uses : [...uses, { value: v.category, label: v.category }]} onChange={(category) => set({ category })} /></Field>;
+  const language = props.uses ? null : <Field label="语言"><Dropdown ariaLabel="语言" value={v.lang ?? "cn"} options={LANGS} onChange={(lang) => set({ lang })} /></Field>;
+  const materials = props.catalog.records.filter((r) => r.kind === "material");
+  const hang = (key: "material" | "materialEn", lang: string, label: string) => <Field label={label}><Dropdown<string | null> ariaLabel={label} value={v[key] ?? null} placeholder="不挂" options={[{ value: null, label: "不挂" }, ...materials.filter((m) => (m.lang ?? "cn") === lang).map((m) => ({ value: m.id, label: m.title }))]} onChange={(id) => set({ [key]: id })} /></Field>;
+  const body = (() => {
+    switch (v.kind) {
+      case "material":
+        if (v.category === SUMMARY) return <>
+          <div className="grid grid-cols-[1fr_8rem] gap-3">{input("名称", "title")}<Field label="分类"><Dropdown ariaLabel="分类" value={v.category} options={[...new Set([...materialsOf(v.lang), v.category])].map((c) => ({ value: c, label: c }))} onChange={(category) => set({ category })} /></Field></div>
+          {text("正文", 6)}
+        </>;
+        return <>
+          <div className="grid grid-cols-[1fr_8rem] gap-3">{input("名称", "title")}<Field label="分类"><Dropdown ariaLabel="分类" value={v.category} options={[...new Set([...materialsOf(v.lang), v.category])].map((c) => ({ value: c, label: c }))} onChange={(category) => set({ category })} /></Field></div>
+          <div className="grid grid-cols-3 gap-3">{input(roleLabel(v.category), "role")}{input("时间", "time")}{input("地点", "location")}</div>
+          <Field label={v.category === "项目" ? "概览" : "说明"}><TextInput value={v.text} onChange={(e) => set({ text: e.target.value })} /></Field>
+          {(v.category === "项目" || v.category === "工作" || v.stack) && input("技术栈", "stack")}
+          <Field label="要点" action={<button type="button" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => set({ points: [...v.points, { id: crypto.randomUUID(), text: "" }] })}><Plus size={12} />要点</button>}>
+            <div className="space-y-1.5">{v.points.map((pt, i) => <div key={pt.id} className="flex items-start gap-1 rounded-control border bg-card py-1 pr-1 pl-2.5">
+              <div className="min-w-0 flex-1 py-0.5 text-sm"><PointEditor label={`要点 ${i + 1}`} value={pt.text} disabled={props.busy} onChange={(t) => set({ points: v.points.map((x) => (x.id === pt.id ? { ...x, text: t } : x)) })} /></div>
+              <IconButton label="删除这条要点" danger onClick={() => set({ points: v.points.filter((x) => x.id !== pt.id) })}><Trash2 size={13} /></IconButton>
+            </div>)}{!v.points.length && <p className="text-sm text-muted-foreground">还没有要点</p>}</div>
+          </Field>
+        </>;
+      case "profile":
+        return <Field label="字段" action={<button type="button" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => set({ fields: [...v.fields, { id: crypto.randomUUID(), label: "", value: "", visible: true }] })}><Plus size={12} />字段</button>}>
+          <div className="space-y-1.5">{v.fields.map((f) => <div key={f.id} className="grid grid-cols-[7rem_1fr_auto] items-center gap-2">
+            <TextInput aria-label="字段名" value={f.label} onChange={(e) => set({ fields: v.fields.map((x) => (x.id === f.id ? { ...x, label: e.target.value } : x)) })} />
+            <TextInput aria-label="字段值" value={f.value} onChange={(e) => set({ fields: v.fields.map((x) => (x.id === f.id ? { ...x, value: e.target.value } : x)) })} />
+            <IconButton label="删除这个字段" danger onClick={() => set({ fields: v.fields.filter((x) => x.id !== f.id) })}><Trash2 size={13} /></IconButton>
+          </div>)}</div>
+        </Field>;
+      case "fact":
+        return dossier ? <>
+          {input("名称", "title")}
+          <div className="grid grid-cols-2 gap-3">{hang("material", "cn", "中文素材")}{hang("materialEn", "en", "英文素材")}</div>
+          {text("正文", 18)}
+        </> : <>
+          <div className="grid grid-cols-[1fr_10rem] gap-3">{input("事项", "title")}{input("分组", "category")}</div>
+          {text("口径", 4)}
+        </>;
+      case "rule":
+        return <><div className={`grid gap-3 ${language ? "grid-cols-[1fr_10rem_8rem]" : "grid-cols-[1fr_10rem]"}`}>{input("标题", "title")}{use}{language}</div>{text("正文", 14)}</>;
+      case "decision":
+        return <><div className={`grid gap-3 ${language ? "grid-cols-[1fr_10rem_8rem]" : "grid-cols-[1fr_10rem]"}`}>{input("名称", "title")}{use}{language}</div>{text("内容", 4)}</>;
+      case "example":
+        return <><div className="grid grid-cols-[1fr_8rem] gap-3">{input("名称", "title")}{language}</div>{text("正文", 10)}</>;
+      default:
+        return <>{input("名称", "title")}{text("正文", 10)}</>;
+    }
+  })();
+  const toggle = v.kind === "material" ? "用于选材" : v.kind === "profile" || v.kind === "application" ? null : "发给模型";
+  const ready = v.title.trim() && !(v.kind === "fact" && !v.category.trim());
+  return <Modal wide title={review ? "确认修改" : props.initial.revision ? `编辑${name}` : `新增${name}`} error={error} onClose={props.close} submitDisabled={props.busy || !ready} submitLabel={review ? "确认保存" : "查看差异"} footerLeft={review ? <Button disabled={props.busy} onClick={() => setReview(false)}>返回编辑</Button> : toggle ? <div className="flex items-center gap-2 text-sm"><Switch label={toggle} checked={v.enabled} onChange={(enabled) => set({ enabled })} /><span>{toggle}</span></div> : undefined} onSubmit={(e) => { e.preventDefault(); if (!review) { setReview(true); return; } void props.write(() => seekerApi.recordSave(v)).then((ok) => (ok ? props.close() : setError("没存上，请重试或重新打开这一条"))); }}>
+    {review ? <SeekerDiff before={props.initial.revision ? recordText(props.initial) : ""} after={recordText(v)} /> : <fieldset disabled={props.busy} className="-m-1 max-h-[62vh] space-y-3 overflow-y-auto p-1">{body}</fieldset>}
+  </Modal>;
+}
+
+const PAGE_OF: Record<string, string> = { material: "素材", profile: "素材", fact: "档案", rule: "规则", decision: "规则", example: "规则", application: "网申" };
+const pageOf = (r: SeekerRecord) => (isRater(r) ? "Rater 规则" : PAGE_OF[r.kind] ?? "");
+
+/** transfer/ → records: per page, each new or changed item (ticked) and the ones the files don't have any more (ticked: remove). */
+export function SeekerImportDialog(props: { preview: SeekerImport; busy: boolean; write: SeekerWrite; close: () => void }) {
+  const items = props.preview.items;
+  const gone = props.preview.gone ?? [];
+  const [chosen, setChosen] = useState(() => new Set(items.filter((i) => !i.current).map((i) => i.incoming.id)));
+  const [removing, setRemoving] = useState(() => new Set(gone.map((r) => r.id)));
+  const [error, setError] = useState<string | null>(null);
+  const flip = (set: Set<string>, id: string) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n; };
+  const pages = ["素材", "档案", "规则", "网申", "Rater 规则"];
+  const label = [chosen.size && `导入 ${chosen.size} 条`, removing.size && `删除 ${removing.size} 条`].filter(Boolean).join("，") || "没有要做的";
+  const row = (id: string, on: boolean, flipIt: () => void, title: string, meta: string, diff?: ReactNode) => <div key={id} className="py-1.5">
+    <div className="flex items-center gap-2 text-sm"><input type="checkbox" className="size-4 shrink-0 accent-[var(--primary)]" checked={on} aria-label={title} onChange={flipIt} /><span className="min-w-0 truncate">{title}</span><span className="shrink-0 text-xs text-muted-foreground">{meta}</span></div>
+    {diff && <details className="mt-1 pl-6"><summary className="cursor-pointer text-xs text-muted-foreground">差异</summary><div className="mt-1">{diff}</div></details>}
+  </div>;
+  return <Modal wide title="从 transfer/ 导入" onClose={props.close} error={error} submitLabel={label} submitDisabled={props.busy || (!chosen.size && !removing.size)} onSubmit={(e) => { e.preventDefault(); void props.write(() => seekerApi.import(items.filter((i) => chosen.has(i.incoming.id)).map((i) => i.incoming), [...removing])).then((ok) => (ok ? props.close() : setError("没导入完；资料要是变了，请重新打开导入"))); }}>
+    <fieldset disabled={props.busy} className="-m-1 max-h-[60vh] space-y-4 overflow-y-auto p-1">
+      {pages.map((page) => {
+        const here = items.filter((i) => pageOf(i.incoming) === page);
+        if (!here.length) return null;
+        return <section key={page}><div className="flex items-center gap-2"><h3 className="text-sm font-bold">{page}<span className="ml-2 font-normal text-muted-foreground">{here.length}</span></h3><button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setChosen((s) => new Set([...s, ...here.map((i) => i.incoming.id)]))}>全选</button></div><div className="divide-y">{here.map((i) => row(i.incoming.id, chosen.has(i.incoming.id), () => setChosen((s) => flip(s, i.incoming.id)), i.incoming.title, `${i.current ? "有变化" : "新的"} · ${i.incoming.lang === "en" ? "English · " : ""}${i.incoming.kind === "decision" ? "个人约定" : i.incoming.category}`, <SeekerDiff before={recordText(i.current)} after={recordText(i.incoming)} />))}</div></section>;
+      })}
+      {gone.length > 0 && <section><h3 className="text-sm font-bold">文件里没有了<span className="ml-2 font-normal text-muted-foreground">勾上的会删掉</span></h3><div className="divide-y">{gone.map((r) => row(r.id, removing.has(r.id), () => setRemoving((s) => flip(s, r.id)), r.title, `${pageOf(r)} · ${r.category}`))}</div></section>}
+      {!items.length && !gone.length && <p className="text-sm text-muted-foreground">和 transfer/ 一样，没有要导入的</p>}
+      {props.preview.skipped.length > 0 && <details><summary className="cursor-pointer text-xs text-muted-foreground">没导入的文件（{props.preview.skipped.length}）</summary><div className="mt-1 space-y-0.5">{props.preview.skipped.map((s, i) => <p key={i} className="text-xs text-muted-foreground">{s}</p>)}</div></details>}
+    </fieldset>
   </Modal>;
 }

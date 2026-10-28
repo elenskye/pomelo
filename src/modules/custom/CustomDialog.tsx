@@ -7,7 +7,7 @@ import { Field, TextInput } from "@/shared/ui";
 import { TEMPLATE_COLOR, TEMPLATE_LABEL, useCustomMutations, type Custom, type Template } from "./api";
 import { ICONS } from "./icons";
 
-export function CustomDialog(props: { template: Template; custom?: Custom; onClose: () => void }) {
+export function CustomDialog(props: { template: Template; custom?: Custom; onClose: () => void; /** A new one is made: where it goes in the 模块坞. */ onMade?: (key: string) => void }) {
   const c = props.custom;
   const [name, setName] = useState(c?.name ?? "");
   const [icon, setIcon] = useState(c?.icon ?? ICONS[0][0]);
@@ -29,6 +29,7 @@ export function CustomDialog(props: { template: Template; custom?: Custom; onClo
       } else {
         const made = await m.create.mutateAsync({ template: props.template, ...patch });
         toast(`已新建「${made.name}」`);
+        props.onMade?.(made.key);
         void navigate(`/${made.key}`);
       }
       props.onClose();
