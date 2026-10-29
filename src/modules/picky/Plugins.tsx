@@ -2,12 +2,12 @@
 // Rust skills/). Left the list, right the chosen one: what it does and sends, 启用 / 小拾自己决定用, its
 // keys (keychain only: shown as 已保存, never read back). 小工具 get their own group when one exists.
 // Also here: the skills a draft asks for (chips above the input, the 联网 button), sent with it.
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { X, ArrowDown, CornerDownRight, RefreshCw } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, IconButton, Switch, TextInput } from "@/shared/ui";
-import { SKILLS_KEY, pickyApi, useSkills, type Skill, type SkillKey } from "./api";
+import { SKILLS_KEY, pickyApi, useSkills, type Skill, type SkillFlowNode, type SkillKey } from "./api";
 
 export function PluginsDialog(props: { onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -72,8 +72,8 @@ function SkillPane(props: { skill: Skill }) {
         <p className="text-base font-bold">{s.name}</p>
         <span className="rounded-control bg-muted px-1.5 text-xs text-muted-foreground">{s.command}</span>
       </div>
-      <p className="leading-relaxed">{s.summary}</p>
-      <p className="leading-relaxed text-muted-foreground">{s.detail}</p>
+      <SkillFlow flow={s.flow} />
+      <ul className="list-disc space-y-1 pl-5 leading-relaxed">{s.features.map((f) => <li key={f}>{f}</li>)}</ul>
       <div className="flex flex-col gap-2.5 border-t pt-4">
         <label className="flex items-center justify-between gap-4">
           <span>启用</span>
@@ -92,7 +92,58 @@ function SkillPane(props: { skill: Skill }) {
   );
 }
 
-/** The contact 书单 / 影单检索 send to Wikidata and Open Library (one for both). */
+/** A skill's flow: rounded boxes from the input (tinted) to the result (柚红 edge), arrows between; a
+ * check is a dashed box with its branch indented beside a dashed line (label, small boxes, where it goes
+ * on), the arrow on down labelled; a loop is a ↻ line saying where it goes back to. */
+function SkillFlow(props: { flow: SkillFlowNode[] }) {
+  const steps = props.flow.filter((n) => n.kind === "step");
+  const box = "rounded-card border px-3 py-1.5 text-sm";
+  return (
+    <ol aria-label="流程" className="flex flex-col items-start">
+      {props.flow.map((n, i) => {
+        const prev = props.flow[i - 1];
+        return (
+          <li key={i} className="flex flex-col items-start">
+            {i > 0 && (
+              <span className="my-1 ml-4 flex items-center gap-1 text-xs text-muted-foreground">
+                <ArrowDown size={14} aria-hidden />
+                {prev?.kind === "check" && prev.no}
+              </span>
+            )}
+            {n.kind === "step" ? (
+              <span className={`${box} ${n === steps[0] ? "bg-accent text-accent-foreground" : n === steps[steps.length - 1] ? "border-primary bg-card" : "bg-card"}`}>{n.text}</span>
+            ) : n.kind === "check" ? (
+              <>
+                <span className={`${box} border-dashed bg-card`}>{n.ask}</span>
+                <div className="mt-1 ml-4 flex flex-col items-start gap-1 border-l-2 border-dashed pt-0.5 pb-1 pl-3">
+                  <span className="text-xs text-muted-foreground">{n.yes}</span>
+                  {n.side.map((t, j) => (
+                    <Fragment key={j}>
+                      {j > 0 && <ArrowDown size={12} className="ml-3 text-muted-foreground" aria-hidden />}
+                      <span className="rounded-card border bg-muted/50 px-2.5 py-1 text-xs">{t}</span>
+                    </Fragment>
+                  ))}
+                  {n.join && (
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <CornerDownRight size={12} aria-hidden />接到「{n.join}」
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <span className="flex items-center gap-1.5 rounded-card border border-dashed px-3 py-1 text-xs text-muted-foreground">
+                <RefreshCw size={12} aria-hidden />
+                {n.text}，回到「{n.back}」
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The contact general-book-lookup / general-film-lookup send to Wikidata and Open Library (one for both). */
 function ContactField(props: { value: string | null }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -110,7 +161,7 @@ function ContactField(props: { value: string | null }) {
   return (
     <div className="flex flex-col gap-1.5 border-t pt-4">
       <p>
-        联系邮箱<span className="text-muted-foreground">（书单检索、影单检索共用）</span>
+        联系邮箱<span className="text-muted-foreground">（general-book-lookup、general-film-lookup 共用）</span>
       </p>
       <p className="text-muted-foreground">只发给 Wikidata 和 Open Library。填了 Wikidata 每分钟给 200 次请求，不填只有 10 次，几本一起查时会慢、可能查不全。</p>
       <form onSubmit={save} className="flex items-center gap-2">

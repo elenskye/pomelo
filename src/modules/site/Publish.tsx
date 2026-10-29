@@ -306,7 +306,7 @@ export function PublishPage(props: { o: Overview; history: History | null }) {
   const count = files.length + ahead.length;
   return (
     <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
-      <div className="max-w-3xl space-y-6 px-8 pt-1 pb-8">
+      <div className="mx-auto max-w-3xl space-y-6 px-8 pt-1 pb-8">
         {job && <JobCard job={job} siteUrl={o.siteUrl} onDismiss={dismiss} />}
         <section className="space-y-2">
           <div className="flex items-end justify-between gap-4">

@@ -14,7 +14,7 @@
 //!   (files::read: the formats attachments take, whole tables), cuts it like project files
 //!   (index::pieces) and embeds what changed — passages whose text is the same keep their vectors;
 //!   the same bytes only mark it current. Images are listed but never built (no text: `PENDING`
-//!   leaves them out); a cloud model looks at one with `view=look` (`look`: shrunk like an attached
+//!   leaves them out); a PDF without text (a scan, `files::SCANNED_PDF`) is listed by name the same way; a cloud model looks at one with `view=look` (`look`: shrunk like an attached
 //!   image, sent in a user message after the tool results — chat.rs).
 //! - When (the user's choice): pending files are built while 8081 runs anyway (after a scan), or
 //!   when a question searches them (`prepare`, which starts 8081); adding a source and 重新建立 start
@@ -51,6 +51,11 @@ pub const MAX_FILES: usize = 2000;
 const READABLE: &[&str] = &["txt", "text", "md", "markdown", "pdf", "docx", "doc", "pptx", "xlsx", "xlsm", "xls", "ods", "csv"];
 /// Listed (and looked at by a cloud model), never built.
 const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"];
+
+/// A scanned PDF: it was read and had no text.
+pub fn is_scan(error: Option<&str>) -> bool {
+    error == Some(files::SCANNED_PDF)
+}
 
 /// A folder's image (by its extension).
 pub fn is_image(path: &str) -> bool {
@@ -1046,10 +1051,12 @@ pub fn files_view(search: &Connection, scope: &Scope, args: &serde_json::Value, 
             "网页".to_string()
         } else if is_image(&l.path) {
             "图片，用 look 看".to_string()
+        } else if is_scan(l.error.as_deref()) {
+            "扫描件，没有文字，只有文件名".to_string()
         } else {
             Path::new(&l.path).extension().map_or("文件".into(), |e| e.to_string_lossy().to_uppercase())
         };
-        let broken = l.error.as_deref().map(|e| format!(" · 读不了：{e}")).unwrap_or_default();
+        let broken = l.error.as_deref().filter(|e| !is_scan(Some(e))).map(|e| format!(" · 读不了：{e}")).unwrap_or_default();
         let line = format!("- {}（{kind} · {} · {}{broken}）", l.shown, size_text(l.size), l.date);
         if used + super::context::estimate(&line) > budget {
             lines.push(format!("……还有 {} 个没列出，可以用 keyword 缩小", hits.len() - i));
@@ -1227,9 +1234,11 @@ pub struct Failed {
 pub struct SourceView {
     #[serde(flatten)]
     pub source: Source,
-    /// Files it holds (images apart); with passages; still to (re)build; that can't be read.
+    /// Files it holds (images and scanned PDFs apart); with passages; still to (re)build; that can't be read.
     pub files: i64,
     pub images: i64,
+    /// PDFs without text (scans): by name only, like images.
+    pub scans: i64,
     pub ready: i64,
     pub pending: i64,
     pub failed: Vec<Failed>,
@@ -1257,10 +1266,11 @@ pub struct Overview {
 
 pub fn source_view(search: &Connection, s: Source, model: &str) -> Result<SourceView, String> {
     let (images, list): (Vec<Doc>, Vec<Doc>) = docs(search, s.id)?.into_iter().partition(|d| is_image(&d.path));
+    let (scans, list): (Vec<Doc>, Vec<Doc>) = list.into_iter().partition(|d| d.fresh && is_scan(d.error.as_deref()));
     let ready = list.iter().filter(|d| d.error.is_none() && d.model.as_deref() == Some(model)).count() as i64;
     let pending = list.iter().filter(|d| !d.fresh || (d.error.is_none() && d.model.as_deref() != Some(model))).count() as i64;
     let failed = list.iter().filter_map(|d| d.error.clone().map(|error| Failed { path: d.path.clone(), error })).collect();
-    Ok(SourceView { files: list.len() as i64, images: images.len() as i64, ready, pending, failed, building: false, missing: false, truncated: false, source: s })
+    Ok(SourceView { files: list.len() as i64, images: images.len() as i64, scans: scans.len() as i64, ready, pending, failed, building: false, missing: false, truncated: false, source: s })
 }
 
 fn overview(app: &AppHandle) -> Result<Overview, String> {
@@ -1588,19 +1598,22 @@ pub mod tests {
         std::fs::create_dir_all(&data).unwrap();
         std::fs::write(root.join("租房.md"), "# 押金\n租房合同的押金怎么退。\n\n# 周末\n周末去公园散步。").unwrap();
         std::fs::write(root.join("坏.pdf"), b"not a pdf").unwrap();
+        std::fs::write(root.join("证书扫描.pdf"), crate::picky::pdf::tests::sample_pdf(&[""])).unwrap();
         let lib = create_library(&c, "生活").unwrap();
         let f = add_folder(&c, lib, &root, &data).unwrap();
         scan_one(&c, &s, f);
         build_all(&c, &s, f);
         let list = docs(&s, f).unwrap();
         let model = mock_rt().1.key;
-        assert_eq!(list.len(), 2);
+        assert_eq!(list.len(), 3);
         assert!(list.iter().any(|d| d.path == "坏.pdf" && d.error.is_some() && d.fresh));
+        assert!(list.iter().any(|d| d.path == "证书扫描.pdf" && is_scan(d.error.as_deref())));
         let good = list.iter().find(|d| d.path == "租房.md").unwrap().clone();
         assert!(good.fresh && good.model.as_deref() == Some(model.as_str()));
         assert!(next_pending(&s, &[f], &model).unwrap().is_none());
         let v = source_view(&s, source(&c, f).unwrap(), &model).unwrap();
-        assert_eq!((v.files, v.ready, v.pending, v.failed.len()), (2, 1, 0, 1));
+        // a scanned PDF is counted apart, like an image (by name only), not as unreadable
+        assert_eq!((v.files, v.ready, v.pending, v.failed.len(), v.scans), (2, 1, 0, 1, 1));
 
         // retrieval: the passage about deposits ranks first, labelled with its file and section
         let sc = Scope { libraries: vec!["生活".into()], sources: vec![(source(&c, f).unwrap(), "生活".into())], skipped: vec![] };

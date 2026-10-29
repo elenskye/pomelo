@@ -151,15 +151,16 @@ export function ProgressBar(props: { done: number; doing?: number; total: number
 }
 
 /** On / off switch (settings rows). */
-export function Switch(props: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+export function Switch(props: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={props.checked}
       aria-label={props.label}
+      disabled={props.disabled}
       onClick={() => props.onChange(!props.checked)}
-      className={`relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
         props.checked ? "bg-primary" : "bg-muted-foreground/30"
       }`}
     >

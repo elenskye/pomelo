@@ -167,6 +167,10 @@ pub fn run() {
             app.manage(AppState::init(DataPaths::new(root), &home, mode));
             let handle = app.handle().clone();
             app.state::<AppState>().picky.set_app(handle.clone());
+            // once: 投石问路's old 简历 field becomes the job's résumé in Seeker
+            if let Err(e) = picky::assistants::seeker::output::adopt_job_resumes(&app.state::<AppState>()) {
+                eprintln!("[seeker] 简历一栏没搬过去：{e}");
+            }
             tray::init(&handle)?;
             // the login item opens Pomelo in the menu bar only (hidden before the window is first drawn)
             if autostart::launched_hidden() {
@@ -295,6 +299,15 @@ pub fn run() {
             picky::assistants::rater::practice::picky_rater_follow,
             picky::assistants::rater::practice::picky_rater_keep,
             picky::assistants::rater::practice::picky_rater_comment,
+            picky::assistants::rater::practice::picky_rater_rounds_delete,
+            picky::assistants::rater::picky_rater_order,
+            picky::assistants::rater::picky_rater_delete_many,
+            picky::assistants::seeker::catalog::picky_seeker_records_order,
+            picky::assistants::seeker::catalog::picky_seeker_records_enable,
+            picky::assistants::seeker::catalog::picky_seeker_records_delete,
+            picky::assistants::seeker::catalog::picky_seeker_group_rename,
+            picky::assistants::seeker::model::picky_seeker_prompts,
+            picky::assistants::rater::picky_rater_prompts,
             picky::assistants::rater::interview::picky_rater_interviews,
             picky::assistants::seeker::files::picky_seeker_files,
             picky::assistants::seeker::files::picky_seeker_cv_text,
@@ -315,6 +328,7 @@ pub fn run() {
             picky::assistants::seeker::picky_seeker_use_job,
             picky::assistants::seeker::company::picky_seeker_knowledge,
             picky::assistants::seeker::company::picky_seeker_knowledge_add,
+            picky::assistants::seeker::company::picky_seeker_company_names,
             picky::assistants::seeker::company::picky_seeker_job_company,
             picky::assistants::seeker::company::picky_seeker_job_company_set,
             picky::assistants::seeker::catalog::picky_seeker_record_save,
@@ -325,16 +339,12 @@ pub fn run() {
             picky::assistants::seeker::workflow::picky_seeker_assemble,
             picky::assistants::seeker::workflow::picky_seeker_sources,
             picky::assistants::seeker::workflow::picky_seeker_source_apply,
-            picky::assistants::seeker::workflow::picky_seeker_confirm,
-            picky::assistants::seeker::workflow::picky_seeker_restore,
             picky::assistants::seeker::workflow::picky_seeker_reorder,
             picky::assistants::seeker::workflow::picky_seeker_apply,
             picky::assistants::seeker::model::picky_seeker_suggest,
-            picky::assistants::seeker::output::picky_seeker_template_read,
-            picky::assistants::seeker::output::picky_seeker_template,
             picky::assistants::seeker::output::picky_seeker_output_save,
-            picky::assistants::seeker::output::picky_seeker_job_link,
-            picky::assistants::seeker::output::picky_seeker_export_restore,
+            picky::assistants::seeker::output::picky_seeker_job_resume,
+            picky::assistants::seeker::output::picky_seeker_job_resumes,
             picky::assistants::translate::picky_translate_settings,
             picky::assistants::translate::picky_translate_input,
             picky::assistants::translate::picky_translate_preview,

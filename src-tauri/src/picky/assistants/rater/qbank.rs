@@ -1,5 +1,5 @@
 //! 三个题库 SKILL (v0.7 阶段 ⑤): 简历题 / 通用题 / 突击题. Each has an editable workflow (Seeker
-//! records of that 用途 — rules and 个人约定; none yet: the built-in `default_workflow`), reads what it
+//! rules of that 用途; none yet: the built-in `default_workflow`), reads what it
 //! needs, and only proposes: new questions (a list to tick on Rater's page, or the reply's card in a
 //! 小拾 conversation) or one new answer (a diff). Writing is the user's click (rater.rs `put`, one undo
 //! step). The page's 「让小拾补题」 / 「润色」 and 小拾's tools (skills/mod.rs) all call `generate`.
@@ -26,13 +26,34 @@ pub const MAX: usize = 12;
 /// The answer's shape, for every SKILL.
 pub const SKELETON: &str = "答案是用户自己的口述稿：第一人称、短句、大白话，能在 90 秒（约 400 字）内说完。骨架：一句话结论 → 我做了什么（动作 + 技术或方法）→ 结果（数字和范围）→ 局限或如果重来。行为题用 情境 → 任务 → 行动 → 结果。假设题（「如果让你……」）答「我会怎么做」，不写成做过的事，也不写结果数字。";
 
-/// A SKILL's workflow before the user writes their own (Rater 规则 page shows it).
-pub fn default_workflow(category: &str) -> &'static str {
+/// A SKILL's workflow before the user writes their own (Rater 规则 page shows it): its points.
+pub fn default_workflow(category: &str) -> &'static [&'static str] {
     match category {
-        "简历题" => "- 面试官照着简历问，要有问必答：按每段经历各出几道。\n- 题型：「【项目】里你具体负责什么？哪些是队友做的？」「为什么用【技术】而不是【另一种】？」「【指标】是怎么算的、在什么数据上？」「最难的一步是什么，怎么解决的？」「如果重做，你会改哪里？」；简历上的每个技术名词：它是什么、你在哪里用过、用到什么程度。\n- 只用素材和经历档案里有的事实；本人做的和队友做的分开；缺的地方写「（待补：缺什么）」，不编数字和细节；资料里没写的做法（指标怎么算、数据怎么来、为什么这么选）也写「（待补）」，不按常理补全。",
-        "通用题" => "- 题型：自我介绍（1 分钟、3 分钟两版）、为什么投这个岗位 / 这家公司、优点和缺点、一次失败 / 冲突 / 带队的经历、职业规划、到岗时间和期望薪资、最后的反问。\n- 事实只用基本信息、已确认事实和经历一览里有的；到岗时间、薪资这类照已确认事实写，没有就写「（待补）」，不替用户定。",
-        _ => "- 每个岗位第一次出 8～10 道：「JD 里的【要求】，你有什么经历能证明？」「你怎么看这家公司的【业务 / 产品】？」「如果让你做【这个岗位的日常工作】，第一个月做什么？」，再把已有的简历题、通用题按这家公司改写几道（写明改自哪道，原题不动）。\n- 公司资料是招聘方的情况，不是用户的经历：只用来判断岗位看重什么、回答怎么贴近；用户的事实只从已有的题、素材里来。",
+        "简历题" => &[
+            "面试官照着简历问，要有问必答：按每段经历各出几道。",
+            "题型：「【项目】里你具体负责什么？哪些是队友做的？」「为什么用【技术】而不是【另一种】？」「【指标】是怎么算的、在什么数据上？」「最难的一步是什么，怎么解决的？」「如果重做，你会改哪里？」",
+            "简历上的每个技术名词都出题：它是什么、你在哪里用过、用到什么程度。",
+            "只用素材和经历档案里有的事实，本人做的和队友做的分开。",
+            "缺的地方写「（待补：缺什么）」，不编数字和细节。",
+            "资料里没写的做法（指标怎么算、数据怎么来、为什么这么选）也写「（待补）」，不按常理补全。",
+        ],
+        "通用题" => &[
+            "题型：自我介绍（1 分钟、3 分钟两版）、为什么投这个岗位 / 这家公司、优点和缺点、一次失败 / 冲突 / 带队的经历、职业规划、到岗时间和期望薪资、最后的反问。",
+            "事实只用基本信息、已确认事实和经历一览里有的。",
+            "到岗时间、薪资这类照已确认事实写，没有就写「（待补）」，不替用户定。",
+        ],
+        _ => &[
+            "每个岗位第一次出 8～10 道：「JD 里的【要求】，你有什么经历能证明？」「你怎么看这家公司的【业务 / 产品】？」「如果让你做【这个岗位的日常工作】，第一个月做什么？」",
+            "再把已有的简历题、通用题按这家公司改写几道，写明改自哪道，原题不动。",
+            "公司资料是招聘方的情况，不是用户的经历：只用来判断岗位看重什么、回答怎么贴近。",
+            "用户的事实只从已有的题、素材里来。",
+        ],
     }
+}
+
+/// A default workflow as a rule (its points, ids `p1`…), for the prompt and 「改成我的」.
+pub fn default_rule(category: &str) -> Record {
+    Record { kind: "rule".into(), category: category.into(), title: "工作流".into(), points: default_workflow(category).iter().enumerate().map(|(i, t)| seeker::Point { id: format!("p{}", i + 1), text: t.to_string() }).collect(), lang: "cn".into(), ..Default::default() }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -62,6 +83,10 @@ pub struct Ask {
     pub question: Option<String>,
     /// The user's words for this time.
     pub request: String,
+    /// 润色 a question still in a 小拾 card (not in the bank yet, or its answer not saved yet): it
+    /// stands in for the bank's (skills/qbank.rs `replace`).
+    #[serde(skip)]
+    pub pending: Option<Question>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -103,23 +128,26 @@ fn chosen<'a>(w: &'a Workspace, ids: &[String]) -> Result<Vec<&'a Record>, Strin
     Ok(all.into_iter().filter(|r| r.category == "项目" || r.category == "工作").collect())
 }
 
-/// The rules this SKILL reads: 共用准则, 题库维护 and its workflow (its rules, else the default), with
-/// the 个人约定 of those as one list.
+/// The rule groups a SKILL (题库 · 简历题 / 通用题 / 突击题) reads.
+pub fn reads(category: &str) -> [&str; 3] {
+    ["共用准则", RULES[0], category]
+}
+
+/// The rules this SKILL reads (`reads`): 共用准则, 题库维护 and its workflow (its rules, else the
+/// default), as Markdown (`# 组`, `## 标题`, points numbered), then `# 答案`.
 pub fn rules(w: &Workspace, category: &str) -> String {
     let on: Vec<&Record> = w.catalog.records.iter().filter(|r| r.enabled && r.for_lang("cn")).collect();
-    let mut out = vec![];
-    for (use_, label) in [("共用准则", "共用准则"), (RULES[0], "题库维护"), (category, "工作流")] {
-        let rules: Vec<String> = on.iter().filter(|r| r.kind == "rule" && r.category == use_).map(|r| format!("【{label}：{}】\n{}", r.title, r.text)).collect();
-        if rules.is_empty() && use_ == category {
-            out.push(format!("【工作流：{category}】\n{}", default_workflow(category)));
-        }
-        out.extend(rules);
-    }
-    let decisions: Vec<String> = on.iter().filter(|r| r.kind == "decision" && [RULES[0], category].contains(&r.category.as_str())).map(|r| format!("- {}：{}", r.title, r.text)).collect();
-    if !decisions.is_empty() {
-        out.push(format!("【有效个人约定】\n{}", decisions.join("\n")));
-    }
-    out.push(format!("【答案】{SKELETON}"));
+    let default = default_rule(category);
+    let groups: Vec<(String, Vec<&Record>)> = reads(category)
+        .into_iter()
+        .map(|use_| {
+            let mine: Vec<&Record> = on.iter().filter(|r| r.kind == "rule" && r.category == use_).copied().collect();
+            let heading = if use_ == category { format!("工作流：{category}") } else { seeker::catalog::group_label(&w.catalog, use_) };
+            (heading, if mine.is_empty() && use_ == category { vec![&default] } else { mine })
+        })
+        .collect();
+    let mut out = seeker::catalog::rules_markdown(&groups);
+    out.push(format!("# 答案\n{SKELETON}"));
     out.join("\n\n")
 }
 
@@ -429,7 +457,11 @@ pub(crate) async fn call(state: &AppState, model: &str, system: &str, user: &str
 /// One SKILL run: reads, asks Rater's model once, checks the answer. Nothing is written.
 pub async fn generate(app: &AppHandle, ask: Ask) -> Result<Proposal, String> {
     let state = app.state::<AppState>();
-    let (w, bank, opts) = state.picky.with_db(|c| Ok((seeker::read(c)?, read(c)?, options(c)?)))?;
+    let (w, mut bank, opts) = state.picky.with_db(|c| Ok((seeker::read(c)?, read(c)?, options(c)?)))?;
+    if let Some(q) = &ask.pending {
+        bank.questions.retain(|x| x.id != q.id);
+        bank.questions.push(q.clone());
+    }
     let model = chosen_model(&w, &opts)?;
     let cloud = model.starts_with("cloud:");
     if ask.kind == "突击题" && ask.job.is_none() {
@@ -485,8 +517,8 @@ pub async fn picky_rater_add(state: tauri::State<'_, AppState>, questions: Vec<Q
 
 /// Each SKILL's workflow before the user writes their own.
 #[tauri::command]
-pub fn picky_rater_defaults() -> Vec<(String, String)> {
-    CATEGORIES.iter().map(|c| (c.to_string(), default_workflow(c).to_string())).collect()
+pub fn picky_rater_defaults() -> Vec<(String, Vec<String>)> {
+    CATEGORIES.iter().map(|c| (c.to_string(), default_workflow(c).iter().map(|p| p.to_string()).collect())).collect()
 }
 
 #[tauri::command]
@@ -547,7 +579,7 @@ mod tests {
         let (w, bank) = (seeker::read(&c).unwrap(), read(&c).unwrap());
         // 简历题: the default workflow, the material with its 档案, what's there already
         let (system, user) = prompt(&w, &bank, &Ask { materials: vec!["m-notes".into()], count: 2, ..ask("简历题") }, None, "").unwrap();
-        for part in ["【共用准则：定位】", "【题库维护：答案要求】", "【工作流：简历题】\n- 面试官照着简历问", "按工作流出满 2 道新的简历题", "【答案】答案是用户自己的口述稿"] {
+        for part in ["# 共用准则\n\n## 定位\n1. 只做指定的事。", "# 题库维护\n\n## 答案要求\n1. 能口述。", "# 工作流：简历题\n\n## 工作流\n1. 面试官照着简历问", "按工作流出满 2 道新的简历题", "# 答案\n答案是用户自己的口述稿"] {
             assert!(system.contains(part), "{part}\n{system}");
         }
         assert!(!system.contains("不该读到"));
@@ -559,7 +591,7 @@ mod tests {
         assert!(prompt(&w, &bank, &ask("简历题"), None, "").unwrap().1.contains("示例证券"));
         // 通用题: the user's own workflow replaces the default; 基本信息, facts, the experiences
         let (system, user) = prompt(&w, &bank, &ask("通用题"), None, "").unwrap();
-        assert!(system.contains("【工作流：自己写的】\n只出自我介绍。") && !system.contains("【工作流：通用题】"), "{system}");
+        assert!(system.contains("# 工作流：通用题\n\n## 自己写的\n1. 只出自我介绍。") && !system.contains("1. 题型：自我介绍"), "{system}");
         for part in ["基本信息：\n- 姓名：林小柚", "已确认事实：\n- [个人事实] 到岗时间：2027 年 4 月后", "经历（简历素材，", "【项目】柚子笔记｜独立开发\n  读书笔记整理工具\n  - 检索改进：按意思搜索"] {
             assert!(user.contains(part), "{part}\n{user}");
         }

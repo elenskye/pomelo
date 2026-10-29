@@ -37,12 +37,12 @@ export function draftText(d: SeekerDraft | null | undefined): string {
   if (!d) return "";
   const en = d.lang === "en";
   // English: the heading as the export writes it (角色｜时间, then 名称, 地点); Summary and points-only sections without one
-  const head = (category: string, e: SeekerDraft["sections"][number]["entries"][number]) => !en ? [[e.time, e.name, e.role, e.location].filter(Boolean).join("｜")] : category === SUMMARY || HEADLESS.includes(category) ? [] : category === "教育" || !e.role ? [[e.name, e.time].filter(Boolean).join("｜"), e.role, e.location] : [[e.role, e.time].filter(Boolean).join("｜"), [e.name, e.location].filter(Boolean).join(", ")];
+  const head = (category: string, e: SeekerDraft["sections"][number]["entries"][number]) => !en ? [[e.name, e.role, e.time].filter(Boolean).join("｜")] : category === SUMMARY || HEADLESS.includes(category) ? [] : category === "教育" || !e.role ? [[e.name, e.time].filter(Boolean).join("｜"), e.role, e.location] : [[e.role, e.time].filter(Boolean).join("｜"), [e.name, e.location].filter(Boolean).join(", ")];
   return [...(en ? [d.form === "cv" ? "CV" : "Resume"] : []), d.name, d.header.filter((h) => h.visible).map((h) => `${h.label}：${h.value}`).join("\n"), ...d.sections.map((s) => [s.title, ...s.entries.map((e) => [...head(s.category ?? "", e).filter(Boolean), ...(e.note ? [e.note] : []), ...e.points.map((p) => `• ${p.text}`)].join("\n"))].join("\n\n")), `目标 JD：\n${d.jd}`].join("\n\n");
 }
 export function recordText(r: SeekerRecord | null | undefined): string {
   if (!r) return "";
-  return [r.title, [r.time, r.role, r.location].filter(Boolean).join("｜"), r.text, r.stack ? `技术栈：${r.stack}` : "", ...r.points.map((p) => `• ${p.text}`), ...r.fields.map((f) => `${f.label}：${f.value}`), r.enabled ? "" : "（已停用）"].filter(Boolean).join("\n");
+  return [r.title, [r.time, r.role, r.location].filter(Boolean).join("｜"), r.text, r.stack ? `技术栈：${r.stack}` : "", ...r.points.map((p, i) => (r.kind === "rule" ? `${i + 1}. ${p.text}` : `• ${p.text}`)), ...r.fields.map((f) => `${f.label}：${f.value}`), r.enabled ? "" : "（已停用）"].filter(Boolean).join("\n");
 }
 
 /** Each instance is a sibling group. Numeric positions adapt the existing pointer sorter to block IDs. */

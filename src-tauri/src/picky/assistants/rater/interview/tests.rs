@@ -1,5 +1,5 @@
 use super::*;
-use crate::picky::assistants::seeker::{catalog, output::{Export, JobExport, Slots, Template}, workflow, Entry, Point, Section};
+use crate::picky::assistants::seeker::{catalog, output::{Export, JobResume}, workflow, Entry, Point, Section};
 use crate::picky::store::tests::memory_db;
 
 fn record(id: &str, kind: &str, category: &str, title: &str, text: &str) -> Record {
@@ -40,10 +40,6 @@ fn seeded(c: &Connection) {
     seeker::save(c, &draft("林小柚", &["m-orange"])).unwrap();
 }
 
-fn slots() -> Slots {
-    Slots { name: 0, contact: 1, section: 2, entry: 3, point: 4, education: None, note: None, contact2: None, summary: None, blank: None }
-}
-
 #[test]
 fn a_prep_reads_the_resume_the_job_uses_its_jd_and_the_relevant_questions() {
     let c = memory_db();
@@ -51,21 +47,35 @@ fn a_prep_reads_the_resume_the_job_uses_its_jd_and_the_relevant_questions() {
     let (mut w, bank) = (seeker::read(&c).unwrap(), read(&c).unwrap());
     let ask = PrepAsk { job: 4, lang: "中文".into(), form: "视频一面".into(), request: "多准备 SQL".into() };
     // no export for the job: the Chinese draft (橙子识别) → its 简历题, not 柚子笔记's
-    let (system, user) = prep_prompt(&w, &bank, &ask, &job(), "").unwrap();
-    assert!(system.contains("面试语言：中文；形式：视频一面") && system.contains("【面试：复盘】") && system.contains("\"sheet\""), "{system}");
+    // the export's Word (a.docx) reads as its text; the rest have none
+    let txt = |p: &str| (p == "/x/a.docx").then(|| "林小柚\n柚子笔记 · 独立开发".to_string());
+    let used = |w: &Workspace| resume(w, &job(), "中文", &|_| true, &txt);
+    let (system, user) = prep_prompt(&w, &bank, &ask, &job(), used(&w).as_ref(), "").unwrap();
+    assert!(system.contains("面试语言：中文；形式：视频一面") && system.contains("# 面试\n\n## 复盘\n1. 事实和判断分开。") && system.contains("\"sheet\""), "{system}");
     for part in ["用户本次要求：多准备 SQL", "岗位：柚子银行 · 数据分析师（上海）\nJD：\n负责信贷数据分析", "投递的简历（中文草稿）：", "橙子识别\n", "题目 g1【通用题】", "题目 o1【简历题】", "题目 j1【突击题】", "[个人事实] 到岗时间"] {
         assert!(user.contains(part), "{part}\n{user}");
     }
     assert!(!user.contains("题目 n1") && !user.contains("别家的题") && !user.contains("本人负责全部代码"), "{user}");
     // the job's export in use wins: 柚子笔记, with its 档案
-    let export = Export { id: "e1".into(), label: "林小柚-简历.docx".into(), draft: draft("林小柚", &["m-notes"]), path: "/x/a.docx".into(), template: Template { path: "/x/t.docx".into(), slots: slots(), paragraphs: vec![] }, created_at: "2026-10-02T00:00:00.000Z".into() };
-    w.output.links.push(JobExport { id: "l".into(), export_id: "e1".into(), job: job(), jd: String::new(), created_at: "2026-10-02T00:00:00.000Z".into(), current: true });
+    let export = Export { id: "e1".into(), label: "林小柚-简历.docx".into(), path: "/x/a.docx".into(), lang: "cn".into(), materials: vec!["m-notes".into()], created_at: "2026-10-02T00:00:00.000Z".into(), draft: None };
+    w.output.links.push(JobResume { id: "l".into(), path: "/x/a.docx".into(), job: job(), jd: String::new(), created_at: "2026-10-02T00:00:00.000Z".into(), current: true, export_id: None });
     w.output.exports.push(export);
-    let (_, user) = prep_prompt(&w, &bank, &ask, &job(), "\n\n公司资料（柚子银行）…").unwrap();
+    let (_, user) = prep_prompt(&w, &bank, &ask, &job(), used(&w).as_ref(), "\n\n公司资料（柚子银行）…").unwrap();
     assert!(user.contains("投递的简历（林小柚-简历.docx）") && user.contains("题目 n1") && !user.contains("题目 o1") && user.contains("经历档案《柚子笔记 经历档案》"), "{user}");
     // English interview: said so
-    let (system, _) = prep_prompt(&w, &bank, &PrepAsk { lang: "English".into(), ..ask }, &job(), "").unwrap();
+    let (system, _) = prep_prompt(&w, &bank, &PrepAsk { lang: "English".into(), ..ask.clone() }, &job(), used(&w).as_ref(), "").unwrap();
     assert!(system.contains("面试语言是英文"));
+    // a résumé from cv/ that Pomelo didn't make (now in use): its text, and every 简历题
+    w.output.links[0].current = false;
+    w.output.links.insert(0, JobResume { id: "l2".into(), path: "/cv/cn/林小柚-简历-v3.pdf".into(), job: job(), jd: String::new(), created_at: "2026-10-03T00:00:00.000Z".into(), current: true, export_id: None });
+    let pdf = resume(&w, &job(), "中文", &|_| true, &|p| p.ends_with(".pdf").then(|| "林小柚\n柚子银行实习 · 写 SQL 报表".to_string())).unwrap();
+    assert_eq!((pdf.name.as_str(), pdf.materials.is_empty()), ("林小柚-简历-v3.pdf", true));
+    let (_, user) = prep_prompt(&w, &bank, &ask, &job(), Some(&pdf), "").unwrap();
+    assert!(user.contains("投递的简历（林小柚-简历-v3.pdf）：\n林小柚\n柚子银行实习") && user.contains("题目 n1") && user.contains("题目 o1"), "{user}");
+    // its file deleted: the export before it isn't used either when gone; the draft then
+    let gone = resume(&w, &job(), "中文", &|p| !p.ends_with(".pdf"), &txt).unwrap();
+    assert_eq!(gone.name, "林小柚-简历.docx");
+    assert_eq!(resume(&w, &job(), "中文", &|_| false, &|_| None).unwrap().name, "中文草稿");
 }
 
 #[test]
@@ -127,9 +137,9 @@ fn reviews_save_compare_and_turn_into_questions_and_rules_one_step_each() {
     assert!(keep_question(&c, &id, 0).unwrap_err().contains("已经"));
     crate::undo::tests::step(&c, &mut h, "加进规则", |c| adopt_rule(c, &id, 0));
     let rule = seeker::read(&c).unwrap().catalog.records.into_iter().find(|x| x.title == "（模拟）先说数据口径").unwrap();
-    assert_eq!((rule.kind.as_str(), rule.category.as_str()), ("decision", "面试"));
+    assert_eq!((rule.kind.as_str(), rule.category.as_str(), rule.points.len()), ("rule", "面试", 1));
     assert!(adopt_rule(&c, &id, 0).is_err());
-    assert!(super::super::practice::rules(&seeker::read(&c).unwrap()).contains("- （模拟）先说数据口径：被问到数字时"));
+    assert!(super::super::practice::rules(&seeker::read(&c).unwrap()).contains("## （模拟）先说数据口径\n1. 被问到数字时"), "{}", super::super::practice::rules(&seeker::read(&c).unwrap()));
     // each was one step
     crate::undo::undo(&c, &mut h).unwrap();
     assert!(seeker::read(&c).unwrap().catalog.records.iter().all(|x| x.title != "（模拟）先说数据口径"));
@@ -228,7 +238,7 @@ fn real_interview() {
     };
     let mut report = vec![format!("# Rater 面试真测：{name}\n")];
     // 准备
-    let (system, user) = prep_prompt(&w, &bank, &PrepAsk { job: 4, lang: "中文".into(), form: "视频一面 · 业务面".into(), request: String::new() }, &jd, "").unwrap();
+    let (system, user) = prep_prompt(&w, &bank, &PrepAsk { job: 4, lang: "中文".into(), form: "视频一面 · 业务面".into(), request: String::new() }, &jd, resume(&w, &jd, "中文", &|_| true, &|_| None).as_ref(), "").unwrap();
     let source = format!("{system}\n{user}");
     let odd = |text: &str| -> String {
         let mut out: Vec<&str> = text.split(|ch: char| !(ch.is_ascii_digit() || ch == '.' || ch == '%')).map(|s| s.trim_matches('.')).filter(|s| s.chars().any(|ch| ch.is_ascii_digit()) && s.len() > 1 && !source.contains(*s)).collect();
@@ -268,7 +278,7 @@ fn real_interview() {
             report.push(format!("- 没准备到：{}", a.misses.iter().map(|m| format!("问 {}（{}）", m.asked + 1, m.text)).collect::<Vec<_>>().join("；")));
             report.push(format!("- 建议加进题库 {} 道：", a.questions.len()));
             report.extend(a.questions.iter().map(|f| format!("  - 【{}】{} → {}", f.category, f.question, f.answer)));
-            report.push(format!("- 提议的个人约定 {} 条：", a.rules.len()));
+            report.push(format!("- 提议的规则 {} 条：", a.rules.len()));
             report.extend(a.rules.iter().map(|r| format!("  - 【{}】{}：{}（{}）", r.use_, r.title, r.text, r.why)));
             report.push(String::new());
         }

@@ -7,8 +7,9 @@
 //!   `- 角色：` (or 职位 / 专业 / 学历) `- 时间：` `- 地点：` `- 概览：` (or 说明) `- 技术栈：`, then the points
 //!   (`- **小标题**：…`). A file without `## ` (技能) is one material titled by its heading.
 //! - `SEEKER.md` (共用准则), `rules/cn-modules.md` (素材润色), `rules/cn-resume.md` (整体审查) → a rule per
-//!   `## ` section (a first line `用于：…` sets the task); a section named 「有效个人约定」 → a decision
-//!   per bullet (`- **名称**：内容`).
+//!   `## ` section (a first line `用于：…` sets the task), its lines as points (catalog.rs `split_points`);
+//!   a section named 「有效个人约定」 → one rule of that title, a point per bullet (`- **名称**：内容` →
+//!   「名称：内容」).
 //! - `FACTS.md` → a fact per bullet (`- **事项**：口径`), its `## ` group as the category.
 //! - `projects/*.md` → 经历档案 (one each; lines `- 素材：名称` before its first `## ` link it to that
 //!   Chinese and / or English material).
@@ -250,9 +251,9 @@ pub fn parse(path: &str, kind: &str, category: &str, text: &str) -> Vec<(Record,
             let mut out = vec![];
             for (h, body) in sections(&lines) {
                 if h.contains("个人约定") {
-                    for b in body.iter().filter_map(|l| bullet(l)) {
-                        let (name, text) = labelled(b).unwrap_or_else(|| (b.chars().take(12).collect(), b.to_string()));
-                        out.push(plain(Record { kind: "decision".into(), category: category.into(), title: name, text, ..Default::default() }));
+                    let points: Vec<Point> = body.iter().filter_map(|l| bullet(l)).enumerate().map(|(i, b)| Point { id: format!("p{}", i + 1), text: labelled(b).map_or_else(|| b.to_string(), |(name, text)| format!("{name}：{text}")) }).collect();
+                    if !points.is_empty() {
+                        out.push(plain(Record { kind: "rule".into(), category: category.into(), title: h.to_string(), points, ..Default::default() }));
                     }
                     continue;
                 }
@@ -262,9 +263,9 @@ pub fn parse(path: &str, kind: &str, category: &str, text: &str) -> Vec<(Record,
                     Some((i, u)) if !u.is_empty() => (u, &body[i + 1..]),
                     _ => (category.to_string(), &body[..]),
                 };
-                let text = block(body);
-                if !text.is_empty() {
-                    out.push(plain(Record { kind: "rule".into(), category, title: h, text, ..Default::default() }));
+                let points = super::catalog::split_points(&block(body));
+                if !points.is_empty() {
+                    out.push(plain(Record { kind: "rule".into(), category, title: h, points, ..Default::default() }));
                 }
             }
             out

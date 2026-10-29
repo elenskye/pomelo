@@ -3,7 +3,9 @@
 //! - A company's names: the folder name's parts that not every folder shares (`lenovo`, not `seek`),
 //!   and from the Markdown files at the top of knowledge/ (招聘索引.md): the text of a link into the
 //!   folder (`[联想](seek-lenovo/公司与招聘.md)`), or in a table row with such a link, its first cell.
-//!   Shown by its first index name (else the folder name).
+//!   Shown by its first index name (else the folder name), or the name the user gave it in Seeker's
+//!   设置 (`Settings::company_names`, folder → name; not undone, like the other settings): that name
+//!   is shown and matched first.
 //! - A job matches a company when one of the names is in the job's company or the other way round
 //!   (letters, digits and CJK; a Latin name only as a whole word, ≥ 2 characters). Several: the
 //!   longest name wins; a tie is no match. The user's choice for the job (`seeker_job_companies`,
@@ -24,6 +26,8 @@ pub const LIBRARY: &str = "Seeker";
 pub struct Company {
     pub folder: String,
     pub name: String,
+    /// The name found by itself (index or folder), when the user hasn't given one.
+    pub auto: String,
     #[serde(skip)]
     pub names: Vec<String>,
 }
@@ -87,7 +91,7 @@ pub fn companies(dir: &Path) -> Result<Vec<Company>, String> {
     folders.sort();
     let parts = |f: &str| f.split(['-', '_', ' ', '.']).map(key).filter(|p| p.chars().count() >= 2).collect::<Vec<_>>();
     let shared: Vec<String> = if folders.len() < 2 { vec![] } else { parts(&folders[0]).into_iter().filter(|p| folders.iter().all(|f| parts(f).contains(p))).collect() };
-    let mut out: Vec<Company> = folders.iter().map(|f| Company { folder: f.clone(), name: String::new(), names: parts(f).into_iter().filter(|p| !shared.contains(p)).collect() }).collect();
+    let mut out: Vec<Company> = folders.iter().map(|f| Company { folder: f.clone(), name: String::new(), auto: String::new(), names: parts(f).into_iter().filter(|p| !shared.contains(p)).collect() }).collect();
     let mut index: Vec<PathBuf> = std::fs::read_dir(dir).map_err(err)?.flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("md"))).collect();
     index.sort();
     for path in index {
@@ -107,6 +111,38 @@ pub fn companies(dir: &Path) -> Result<Vec<Company>, String> {
         if c.name.is_empty() {
             c.name = c.folder.clone();
         }
+        c.auto = c.name.clone();
+    }
+    Ok(out)
+}
+
+/// The user's names (folder → name) over the found ones: shown, and matched before the others.
+pub fn named(mut list: Vec<Company>, names: &std::collections::BTreeMap<String, String>) -> Vec<Company> {
+    for c in &mut list {
+        if let Some(n) = names.get(&c.folder).map(|n| n.trim()).filter(|n| !n.is_empty()) {
+            c.name = n.to_string();
+            c.names.retain(|x| x != n);
+            c.names.insert(0, n.to_string());
+        }
+    }
+    list
+}
+
+/// The names the user gives (folder → name; blank: the found one again): one name per company.
+pub fn clean_names(names: &std::collections::BTreeMap<String, String>, folders: &[String]) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for (folder, name) in names {
+        let name = name.trim();
+        if name.is_empty() || !folders.contains(folder) {
+            continue;
+        }
+        if name.chars().count() > 30 {
+            return Err(format!("「{name}」太长了，公司名称最多 30 个字"));
+        }
+        if out.values().any(|n: &String| key(n) == key(name)) {
+            return Err(format!("两家公司都叫「{name}」，请换一个名称"));
+        }
+        out.insert(folder.clone(), name.to_string());
     }
     Ok(out)
 }
@@ -255,8 +291,9 @@ fn knowledge_view(state: &AppState) -> Knowledge {
         Ok(None) => return Knowledge { cv, cv_library, ..Default::default() },
         Err(e) => return Knowledge { error: Some(e), ..Default::default() },
     };
+    let names = state.picky.with_db(|c| settings_of(c)).map(|s| s.company_names).unwrap_or_default();
     let (companies, error) = match companies(&dir) {
-        Ok(list) => (list, None),
+        Ok(list) => (named(list, &names), None),
         Err(e) => (vec![], Some(e)),
     };
     let library = state.picky.with_db(|c| source(c, &dir)).ok().flatten().map(|(_, name)| name);
@@ -265,6 +302,19 @@ fn knowledge_view(state: &AppState) -> Knowledge {
 
 #[tauri::command]
 pub async fn picky_seeker_knowledge(state: State<'_, AppState>) -> Result<Knowledge, String> {
+    Ok(knowledge_view(&state))
+}
+
+/// Names knowledge/'s companies (folder → name; blank: the found name). A setting: not undone.
+#[tauri::command]
+pub async fn picky_seeker_company_names(state: State<'_, AppState>, names: std::collections::BTreeMap<String, String>) -> Result<Knowledge, String> {
+    let view = knowledge_view(&state);
+    let folders: Vec<String> = view.companies.iter().map(|c| c.folder.clone()).collect();
+    let names = clean_names(&names, &folders)?;
+    state.picky.with_db(|c| {
+        let settings = catalog::Settings { company_names: names, ..settings_of(c)? };
+        set_settings(c, "options", &serde_json::to_string(&settings).map_err(err)?)
+    })?;
     Ok(knowledge_view(&state))
 }
 

@@ -2,11 +2,9 @@
 // off on the timeline below — checking fills today's date, which stays editable. Rust derives the
 // current status (last checked; none = 想投) and 投递日期 (first checked day).
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, ExternalLink, FolderOpen, Settings2 } from "lucide-react";
+import { Check, ExternalLink, Settings2 } from "lucide-react";
 import { AssistAction, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/picky/Assist";
 import { usePickyStatus } from "@/modules/picky/api";
-import { homeDir } from "@tauri-apps/api/path";
-import { open } from "@tauri-apps/plugin-dialog";
 import { DateInput } from "@/shared/DateInput";
 import { localToday } from "@/shared/dates";
 import { Dropdown } from "@/shared/Dropdown";
@@ -32,25 +30,13 @@ type Draft = {
   steps: DraftStep[];
 };
 
-const SEEKER = "Documents/Seeker";
-
-/** Path / URL input with 打开 (and 选择… for files, starting in Seeker). Paths under home are kept as ~/…. */
-function OpenableInput(props: { label: string; value: string; onChange: (v: string) => void; file?: boolean }) {
+/** URL input with 打开. */
+function OpenableInput(props: { label: string; value: string; onChange: (v: string) => void }) {
   const toast = useToast();
-  const pick = async () => {
-    const home = (await homeDir()).replace(/\/$/, "");
-    const path = await open({ multiple: false, directory: false, defaultPath: `${home}/${SEEKER}` });
-    if (typeof path === "string") props.onChange(path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path);
-  };
   return (
     <Field label={props.label}>
       <div className="flex items-center gap-1">
         <TextInput aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} maxLength={1000} />
-        {props.file && (
-          <IconButton label={`选择${props.label}文件`} onClick={() => void pick().catch((e) => toast(errorText(e), "error"))}>
-            <FolderOpen size={14} />
-          </IconButton>
-        )}
         <IconButton label={`打开${props.label}`} disabled={!props.value.trim()} onClick={() => void ipc.openLink(props.value).catch((e) => toast(errorText(e), "error"))}>
           <ExternalLink size={14} />
         </IconButton>
@@ -324,7 +310,6 @@ export function JobPanel(props: {
         </div>
       </Field>
       <OpenableInput label="JD 链接" value={d.link} onChange={(v) => set("link", v)} />
-      <OpenableInput label="简历" file value={d.resume} onChange={(v) => set("resume", v)} />
       {j && <JobSeekerExports job={j} disabled={dirty} />}
       {j && <JobInterviews job={j} disabled={dirty} />}
       <Field label="备注">

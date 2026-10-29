@@ -1,8 +1,9 @@
 //! cv/ and material/ of the Seeker folder (v0.7 阶段 ⑦): read in place, never changed or moved.
 //! - cv/: the resumes (.docx, .pdf; .doc / .pages listed but not read) by language folder (cn/, en/;
 //!   else Chinese when the name has CJK). Versions of one resume are one `series`: the name without
-//!   its version (`-v3`, ` v3`, `_V3`) or date (`-2026-10-28`, `20261028`) at the end. Tagged: 模板 (a
-//!   template Seeker uses), Pomelo 导出 (an export's path), and the 投石问路 jobs whose company the
+//!   its version (`-v3`, ` v3`, `_V3`) or date (`-2026-10-28`, `20261028`) at the end. Tagged: 模板 (the
+//!   newest version of a series whose name says template / 模板; older versions are plain files; a
+//!   template picked before the built-in ones isn't one any more), Pomelo 导出 (an export's path), and the 投石问路 jobs whose company the
 //!   series names (company.rs `matched` with the series' words as names: `keyreply` ↔ 「KeyReply」).
 //! - Its text (`text`): a .docx's paragraphs, a .pdf's pages — only inside <Seeker>/cv/.
 //! - material/ (证书原件): file names by sub-folder only; Pomelo never opens them for a model.
@@ -28,6 +29,8 @@ pub struct CvFile {
     pub size: u64,
     pub template: bool,
     pub export: bool,
+    /// The Pomelo export this file is (its id).
+    pub export_id: Option<String>,
     /// 投石问路 jobs the series names (「KeyReply · 软件开发实习」).
     pub jobs: Vec<String>,
 }
@@ -113,9 +116,9 @@ fn words(series: &str) -> Vec<String> {
     series.split(|c: char| !c.is_alphanumeric()).map(str::to_lowercase).filter(|w| w.chars().count() >= 2 && !COMMON.contains(&w.as_str())).collect()
 }
 
-/// cv/ and material/ of `root` (the Seeker folder). `templates`, `exports`: paths Seeker knows;
+/// cv/ and material/ of `root` (the Seeker folder). `exports`: (id, path) of Pomelo's exports;
 /// `jobs`: (label, company).
-pub fn scan(root: &Path, templates: &[String], exports: &[String], jobs: &[(String, String)]) -> Files {
+pub fn scan(root: &Path, exports: &[(String, String)], jobs: &[(String, String)]) -> Files {
     let same = |a: &Path, b: &str| std::fs::canonicalize(a).ok().zip(std::fs::canonicalize(b).ok()).is_some_and(|(x, y)| x == y);
     let mut files = Files { transfer: root.join("transfer").is_dir(), ..Default::default() };
     let cv = root.join("cv");
@@ -135,15 +138,23 @@ pub fn scan(root: &Path, templates: &[String], exports: &[String], jobs: &[(Stri
             _ => "en",
         };
         let (series, version) = series(stem);
-        let named: Vec<company::Company> = vec![company::Company { folder: series.clone(), name: series.clone(), names: words(&series) }];
+        let named: Vec<company::Company> = vec![company::Company { folder: series.clone(), name: series.clone(), auto: series.clone(), names: words(&series) }];
         let jobs = jobs.iter().filter(|(_, company)| !named[0].names.is_empty() && company::matched(company, &named).is_some()).map(|(label, _)| label.clone()).collect();
         let (size, modified) = stamp(&p);
         let path = p.to_string_lossy().into_owned();
-        files.cv.push(CvFile { template: templates.iter().any(|t| same(&p, t)), export: exports.iter().any(|e| same(&p, e)), path, name, lang: lang.into(), series, version, modified, size, jobs });
+        let export_id = exports.iter().find(|(_, e)| same(&p, e)).map(|(id, _)| id.clone());
+        let template = ["template", "模板"].iter().any(|w| series.to_lowercase().contains(w));
+        files.cv.push(CvFile { template, export: export_id.is_some(), export_id, path, name, lang: lang.into(), series, version, modified, size, jobs });
     }
     // Chinese first; by series, its newest version first
     let order = |x: &CvFile| (x.lang != "cn", x.series.to_lowercase(), std::cmp::Reverse(x.version), std::cmp::Reverse(x.modified));
     files.cv.sort_by_key(order);
+    // 模板: only a template series' newest version (the first of its series now)
+    for i in 1..files.cv.len() {
+        if files.cv[i].lang == files.cv[i - 1].lang && files.cv[i].series.to_lowercase() == files.cv[i - 1].series.to_lowercase() {
+            files.cv[i].template = false;
+        }
+    }
     let material = root.join("material");
     let mut found = vec![];
     walk(&material, 3, &mut found);
@@ -154,6 +165,17 @@ pub fn scan(root: &Path, templates: &[String], exports: &[String], jobs: &[(Stri
         files.material.push(MaterialFile { path: p.to_string_lossy().into_owned(), name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), group, size, modified });
     }
     files
+}
+
+/// A résumé file under `root`/cv/ (its full path), else why not.
+pub fn in_cv(root: &Path, path: &Path) -> Result<String, String> {
+    let cv = std::fs::canonicalize(root.join("cv")).map_err(|_| "Seeker 文件夹里没有 cv/".to_string())?;
+    let p = std::fs::canonicalize(path).map_err(|_| "找不到这份简历".to_string())?;
+    let ext = p.extension().and_then(|e| e.to_str()).map(str::to_lowercase).unwrap_or_default();
+    if !p.starts_with(&cv) || !p.is_file() || !RESUME.contains(&ext.as_str()) {
+        return Err("只能用 cv/ 里的简历".into());
+    }
+    Ok(p.to_string_lossy().into_owned())
 }
 
 /// The text of one resume under `root`/cv/ (paragraphs or pages, blank lines between).
@@ -180,17 +202,13 @@ pub fn root(c: &Connection, mode: crate::picky::Mode) -> Result<Option<PathBuf>,
     output::allowed_path(Path::new(folder.trim()), mode).map(Some)
 }
 
-/// The list for the pages and 小拾: templates and exports from picky.db, jobs from pomelo.db (read
-/// apart, never nested).
+/// The list for the pages and 小拾: exports from picky.db, jobs from pomelo.db (read apart, never
+/// nested).
 pub fn list(state: &AppState) -> Files {
-    let read = state.picky.with_db(|c| {
-        let w = read(c)?;
-        let templates: Vec<String> = [w.output.template.as_ref(), w.output.template_en.as_ref()].into_iter().flatten().map(|t| t.path.clone()).collect();
-        Ok((root(c, state.picky.mode)?, templates, w.output.exports.iter().map(|e| e.path.clone()).collect::<Vec<_>>()))
-    });
-    let (root, templates, exports) = match read {
-        Ok((Some(r), t, e)) => (r, t, e),
-        Ok((None, ..)) => return Files::default(),
+    let read = state.picky.with_db(|c| Ok((root(c, state.picky.mode)?, read(c)?.output.exports.iter().map(|e| (e.id.clone(), e.path.clone())).collect::<Vec<_>>())));
+    let (root, exports) = match read {
+        Ok((Some(r), e)) => (r, e),
+        Ok((None, _)) => return Files::default(),
         Err(e) => return Files { error: Some(e), ..Default::default() },
     };
     let jobs: Vec<(String, String)> = state
@@ -200,7 +218,7 @@ pub fn list(state: &AppState) -> Files {
             Ok(rows.into_iter().map(|(c, p)| (p.map_or(c.clone(), |p| format!("{c} · {p}")), c)).collect())
         })
         .unwrap_or_default();
-    scan(&root, &templates, &exports, &jobs)
+    scan(&root, &exports, &jobs)
 }
 
 #[tauri::command]

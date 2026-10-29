@@ -104,3 +104,5 @@ export const STAGE_STYLE: Record<Stage, { bg: string; fg: string }> = {
 };
 
 export const jobLabel = (j: Pick<Job, "company" | "position">) => (j.position ? `${j.company} · ${j.position}` : j.company);
+/** Jobs for a pick dialog (PickField): company · position, then where and when (applied, else added). */
+export const jobPicks = (jobs: Job[]) => jobs.map((j) => ({ value: j.id as number | null, label: jobLabel(j), detail: [j.location, (j.appliedOn ?? j.createdAt).slice(0, 10).replace(/-/g, " / ")].filter(Boolean).join(" · ") }));

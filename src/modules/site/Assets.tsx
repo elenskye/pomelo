@@ -157,7 +157,7 @@ export function AssetsPage(props: { onError: (e: unknown) => void; onChanged: ()
             ))}
           </div>
         ) : (
-          <div className="mx-6 mb-6 max-w-3xl overflow-hidden rounded-card border bg-card">
+          <div className="mx-6 mb-6 overflow-hidden rounded-card border bg-card">
             {list.map((e) => (
               <button key={e.slug} type="button" onClick={() => setOpen(e)} className={`flex w-full items-center gap-3 border-b px-4 py-2.5 text-left text-sm last:border-b-0 hover:bg-muted/70 ${open?.slug === e.slug ? "bg-accent" : ""}`}>
                 <FileText size={14} className="shrink-0 text-muted-foreground" />

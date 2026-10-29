@@ -3,14 +3,16 @@
 // dashed follow-up card next), then the round's feedback (the program lists 不熟 / 会 / 追问; 小拾
 // comments when something was typed or followed up). Every write is one undo step in Rust; after ⌘Z
 // the App re-reads every query, so the page follows the round as Rust has it.
+import { PickField } from "@/shared/PickField";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Keyboard, Plus, Sparkles, Trash2, X } from "lucide-react";
-import { jobLabel, useJobs } from "@/modules/jobs/api";
+import { useJobs, jobPicks } from "@/modules/jobs/api";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm } from "@/shared/feedback";
-import { Button, EmptyState, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Button, EmptyState, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
 import { when } from "./SeekerParts";
+import { PickRow, SelectBar, SelectButton, useSelect } from "./select";
 import type { SeekerRecord } from "./seekerApi";
 import { RATER_CATEGORIES, RATER_FOLLOW_MAX, RATER_KEY, RATER_KNOW, RATER_MODES, RATER_PRACTICE_KEY, RATER_RANDOM_COUNT, RATER_UNSURE, raterApi, wantsComment, type RaterBank, type RaterCard, type RaterPick, type RaterPractice, type RaterQuestion, type RaterRound, type RaterTally } from "./raterApi";
 
@@ -88,6 +90,10 @@ function StartRound(p: Props & { practice: RaterPractice; write: Write; open: (i
   const removeRound = async (id: string) => {
     if (await confirm({ title: "删除这一轮？", message: "这一轮的会 / 不熟也从练习记录里去掉。", danger: true, confirmLabel: "删除" })) void p.write(() => raterApi.removeRound(id));
   };
+  const rounds = useSelect(p.practice.rounds.map((r) => r.id));
+  const removeRounds = async () => {
+    if (await confirm({ title: `删除 ${rounds.count} 轮？`, message: "这几轮的会 / 不熟也从练习记录里去掉。", danger: true, confirmLabel: "删除" })) void p.write(() => raterApi.removeRounds([...rounds.picked]), () => rounds.exit());
+  };
   const toggle = (id: string) => setOff((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const row = (q: RaterQuestion, right: ReactNode) => <div key={q.id} className="flex min-w-0 items-center gap-2 rounded-control px-2 py-1.5 text-sm hover:bg-muted/60">
     {right}
@@ -108,18 +114,18 @@ function StartRound(p: Props & { practice: RaterPractice; write: Write; open: (i
         <div className="flex flex-wrap items-center gap-2">
           <Dropdown ariaLabel="题目类别" value={category} options={[ALL, ...RATER_CATEGORIES].map((c) => ({ value: c, label: c === ALL ? "全部类别" : c }))} onChange={setCategory} />
           {tags.length > 0 && <Dropdown ariaLabel="标签" value={tag} options={[{ value: ALL, label: "全部标签" }, ...tags.map((t) => ({ value: t, label: t }))]} onChange={setTag} />}
-          <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={unsureOnly} onChange={(e) => setUnsureOnly(e.target.checked)} />只要不熟的</label>
+          <label className="flex items-center gap-2 text-sm"><Switch label="只要不熟的" checked={unsureOnly} onChange={setUnsureOnly} />只要不熟的</label>
           <span className="flex-1" />
-          {listed.length > 0 && <label className="flex items-center gap-1.5 text-sm text-muted-foreground"><input type="checkbox" checked={ticked.length === listed.length} ref={(el) => { if (el) el.indeterminate = ticked.length > 0 && ticked.length < listed.length; }} onChange={() => setOff((s) => { const n = new Set(s); const all = ticked.length === listed.length; for (const q of listed) { if (all) n.add(q.id); else n.delete(q.id); } return n; })} />全选</label>}
+          {listed.length > 0 && <Button variant="ghost" onClick={() => setOff((s) => { const n = new Set(s); const all = ticked.length === listed.length; for (const q of listed) { if (all) n.add(q.id); else n.delete(q.id); } return n; })}>{ticked.length === listed.length ? "全不选" : "全选"}</Button>}
         </div>
-        <div className="rounded-card border bg-card p-1">
-          {listed.map((q) => row(q, <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2"><input type="checkbox" className="size-4 shrink-0 accent-[var(--primary)]" checked={!off.has(q.id)} onChange={() => toggle(q.id)} /><span className="min-w-0 flex-1 truncate">{q.question}</span>{meta(q)}</label>))}
+        <div className="space-y-0.5 rounded-card border bg-card p-1">
+          {listed.map((q) => <PickRow key={q.id} on={!off.has(q.id)} onClick={() => toggle(q.id)} className="items-center gap-2 px-2 py-1.5"><span className="min-w-0 flex-1 truncate">{q.question}</span>{meta(q)}</PickRow>)}
           {!listed.length && <p className="px-2 py-3 text-sm text-muted-foreground">没有符合的题</p>}
         </div>
       </div>}
       {mode === "按 JD" && <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Dropdown<number | null> ariaLabel="岗位" value={job} placeholder="选择岗位" options={(jobs.data ?? []).map((j) => ({ value: j.id, label: jobLabel(j) }))} onChange={(j) => { setJob(j); setPick(null); }} />
+          <PickField<number | null> ariaLabel="岗位" title="按哪个岗位挑卡" value={job} placeholder="选择岗位" options={jobPicks(jobs.data ?? [])} onChange={(j) => { setJob(j); setPick(null); }} />
           <Button disabled={p.busy || picking || job == null || !p.model} onClick={() => void runPick()}><Sparkles size={14} />{picking ? "正在挑…" : pick ? "重新挑" : "让小拾挑"}</Button>
         </div>
         {pick && <div className="space-y-2">
@@ -129,23 +135,24 @@ function StartRound(p: Props & { practice: RaterPractice; write: Write; open: (i
             {chosen.map((id) => { const q = questions.find((x) => x.id === id)!; return row(q, <><span className="min-w-0 flex-1 truncate">{q.question}</span>{meta(q)}<IconButton label="去掉" onClick={() => setPick({ ...pick, questions: pick.questions.filter((x) => x !== id) })}><X size={14} /></IconButton></>); })}
             {!chosen.length && <p className="px-2 py-3 text-sm text-muted-foreground">一道都没留</p>}
           </div>
-          <Dropdown<string | null> ariaLabel="加一道" value={null} plain foldKey="rater-add" renderTrigger={() => <span className="inline-flex items-center gap-1 text-sm text-primary"><Plus size={14} />加一道</span>} triggerClassName="rounded-control px-1 py-0.5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" options={questions.filter((q) => !chosen.includes(q.id)).map((q) => ({ value: q.id, label: q.question, group: q.category }))} onChange={(id) => { if (id) setPick({ ...pick, questions: [...pick.questions, id] }); }} />
+          <PickField<string | null> ariaLabel="加一道" title="加一道题" value={null} trigger={<span className="inline-flex items-center gap-1 text-sm text-primary"><Plus size={14} />加一道</span>} options={questions.filter((q) => !chosen.includes(q.id)).map((q) => ({ value: q.id, label: q.question, group: q.category }))} onChange={(id) => { if (id) setPick({ ...pick, questions: [...pick.questions, id] }); }} />
         </div>}
       </div>}
       {mode === "随机" && <div className="flex items-center gap-2 text-sm"><span>几张</span><div className="w-20"><TextInput aria-label="几张" inputMode="numeric" value={count} placeholder={String(RATER_RANDOM_COUNT)} onChange={(e) => setCount(e.target.value.replace(/\D/g, "").slice(0, 2))} /></div></div>}
       {error && <p className="text-sm text-destructive">{error}</p>}
     </section>
     {p.practice.rounds.length > 0 && <section className="mx-auto max-w-3xl space-y-2">
-      <h3 className="text-sm font-bold">最近几轮</h3>
-      <div className="rounded-card border bg-card p-1">
-        {p.practice.rounds.map((r) => <div key={r.id} className="group flex items-center gap-2 rounded-control text-sm hover:bg-muted/60">
-          <button type="button" onClick={() => p.open(r.id)} className="flex min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <div className="flex h-8 items-center gap-2"><h3 className="mr-auto text-sm font-bold">最近几轮</h3><SelectButton select={rounds} /></div>
+      <SelectBar select={rounds}><Button variant="ghost-danger" disabled={p.busy || !rounds.count} onClick={() => void removeRounds()}><Trash2 size={14} />删除</Button></SelectBar>
+      <div className="space-y-0.5 rounded-card border bg-card p-1">
+        {p.practice.rounds.map((r) => <div key={r.id} className={`group flex items-center gap-2 rounded-control border text-sm ${rounds.has(r.id) ? "border-primary bg-accent text-accent-foreground" : "border-transparent hover:bg-muted/60"}`}>
+          <button type="button" role={rounds.on ? "checkbox" : undefined} aria-checked={rounds.on ? rounds.has(r.id) : undefined} onClick={rounds.on ? rounds.pick(r.id) : () => p.open(r.id)} className="flex min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span className="shrink-0 text-muted-foreground">{when(r.startedAt)}</span>
             <span className="min-w-0 flex-1 truncate">{[r.mode, r.job].filter(Boolean).join(" · ")}</span>
             <span className="shrink-0 text-xs text-muted-foreground">{r.cards} 张 · 会 {r.know} · <span className={r.unsure ? "text-primary" : ""}>不熟 {r.unsure}</span>{r.follows > 0 && ` · 追问 ${r.follows}`}{r.left > 0 && ` · 没练 ${r.left}`}</span>
             <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
           </button>
-          <div className="pr-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100"><IconButton label="删除这一轮" danger disabled={p.busy} onClick={() => void removeRound(r.id)}><Trash2 size={14} /></IconButton></div>
+          <div className={`${rounds.on ? "hidden" : ""} pr-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100`}><IconButton label="删除这一轮" danger disabled={p.busy} onClick={() => void removeRound(r.id)}><Trash2 size={14} /></IconButton></div>
         </div>)}
       </div>
     </section>}

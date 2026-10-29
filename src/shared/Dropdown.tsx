@@ -30,6 +30,8 @@ export function Dropdown<T>(props: {
   menuMaxHeight?: number;
   /** Action menu: no check column. */
   plain?: boolean;
+  /** As wide as its container (forms), the label cut with … when long. */
+  block?: boolean;
   /** Several at once (多选): every option shown ticked by `isPicked`, choosing one toggles it and the menu stays open. */
   isPicked?: (v: T) => boolean;
   /** Fold the groups when the list is long (over 8 options, 2+ groups); the opened ones are remembered under this key. */
@@ -178,7 +180,7 @@ export function Dropdown<T>(props: {
       } ${muted ? "text-muted-foreground" : ""}`}
     >
       {!props.plain && <Check size={14} className={`shrink-0 text-primary ${isSelected ? "" : "invisible"}`} />}
-      {content}
+      <span className="min-w-0 truncate" title={typeof content === "string" ? content : undefined}>{content}</span>
     </div>
   );
 
@@ -199,7 +201,7 @@ export function Dropdown<T>(props: {
         onKeyDown={onKeyDown}
         className={
           props.triggerClassName ??
-          `inline-flex shrink-0 items-center gap-1.5 rounded-control border bg-card py-1.5 pr-2 pl-3 text-sm whitespace-nowrap transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${
+          `${props.block ? "flex w-full min-w-0 justify-between" : "inline-flex shrink-0"} items-center gap-1.5 rounded-control border bg-card py-1.5 pr-2 pl-3 text-sm whitespace-nowrap transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${
             open ? "bg-muted" : ""
           }`
         }
@@ -208,10 +210,10 @@ export function Dropdown<T>(props: {
           props.renderTrigger(selected, open)
         ) : (
           <>
-            <span className={selected ? "" : "text-muted-foreground"}>{selected?.label ?? props.placeholder ?? "请选择"}</span>
+            <span className={`${props.block ? "min-w-0 truncate text-left" : ""} ${selected ? "" : "text-muted-foreground"}`}>{selected?.label ?? props.placeholder ?? "请选择"}</span>
             <ChevronDown
               size={14}
-              className={`text-muted-foreground transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+              className={`shrink-0 text-muted-foreground transition-transform duration-150 ${open ? "rotate-180" : ""}`}
             />
           </>
         )}
@@ -234,6 +236,8 @@ export function Dropdown<T>(props: {
               bottom: "auto",
               margin: 0,
               minWidth: pos?.minWidth,
+              // long labels end in … rather than running off the window
+              maxWidth: "min(36rem, calc(100vw - 16px))",
               maxHeight: props.menuMaxHeight ?? 320,
               visibility: pos ? "visible" : "hidden",
             }}

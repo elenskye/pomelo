@@ -3,13 +3,78 @@
 //! Each works in one language (the draft's, the material's): that language's materials and rules
 //! plus the ones for both; English text stays English, explanations are Chinese.
 //! What the model reads (`context`): the rules for this task (共用准则 first; 素材润色: polishing; 整体审查:
-//! choosing, reviewing and the Summary; 写作规则: every task), its 有效个人约定 as one list, 个人范例, the
+//! choosing, reviewing and the Summary; 写作规则: every task) as Markdown (`# 组`, `## 标题`, points
+//! numbered), 个人范例, the
 //! 已确认事实 by group, and the 经历档案 of the entries it works on (linked to their Chinese or English
 //! material; an unlinked one whose title or opening names the entry). Cloud models only when the
 //! user allowed it in Seeker.
 //! 选材 and 审查 of a draft for a job also read its company's knowledge/ (company.rs `lookup`: the
 //! passages most like the JD), marked as the employer's material, not the user's facts.
+//! Which groups each function reads is said once (`reads`, `task_of`); the 规则 page shows it and the
+//! system message of each function (`previews`, built by the same `prompt`).
 use super::{catalog::{Catalog, Record}, workflow::Selection, *};
+
+/// The rule groups a task reads (with 个人范例, 已确认事实 and the 经历档案 of what it works on).
+pub fn reads(task: &str) -> [&str; 3] {
+    ["共用准则", "写作规则", task]
+}
+
+/// The rule group a kind of suggestion reads besides the shared ones.
+pub fn task_of(kind: &str) -> &'static str {
+    if matches!(kind, "polish" | "material") { "素材润色" } else { "整体审查" }
+}
+
+/// Seeker's model functions: (kind, name on the page). Summary is English only.
+pub const FUNCTIONS: [(&str, &str); 5] = [("select", "按 JD 推荐素材"), ("review", "审查整份简历"), ("summary", "按 JD 改写 Summary"), ("polish", "润色要点"), ("material", "润色一条素材")];
+
+/// One function's 发给模型的说明 on the 规则 page: the groups it reads and its system message.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptView {
+    pub key: String,
+    pub label: String,
+    pub groups: Vec<String>,
+    pub system: String,
+}
+
+/// Each function's system message as a real call builds it (`prompt`), on this language's draft (a new
+/// one with 「（目标 JD）」 when there is none or no JD) and its first material; the JD, the draft and
+/// the company's knowledge/ go with the call itself.
+pub fn previews(view: &Workspace, lang: &str) -> Vec<PromptView> {
+    let lang = if lang == "en" { "en" } else { "cn" };
+    let mut v = view.clone();
+    let mut draft = v.draft(lang).cloned().or_else(|| super::workflow::initial(&v.catalog.records, lang).ok());
+    if let Some(d) = draft.as_mut().filter(|d| d.jd.trim().is_empty()) {
+        d.jd = "（目标 JD）".into();
+    }
+    if let Some(d) = draft {
+        if lang == "en" { v.en.draft = Some(d) } else { v.cn.draft = Some(d) }
+    }
+    let material = match v.catalog.records.iter().find(|r| r.kind == "material" && r.enabled && r.lang == lang) {
+        Some(r) => r.id.clone(),
+        None => {
+            v.catalog.records.push(Record { id: "preview".into(), title: "（一条素材）".into(), lang: lang.into(), ..Default::default() });
+            "preview".into()
+        }
+    };
+    FUNCTIONS
+        .iter()
+        .filter(|(kind, _)| *kind != "summary" || lang == "en")
+        .map(|(kind, label)| {
+            let system = match prompt(&v, kind, (*kind == "material").then_some(material.as_str()), "", lang, "") {
+                Ok((system, ..)) => system,
+                Err(e) => format!("（现在看不了：{e}）"),
+            };
+            PromptView { key: (*kind).into(), label: (*label).into(), groups: reads(task_of(kind)).iter().map(|g| g.to_string()).chain(["个人范例".to_string()]).collect(), system }
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn picky_seeker_prompts(state: State<'_, AppState>, lang: String) -> Result<Vec<PromptView>, String> {
+    let w = state.picky.with_db(|c| read(c))?;
+    Ok(previews(&w, &lang))
+}
 
 /// Lowercase letters, digits and CJK only (「Pub2MD Agent」 → 「pub2mdagent」).
 fn key(s: &str) -> String {
@@ -17,28 +82,26 @@ fn key(s: &str) -> String {
 }
 
 /// The rules, facts and examples a task reads; `entries`: what it works on (name, its material's id).
+/// Markdown: `# 组` and its rules (`## 标题`, points numbered) in `reads` order, then `# 个人范例`,
+/// `# 已确认事实` (`## 分组`), `# 经历档案`.
 pub fn context(catalog: &Catalog, task: &str, entries: &[(&str, Option<&str>)], lang: &str) -> String {
-    let uses = |c: &str| c == "共用准则" || c == "写作规则" || c == task;
     let on: Vec<&Record> = catalog.records.iter().filter(|r| r.enabled && r.for_lang(lang)).collect();
-    let mut out = vec![];
-    for shared in [true, false] {
-        out.extend(on.iter().filter(|r| r.kind == "rule" && uses(&r.category) && (r.category == "共用准则") == shared).map(|r| format!("【{}：{}】\n{}", r.category, r.title, r.text)));
+    let groups: Vec<(String, Vec<&Record>)> = reads(task).iter().map(|g| (super::catalog::group_label(catalog, g), on.iter().filter(|r| r.kind == "rule" && r.category == *g).copied().collect())).collect();
+    let mut out = super::catalog::rules_markdown(&groups);
+    let examples: Vec<String> = on.iter().filter(|r| r.kind == "example").map(|r| format!("## {}\n{}", r.title, r.text)).collect();
+    if !examples.is_empty() {
+        out.push(format!("# 个人范例\n\n{}", examples.join("\n\n")));
     }
-    let decisions: Vec<String> = on.iter().filter(|r| r.kind == "decision" && uses(&r.category)).map(|r| format!("- {}：{}", r.title, r.text)).collect();
-    if !decisions.is_empty() {
-        out.push(format!("【有效个人约定】\n{}", decisions.join("\n")));
-    }
-    out.extend(on.iter().filter(|r| r.kind == "example").map(|r| format!("【个人范例：{}】\n{}", r.title, r.text)));
-    let mut groups: Vec<(&str, Vec<String>)> = vec![];
+    let mut facts: Vec<(&str, Vec<String>)> = vec![];
     for r in on.iter().filter(|r| r.kind == "fact" && !r.is_dossier()) {
         let line = if r.text.contains('\n') { format!("- {}：\n{}", r.title, r.text) } else { format!("- {}：{}", r.title, r.text) };
-        match groups.iter_mut().find(|(g, _)| *g == r.category) {
+        match facts.iter_mut().find(|(g, _)| *g == r.category) {
             Some((_, lines)) => lines.push(line),
-            None => groups.push((&r.category, vec![line])),
+            None => facts.push((&r.category, vec![line])),
         }
     }
-    if !groups.is_empty() {
-        out.push(format!("【已确认事实】\n{}", groups.iter().map(|(g, lines)| format!("{g}：\n{}", lines.join("\n"))).collect::<Vec<_>>().join("\n")));
+    if !facts.is_empty() {
+        out.push(format!("# 已确认事实\n\n{}", facts.iter().map(|(g, lines)| format!("## {g}\n{}", lines.join("\n"))).collect::<Vec<_>>().join("\n\n")));
     }
     let names: Vec<String> = entries.iter().map(|(n, _)| key(n)).filter(|n| n.chars().count() >= 2).collect();
     let exists = |m: &Option<String>| m.clone().filter(|m| catalog.records.iter().any(|x| &x.id == m));
@@ -49,7 +112,10 @@ pub fn context(catalog: &Catalog, task: &str, entries: &[(&str, Option<&str>)], 
         }
         (a, b) => entries.iter().any(|(_, id)| id.is_some() && (*id == a.as_deref() || *id == b.as_deref())),
     };
-    out.extend(on.iter().filter(|r| r.is_dossier() && linked(r)).map(|r| format!("【经历档案：{}】\n{}", r.title, r.text)));
+    let dossiers: Vec<String> = on.iter().filter(|r| r.is_dossier() && linked(r)).map(|r| format!("## {}\n{}", r.title, r.text)).collect();
+    if !dossiers.is_empty() {
+        out.push(format!("# 经历档案\n\n{}", dossiers.join("\n\n")));
+    }
     out.join("\n\n")
 }
 use crate::picky::{assist, context, provider::{self, Event, Msg, Options, Target}, schedule};
@@ -85,7 +151,6 @@ pub fn lang_for(view: &Workspace, record_id: Option<&str>, lang: &str) -> Result
 /// from (before_draft / before_record). `employer`: what the job's knowledge/ says (选材, 审查, Summary).
 pub fn prompt(view: &Workspace, kind: &str, record_id: Option<&str>, request: &str, lang: &str, employer: &str) -> Result<(String, String, Suggestion), String> {
     let catalog = view.catalog.clone();
-    let settings = catalog.settings.clone();
     let record = record_id.map(|id| catalog.records.iter().find(|r| r.id == id).cloned().ok_or("素材已不存在")).transpose()?;
     let lang = lang_for(view, record_id, lang)?;
     let english = lang == "en";
@@ -101,15 +166,15 @@ pub fn prompt(view: &Workspace, kind: &str, record_id: Option<&str>, request: &s
             if jd.trim().is_empty() { return Err("请先填写目标 JD".into()); }
             let materials = catalog.records.iter().filter(|r| r.enabled && r.kind == "material" && r.lang == lang).collect::<Vec<_>>();
             if materials.is_empty() { return Err("还没有可选素材".into()); }
-            input = serde_json::json!({"jd": jd, "materials": materials, "developerRole": settings.developer_role}).to_string();
-            rules = context(&catalog, "整体审查", &[], lang);
+            input = serde_json::json!({"jd": jd, "materials": materials}).to_string();
+            rules = context(&catalog, task_of(kind), &[], lang);
             let shape = "仅输出 JSON：{\"advice\":\"选择理由\",\"selections\":[{\"recordId\":\"现有素材编号\",\"pointIds\":[\"现有要点编号\"]}]}。";
             task = if !english {
-                format!("按 JD 推荐素材和要点，不写新事实。{shape}项目和工作建议各不超过三条；非纯开发岗默认不选技术栈要点。")
+                format!("按 JD 推荐素材和要点，不写新事实。{shape}项目和工作建议各不超过三条；技术栈要点只在 JD 是开发类岗位时选。")
             } else if draft.as_ref().is_some_and(|d| d.form == "cv") {
-                format!("按 JD 为英文 CV 推荐素材和要点，不写新事实。{shape}CV 覆盖优先；每段项目或工作经历最多 3 条要点；Summary（类别「摘要」）最多选一条；非纯开发岗默认不选技术栈要点。")
+                format!("按 JD 为英文 CV 推荐素材和要点，不写新事实。{shape}CV 覆盖优先；每段项目或工作经历最多 3 条要点；Summary（类别「摘要」）最多选一条；技术栈要点只在 JD 是开发类岗位时选。")
             } else {
-                format!("按 JD 为英文 Resume 推荐素材和要点，不写新事实。{shape}Resume 一页，通常选 1–2 个项目；每段项目或工作经历最多 3 条要点；Summary（类别「摘要」）最多选一条；非纯开发岗默认不选技术栈要点。")
+                format!("按 JD 为英文 Resume 推荐素材和要点，不写新事实。{shape}Resume 一页，通常选 1–2 个项目；每段项目或工作经历最多 3 条要点；Summary（类别「摘要」）最多选一条；技术栈要点只在 JD 是开发类岗位时选。")
             };
         }
         "review" | "polish" | "summary" => {
@@ -117,7 +182,7 @@ pub fn prompt(view: &Workspace, kind: &str, record_id: Option<&str>, request: &s
             input = serde_json::to_string(&draft).map_err(err)?;
             let owned = entries_of(&draft);
             let entries: Vec<(&str, Option<&str>)> = owned.iter().map(|(n, id)| (n.as_str(), id.as_deref())).collect();
-            rules = context(&catalog, if kind == "polish" { "素材润色" } else { "整体审查" }, &entries, lang);
+            rules = context(&catalog, task_of(kind), &entries, lang);
             let form = if draft.form == "cv" { "CV" } else { "Resume" };
             task = match (kind, english) {
                 ("review", false) => "审查整份简历与 JD 的匹配、事实依据、表达和冗余，只给中文建议，不替用户改写正文。".into(),
@@ -135,7 +200,7 @@ pub fn prompt(view: &Workspace, kind: &str, record_id: Option<&str>, request: &s
         "material" => {
             let record = record.ok_or("素材已不存在")?;
             input = serde_json::to_string(&record).map_err(err)?;
-            rules = context(&catalog, "素材润色", &[(record.title.as_str(), Some(record.id.as_str()))], lang);
+            rules = context(&catalog, task_of(kind), &[(record.title.as_str(), Some(record.id.as_str()))], lang);
             result.before_record = Some(record);
             task = format!("只润色正文和已有要点，一轮完成，不改事实、抬头、编号。不增删要点。{}仅输出 JSON：{{\"advice\":\"说明\",\"text\":\"润色后正文\",\"edits\":[{{\"id\":\"已有要点编号\",\"text\":\"新正文\"}}]}}。", if english { "正文保持英文，说明用中文。" } else { "" });
         }

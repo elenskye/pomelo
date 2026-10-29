@@ -60,7 +60,7 @@ fn a_proposal_is_checked_but_never_written() {
     // …but not where the model said today (「午饭 35，昨天打车 20」: the 午饭 is today's)
     let p = propose(&c, ADD_ENTRY, &format!(r#"{{"amount": 35, "day": "{today}"}}"#), "午饭 35，昨天打车 20", &today).unwrap();
     assert_eq!(patch_of(&p)["day"].as_str(), Some(today.as_str()));
-    assert!(answer(ADD_ENTRY, Ok((1, &p))).text.contains("（收支 支出；金额 ¥35；"), "{}", answer(ADD_ENTRY, Ok((1, &p))).text);
+    assert!(answer(ADD_ENTRY, Ok(("1-1", 1, &p)), false).text.contains("（收支 支出；金额 ¥35；"), "{}", answer(ADD_ENTRY, Ok(("1-1", 1, &p)), false).text);
 
     let t = propose(&c, ADD_TASK, r#"{"title": "交房租", "due_date": "2020-01-01"}"#, "提醒我明天交房租", &today).unwrap();
     assert_eq!(patch_of(&t)["groupId"], 1); // no group named: the first
@@ -105,6 +105,66 @@ fn cards_keep_their_items_and_the_rules_refuse() {
     let pomelo = seeded();
     let text = instructions(&pomelo, &cloud, "2026-10-14").unwrap();
     assert!(text.contains("新任务") && !text.contains("记一笔收支") && text.contains("摸鱼读读：类型") && !text.contains("钱来钱往："), "{text}");
+    assert!(no_books.iter().all(|t| t["function"]["parameters"]["properties"]["replace"].is_object()) && text.contains("replace"));
+}
+
+/// A pending item is changed in place (this reply's card or an earlier one's of the conversation); a
+/// decided card isn't; the earlier ones are listed for the model with their 编号.
+#[test]
+fn a_pending_item_is_replaced_in_its_place() {
+    let p = crate::picky::store::tests::memory_db();
+    p.execute_batch("INSERT INTO sessions (title) VALUES ('t'); INSERT INTO runs (session_id, model, model_name, state) VALUES (1, 'local:x', 'X', 'completed'), (1, 'local:x', 'X', 'completed'), (1, 'local:x', 'X', 'completed');").unwrap();
+    let book = |creator: &str| Proposal {
+        tool: ADD_WORK.into(),
+        module: "books".into(),
+        label: "新书".into(),
+        choices: vec![Choice { title: "巴比伦塔".into(), fields: vec![Field { label: "作者".into(), before: None, after: creator.into(), long: false }], op: Op::AddWork { module: "books".into(), patch: json!({"title": "巴比伦塔", "creator": creator}) } }],
+        more: 0,
+        note: None,
+    };
+    let note = Proposal { tool: ADD_ENTRY.into(), module: "finance".into(), label: "记一笔收支".into(), choices: vec![Choice { title: "午饭 ¥35".into(), fields: vec![], op: Op::AddEntry { patch: json!({"amount": 3500}) } }], more: 0, note: None };
+    add(&p, 1, &book("Moses Maimonides")).unwrap();
+    add(&p, 1, &note).unwrap();
+    // the earlier reply's card, with each item's 编号; a module this model may not see is left out
+    let listed = card::pending_text(&p, &[1], |m| m != "finance").unwrap();
+    assert!(listed.contains("- 编号 1-1 · 新书 · 巴比伦塔：作者 Moses Maimonides") && !listed.contains("午饭") && listed.contains("replace"), "{listed}");
+    assert_eq!(card::pending_text(&p, &[2], |_| true).unwrap(), "");
+    // 编号: only of this conversation's cards (`runs`) or this reply's; a bare number is this reply's
+    assert_eq!(card::find_ref(&p, &[1], 3, "1-1").unwrap(), (1, 0, ADD_WORK.to_string()));
+    assert_eq!(card::find_ref(&p, &[1], 3, "编号 1-2").unwrap().1, 1);
+    assert!(card::find_ref(&p, &[], 3, "1-1").unwrap_err().contains("没有编号"));
+    assert!(card::find_ref(&p, &[1], 3, "1-5").unwrap_err().contains("没有编号 1-5 这一条"));
+    assert!(card::find_ref(&p, &[1], 3, "甲").is_err());
+    add(&p, 3, &note).unwrap();
+    assert_eq!(card::find_ref(&p, &[1], 3, "1").unwrap(), (3, 0, ADD_ENTRY.to_string()));
+    // replaced in place: same position, the new lines, nothing added
+    card::replace(&p, 1, 0, &book("特德·姜")).unwrap();
+    let c = card_of(&p, 1).unwrap().unwrap();
+    assert_eq!((c.items.len(), c.items[0].fields[0].after.as_str(), c.items[0].label.as_str()), (2, "特德·姜", "新书"));
+    assert!(answer(ADD_WORK, Ok(("1-1", 1, &book("特德·姜"))), true).text.starts_with("已把卡片里编号 1-1 那一条换成"));
+    assert!(answer(ADD_WORK, Ok(("3-2", 2, &book("特德·姜"))), false).text.contains("第 2 条，编号 3-2"));
+    // decided: no more changes
+    cancel(&p, 1).unwrap();
+    assert!(card::find_ref(&p, &[1], 3, "1-1").unwrap_err().contains("已经确认或取消"));
+    assert!(card::replace(&p, 1, 0, &book("甲")).is_err());
+    assert_eq!(card::pending_text(&p, &[1], |_| true).unwrap(), "");
+    // `replace` leaves the arguments
+    assert_eq!(replacing(r#"{"title":"巴比伦塔","replace":"12-1"}"#), (Some("12-1".into()), r#"{"title":"巴比伦塔"}"#.into()));
+    assert_eq!(replacing(r#"{"replace":2}"#).0.as_deref(), Some("2"));
+    assert_eq!(replacing(r#"{"title":"x"}"#).0, None);
+}
+
+/// 书单检索 fills a 新书 unless the model named an author the found book doesn't have (同名书).
+#[test]
+fn a_lookup_of_another_work_leaves_the_models_author() {
+    let found = |creator: &str| crate::picky::skills::works::Work { title: "巴比伦塔".into(), original: None, creator: Some(creator.into()), country: Some("西班牙".into()), kind: Some("非虚构".into()), year: None, url: String::new(), site: String::new(), note: String::new() };
+    let args = r#"{"kind":"book","title":"巴比伦塔","creator":"特德·姜","country":"美国"}"#;
+    assert_eq!(with_work(args, Some(&found("Moses Maimonides"))), args);
+    let same: Value = serde_json::from_str(&with_work(args, Some(&found("Ted Chiang 特德·姜")))).unwrap();
+    assert_eq!((same["creator"].as_str(), same["country"].as_str()), (Some("Ted Chiang 特德·姜"), Some("西班牙")));
+    // no author said: the lookup fills it
+    let none: Value = serde_json::from_str(&with_work(r#"{"kind":"book","title":"巴比伦塔"}"#, Some(&found("Moses Maimonides")))).unwrap();
+    assert_eq!(none["creator"].as_str(), Some("Moses Maimonides"));
 }
 
 #[test]
@@ -156,7 +216,7 @@ fn an_edit_with_several_fits_waits_for_a_pick() {
     let p = st.with_db(|c| propose(c, EDIT_ENTRY, r#"{"find": "午饭", "amount": 40}"#, "午饭改成 40", &today)).unwrap();
     assert_eq!(p.choices.len(), 2);
     assert!(p.choices[0].title.contains("午饭 ¥35：金额 ¥35 → ¥40"), "{}", p.choices[0].title); // newest first
-    assert!(answer(EDIT_ENTRY, Ok((1, &p))).text.contains("找到 2 条可能是的"));
+    assert!(answer(EDIT_ENTRY, Ok(("1-1", 1, &p)), false).text.contains("找到 2 条可能是的"));
     st.picky.with_db(|c| add(c, 1, &p)).unwrap();
     assert!(confirm(&st, 1, &[Pick { position: 0, option: None }]).unwrap_err().contains("还没选"));
     let card = confirm(&st, 1, &[Pick { position: 0, option: Some(1) }]).unwrap();
@@ -215,7 +275,7 @@ fn every_module_adds_and_edits_with_its_own_rules() {
     assert!(field(&p, "进度").after.starts_with("已投递"));
     // a date the model got wrong: the card uses Rust's, and the model is told
     let p = propose(&c, EDIT_JOB, r#"{"job": "甲公司", "status": "Offer", "day": "2020-01-01"}"#, "甲公司下周三拿到 offer", &today).unwrap();
-    assert!(answer(EDIT_JOB, Ok((1, &p))).text.contains("问题里的日期是"));
+    assert!(answer(EDIT_JOB, Ok(("1-1", 1, &p)), false).text.contains("问题里的日期是"));
 
     // 摸鱼读读 · 好奇看看
     let (_, w) = write(&c, ADD_WORK, r#"{"kind": "book", "title": "《三体》", "status": "todo"}"#, "想读《三体》");
@@ -242,7 +302,7 @@ fn every_module_adds_and_edits_with_its_own_rules() {
     assert_eq!(field(&p, "加上").after, "雨伞、充电宝");
     let (p, _) = write(&c, EDIT_TRIP, r#"{"trip": "东京", "pack": ["雨伞", "护照"], "add": ["雨伞"]}"#, "装好了雨伞");
     assert_eq!(field(&p, "装好").after, "雨伞");
-    assert!(answer(EDIT_TRIP, Ok((1, &p))).text.contains("没找到（或已经装好了）：护照"));
+    assert!(answer(EDIT_TRIP, Ok(("1-1", 1, &p)), false).text.contains("没找到（或已经装好了）：护照"));
     assert_eq!(packing::trip(&c, w.id).unwrap().packed, 1);
 
     // 念念不忘: the changes marked
@@ -280,6 +340,10 @@ fn the_mock_model_proposes_by_plain_patterns() {
     assert_eq!(calls("装好了雨伞、护照"), [r#"pomelo_edit_trip {"pack":["雨伞","护照"]}"#]);
     assert_eq!(calls("笔记里的两套改成三套"), [r#"pomelo_edit_note {"find":"两套","new":"三套","old":"两套"}"#]);
     assert!(calls("推荐几本像《三体》的书").is_empty());
+    // 改卡片: the pending item of that book (the listing in the system message), else a new one
+    assert_eq!(calls("《巴比伦塔》是特德·姜写的"), [r#"pomelo_add_work {"creator":"特德·姜","kind":"book","title":"巴比伦塔"}"#]);
+    let listed = mock_calls("《巴比伦塔》是特德·姜写的", "【还没确认的卡片】…\n- 编号 12-1 · 新书 · 《巴比伦塔》：作者 Moses Maimonides\n", today);
+    assert_eq!(listed[0].1["replace"], "12-1");
     assert!(calls("这周做完了什么").is_empty());
 }
 

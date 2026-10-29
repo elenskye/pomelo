@@ -6,7 +6,7 @@ import { HEADLESS, SUMMARY, SeekerSort, contactLines } from "./SeekerParts";
 import { PointEditor } from "./SeekerPoint";
 import { draftLang, type SeekerDraft, type SeekerEdit, type SeekerEntry, type SeekerLang } from "./seekerApi";
 
-/** An entry's heading as the Word export writes it (Rust output.rs `lines`): 中文 时间 · 名称 · 角色 · 地点
+/** An entry's heading as the Word export writes it (Rust output.rs `lines`): 中文 名称 ⇥ 角色 ⇥ 时间
  * (教育: 名称 ⇥ 时间, then 专业；说明); English 角色 ⇥ 时间, then 名称, 地点 (教育: 名称 ⇥ 时间, then the degree). */
 export function EntryHead({ lang, category, entry: e }: { lang: SeekerLang; category: string; entry: SeekerEntry }) {
   const grey = (lines: string[]) => lines.filter(Boolean).map((l, i) => <p key={i} className="text-muted-foreground">{l}</p>);
@@ -16,8 +16,8 @@ export function EntryHead({ lang, category, entry: e }: { lang: SeekerLang; cate
     const below = education ? [e.role, e.note] : e.role.trim() ? [[e.name, e.location].filter((x) => x.trim()).join(", "), e.note] : [e.location, e.note];
     return <div><div className="flex flex-wrap gap-x-6"><strong className="flex-1">{top || "未命名"}</strong><strong>{e.time}</strong></div>{grey(below)}</div>;
   }
-  if (category === "教育") return <div><div className="flex flex-wrap gap-x-6"><strong className="flex-1">{e.name || "未命名"}</strong><span>{e.time}</span></div>{grey([[e.role, e.note].filter(Boolean).join("；")])}</div>;
-  return <div><div className="flex flex-wrap gap-x-6"><strong className="w-32">{e.time}</strong><strong className="flex-1">{e.name || "未命名"}</strong><span>{e.role}</span><span>{e.location}</span></div>{grey([e.note])}</div>;
+  if (category === "教育") return <div><div className="flex flex-wrap gap-x-6"><strong className="flex-1">{e.name || "未命名"}</strong><span className="text-muted-foreground">{e.time}</span></div>{grey([[e.role, e.note].filter(Boolean).join("；")])}</div>;
+  return <div><div className="flex flex-wrap gap-x-6"><strong className="min-w-0 basis-1/2">{e.name || "未命名"}</strong><span className="flex-1">{e.role}</span><span className="text-muted-foreground">{e.time}</span></div>{grey([e.note])}</div>;
 }
 
 /** 预览: the draft laid out like its Word export. */
@@ -30,7 +30,9 @@ export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selecte
   const { draft, busy, selected, setSelected, edit } = props;
   const lang = draftLang(draft);
   const scroll = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; clientX: number; clientY: number; base: Set<string>; pointerId: number } | null>(null);
+  // a press on the page: a drag selects what its box touches; a click (no move) picks the block under it,
+  // or lets go of it when it was the one picked (⌘ / shift: adds to or takes from the selection)
+  const drag = useRef<{ x: number; y: number; clientX: number; clientY: number; startX: number; startY: number; base: Set<string>; before: Set<string>; adding: boolean; pointerId: number } | null>(null);
   const frame = useRef(0);
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
@@ -57,8 +59,8 @@ export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selecte
     if (animate) frame.current = requestAnimationFrame(() => updateSelection(true));
   };
 
-  const block = (id: string, content: ReactNode, onEdit: () => void, inherited = false, handle: ReactNode = null) => <div key={id} data-seeker-block={id} className={`group flex items-start gap-2 rounded-control px-2 py-1.5 ${selected.has(id) || inherited ? "bg-accent ring-1 ring-ring/30" : "hover:bg-muted/50"}`}>
-    {handle}<input type="checkbox" className="mt-1 shrink-0" checked={selected.has(id)} disabled={busy} aria-label={`选择${typeof content === "string" ? content : "简历内容"}`} onChange={() => { const next = new Set(selected); if (next.has(id)) next.delete(id); else next.add(id); setSelected(next); }} />
+  const block = (id: string, content: ReactNode, onEdit: () => void, inherited = false, handle: ReactNode = null) => <div key={id} data-seeker-block={id} role="option" aria-selected={selected.has(id)} className={`group flex items-start gap-2 rounded-control border px-2 py-1.5 ${selected.has(id) ? "border-primary bg-accent text-accent-foreground" : inherited ? "border-transparent bg-accent/60" : "border-transparent hover:bg-muted/50"}`}>
+    {handle}
     <div className="min-w-0 flex-1 whitespace-pre-wrap break-words">{content}</div>
     <Button variant="ghost" className="px-1 py-0.5 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label="编辑此项" disabled={busy} onClick={onEdit}><Pencil size={13} /></Button>
   </div>;
@@ -82,12 +84,27 @@ export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selecte
       e.preventDefault();
       root.focus();
       root.setPointerCapture(e.pointerId);
-      drag.current = { x: e.clientX - rect.left + root.scrollLeft, y: e.clientY - rect.top + root.scrollTop, clientX: e.clientX, clientY: e.clientY, base: e.metaKey || e.ctrlKey || e.shiftKey ? new Set(selected) : new Set(), pointerId: e.pointerId };
+      const adding = e.metaKey || e.ctrlKey || e.shiftKey;
+      drag.current = { x: e.clientX - rect.left + root.scrollLeft, y: e.clientY - rect.top + root.scrollTop, clientX: e.clientX, clientY: e.clientY, startX: e.clientX, startY: e.clientY, base: adding ? new Set(selected) : new Set(), before: new Set(selected), adding, pointerId: e.pointerId };
       cancelAnimationFrame(frame.current);
       updateSelection(true);
     }}
     onPointerMove={(e) => { if (drag.current) { drag.current.clientX = e.clientX; drag.current.clientY = e.clientY; } }}
-    onPointerUp={(e) => { if (!drag.current) return; cancelAnimationFrame(frame.current); drag.current.clientX = e.clientX; drag.current.clientY = e.clientY; updateSelection(false); drag.current = null; setBox(null); if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }}
+    onPointerUp={(e) => {
+      const d = drag.current;
+      if (!d) return;
+      cancelAnimationFrame(frame.current);
+      d.clientX = e.clientX; d.clientY = e.clientY;
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 4) {
+        const id = (document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-seeker-block]") as HTMLElement | null)?.dataset.seekerBlock;
+        const next = new Set(d.adding ? d.before : []);
+        if (id && d.before.has(id) && (d.adding || d.before.size === 1)) next.delete(id);
+        else if (id) next.add(id);
+        setSelected(next);
+      } else updateSelection(false);
+      drag.current = null; setBox(null);
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    }}
     onLostPointerCapture={() => { cancelAnimationFrame(frame.current); drag.current = null; setBox(null); }}
     onPointerCancel={() => { cancelAnimationFrame(frame.current); drag.current = null; setBox(null); }}>
     <article className="mx-auto my-5 min-h-[650px] max-w-[794px] select-none rounded-sm border bg-card p-6 text-sm shadow-sm sm:p-8">

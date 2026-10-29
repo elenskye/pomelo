@@ -10,9 +10,9 @@ import { Button, EmptyState, IconButton } from "@/shared/ui";
 import { SeekerDiff } from "./SeekerParts";
 import { SEEKER_FILES_KEY, seekerApi, type SeekerCvFile, type SeekerLang } from "./seekerApi";
 
-const folderOf = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
+export const folderOf = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
 const size = (n: number) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
-const date = (secs: number) => { const d = new Date(secs * 1000); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()} / ${p(d.getMonth() + 1)} / ${p(d.getDate())}`; };
+export const cvDate = (secs: number) => { const d = new Date(secs * 1000); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()} / ${p(d.getMonth() + 1)} / ${p(d.getDate())}`; };
 export const useSeekerFiles = () => useQuery({ queryKey: SEEKER_FILES_KEY, queryFn: seekerApi.files });
 
 function useOpen() {
@@ -53,7 +53,7 @@ export function SeekerCvHistory(props: { lang: SeekerLang }) {
             <div className="group flex items-center gap-2 rounded-control px-2 py-1.5 text-sm hover:bg-muted/60">
               <FileText size={14} className="shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{f.name.split("/").pop()}{f.template && <span className="ml-2 text-xs text-primary">模板</span>}{f.export && <span className="ml-2 text-xs text-muted-foreground">Pomelo 导出</span>}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{date(f.modified)} · {size(f.size)}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{cvDate(f.modified)} · {size(f.size)}</span>
               <span className="flex shrink-0 items-center gap-1">
                 {readable && <Button variant="ghost" onClick={() => (shown?.path === f.path && !shown.before ? setShown(null) : void read(f))}>正文</Button>}
                 {readable && older && /\.(docx|pdf)$/i.test(older.name) && <Button variant="ghost" onClick={() => (shown?.path === f.path && shown.before != null ? setShown(null) : void read(f, older))}>比较上一版</Button>}

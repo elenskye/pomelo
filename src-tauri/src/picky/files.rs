@@ -104,6 +104,9 @@ pub fn prepare(path: &Path) -> Result<Prepared, String> {
     read(path, false)
 }
 
+/// A PDF without a text layer (a scan): the knowledge base lists it by name only, like an image.
+pub const SCANNED_PDF: &str = "PDF 没有可提取的文字，可能是扫描版；请先转换成带文字的 PDF";
+
 /// `whole_tables`: every row of a big table as text (知识库 files are searched, not sent whole; 查表
 /// only exists for attachments).
 pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
@@ -170,7 +173,7 @@ pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
             .map(|(ordinal, (i, t))| Segment { ordinal: ordinal as i64, page_start: Some(i as i64 + 1), page_end: Some(i as i64 + 1), heading: None, content: t.trim().to_string() })
             .collect();
         if segments.is_empty() {
-            return Err("PDF 没有可提取的文字，可能是扫描版；请先转换成带文字的 PDF".into());
+            return Err(SCANNED_PDF.into());
         }
         (Some(pages.len() as i64), segments)
     } else {

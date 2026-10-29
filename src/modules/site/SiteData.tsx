@@ -104,7 +104,7 @@ export function SiteDataPage(props: { setDirty: (d: boolean) => void; onError: (
   };
   return (
     <div className="-m-1 min-h-0 flex-1 overflow-y-auto border-t p-1">
-      <div className="max-w-3xl space-y-6 px-8 py-5">
+      <div className="mx-auto max-w-3xl space-y-6 px-8 py-5">
         <Card title="话题与类别" dirty={termsDirty} saving={saving === "terms"} onSave={() => void save("terms")}>
           <div className="space-y-5">
             <TermRows label="类别" rows={terms.categories} known={known} set={(categories) => setTerms({ ...terms, categories })} />

@@ -54,7 +54,6 @@ pub const SEEKER_TOOL: &str = seeker::TOOL;
 pub const QBANK_RESUME: &str = "qbank_resume";
 pub const QBANK_GENERAL: &str = "qbank_general";
 pub const QBANK_JOB: &str = "qbank_job";
-const QBANK_DETAIL: &str = "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。";
 const PREF: &str = "skills";
 /// The contact Wikidata / Open Library get (the user sets it in the 插件库).
 const CONTACT: &str = "skills.contact";
@@ -68,14 +67,51 @@ pub struct KeySpec {
     pub required: bool,
 }
 
+/// One node of a skill's flow (the 插件库 draws it): what happens, in order, with the checks and the
+/// loops the code really has.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Flow {
+    Step { text: &'static str },
+    /// `ask`: the check; `yes`: its label and the steps on that side (`join`: the step it goes on at,
+    /// "" = it ends there); `no`: the label of the way on down.
+    Check { ask: &'static str, yes: &'static str, side: &'static [&'static str], join: &'static str, no: &'static str },
+    /// Goes back to the step `back` while `text` says so.
+    Again { text: &'static str, back: &'static str },
+}
+
+const fn s(text: &'static str) -> Flow {
+    Flow::Step { text }
+}
+
+const fn check(ask: &'static str, yes: &'static str, side: &'static [&'static str], join: &'static str, no: &'static str) -> Flow {
+    Flow::Check { ask, yes, side, join, no }
+}
+
+const fn again(text: &'static str, back: &'static str) -> Flow {
+    Flow::Again { text, back }
+}
+
+/// 题库 SKILLs: a pending card's question (`replace`) or a bank question (`question`) first.
+const REWRITE_PENDING: Flow = check("改卡片里还没确认的题？", "是", &["Rater 的模型按你的话重写那道题的答案", "换掉卡片里那一条"], "你勾选、确认", "否");
+const CHECKED: &str = "检查模型的回答（素材、改自对得上，去掉重复，条数不超）";
+const POLISH_BANK: Flow = check("说了题库里哪道题？", "是", &["按字找那道题（没找到或有几道 → 问你）", "Rater 的模型重写它的答案"], CHECKED, "否");
+const QBANK_END: [Flow; 5] = [
+    s(CHECKED),
+    check("回答用不了？", "是", &["告诉小拾没出成"], "", "否"),
+    s("放进确认卡片"),
+    s("你勾选、确认"),
+    s("写进题库（一步撤销）"),
+];
+
 pub struct Skill {
     pub key: &'static str,
     pub name: &'static str,
     pub tool: &'static str,
-    /// One line for the list.
-    pub summary: &'static str,
-    /// What it sends where, and where Pomelo uses it.
-    pub detail: &'static str,
+    /// Its flow (the 插件库 draws it as a chart).
+    pub flow: &'static [Flow],
+    /// What it can do (and what it sends where), one point each.
+    pub features: &'static [&'static str],
     pub keys: &'static [KeySpec],
     pub auto: bool,
     /// It proposes writing files (a card the user confirms): never for 定时任务.
@@ -85,110 +121,194 @@ pub struct Skill {
 pub const SKILLS: &[Skill] = &[
     Skill {
         key: BOOKS,
-        name: "书单检索",
+        name: "general-book-lookup",
         tool: "pomelo_find_book",
-        summary: "查书的作者、国家、类型：先在 Wikidata 找到这本书，再用 Open Library 核对。",
-        detail: "发出去的只有书名（和作者）。用在：对话里补全、核对小拾推荐的书（回答标出处）；书影面板的「补全」「一句话填好」；小拾提议新书时补上作者、国家、类型。",
+        flow: &[
+            s("书名（和作者）"),
+            s("Wikidata 按书名找，作者对得上的优先"),
+            check("Wikidata 没找到？", "是", &["Open Library 按书名找", "也没有就说查不到，不编"], "作者 · 国家 · 类型", "找到了"),
+            s("Open Library 核对作者"),
+            check("作者对不上？", "是", &["以 Wikidata 为准，注明不一样"], "作者 · 国家 · 类型", "对得上"),
+            s("作者 · 国家 · 类型"),
+        ],
+        features: &["查书的作者、国家、类型，回答标出处", "书影面板的「补全」「一句话填好」", "小拾提议新书时补上作者、国家、类型", "发出去的只有书名（和作者）"],
         keys: &[],
         auto: true,
         writes: false,
     },
     Skill {
         key: FILMS,
-        name: "影单检索",
+        name: "general-film-lookup",
         tool: "pomelo_find_film",
-        summary: "查电影、剧集、动漫的导演、国家、类型：先在 Wikidata 找到这一部，再用 TMDb（电影、剧集）或 Jikan（动漫）核对。",
-        detail: "发出去的只有名称（和导演）。没填 TMDb Token 时电影、剧集只用 Wikidata。用在：和书单检索一样的这些地方。",
+        flow: &[
+            s("名称（和导演）"),
+            s("Wikidata 按名称找，导演对得上的优先"),
+            check("Wikidata 没找到？", "是", &["TMDb（填了 Token）或 Jikan 按名称找", "也没有就说查不到，不编"], "导演 · 国家 · 类型", "找到了"),
+            check("电影、剧集，填了 TMDb Token？", "是", &["TMDb 核对导演"], "导演 · 国家 · 类型", "否"),
+            check("是动漫？", "是", &["Jikan 核对"], "导演 · 国家 · 类型", "否"),
+            s("不核对，只用 Wikidata"),
+            s("导演 · 国家 · 类型"),
+        ],
+        features: &["查电影、剧集、动漫的导演、国家、类型，回答标出处", "书影面板的「补全」「一句话填好」，小拾提议新影视时补上", "没填 TMDb Token 时电影、剧集只用 Wikidata", "发出去的只有名称（和导演）"],
         keys: &[KeySpec { account: works::TMDB_ACCOUNT, label: "TMDb Read Access Token", required: false }],
         auto: true,
         writes: false,
     },
     Skill {
         key: WEB,
-        name: "联网搜索",
+        name: "general-web-search",
         tool: "pomelo_web_search",
-        summary: "用 Tavily 在网上搜，回答带来源，点了用浏览器打开。",
-        detail: "发出去的是搜索词：小拾自己写的，或者（「/联网搜索」时）问题本身，可能带上私人内容。搜到的存进对话，追问还用得上。",
+        flow: &[
+            s("问题"),
+            check("用了斜杠命令或「联网」？", "是", &["先拿问题直接搜一次，结果和问题一起给小拾"], "小拾写搜索词", "否"),
+            s("小拾写搜索词"),
+            s("Tavily 搜索，读搜到的网页摘要"),
+            again("不够就换个词再搜（一条回答最多查 4 轮）", "小拾写搜索词"),
+            s("回答带来源"),
+        ],
+        features: &["上网查新的信息，回答带来源，点了用浏览器打开", "用斜杠命令时直接拿问题去搜（可能带上私人内容）", "搜到的存进对话，追问还用得上", "要填 Tavily API Key"],
         keys: &[KeySpec { account: web::ACCOUNT, label: "Tavily API Key", required: true }],
         auto: false,
         writes: false,
     },
     Skill {
         key: FILES,
-        name: "读文件",
+        name: "general-file-reader",
         tool: files::TOOL,
-        summary: "读这个问题带的附件和项目资料：看目录、按段号读、按字找。资料太长放不下时，先给小拾目录和按问题挑出的段落，它再用这个读需要的部分。",
-        detail: "只读这个问题已经带上的文件（存在小拾里的那份），不碰别的文件；读到的段落标出处。不发到别处：内容随这个问题发给你选的模型。",
+        flow: &[
+            s("这个问题带的文件"),
+            check("放得进这次的篇幅？", "是", &["全文随问题发给模型"], "回答标出处", "放不下"),
+            s("先给目录和按问题挑出的段落"),
+            s("小拾按段号读 / 按字找"),
+            again("不够就再读（一条回答最多查 4 轮）", "小拾按段号读 / 按字找"),
+            s("回答标出处"),
+        ],
+        features: &["读附件和项目资料：看目录、按段号读、按字找", "资料太长时先给目录和按问题挑出的段落，再读需要的部分", "只读已经带上的文件，不碰别的文件", "内容只随这个问题发给你选的模型"],
         keys: &[],
         auto: true,
         writes: false,
     },
     Skill {
         key: KB,
-        name: "查知识库",
+        name: "general-knowledge-base",
         tool: KB_TOOL,
-        summary: "小拾觉得需要时自己查知识库：这个对话选的库，没选就是项目选的，再没有就是全部。按问题找相关的段落，也能列出库里有哪些文件、整篇读某个文件（看目录、按段读、按字找）。查到的标出处。",
-        detail: "和输入框的「知识库」按钮并存：按钮按下时每个问题都先查一遍；这个技能让小拾没按时也能查，或者换个说法再查。用云端模型时不查不发给云端的文件夹。",
+        flow: &[
+            s("问题"),
+            s("选库：对话 → 项目 → 全部"),
+            check("用的是云端模型？", "是", &["跳过设成不发给云端的文件夹"], "找段落 / 列文件 / 读整篇", "否"),
+            s("找段落 / 列文件 / 读整篇"),
+            check("是图片或扫描件？", "是", &["只认文件名；云端模型能看图片"], "回答标出处", "否"),
+            again("不够就再查（一条回答最多查 4 轮）", "找段落 / 列文件 / 读整篇"),
+            s("回答标出处"),
+        ],
+        features: &["按问题在知识库里找相关的段落", "列出库里有哪些文件，整篇读一个文件（看目录、按段读、按字找）", "图片和扫描件只认文件名，云端模型能看图片", "用云端模型时不查不发给云端的文件夹"],
         keys: &[],
         auto: true,
         writes: false,
     },
     Skill {
         key: WORD,
-        name: "Word 工具箱",
+        name: "general-word-toolkit",
         tool: toolbox::WORD_TOOL,
-        summary: "小拾觉得需要时自己用：改 Word 文件（文字，加粗、斜体、下划线，标题、列表，加段、删段），或者新建一个 Word。改的都放进确认卡片，你勾选后点「写入文件」才写；新建的你点「保存」才存。",
-        detail: "只改这个问题的附件（从访达拖进来或点选的，改的是原文件）和知识库里的 Word 文件，不碰别的文件；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。",
-        keys: &[],
-        auto: true,
-        writes: true,
-    },
-    Skill {
-        key: SEEKER,
-        name: "Seeker 资料",
-        tool: seeker::TOOL,
-        summary: "小拾觉得需要时自己查你的求职资料：Seeker 的简历素材、现在的中英文简历草稿、确认过的版本、导出过的 Word，和 Rater 的面试题库、卡片练习的记录。只读，不改任何资料。",
-        detail: "停用（不发给模型）的素材不读；Seeker 的规则、档案、网申不读。用云端模型时，只有 Seeker 设置里「允许发给云端」开着才读（Rater 也照它）；Seeker 或 Rater 在模块坞里隐藏了就不读它。",
-        keys: &[],
-        auto: true,
-        writes: false,
-    },
-    Skill {
-        key: QBANK_RESUME,
-        name: "题库 · 简历题",
-        tool: qbank::RESUME_TOOL,
-        summary: "按简历上的经历出面试官会追问的题，配好口述稿答案；也能给已有的一道简历题重写答案。读选的经历（不说就是简历草稿里的）和挂着的经历档案。",
-        detail: QBANK_DETAIL,
-        keys: &[],
-        auto: true,
-        writes: true,
-    },
-    Skill {
-        key: QBANK_GENERAL,
-        name: "题库 · 通用题",
-        tool: qbank::GENERAL_TOOL,
-        summary: "出自我介绍、为什么投、优缺点、行为题、职业规划、反问这类通用题，配好口述稿答案；读基本信息、已确认事实和经历一览。",
-        detail: QBANK_DETAIL,
-        keys: &[],
-        auto: true,
-        writes: true,
-    },
-    Skill {
-        key: QBANK_JOB,
-        name: "题库 · 突击题",
-        tool: qbank::JOB_TOOL,
-        summary: "按投石问路里一个岗位的 JD 和公司资料出突击题，也把已有的简历题、通用题按这家公司改写（记着改自哪道，原题不动）。",
-        detail: QBANK_DETAIL,
+        flow: &[
+            s("问题"),
+            check("要新建一个 Word？", "是", &["名称和内容放进卡片", "你选文件夹、点「保存」才存"], "", "改已有的"),
+            s("附件或知识库里的 Word，读成编号的段落"),
+            s("小拾提出修改"),
+            check("这一段改不了（表格、域，或格式对不上）？", "是", &["不放进卡片，告诉小拾为什么"], "小拾提出修改", "能改"),
+            s("放进确认卡片（同一段再改就换掉）"),
+            s("你勾选、点「写入文件」"),
+            check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
+            s("写入文件（只动改了的字，不留备份）"),
+        ],
+        features: &["改文字和格式：加粗、斜体、下划线、标题、列表", "加段、删段", "新建一个 Word，你点「保存」才存", "只改附件和知识库里的 Word；不留备份，文件被改过就不写"],
         keys: &[],
         auto: true,
         writes: true,
     },
     Skill {
         key: TEXT,
-        name: "文本工具箱",
+        name: "general-text-toolkit",
         tool: toolbox::TEXT_TOOL,
-        summary: "小拾觉得需要时自己用：改 Markdown 和纯文本文件（改段、删段），改的放进确认卡片，你勾选后点「写入文件」才写。",
-        detail: "只改这个问题的附件（改的是原文件）和知识库里的这类文件，保留原来的换行和编码；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。",
+        flow: &[
+            s("附件或知识库里的 Markdown / 文本，读成编号的段落"),
+            s("小拾提出修改"),
+            s("放进确认卡片（同一段再改就换掉）"),
+            s("你勾选、点「写入文件」"),
+            check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
+            s("写入文件（保留原来的换行和编码，不留备份）"),
+        ],
+        features: &["改段、删段", "保留原来的换行和编码", "只改附件和知识库里的这类文件；不留备份，文件被改过就不写"],
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: SEEKER,
+        name: "seeker-toolkit",
+        tool: seeker::TOOL,
+        flow: &[
+            s("问到求职资料"),
+            check("Seeker / Rater 隐藏了，或云端模型没被允许？", "是", &["不读，告诉小拾为什么"], "", "否"),
+            s("挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"),
+            s("只读启用的，按剩下的篇幅截短"),
+            again("不够就换一种查法（一条回答最多查 4 轮）", "挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"),
+            s("回答"),
+        ],
+        features: &["Seeker：素材和基本信息、中英文简历草稿、导出过的 Word 和用在哪个岗位", "cv/ 的简历（列出来、读一份正文）和 material/ 的文件名", "Rater：题库和练习记录、最近几轮卡片练习、面试准备和复盘", "停用的素材和规则、档案、网申不读；云端模型要 Seeker 允许发给云端"],
+        keys: &[],
+        auto: true,
+        writes: false,
+    },
+    Skill {
+        key: QBANK_RESUME,
+        name: "rater-qbank-resume",
+        tool: qbank::RESUME_TOOL,
+        flow: &[
+            s("小拾写出经历、题目里的字或卡片编号"),
+            REWRITE_PENDING,
+            POLISH_BANK,
+            s("找经历：没说就用简历草稿里的（找不到 → 问你）"),
+            s("读这些经历、经历档案和已有的简历题"),
+            s("Rater 的模型照「简历题」工作流出题（一次调用）"),
+            QBANK_END[0], QBANK_END[1], QBANK_END[2], QBANK_END[3], QBANK_END[4],
+        ],
+        features: &["按经历出面试官会追问的题，配口述稿答案", "给已有的简历题重写答案", "读选的经历（没说就是简历草稿里的）和经历档案", "照 Rater 规则里「简历题」的工作流，一步撤销", "用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"],
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: QBANK_GENERAL,
+        name: "rater-qbank-general",
+        tool: qbank::GENERAL_TOOL,
+        flow: &[
+            s("小拾写出题目里的字或卡片编号"),
+            REWRITE_PENDING,
+            POLISH_BANK,
+            s("读基本信息、已确认事实、经历一览和已有的通用题"),
+            s("Rater 的模型照「通用题」工作流出题（一次调用）"),
+            QBANK_END[0], QBANK_END[1], QBANK_END[2], QBANK_END[3], QBANK_END[4],
+        ],
+        features: &["自我介绍、为什么投、优缺点、行为题、职业规划、反问", "配口述稿答案", "照 Rater 规则里「通用题」的工作流，一步撤销", "用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"],
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: QBANK_JOB,
+        name: "rater-qbank-job",
+        tool: qbank::JOB_TOOL,
+        flow: &[
+            s("小拾写出岗位、题目里的字或卡片编号"),
+            REWRITE_PENDING,
+            POLISH_BANK,
+            check("投石问路里对不上一个岗位？", "是", &["没说、没找到或有几个 → 问你"], "", "对上了"),
+            s("读 JD、knowledge/ 里这家公司的资料、已有的简历题和通用题"),
+            s("Rater 的模型照「突击题」工作流出题，也改写已有的题（记着改自哪道）"),
+            QBANK_END[0], QBANK_END[1], QBANK_END[2], QBANK_END[3], QBANK_END[4],
+        ],
+        features: &["按投石问路里一个岗位出突击题", "把已有的简历题、通用题按这家公司改写，记着改自哪道，原题不动", "照 Rater 规则里「突击题」的工作流，一步撤销", "用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"],
         keys: &[],
         auto: true,
         writes: true,
@@ -325,14 +445,14 @@ pub fn instructions(skills: &[&Skill], forced: &[String]) -> String {
             WORD => "\n- Word 工具箱（pomelo_word）：用户要改 Word 文件时，read 读要改的部分，再调用 edit 把改好的整段文字放进确认卡片；要把写好的内容存成 Word 时用 create。只在回答里写改法不会进卡片：要改就一定调用 edit / create，它返回「已放进确认卡片」之后才能说放进去了；也不要说已经改好、已经存好（用户确认后才写）。只是问意见、没让改时不用 edit。",
             TEXT => "\n- 文本工具箱（pomelo_text）：用户要改 Markdown、纯文本文件时，read 之后调用 edit 提议改动，规矩同 Word 工具箱。",
             QBANK_RESUME | QBANK_GENERAL | QBANK_JOB => "",
-            SEEKER => "\n- Seeker 资料（pomelo_seeker）：问到用户的简历、求职素材、确认过的简历版本、导出过的简历、面试题库和练习时用，只读；回答里引用原文，不要改写成新的事实。",
+            SEEKER => "\n- Seeker 资料（pomelo_seeker）：问到用户的简历、求职素材、cv/ 里的简历版本、导出过的简历、面试题库和练习时用，只读；回答里引用原文，不要改写成新的事实。",
             KB => "\n- 查知识库（pomelo_kb）：问到用户自己的文件、文档里的内容时先 search；问有哪些文件时用 files；要读完整的一份时 outline 再 read，用到的标出处；问到图片时用 files 找、look 看；查不到就说没查到。",
             _ => "\n- 联网搜索（pomelo_web_search）：问到最近的事、你不知道或可能过时的事时用；可以换个说法再搜一次。",
         });
     }
     let qbank: Vec<String> = skills.iter().filter_map(|sk| qbank::category(sk.tool).map(|c| format!("{} {c}", sk.tool))).collect();
     if !qbank.is_empty() {
-        s.push_str(&format!("\n- 题库（{}）：用户要出面试题、写或改答案时用，出的题进确认卡片，确认后才写进 Rater 题库；不要自己在回答里写一整套题代替它。", qbank.join("、")));
+        s.push_str(&format!("\n- 题库（{}）：用户要出面试题、写或改答案时用，出的题进确认卡片，确认后才写进 Rater 题库；不要自己在回答里写一整套题代替它。卡片里还没确认的题要改答案：同一个工具加上 replace（编号）和 request。", qbank.join("、")));
     }
     for f in forced.iter().filter_map(|f| skill(f)) {
         s.push_str(&if f.key == WEB {
@@ -430,7 +550,7 @@ pub async fn run_with(mock: bool, tavily: Option<String>, reach: works::Reach, s
     };
     let titles: Vec<String> = titles.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).take(TITLES).collect();
     if titles.is_empty() {
-        return answer(format!("{} · 没有名称", sk.name), "failed", "没查：titles 不能为空。".into());
+        return answer(format!("{} · 没有名称", if which == Which::Books { "书单检索" } else { "影单检索" }), "failed", "没查：titles 不能为空。".into());
     }
     let hint = args[if which == Which::Books { "author" } else { "director" }].as_str().map(String::from);
     // side by side (Wikidata's pacing still holds its own requests apart)
@@ -445,7 +565,7 @@ pub async fn run_with(mock: bool, tavily: Option<String>, reach: works::Reach, s
     for (t, task) in titles.iter().zip(tasks) {
         found.push((t.clone(), task.await.unwrap_or_else(|_| Err("查的时候出错了".into()))));
     }
-    works_results(sk, which, &found, sources, budget)
+    works_results(which, &found, sources, budget)
 }
 
 /// What the model gets for web pages, while they fit `budget`.
@@ -469,7 +589,7 @@ pub fn web_results(q: &str, pages: &[web::Page], sources: &mut Sources, budget: 
     answer(format!("联网搜索「{}」· {} 条", clip(q, 20), lines.len() - 1), "ok", lines.join("\n"))
 }
 
-fn works_results(sk: &Skill, which: Which, found: &[(String, Result<Option<Work>, String>)], sources: &mut Sources, budget: i64) -> Answer {
+fn works_results(which: Which, found: &[(String, Result<Option<Work>, String>)], sources: &mut Sources, budget: i64) -> Answer {
     let budget = budget.min(data::MAX_RESULT);
     let mut lines = vec![];
     let mut hits = 0;
@@ -491,7 +611,8 @@ fn works_results(sk: &Skill, which: Which, found: &[(String, Result<Option<Work>
         lines.push(line);
     }
     let first = clip(&found.first().map(|f| f.0.clone()).unwrap_or_default(), 12);
-    let label = if found.len() > 1 { format!("{}「{first}」等 {} {}", sk.name, found.len(), if which == Which::Books { "本" } else { "部" }) } else { format!("{}「{first}」", sk.name) };
+    let what = if which == Which::Books { "书单检索" } else { "影单检索" };
+    let label = if found.len() > 1 { format!("{what}「{first}」等 {} {}", found.len(), if which == Which::Books { "本" } else { "部" }) } else { format!("{what}「{first}」") };
     answer(format!("{label} · 查到 {hits} 个"), if hits > 0 { "ok" } else { "failed" }, lines.join("\n"))
 }
 
@@ -525,8 +646,8 @@ pub struct SkillInfo {
     pub key: &'static str,
     pub name: &'static str,
     pub command: String,
-    pub summary: &'static str,
-    pub detail: &'static str,
+    pub flow: &'static [Flow],
+    pub features: &'static [&'static str],
     pub enabled: bool,
     pub auto: bool,
     pub ready: bool,
@@ -545,8 +666,8 @@ fn infos(conn: &Connection, p: &super::Picky) -> Vec<SkillInfo> {
                 key: s.key,
                 name: s.name,
                 command: format!("/{}", s.name),
-                summary: s.summary,
-                detail: s.detail,
+                flow: s.flow,
+                features: s.features,
                 enabled: sw.enabled,
                 auto: sw.auto,
                 ready: ready(p, s),
@@ -641,6 +762,32 @@ mod tests {
     use super::*;
     use crate::picky::store::tests::memory_db;
 
+    /// Each flow starts and ends with a step, and a branch goes on at / a loop goes back to one of its
+    /// own steps.
+    #[test]
+    fn every_flow_joins_its_own_steps() {
+        for skill in SKILLS {
+            let steps: Vec<&str> = skill.flow.iter().filter_map(|f| if let Flow::Step { text } = f { Some(*text) } else { None }).collect();
+            assert!(matches!(skill.flow.first(), Some(Flow::Step { .. })) && matches!(skill.flow.last(), Some(Flow::Step { .. })), "{}", skill.name);
+            for f in skill.flow {
+                match f {
+                    Flow::Check { join, side, .. } => assert!((join.is_empty() || steps.contains(join)) && !side.is_empty(), "{}: {join}", skill.name),
+                    Flow::Again { back, .. } => assert!(steps.contains(back), "{}: {back}", skill.name),
+                    Flow::Step { .. } => {}
+                }
+            }
+        }
+    }
+
+    /// The flows as JSON for mockIpc.ts (`cargo test skill_flows_json -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn skill_flows_json() {
+        for skill in SKILLS {
+            println!("FLOW {} {}", skill.key, serde_json::to_string(skill.flow).unwrap());
+        }
+    }
+
     #[test]
     fn switches_default_and_change() {
         let c = memory_db();
@@ -669,7 +816,7 @@ mod tests {
         assert_eq!(s.0.len(), 1);
         let w = tauri::async_runtime::block_on(works::find(Which::Books, "三体", None, works::Reach::default(), true)).unwrap();
         let found = vec![("三体".to_string(), Ok(w)), ("没有这本".to_string(), Ok(None))];
-        let a = works_results(&SKILLS[0], Which::Books, &found, &mut s, 4000);
+        let a = works_results(Which::Books, &found, &mut s, 4000);
         assert!(a.text.contains("[2] 《三体》：原名 The Three-Body Problem；作者 刘慈欣；国家 中国；类型 虚构；2006 年") && a.text.contains("「没有这本」：没查到"), "{}", a.text);
         assert_eq!(a.label, "书单检索「三体」等 2 本 · 查到 1 个");
         assert_eq!(s.0[1].url.as_deref(), Some("https://openlibrary.org/works/OL17267881W"));
@@ -688,8 +835,8 @@ mod tests {
         let p = crate::picky::Picky::init(&crate::paths::DataPaths::new(dir.to_path_buf()), &dir, crate::picky::Mode::Mock);
         let keys = |ctx| offered(&c, &p, &[], ctx).iter().map(|s| s.key).collect::<Vec<_>>();
         assert_eq!(keys(Ctx::default()), [BOOKS, FILMS, WORD, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
-        assert_eq!(keys(Ctx { files: true, kb: true, text: true }), [BOOKS, FILMS, FILES, KB, WORD, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB, TEXT]);
-        assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB, TEXT])); // never for 定时任务
+        assert_eq!(keys(Ctx { files: true, kb: true, text: true }), [BOOKS, FILMS, FILES, KB, WORD, TEXT, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
+        assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, TEXT, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB])); // never for 定时任务
         let text = instructions(&all, &[WEB.into(), BOOKS.into()]);
         assert!(text.contains("已经用问题先搜了一次") && text.contains("先调用 pomelo_find_book"));
         assert!(instructions(&[], &[]).is_empty());

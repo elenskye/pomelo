@@ -6,6 +6,7 @@ import { nextOnOrAfter } from "@/modules/finance/money";
 import { excerpt, tagSpans } from "@/modules/notes/NoteBody";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/picky/assistants/seekerApi";
+import type { SkillFlowNode } from "@/modules/picky/api";
 import { seekerHandlers, seekerMock } from "./seekerMock";
 
 type Args = Record<string, unknown>;
@@ -2270,12 +2271,14 @@ type PSource = { n: number; kind: "record" | "passage" | "web"; module: string |
 // ---- v0.4.5 阶段 7: 知识库 (knowledge.rs): libraries of folders (made-up files) and saved pages; a build takes ~2.5 s ----
 type PKbDoc = { path: string; text: string; error?: string; image?: boolean };
 type PKbSource = { id: number; libraryId: number; kind: "folder" | "web"; path: string | null; artifactId: number | null; cloud: boolean; docs: PKbDoc[]; buildUntil: number | null };
+const P_SCANNED = "PDF 没有可提取的文字，可能是扫描版；请先转换成带文字的 PDF";
 const P_KB_FILES: PKbDoc[] = [
   { path: "租房/看房记录.md", text: "看了三套房：采光最好的是朝南那套，押一付三，月租 4500，通勤 35 分钟。" },
   { path: "租房/合同要点.docx", text: "合同要写清押金怎么退、维修谁负责、提前退租的违约金。" },
   { path: "周报/2026-10 第二周.md", text: "这周把知识库的方案定了：库分文件夹和网页，只重算变了的文件。" },
   { path: "读书/百年孤独.pdf", text: "马孔多的故事，布恩迪亚家族七代人。" },
-  { path: "扫描件.pdf", text: "", error: "PDF 没有可提取的文字，可能是扫描版；请先转换成带文字的 PDF" },
+  { path: "扫描件.pdf", text: "", error: P_SCANNED },
+  { path: "坏掉的.docx", text: "", error: "文件读不了：不是有效的 Word 文件" },
   { path: "照片/白板.png", text: "", image: true },
 ];
 const pkb = {
@@ -2294,7 +2297,7 @@ const pKbView = (src: PKbSource) => {
   const done = building ? Math.floor((ok.length * (2500 - (src.buildUntil! - Date.now()))) / 2500) : pKbBuilt(src) ? ok.length : 0;
   return {
     id: src.id, libraryId: src.libraryId, kind: src.kind, name: pKbName(src), path: src.path, url: art?.url ?? null, artifactId: src.artifactId, deleted: !!art?.deleted, cloud: src.cloud,
-    files: src.docs.filter((d) => !d.image).length, images: src.docs.filter((d) => d.image).length, ready: done, pending: building || pKbBuilt(src) ? 0 : ok.length, failed: pKbBuilt(src) ? src.docs.filter((d) => d.error).map((d) => ({ path: d.path, error: d.error! })) : [],
+    files: src.docs.filter((d) => !d.image && !(pKbBuilt(src) && d.error === P_SCANNED)).length, images: src.docs.filter((d) => d.image).length, scans: pKbBuilt(src) ? src.docs.filter((d) => d.error === P_SCANNED).length : 0, ready: done, pending: building || pKbBuilt(src) ? 0 : ok.length, failed: pKbBuilt(src) ? src.docs.filter((d) => d.error && d.error !== P_SCANNED).map((d) => ({ path: d.path, error: d.error! })) : [],
     building, missing: !!art?.deleted, truncated: false,
   };
 };
@@ -2752,6 +2755,9 @@ const pActCalls = (q0: string): [string, Record<string, unknown>][] => {
   if (m) return keep([["pomelo_edit_job", { job: m[1].replace(/的投递$/, "").trim(), note: m[2].trim() }]]);
   m = q.match(/^(.*)进([^进]+)了$/);
   if (m && m[1] && !/[把给]/.test(m[1])) return keep([["pomelo_edit_job", { job: m[1].replace(/^这个/, ""), status: m[2] }]]);
+  // 改卡片: 「《X》是Y写的」 — the pending item of that book again (`replace` found by the run), with that author
+  m = q.match(/《(.+?)》是(.+)写的$/);
+  if (m) return keep([["pomelo_add_work", { kind: "book", title: m[1], creator: m[2].trim(), replaceTitle: m[1] }]]);
   const title = /想读|想看|在读|在看|完了|星/.test(q) ? q.match(/《(.+?)》/)?.[1] : undefined;
   if (title) {
     const v: Record<string, unknown> = { kind: q.includes("看") ? "film" : "book", title };
@@ -3310,24 +3316,24 @@ const pCardOut = (c: PCard | undefined) =>
   };
 
 // ---- v0.4 phase 6: 插件库 (skills/): switches, keys, mock lookups and web search ----
-type PSkillDef = { key: string; name: string; tool: string; summary: string; detail: string; keys: { account: string; label: string; required: boolean }[]; auto: boolean };
+type PSkillDef = { key: string; name: string; tool: string; flow: SkillFlowNode[]; features: string[]; keys: { account: string; label: string; required: boolean }[]; auto: boolean };
 const P_SKILLS: PSkillDef[] = [
-  { key: "books", name: "书单检索", tool: "pomelo_find_book", summary: "查书的作者、国家、类型：先在 Wikidata 找到这本书，再用 Open Library 核对。", detail: "发出去的只有书名（和作者）。用在：对话里补全、核对小拾推荐的书（回答标出处）；书影面板的「补全」「一句话填好」；小拾提议新书时补上作者、国家、类型。", keys: [], auto: true },
-  { key: "films", name: "影单检索", tool: "pomelo_find_film", summary: "查电影、剧集、动漫的导演、国家、类型：先在 Wikidata 找到这一部，再用 TMDb（电影、剧集）或 Jikan（动漫）核对。", detail: "发出去的只有名称（和导演）。没填 TMDb Token 时电影、剧集只用 Wikidata。用在：和书单检索一样的这些地方。", keys: [{ account: "tmdb", label: "TMDb Read Access Token", required: false }], auto: true },
-  { key: "web", name: "联网搜索", tool: "pomelo_web_search", summary: "用 Tavily 在网上搜，回答带来源，点了用浏览器打开。", detail: "发出去的是搜索词：小拾自己写的，或者（「/联网搜索」时）问题本身，可能带上私人内容。搜到的存进对话，追问还用得上。", keys: [{ account: "tavily", label: "Tavily API Key", required: true }], auto: false },
-  { key: "files", name: "读文件", tool: "pomelo_file", summary: "读这个问题带的附件和项目资料：看目录、按段号读、按字找。资料太长放不下时，先给小拾目录和按问题挑出的段落，它再用这个读需要的部分。", detail: "只读这个问题已经带上的文件（存在小拾里的那份），不碰别的文件；读到的段落标出处。不发到别处：内容随这个问题发给你选的模型。", keys: [], auto: true },
-  { key: "kb", name: "查知识库", tool: "pomelo_kb", summary: "小拾觉得需要时自己查知识库：这个对话选的库，没选就是项目选的，再没有就是全部。按问题找相关的段落，也能列出库里有哪些文件、整篇读某个文件（看目录、按段读、按字找）。查到的标出处。", detail: "和输入框的「知识库」按钮并存：按钮按下时每个问题都先查一遍；这个技能让小拾没按时也能查，或者换个说法再查。用云端模型时不查不发给云端的文件夹。", keys: [], auto: true },
-  { key: "word", name: "Word 工具箱", tool: "pomelo_word", summary: "小拾觉得需要时自己用：改 Word 文件（文字，加粗、斜体、下划线，标题、列表，加段、删段），或者新建一个 Word。改的都放进确认卡片，你勾选后点「写入文件」才写；新建的你点「保存」才存。", detail: "只改这个问题的附件（从访达拖进来或点选的，改的是原文件）和知识库里的 Word 文件，不碰别的文件；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。", keys: [], auto: true },
-  { key: "seeker", name: "Seeker 资料", tool: "pomelo_seeker", summary: "小拾觉得需要时自己查你的求职资料：Seeker 的简历素材、现在的中英文简历草稿、确认过的版本、导出过的 Word，和 Rater 的面试题库、卡片练习的记录。只读，不改任何资料。", detail: "停用（不发给模型）的素材不读；Seeker 的规则、档案、网申不读。用云端模型时，只有 Seeker 设置里「允许发给云端」开着才读（Rater 也照它）；Seeker 或 Rater 在模块坞里隐藏了就不读它。", keys: [], auto: true },
-  { key: "qbank_resume", name: "题库 · 简历题", tool: "pomelo_qbank_resume", summary: "按简历上的经历出面试官会追问的题，配好口述稿答案；也能给已有的一道简历题重写答案。读选的经历（不说就是简历草稿里的）和挂着的经历档案。", detail: "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。", keys: [], auto: true },
-  { key: "qbank_general", name: "题库 · 通用题", tool: "pomelo_qbank_general", summary: "出自我介绍、为什么投、优缺点、行为题、职业规划、反问这类通用题，配好口述稿答案；读基本信息、已确认事实和经历一览。", detail: "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。", keys: [], auto: true },
-  { key: "qbank_job", name: "题库 · 突击题", tool: "pomelo_qbank_job", summary: "按投石问路里一个岗位的 JD 和公司资料出突击题，也把已有的简历题、通用题按这家公司改写（记着改自哪道，原题不动）。", detail: "照 Rater「规则」里这个 SKILL 的工作流（没改过就是自带的）、共用准则和题库维护的规则，用 Rater 选的模型写（不是对话的模型）；出的题放进回答下面的确认卡片，你勾选确认后才写进题库，一步撤销。用云端模型时要 Seeker 的「允许发给云端」开着；Rater 隐藏了就不用。", keys: [], auto: true },
-  { key: "text", name: "文本工具箱", tool: "pomelo_text", summary: "小拾觉得需要时自己用：改 Markdown 和纯文本文件（改段、删段），改的放进确认卡片，你勾选后点「写入文件」才写。", detail: "只改这个问题的附件（改的是原文件）和知识库里的这类文件，保留原来的换行和编码；不留备份，写之前文件被改过就不写。文件的内容随这个问题发给你选的模型。", keys: [], auto: true },
+  { key: "books", name: "general-book-lookup", tool: "pomelo_find_book", flow: [{"kind":"step","text":"书名（和作者）"},{"kind":"step","text":"Wikidata 按书名找，作者对得上的优先"},{"kind":"check","ask":"Wikidata 没找到？","yes":"是","side":["Open Library 按书名找","也没有就说查不到，不编"],"join":"作者 · 国家 · 类型","no":"找到了"},{"kind":"step","text":"Open Library 核对作者"},{"kind":"check","ask":"作者对不上？","yes":"是","side":["以 Wikidata 为准，注明不一样"],"join":"作者 · 国家 · 类型","no":"对得上"},{"kind":"step","text":"作者 · 国家 · 类型"}], features: ["查书的作者、国家、类型，回答标出处","书影面板的「补全」「一句话填好」","小拾提议新书时补上作者、国家、类型","发出去的只有书名（和作者）"], keys: [], auto: true },
+  { key: "films", name: "general-film-lookup", tool: "pomelo_find_film", flow: [{"kind":"step","text":"名称（和导演）"},{"kind":"step","text":"Wikidata 按名称找，导演对得上的优先"},{"kind":"check","ask":"Wikidata 没找到？","yes":"是","side":["TMDb（填了 Token）或 Jikan 按名称找","也没有就说查不到，不编"],"join":"导演 · 国家 · 类型","no":"找到了"},{"kind":"check","ask":"电影、剧集，填了 TMDb Token？","yes":"是","side":["TMDb 核对导演"],"join":"导演 · 国家 · 类型","no":"否"},{"kind":"check","ask":"是动漫？","yes":"是","side":["Jikan 核对"],"join":"导演 · 国家 · 类型","no":"否"},{"kind":"step","text":"不核对，只用 Wikidata"},{"kind":"step","text":"导演 · 国家 · 类型"}], features: ["查电影、剧集、动漫的导演、国家、类型，回答标出处","书影面板的「补全」「一句话填好」，小拾提议新影视时补上","没填 TMDb Token 时电影、剧集只用 Wikidata","发出去的只有名称（和导演）"], keys: [{ account: "tmdb", label: "TMDb Read Access Token", required: false }], auto: true },
+  { key: "web", name: "general-web-search", tool: "pomelo_web_search", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"用了斜杠命令或「联网」？","yes":"是","side":["先拿问题直接搜一次，结果和问题一起给小拾"],"join":"小拾写搜索词","no":"否"},{"kind":"step","text":"小拾写搜索词"},{"kind":"step","text":"Tavily 搜索，读搜到的网页摘要"},{"kind":"again","text":"不够就换个词再搜（一条回答最多查 4 轮）","back":"小拾写搜索词"},{"kind":"step","text":"回答带来源"}], features: ["上网查新的信息，回答带来源，点了用浏览器打开","用斜杠命令时直接拿问题去搜（可能带上私人内容）","搜到的存进对话，追问还用得上","要填 Tavily API Key"], keys: [{ account: "tavily", label: "Tavily API Key", required: true }], auto: false },
+  { key: "files", name: "general-file-reader", tool: "pomelo_file", flow: [{"kind":"step","text":"这个问题带的文件"},{"kind":"check","ask":"放得进这次的篇幅？","yes":"是","side":["全文随问题发给模型"],"join":"回答标出处","no":"放不下"},{"kind":"step","text":"先给目录和按问题挑出的段落"},{"kind":"step","text":"小拾按段号读 / 按字找"},{"kind":"again","text":"不够就再读（一条回答最多查 4 轮）","back":"小拾按段号读 / 按字找"},{"kind":"step","text":"回答标出处"}], features: ["读附件和项目资料：看目录、按段号读、按字找","资料太长时先给目录和按问题挑出的段落，再读需要的部分","只读已经带上的文件，不碰别的文件","内容只随这个问题发给你选的模型"], keys: [], auto: true },
+  { key: "kb", name: "general-knowledge-base", tool: "pomelo_kb", flow: [{"kind":"step","text":"问题"},{"kind":"step","text":"选库：对话 → 项目 → 全部"},{"kind":"check","ask":"用的是云端模型？","yes":"是","side":["跳过设成不发给云端的文件夹"],"join":"找段落 / 列文件 / 读整篇","no":"否"},{"kind":"step","text":"找段落 / 列文件 / 读整篇"},{"kind":"check","ask":"是图片或扫描件？","yes":"是","side":["只认文件名；云端模型能看图片"],"join":"回答标出处","no":"否"},{"kind":"again","text":"不够就再查（一条回答最多查 4 轮）","back":"找段落 / 列文件 / 读整篇"},{"kind":"step","text":"回答标出处"}], features: ["按问题在知识库里找相关的段落","列出库里有哪些文件，整篇读一个文件（看目录、按段读、按字找）","图片和扫描件只认文件名，云端模型能看图片","用云端模型时不查不发给云端的文件夹"], keys: [], auto: true },
+  { key: "word", name: "general-word-toolkit", tool: "pomelo_word", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Word？","yes":"是","side":["名称和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 Word，读成编号的段落"},{"kind":"step","text":"小拾提出修改"},{"kind":"check","ask":"这一段改不了（表格、域，或格式对不上）？","yes":"是","side":["不放进卡片，告诉小拾为什么"],"join":"小拾提出修改","no":"能改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（只动改了的字，不留备份）"}], features: ["改文字和格式：加粗、斜体、下划线、标题、列表","加段、删段","新建一个 Word，你点「保存」才存","只改附件和知识库里的 Word；不留备份，文件被改过就不写"], keys: [], auto: true },
+  { key: "text", name: "general-text-toolkit", tool: "pomelo_text", flow: [{"kind":"step","text":"附件或知识库里的 Markdown / 文本，读成编号的段落"},{"kind":"step","text":"小拾提出修改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（保留原来的换行和编码，不留备份）"}], features: ["改段、删段","保留原来的换行和编码","只改附件和知识库里的这类文件；不留备份，文件被改过就不写"], keys: [], auto: true },
+  { key: "seeker", name: "seeker-toolkit", tool: "pomelo_seeker", flow: [{"kind":"step","text":"问到求职资料"},{"kind":"check","ask":"Seeker / Rater 隐藏了，或云端模型没被允许？","yes":"是","side":["不读，告诉小拾为什么"],"join":"","no":"否"},{"kind":"step","text":"挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"},{"kind":"step","text":"只读启用的，按剩下的篇幅截短"},{"kind":"again","text":"不够就换一种查法（一条回答最多查 4 轮）","back":"挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"},{"kind":"step","text":"回答"}], features: ["Seeker：素材和基本信息、中英文简历草稿、导出过的 Word 和用在哪个岗位","cv/ 的简历（列出来、读一份正文）和 material/ 的文件名","Rater：题库和练习记录、最近几轮卡片练习、面试准备和复盘","停用的素材和规则、档案、网申不读；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "qbank_resume", name: "rater-qbank-resume", tool: "pomelo_qbank_resume", flow: [{"kind":"step","text":"小拾写出经历、题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"step","text":"找经历：没说就用简历草稿里的（找不到 → 问你）"},{"kind":"step","text":"读这些经历、经历档案和已有的简历题"},{"kind":"step","text":"Rater 的模型照「简历题」工作流出题（一次调用）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉小拾没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["按经历出面试官会追问的题，配口述稿答案","给已有的简历题重写答案","读选的经历（没说就是简历草稿里的）和经历档案","照 Rater 规则里「简历题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "qbank_general", name: "rater-qbank-general", tool: "pomelo_qbank_general", flow: [{"kind":"step","text":"小拾写出题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"step","text":"读基本信息、已确认事实、经历一览和已有的通用题"},{"kind":"step","text":"Rater 的模型照「通用题」工作流出题（一次调用）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉小拾没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["自我介绍、为什么投、优缺点、行为题、职业规划、反问","配口述稿答案","照 Rater 规则里「通用题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "qbank_job", name: "rater-qbank-job", tool: "pomelo_qbank_job", flow: [{"kind":"step","text":"小拾写出岗位、题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"check","ask":"投石问路里对不上一个岗位？","yes":"是","side":["没说、没找到或有几个 → 问你"],"join":"","no":"对上了"},{"kind":"step","text":"读 JD、knowledge/ 里这家公司的资料、已有的简历题和通用题"},{"kind":"step","text":"Rater 的模型照「突击题」工作流出题，也改写已有的题（记着改自哪道）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉小拾没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["按投石问路里一个岗位出突击题","把已有的简历题、通用题按这家公司改写，记着改自哪道，原题不动","照 Rater 规则里「突击题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
 ];
 const pSwitch = (key: string) => pky.skills.get(key) ?? { enabled: true, auto: P_SKILLS.find((s) => s.key === key)?.auto ?? false };
 /** Mock mode: ready without keys (as in Rust). */
 const pSkillsOut = () =>
-  P_SKILLS.map((s) => ({ key: s.key, name: s.name, command: `/${s.name}`, summary: s.summary, detail: s.detail, ...pSwitch(s.key), ready: true, keys: s.keys.map((k) => ({ ...k, saved: pky.keys.has(k.account) })), usesContact: s.key === "books" || s.key === "films", contact: pky.contact }));
+  P_SKILLS.map((s) => ({ key: s.key, name: s.name, command: `/${s.name}`, flow: s.flow, features: s.features, ...pSwitch(s.key), ready: true, keys: s.keys.map((k) => ({ ...k, saved: pky.keys.has(k.account) })), usesContact: s.key === "books" || s.key === "films", contact: pky.contact }));
 const pAskedOf = (userId: number) => pky.asked.get(userId) ?? [];
 /** skills/works.rs mock_find. */
 const P_WORKS: Record<string, { title: string; original: string; creator: string; country: string; kind: string; year: string; site: string; url: string; film: boolean }> = {
@@ -3798,6 +3804,7 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
       const calls = pActCalls(prompt);
       const card: PCard = { runId: msg.id, state: "pending", items: [] };
       const failed: string[] = [];
+      const replaced: string[] = [];
       const refused = new Set<string>();
       let i = 0;
       const next = () => {
@@ -3805,13 +3812,26 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
         const call = calls[i++];
         if (!call) {
           const head = [...refused].map((l) => `${l}不发给云端，这次不能记。\n\n`).join("");
-          const text = card.items.length ? `这是开发版的**模拟回答**：${card.items.length} 条已放进下面的确认卡片，看一下没问题就点「确认」。` : "这是开发版的**模拟回答**。";
+          const text = card.items.length ? `这是开发版的**模拟回答**：${card.items.length} 条已放进下面的确认卡片，看一下没问题就点「确认」。` : replaced.length ? `这是开发版的**模拟回答**：已把上面卡片里的「${replaced.join("、")}」改好了，看一下没问题就点「确认」。` : "这是开发版的**模拟回答**。";
           return void (run.timer = pStream(msg, thinking, prompt, emit, done, head + text + failed.map((f) => `\n\n有一条没放进去：${f}`).join("")));
         }
         const module = pActModule(call[0], call[1]);
+        // `replace` (card.rs): the earlier replies' pending item of that book, on the shown path
+        const { replaceTitle, ...args } = call[1] as Record<string, unknown> & { replaceTitle?: string };
+        const earlier = replaceTitle ? pPath(s).filter((n) => n.role === "assistant" && n.id !== msg.id).map((n) => pky.cards.get(n.id)).find((c) => c?.state === "pending" && c.items.some((it) => it.tool === "pomelo_add_work" && [replaceTitle, `《${replaceTitle}》`].includes(it.title))) : undefined;
         if (pky.selection.startsWith("cloud:") && !pDataCloud().find((m) => m.module === module)?.allowed) refused.add(P_MODULES.find((m) => m[0] === module)![1]);
-        else {
-          const p = pPropose(call[0], call[1], prompt);
+        else if (earlier) {
+          const p = pPropose(call[0], args, prompt);
+          if (typeof p === "string") failed.push(p);
+          else {
+            const at = earlier.items.findIndex((it) => it.tool === "pomelo_add_work" && [replaceTitle, `《${replaceTitle}》`].includes(it.title));
+            const [one] = p.choices;
+            earlier.items[at] = { ...earlier.items[at], tool: p.tool, module: p.module, label: p.label, title: one.title, fields: one.fields, options: null, chosen: null, op: one.op };
+            replaced.push(one.title);
+            emit({ kind: "earlierCard", card: pCardOut(earlier) });
+          }
+        } else {
+          const p = pPropose(call[0], args, prompt);
           if (typeof p === "string") failed.push(p);
           else {
             const [one] = p.choices;
@@ -4749,7 +4769,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
   },
   picky_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
   // reading, settings and the Word export itself aren't undone (as in Rust)
-  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_rater", "picky_rater_interviews", "picky_rater_prep", "picky_rater_review_compare", "picky_rater_prep_word_place", "picky_rater_prep_word", "picky_seeker_files", "picky_seeker_cv_text", "picky_rater_practice", "picky_rater_round", "picky_rater_pick", "picky_rater_follow", "picky_rater_comment", "picky_rater_seconds", "picky_rater_suggest", "picky_rater_defaults", "picky_rater_options", "picky_rater_options_set", "picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_template", "picky_seeker_template_read", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_import_preview", "picky_seeker_output_save", "picky_seeker_knowledge", "picky_seeker_knowledge_add", "picky_seeker_job_company"].includes(key) ? handler : undoable(key === "picky_rater_prep_save" ? "改速查卡" : key === "picky_rater_prep_keep" ? "追问存进题库" : key === "picky_rater_review_save" ? "记复盘" : key === "picky_rater_review_keep" ? "复盘的题存进题库" : key === "picky_rater_review_rule" ? "复盘的约定加进规则" : key === "picky_rater_interview_delete" ? "删除面试记录" : key === "picky_rater_add" ? "补题" : key === "picky_rater_round_start" ? "开始练习" : key === "picky_rater_mark" ? "练习" : key === "picky_rater_stop" ? "停下练习" : key === "picky_rater_round_delete" ? "删除这一轮" : key === "picky_rater_keep" ? "追问存进题库" : key === "picky_rater_save" ? "保存题目" : key === "picky_rater_delete" ? "删除题目" : key === "picky_seeker_job_link" ? "关联 Seeker 导出" : key === "picky_seeker_use_job" ? "为岗位做简历" : key === "picky_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
+  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_rater", "picky_rater_interviews", "picky_rater_prep", "picky_rater_review_compare", "picky_rater_prep_word_place", "picky_rater_prep_word", "picky_seeker_files", "picky_seeker_cv_text", "picky_rater_practice", "picky_rater_round", "picky_rater_pick", "picky_rater_follow", "picky_rater_comment", "picky_rater_seconds", "picky_rater_suggest", "picky_rater_defaults", "picky_rater_options", "picky_rater_options_set", "picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_import_preview", "picky_seeker_output_save", "picky_seeker_knowledge", "picky_seeker_knowledge_add", "picky_seeker_company_names", "picky_seeker_job_company", "picky_seeker_job_resumes", "picky_seeker_prompts", "picky_rater_prompts"].includes(key) ? handler : undoable(key === "picky_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "picky_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "picky_seeker_records_delete" ? "删除 Seeker 资料" : key === "picky_rater_order" ? "调整题目顺序" : key === "picky_rater_delete_many" ? "删除题目" : key === "picky_rater_rounds_delete" ? "删除练习" : key === "picky_rater_prep_save" ? "改速查卡" : key === "picky_rater_prep_keep" ? "追问存进题库" : key === "picky_rater_review_save" ? "记复盘" : key === "picky_rater_review_keep" ? "复盘的题存进题库" : key === "picky_rater_review_rule" ? "复盘的约定加进规则" : key === "picky_rater_interview_delete" ? "删除面试记录" : key === "picky_rater_add" ? "补题" : key === "picky_rater_round_start" ? "开始练习" : key === "picky_rater_mark" ? "练习" : key === "picky_rater_stop" ? "停下练习" : key === "picky_rater_round_delete" ? "删除这一轮" : key === "picky_rater_keep" ? "追问存进题库" : key === "picky_rater_save" ? "保存题目" : key === "picky_rater_delete" ? "删除题目" : key === "picky_seeker_job_resume" ? "关联简历" : key === "picky_seeker_group_rename" ? "分组改名" : key === "picky_seeker_use_job" ? "为岗位做简历" : key === "picky_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
   picky_pub2md: () => p2View(),
   picky_pub2md_settings: (a) => {
     p2.settings = { ...(a.settings as P2Settings), parallel: Math.min(8, Math.max(1, (a.settings as P2Settings).parallel)) };

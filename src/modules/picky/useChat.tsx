@@ -115,6 +115,9 @@ export function useLiveReply(opts: { current: number | null; status: PickyStatus
       l.sources = e.list;
     } else if (e.kind === "card") {
       l.card = e.card;
+    } else if (e.kind === "earlierCard") {
+      // the message that has it, in the saved path (reloaded once the reply ends anyway)
+      if (l.sessionId != null) qc.setQueryData<ChatMessage[]>(messagesKey(l.sessionId), (list) => list?.map((m) => (m.card?.runId === e.card.runId ? { ...m, card: e.card } : m)));
     } else if (e.kind === "edit") {
       l.edit = e.edit;
     } else {

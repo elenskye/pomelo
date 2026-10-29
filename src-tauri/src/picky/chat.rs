@@ -586,6 +586,8 @@ pub enum StreamEvent {
     Sources { list: Vec<cite::Source> },
     /// The reply's confirmation card, after each proposal.
     Card { card: act::Card },
+    /// An earlier reply's pending card, after one of its items was changed (`replace`).
+    EarlierCard { card: act::Card },
     /// 改文件: the changes the reply proposes.
     Edit { edit: work::FileEdit },
     /// Waiting for the local model (it is answering something else) / its turn now.
@@ -1116,29 +1118,58 @@ struct AppHost<'a> {
     /// 查知识库's look: images waiting to be sent, and how many this reply looked at.
     images: Vec<Image>,
     looked: usize,
+    /// The earlier replies on the shown path (their pending cards' items can be replaced).
+    cards: Vec<i64>,
+}
+
+/// The runs of the earlier replies on the conversation's shown path.
+fn earlier_runs(c: &Connection, run_id: i64) -> Result<Vec<i64>, String> {
+    let session: i64 = c.query_row("SELECT session_id FROM runs WHERE id = ?1", [run_id], |r| r.get(0)).map_err(err)?;
+    Ok(path(c, session)?.into_iter().filter(|m| m.role == "assistant").filter_map(|m| m.run_id).filter(|r| *r != run_id).collect())
 }
 
 impl AppHost<'_> {
-    /// A write tool: checked, then into the reply's card (sent to the page). A 新书影 gets its
-    /// creator / country / 类型 from 书单 / 影单检索 first (when on).
+    /// Sends a card that changed: this reply's, or an earlier reply's.
+    fn send_card(&self, run: i64) {
+        if let Ok(Some(card)) = self.app.state::<AppState>().picky.with_db(|c| act::card_of(c, run)) {
+            let _ = self.shared.channel.send(if run == self.shared.run_id { StreamEvent::Card { card } } else { StreamEvent::EarlierCard { card } });
+        }
+    }
+
+    /// A write tool: checked, then into the reply's card (sent to the page), or with `replace` in a
+    /// pending item's place (this reply's card or an earlier one's). A 新书影 gets its creator /
+    /// country / 类型 from 书单 / 影单检索 first (when on).
     async fn propose(&self, call: &ToolCall) -> data::Answer {
         if let Some(refusal) = act::refused(&self.access, &call.name, &call.arguments) {
             return refusal;
         }
         let st = self.app.state::<AppState>();
-        let arguments = match act::work_to_look_up(&call.name, &call.arguments) {
-            Some((module, title, hint)) => act::with_work(&call.arguments, skills::work(self.app, module, &title, hint.as_deref()).await.as_ref()),
-            None => call.arguments.clone(),
+        let (replace, arguments) = act::replacing(&call.arguments);
+        let target = match replace {
+            Some(r) => match st.picky.with_db(|c| act::card::find_ref(c, &self.cards, self.shared.run_id, &r)) {
+                Ok((run, pos, tool)) if act::is_act(&tool) => Some((run, pos)),
+                Ok(_) => return act::answer(&call.name, Err(format!("编号 {r} 是题库的题：用题库的工具加 replace 改")), false),
+                Err(e) => return act::answer(&call.name, Err(e), false),
+            },
+            None => None,
+        };
+        let arguments = match act::work_to_look_up(&call.name, &arguments) {
+            Some((module, title, hint)) => act::with_work(&arguments, skills::work(self.app, module, &title, hint.as_deref()).await.as_ref()),
+            None => arguments,
         };
         let proposal = st.with_db(|c| act::propose(c, &call.name, &arguments, &self.question, &self.today));
-        let added = proposal.and_then(|p| {
-            let n = st.picky.with_db(|c| act::add(c, self.shared.run_id, &p))?;
-            if let Ok(Some(card)) = st.picky.with_db(|c| act::card_of(c, self.shared.run_id)) {
-                let _ = self.shared.channel.send(StreamEvent::Card { card });
-            }
-            Ok((n, p))
+        let placed = proposal.and_then(|p| {
+            let (run, n) = match target {
+                Some((run, pos)) => {
+                    st.picky.with_db(|c| act::card::replace(c, run, pos, &p))?;
+                    (run, pos as usize + 1)
+                }
+                None => (self.shared.run_id, st.picky.with_db(|c| act::add(c, self.shared.run_id, &p))?),
+            };
+            self.send_card(run);
+            Ok((act::card::reference(run, n as i64 - 1), n, p))
         });
-        act::answer(&call.name, added.as_ref().map(|(n, p)| (*n, p)).map_err(|e| e.clone()))
+        act::answer(&call.name, placed.as_ref().map(|(r, n, p)| (r.as_str(), *n, p)).map_err(|e| e.clone()), target.is_some())
     }
 }
 
@@ -1212,10 +1243,8 @@ impl Host for AppHost<'_> {
             }
             name if act::is_act(name) => self.propose(call).await,
             name if skills::qbank::category(name).is_some() => {
-                let a = skills::qbank::run(self.app, &self.access, self.shared.run_id, name, &call.arguments).await;
-                if let Ok(Some(card)) = self.app.state::<AppState>().picky.with_db(|c| act::card_of(c, self.shared.run_id)) {
-                    let _ = self.shared.channel.send(StreamEvent::Card { card });
-                }
+                let (a, run) = skills::qbank::run(self.app, &self.access, self.shared.run_id, &self.cards, name, &call.arguments).await;
+                self.send_card(run);
                 a
             }
             skills::SEEKER_TOOL => self
@@ -1398,6 +1427,21 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
             None
         }
     };
+    // the earlier replies' cards still pending: listed with their 编号 (their items can be replaced)
+    let mut cards = vec![];
+    if let (Some(l), false) = (&mut lookup, request.read_only) {
+        let listed = app.state::<AppState>().picky.with_db(|c| {
+            let runs = earlier_runs(c, shared.run_id)?;
+            let text = act::card::pending_text(c, &runs, |m| l.access.allows(m))?;
+            Ok((runs, text))
+        });
+        if let Ok((runs, text)) = listed {
+            if !text.is_empty() {
+                l.writing = [l.writing.as_str(), text.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n");
+            }
+            cards = runs;
+        }
+    }
     if let Some(l) = &mut lookup {
         let files = skills::toolbox::note(&l.tools, &word_files, &text_files);
         if !files.is_empty() {
@@ -1421,7 +1465,7 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     publish(&app, &shared, &sources, 0);
     let result = match lookup {
         Some(l) if !read => {
-            let mut host = AppHost { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now(), access: l.access, today: l.today, sources, question: question.clone(), tables, materials, kb, word_files, text_files, images: vec![], looked: 0 };
+            let mut host = AppHost { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now(), access: l.access, today: l.today, sources, question: question.clone(), tables, materials, kb, word_files, text_files, images: vec![], looked: 0, cards };
             answer_with_lookups(&mut host, &l.tools, &l.forced, &question, l.cost, &counter, &request, messages, window, window - kept - max_tokens).await
         }
         _ => {
@@ -1666,6 +1710,41 @@ pub(crate) mod tests {
         assert_eq!(ids, [b1.user_id, b1.reply_id, b2.user_id, b2.reply_id]);
         let s = sessions(&c).unwrap();
         assert_eq!((s.len(), s[0].title.as_str()), (1, "第一问"));
+    }
+
+    /// 「《巴比伦塔》是特德·姜写的」 after a reply whose card got the wrong author: the earlier pending card
+    /// is listed for the model, and its item is replaced in place (refine R4).
+    #[test]
+    fn a_follow_up_changes_the_earlier_replys_pending_card() {
+        let c = memory_db();
+        let b1 = begin_run(&c, None, None, "读完了《巴比伦塔》三星", "local:x", "X").unwrap();
+        let book = |creator: &str| act::Proposal {
+            tool: act::ADD_WORK.into(),
+            module: "books".into(),
+            label: "新书".into(),
+            choices: vec![act::Choice { title: "巴比伦塔".into(), fields: vec![act::Field { label: "作者".into(), before: None, after: creator.into(), long: false }], op: act::Op::AddWork { module: "books".into(), patch: serde_json::json!({ "title": "巴比伦塔", "creator": creator }) } }],
+            more: 0,
+            note: None,
+        };
+        act::add(&c, b1.run_id, &book("Moses Maimonides")).unwrap();
+        reply(&c, &b1, "放进卡片了");
+        let b2 = begin_run(&c, Some(b1.session_id), None, "《巴比伦塔》是特德·姜写的", "local:x", "X").unwrap();
+        let runs = earlier_runs(&c, b2.run_id).unwrap();
+        assert_eq!(runs, [b1.run_id]);
+        let listed = act::card::pending_text(&c, &runs, |_| true).unwrap();
+        let system = format!("今天是 2026-10-14\n{listed}");
+        let calls = data::mock_calls("《巴比伦塔》是特德·姜写的", &system, &[act::ADD_WORK]);
+        let (r, args) = act::replacing(&calls[0].arguments);
+        assert_eq!(r, Some(format!("{}-1", b1.run_id)));
+        let (run, pos, tool) = act::card::find_ref(&c, &runs, b2.run_id, r.as_deref().unwrap()).unwrap();
+        assert_eq!((run, pos, tool.as_str()), (b1.run_id, 0, act::ADD_WORK));
+        assert!(args.contains("特德·姜") && !args.contains("replace"));
+        act::card::replace(&c, run, pos, &book("特德·姜")).unwrap();
+        let card = act::card_of(&c, b1.run_id).unwrap().unwrap();
+        assert_eq!((card.items.len(), card.items[0].fields[0].after.as_str()), (1, "特德·姜"));
+        // another conversation's card can't be named
+        let other = begin_run(&c, None, None, "x", "local:x", "X").unwrap();
+        assert!(act::card::find_ref(&c, &earlier_runs(&c, other.run_id).unwrap(), other.run_id, &format!("{}-1", b1.run_id)).is_err());
     }
 
     #[test]
@@ -1998,20 +2077,34 @@ pub(crate) mod tests {
                     if let Some(r) = act::refused(&self.access, name, &call.arguments) {
                         return r;
                     }
-                    let arguments = match act::work_to_look_up(name, &call.arguments) {
+                    // `replace`: an item of this reply's card (the test's card is `proposals`)
+                    let (replace, arguments) = act::replacing(&call.arguments);
+                    let arguments = match act::work_to_look_up(name, &arguments) {
                         Some((module, title, hint)) => {
                             let which = if module == "books" { skills::works::Which::Books } else { skills::works::Which::Films };
-                            act::with_work(&call.arguments, skills::works::find(which, &title, hint.as_deref(), skills::works::Reach::default(), !real_web()).await.ok().flatten().as_ref())
+                            act::with_work(&arguments, skills::works::find(which, &title, hint.as_deref(), skills::works::Reach::default(), !real_web()).await.ok().flatten().as_ref())
                         }
-                        None => call.arguments.clone(),
+                        None => arguments,
                     };
+                    let at = replace.as_deref().and_then(|r| r.rsplit('-').next()?.trim().parse::<usize>().ok()).filter(|n| *n >= 1 && *n <= self.proposals.len());
+                    if replace.is_some() && at.is_none() {
+                        return act::answer(name, Err("卡片里没有这一条".into()), false);
+                    }
                     match act::propose(&self.pomelo, name, &arguments, &self.question, data::tests::TODAY) {
                         Ok(p) => {
-                            self.proposals.push(p);
-                            let n = self.proposals.len();
-                            act::answer(name, Ok((n, &self.proposals[n - 1])))
+                            let n = match at {
+                                Some(n) => {
+                                    self.proposals[n - 1] = p;
+                                    n
+                                }
+                                None => {
+                                    self.proposals.push(p);
+                                    self.proposals.len()
+                                }
+                            };
+                            act::answer(name, Ok((&act::card::reference(self.run_id, n as i64 - 1), n, &self.proposals[n - 1])), at.is_some())
                         }
-                        Err(e) => act::answer(name, Err(e)),
+                        Err(e) => act::answer(name, Err(e), false),
                     }
                 }
                 _ => data::run(&self.pomelo, &self.access, &call.name, &call.arguments, data::tests::TODAY, budget),

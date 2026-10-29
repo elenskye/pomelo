@@ -290,6 +290,8 @@ export type KbSource = {
   cloud: boolean;
   files: number;
   images: number;
+  /** PDFs without text (scans): by name only, like images. */
+  scans: number;
   ready: number;
   pending: number;
   failed: KbFailed[];
@@ -308,6 +310,8 @@ export type StreamEvent =
   | ({ kind: "query" } & Query)
   | { kind: "sources"; list: Source[] }
   | { kind: "card"; card: Card }
+  /** An earlier reply's pending card after the model changed one of its items (`replace`). */
+  | { kind: "earlierCard"; card: Card }
   | { kind: "edit"; edit: FileEdit }
   | { kind: "queued"; on: boolean }
   | { kind: "done"; state: string; error: string | null; reasoningMs: number | null };
@@ -642,7 +646,10 @@ export const useLibrary = () => useQuery({ queryKey: LIBRARY_KEY, queryFn: picky
 /** A skill of the 插件库 (rules in Rust skills/). */
 export type SkillKey = { account: string; label: string; required: boolean; saved: boolean };
 /** `contact`: what 书单 / 影单检索 send to Wikidata / Open Library (one setting for both). */
-export type Skill = { key: string; name: string; command: string; summary: string; detail: string; enabled: boolean; auto: boolean; ready: boolean; keys: SkillKey[]; usesContact: boolean; contact: string | null };
+/** One node of a skill's flow (Rust skills/mod.rs `Flow`): a step; a check with its branch (`join`: the step it goes on at, "" = it ends there; `no`: the label of the way on down); a loop back to `back`. */
+export type SkillFlowNode = { kind: "step"; text: string } | { kind: "check"; ask: string; yes: string; side: string[]; join: string; no: string } | { kind: "again"; text: string; back: string };
+/** A skill of the 插件库: `flow` drawn as a chart, `features` what it can do (Rust skills/mod.rs). */
+export type Skill = { key: string; name: string; command: string; flow: SkillFlowNode[]; features: string[]; enabled: boolean; auto: boolean; ready: boolean; keys: SkillKey[]; usesContact: boolean; contact: string | null };
 export const SKILLS_KEY = ["picky", "skills"];
 export const useSkills = () => useQuery({ queryKey: SKILLS_KEY, queryFn: pickyApi.skills });
 /** The skill the 联网 button asks for. */

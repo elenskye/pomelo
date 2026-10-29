@@ -1,6 +1,6 @@
 //! 「Seeker 资料」 (v0.7 阶段 ④): 小拾 reads Seeker and Rater, never writes them. One tool, views:
-//! materials (基本信息 and 素材, by language), resume (the current drafts), versions (confirmed ones;
-//! with an id, its text), exports (Word exports and the jobs they went to), questions (Rater's bank,
+//! materials (基本信息 and 素材, by language), resume (the current drafts), exports (Word exports still
+//! on disk and the jobs they went to; no copy of their text), questions (Rater's bank,
 //! each with its practice record), practice (Rater's recent card rounds and their feedback),
 //! interviews (Rater's 准备 and 复盘), files (cv/'s resumes and material/'s file names) and cv (one
 //! resume's text from cv/; material/ is never read).
@@ -16,18 +16,17 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 
 pub const TOOL: &str = "pomelo_seeker";
-const VIEWS: [&str; 9] = ["materials", "resume", "versions", "exports", "questions", "practice", "interviews", "files", "cv"];
+const VIEWS: [&str; 8] = ["materials", "resume", "exports", "questions", "practice", "interviews", "files", "cv"];
 /// Rounds the practice view shows (newest first).
 const ROUNDS: usize = 10;
 
 pub fn tool() -> Value {
     let s = |d: &str| json!({ "type": "string", "description": d });
-    json!({ "type": "function", "function": { "name": TOOL, "description": "读用户的求职资料（Seeker 写简历、Rater 面试题库），只读。view=materials：简历素材和基本信息（lang 选中文 cn / 英文 en，不填两种都看；keyword 按字筛）；view=resume：现在的简历草稿；view=versions：确认过的简历版本（不带 id 列出来，带 id 读那一版全文）；view=exports：导出过的 Word 和它们用在哪个岗位；view=questions：面试题库和练习记录（category 选类别，keyword 按字筛）；view=practice：最近几轮卡片练习；view=interviews：面试准备和复盘；view=files：cv/ 的简历和 material/ 的文件名；view=cv：读 cv/ 一份简历（keyword 写文件名）。", "parameters": { "type": "object", "properties": {
+    json!({ "type": "function", "function": { "name": TOOL, "description": "读用户的求职资料（Seeker 写简历、Rater 面试题库），只读。view=materials：简历素材和基本信息（lang 选中文 cn / 英文 en，不填两种都看；keyword 按字筛）；view=resume：现在的简历草稿；view=exports：导出过的 Word 和它们用在哪个岗位（正文用 view=cv 读）；view=questions：面试题库和练习记录（category 选类别，keyword 按字筛）；view=practice：最近几轮卡片练习；view=interviews：面试准备和复盘；view=files：cv/ 的简历和 material/ 的文件名；view=cv：读 cv/ 一份简历（keyword 写文件名）。", "parameters": { "type": "object", "properties": {
         "view": { "type": "string", "enum": VIEWS },
-        "lang": { "type": "string", "enum": ["cn", "en"], "description": "materials / resume / versions / exports：只看中文或英文" },
+        "lang": { "type": "string", "enum": ["cn", "en"], "description": "materials / resume / exports：只看中文或英文" },
         "keyword": s("materials / questions：要有的字（空格隔开的几个都要有）"),
-        "category": { "type": "string", "enum": rater::CATEGORIES },
-        "id": { "type": "integer", "description": "versions：读这一版的全文" }
+        "category": { "type": "string", "enum": rater::CATEGORIES }
     }, "required": ["view"] } } })
 }
 
@@ -163,8 +162,7 @@ pub fn run(c: &Connection, mode: Mode, access: &Access, arguments: &str, budget:
             Ok(None) => return failed("Seeker 资料 · 没选文件夹", "Seeker 还没选文件夹，cv/ 和 material/ 没法看。".into()),
             Err(e) => return failed("Seeker 资料 · 没读成", format!("没读成：{e}")),
         };
-        let templates: Vec<String> = seeker::read(c).map(|w| [w.output.template, w.output.template_en].into_iter().flatten().map(|t| t.path).collect()).unwrap_or_default();
-        let files = seeker::files::scan(&root, &templates, &[], &[]);
+        let files = seeker::files::scan(&root, &[], &[]);
         if view == "cv" {
             let hits: Vec<&seeker::files::CvFile> = files.cv.iter().filter(|f| !keyword.is_empty() && has(&f.name, keyword)).collect();
             let file = match hits.as_slice() {
@@ -207,26 +205,16 @@ pub fn run(c: &Connection, mode: Mode, access: &Access, arguments: &str, budget:
                 .collect();
             done(Found::new(String::new(), vec![]).rows(rows.into_iter().map(data::row).collect()))
         }
-        "versions" => {
-            let versions: Vec<&seeker::catalog::Version> = w.catalog.versions.iter().filter(|v| langs.contains(&v.body.lang.as_str())).collect();
-            if let Some(id) = args["id"].as_i64() {
-                return match versions.iter().find(|v| v.id == id) {
-                    Some(v) => done(Found::new(String::new(), vec![format!("确认版本「{}」（{}，{}）：", v.label, lang_name(&v.body.lang), &v.created_at[..10.min(v.created_at.len())])]).rows(vec![data::row(draft_text(&v.body))])),
-                    None => failed("Seeker 资料 · 没有这一版", format!("没有编号 {id} 的确认版本，先用 view=versions 不带 id 列出来。")),
-                };
-            }
-            let rows = versions.iter().map(|v| format!("- 编号 {}：「{}」（{}，{}）", v.id, v.label, lang_name(&v.body.lang), &v.created_at[..10.min(v.created_at.len())])).collect::<Vec<_>>();
-            done(Found::new(String::new(), vec![format!("确认过的简历版本 {} 个（带 id 再查能读全文）：", rows.len())]).rows(rows.into_iter().map(data::row).collect()))
-        }
         _ => {
             let rows = w
                 .output
                 .exports
                 .iter()
-                .filter(|e| langs.contains(&e.draft.lang.as_str()))
+                // a file deleted from disk isn't listed (its record stays)
+                .filter(|e| langs.contains(&e.lang.as_str()) && std::path::Path::new(&e.path).is_file())
                 .map(|e| {
-                    let jobs: Vec<String> = w.output.links.iter().filter(|l| l.export_id == e.id).map(|l| format!("{}{}{}", l.job.company, l.job.position.as_deref().map(|p| format!(" · {p}")).unwrap_or_default(), if l.current { "（本次使用）" } else { "" })).collect();
-                    format!("- {}（{}，{}）{}", e.label, lang_name(&e.draft.lang), &e.created_at[..10.min(e.created_at.len())], if jobs.is_empty() { String::new() } else { format!("：用在 {}", jobs.join("、")) })
+                    let jobs: Vec<String> = w.output.links.iter().filter(|l| l.path == e.path).map(|l| format!("{}{}{}", l.job.company, l.job.position.as_deref().map(|p| format!(" · {p}")).unwrap_or_default(), if l.current { "（本次使用）" } else { "" })).collect();
+                    format!("- {}（{}，{}）{}", e.label, lang_name(&e.lang), &e.created_at[..10.min(e.created_at.len())], if jobs.is_empty() { String::new() } else { format!("：用在 {}", jobs.join("、")) })
                 })
                 .collect::<Vec<_>>();
             done(Found::new(String::new(), vec![format!("导出过的 Word {} 份：", rows.len())]).rows(rows.into_iter().map(data::row).collect()))
@@ -293,7 +281,6 @@ fn found_label(view: &str, label: &str) -> String {
     let what = match view {
         "materials" => "素材",
         "resume" => "简历草稿",
-        "versions" => "确认版本",
         "exports" => "导出的 Word",
         "practice" => "卡片练习",
         "interviews" => "面试",

@@ -13,6 +13,8 @@ export function Modal(props: {
   submitDisabled?: boolean;
   extra?: ReactNode;
   wide?: boolean;
+  /** "xl": 720 wide (editors with rows of fields, diffs). */
+  size?: "xl";
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -26,7 +28,7 @@ export function Modal(props: {
         e.preventDefault();
         props.onClose();
       }}
-      className={`m-auto h-fit max-h-[85vh] ${props.wide ? "w-[560px]" : "w-[440px]"} rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30`}
+      className={`m-auto h-fit max-h-[85vh] ${props.size === "xl" ? "w-[720px] max-w-[calc(100vw-48px)]" : props.wide ? "w-[560px]" : "w-[440px]"} rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30`}
     >
       <form onSubmit={props.onSubmit} className="space-y-4">
         <p className="text-base font-bold">{props.title}</p>

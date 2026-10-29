@@ -14,6 +14,9 @@
 //!   芝麻开门, starting / stopping models, import / export and backups have no tools.
 //! - Tool definitions carry no user data; the names to pick from and the calendar go in the system
 //!   message (`instructions`), only for modules this model may write.
+//! - A pending item can be changed (card.rs): the same tool again with `replace` = its 编号.
+//! - 书单 / 影单检索 fills a 新书影's creator / country / 类型, unless the model named a creator the
+//!   found work doesn't have (another work of that title): then the model's arguments stay.
 
 pub mod card;
 mod make;
@@ -164,9 +167,26 @@ pub fn tools(access: &Access) -> Vec<Value> {
                 ADD_NOTE => ("记一条笔记", json!({ "content": s("全文，用户原话") }), vec!["content"]),
                 _ => ("改已有的笔记：给改好的全文，或把一段换掉", json!({ "find": s("笔记里的字"), "content": s("改好后的全文"), "old": s("要换掉的原文"), "new": s("换成") }), vec!["find"]),
             };
+            let mut props = props;
+            props["replace"] = s(REPLACE);
             json!({ "type": "function", "function": { "name": a.tool, "description": description, "parameters": { "type": "object", "properties": props, "required": required } } })
         })
         .collect()
+}
+
+/// The `replace` argument of every tool that proposes into the card.
+pub const REPLACE: &str = "换掉卡片里的哪一条（编号）";
+
+/// A call's `replace` (a string, or a bare number = this reply's item) and its arguments without it.
+pub fn replacing(arguments: &str) -> (Option<String>, String) {
+    let Ok(mut args) = serde_json::from_str::<Value>(arguments) else { return (None, arguments.to_string()) };
+    let Some(r) = args.as_object_mut().and_then(|o| o.remove("replace")) else { return (None, arguments.to_string()) };
+    let r = match r {
+        Value::String(s) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    (r, args.to_string())
 }
 
 fn joined(v: Vec<String>) -> String {
@@ -221,7 +241,8 @@ pub fn instructions(conn: &Connection, access: &Access, today: &str) -> Result<S
          - 用户明确要记、要改时才提议（「午饭 35」「想读《三体》」「甲公司进面试了」「交房租做完了」都是要记）；一句话里有几件事就调用几次。缺了必须的信息（比如金额）就先问，不要编。\n\
          - 改、完成、勾上已有的记录时，用名称里的字说是哪一条（任务名、公司、书名、笔记里的字、收支的备注），柚儿园来找：找到几条会列在卡片里让用户选；一条都没找到会告诉你，那就问用户。\n\
          - 分类、分组、目标、状态、渠道、类型、课程、模板、账户的名称从下面列出的里选；日期写 YYYY-MM-DD，没说的不写。\n\
-         - 提议之后告诉用户已经放进卡片、请确认，不要说已经记好、改好了。不能删除任何东西。\n{}",
+         - 提议之后告诉用户已经放进卡片、请确认，不要说已经记好、改好了。不能删除任何东西。\n\
+         - 卡片里还没确认的一条要改（用户纠正了、检索填错了），用同一个工具重新调用、加上 replace 写它的编号（工具结果和【还没确认的卡片】里有），参数写全、没变的照抄：那一条会被换掉。不要说卡片改不了；编号只用来改卡片，回答里不用提。\n{}",
         writable.iter().map(|a| a.label).collect::<Vec<_>>().join("、"),
         assist::calendar(today)
     );
@@ -337,26 +358,19 @@ pub fn propose(conn: &Connection, tool: &str, arguments: &str, question: &str, t
     Ok(Proposal { tool: tool.into(), module, label, choices, more: plan.more, note: plan.note })
 }
 
-/// What the model gets back (and whether the proposal went into the card).
-pub fn answer(tool: &str, result: Result<(usize, &Proposal), String>) -> Answer {
+/// What the model gets back (and whether the proposal went into the card): `at` = the item's 编号 and
+/// its number in its card; `replaced`: it took a pending item's place.
+pub fn answer(tool: &str, result: Result<(&str, usize, &Proposal), String>, replaced: bool) -> Answer {
     let a = act(tool);
     match result {
-        Ok((n, p)) => {
+        Ok((r, n, p)) => {
             let note = p.note.as_deref().map(|x| format!("（{x}）")).unwrap_or_default();
+            let place = if replaced { format!("已把卡片里编号 {r} 那一条换成") } else { format!("已放进确认卡片（第 {n} 条，编号 {r}）") };
             let text = match p.choices.as_slice() {
                 // the card's own lines, so the reply says what will really be written
-                [one] => format!(
-                    "已放进确认卡片（第 {n} 条，等用户确认）：{} · {}（{}）{note}",
-                    p.label,
-                    one.title,
-                    one.fields.iter().map(|f| match &f.before {
-                        Some(b) if !f.long => format!("{} {b} → {}", f.label, f.after),
-                        _ if f.long => format!("{}：{}", f.label, f.after.chars().take(80).collect::<String>()),
-                        _ => format!("{} {}", f.label, f.after),
-                    }).collect::<Vec<_>>().join("；")
-                ),
+                [one] => format!("{place}，等用户确认：{} · {}（{}）{note}", p.label, one.title, one.fields.iter().map(card::field_text).collect::<Vec<_>>().join("；")),
                 many => format!(
-                    "已放进确认卡片（第 {n} 条，等用户在卡片里选是哪一条再确认）：找到 {} 条可能是的{}：{}{note}",
+                    "{place}，等用户在卡片里选是哪一条再确认：找到 {} 条可能是的{}：{}{note}",
                     many.len() + p.more,
                     if p.more > 0 { format!("，列了最相关的 {} 条", many.len()) } else { String::new() },
                     many.iter().map(|c| c.title.as_str()).collect::<Vec<_>>().join("；")
@@ -404,10 +418,18 @@ pub fn work_to_look_up(tool: &str, arguments: &str) -> Option<(&'static str, Str
     (!title.is_empty()).then(|| (module, title, args["creator"].as_str().map(String::from)))
 }
 
-/// The call's arguments with what the lookup found (it wins over the model's own knowledge).
+/// The call's arguments with what the lookup found (it wins over the model's own knowledge), unless the
+/// model named a creator the found work doesn't have: another work of that title (同名书), so the
+/// model's own arguments stay.
 pub fn with_work(arguments: &str, w: Option<&super::skills::works::Work>) -> String {
     let Some(w) = w else { return arguments.to_string() };
     let mut args: Value = serde_json::from_str(arguments).unwrap_or_else(|_| json!({}));
+    let said = args["creator"].as_str().map(str::trim).filter(|s| !s.is_empty());
+    if let (Some(said), Some(found)) = (said, w.creator.as_deref()) {
+        if !super::skills::works::same_person(said, found) {
+            return arguments.to_string();
+        }
+    }
     for (k, v) in [("creator", &w.creator), ("country", &w.country), ("type", &w.kind)] {
         if let Some(v) = v {
             args[k] = json!(v);
@@ -442,7 +464,8 @@ fn after<'a>(q: &'a str, w: &str) -> Option<&'a str> {
 }
 
 /// The mock model's write calls, by a few plain patterns (mockIpc.ts mirrors them). `system` lists the
-/// 分类 (an entry picks one by a few words).
+/// 分类 (an entry picks one by a few words) and the earlier replies' pending cards (「《X》是Y写的」
+/// replaces that book's item).
 pub fn mock_calls(question: &str, system: &str, today: &str) -> Vec<(&'static str, Value)> {
     let q = question.trim().trim_end_matches(['。', '！', '!']);
     let date = assist::date_in(q, today);
@@ -480,6 +503,15 @@ pub fn mock_calls(question: &str, system: &str, today: &str) -> Vec<(&'static st
         if !job.is_empty() && !status.is_empty() && !job.contains(['把', '给']) {
             return vec![(EDIT_JOB, json!({ "job": job.trim_start_matches("这个"), "status": status }))];
         }
+    }
+    // 改卡片: 「《X》是Y写的」 — the pending item of that book again, with that author
+    if let Some((t, who)) = q.split_once('《').and_then(|(_, r)| r.split_once('》')).and_then(|(t, r)| r.strip_prefix('是').and_then(|w| w.strip_suffix("写的")).map(|w| (t, w.trim()))) {
+        let mut v = json!({ "kind": "book", "title": t, "creator": who });
+        let listed = system.lines().find(|l| l.starts_with("- 编号 ") && (l.contains(&format!(" · 《{t}》：")) || l.contains(&format!(" · {t}：")))).and_then(|l| l.trim_start_matches("- 编号 ").split(' ').next());
+        if let Some(r) = listed {
+            v["replace"] = json!(r);
+        }
+        return vec![(ADD_WORK, v)];
     }
     // 书影
     let title = q.split_once('《').and_then(|(_, r)| r.split_once('》')).map(|(t, _)| t).filter(|_| ["想读", "想看", "在读", "在看", "完了", "星"].iter().any(|w| q.contains(w)));

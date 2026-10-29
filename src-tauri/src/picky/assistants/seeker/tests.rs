@@ -73,8 +73,7 @@ fn transfer_files_become_records_and_a_second_import_shows_only_what_changed() {
             ("application", "网申", "为什么选择我们"),
             ("fact", "经历档案", "橙子识别 经历档案"),
             ("rule", "素材润色", "事实与职责"),
-            ("decision", "素材润色", "自维护内容"),
-            ("decision", "素材润色", "不催稿"),
+            ("rule", "素材润色", "有效个人约定"),
             ("rule", "整体审查", "审查边界"),
         ]
     );
@@ -91,14 +90,17 @@ fn transfer_files_become_records_and_a_second_import_shows_only_what_changed() {
     assert_eq!((school.role.as_str(), school.points.len(), school.text.as_str()), ("金融学 · 本科", 2, ""));
     assert_eq!((at("技能证书").points.len(), at("技能证书").time.as_str()), (2, ""));
     assert_eq!(at("基本信息").fields.iter().map(|f| f.label.as_str()).collect::<Vec<_>>(), ["姓名", "工作地点", "工作邮箱", "个人邮箱", "联系电话", "GitHub", "个人网站"]);
-    assert_eq!((at("事实与职责").text.as_str(), at("维护简历素材").text.as_str(), at("自维护内容").text.as_str()), ("- 不编造事实", "先读素材。", "基本信息由用户自维护"));
+    // rules come in as points; a 有效个人约定 section is one rule, a point per bullet
+    let texts = |t: &str| at(t).points.iter().map(|p| p.text.clone()).collect::<Vec<_>>();
+    assert_eq!((texts("事实与职责"), texts("维护简历素材"), texts("有效个人约定")), (vec!["不编造事实".to_string()], vec!["先读素材。".to_string()], vec!["自维护内容：基本信息由用户自维护".to_string(), "不催稿".to_string()]));
+    assert!(at("事实与职责").text.is_empty());
     assert_eq!((at("到岗时间").text.as_str(), at("为什么选择我们").text.as_str()), ("2027 年后到岗", "示例答案。"));
     let dossier = at("橙子识别 经历档案");
     assert_eq!((dossier.material.as_ref(), dossier.text.as_str()), (Some(&at("橙子识别").id), "## 概览\n\n本人负责调参，团队 3 人。"));
 
     let c = memory_db();
     let w = imported(&c, &dir);
-    assert_eq!(w.catalog.records.len(), 17);
+    assert_eq!(w.catalog.records.len(), 16);
     // the same files again: nothing to do; a changed one: that item, against the current one
     let same = import::preview(&dir.join("transfer"), &w.catalog.records).unwrap();
     assert!(same.items.is_empty() && same.gone.is_empty());
@@ -129,13 +131,14 @@ fn the_model_reads_the_rules_for_its_task_and_the_linked_dossier() {
     let w = imported(&c, &dir);
     let orange = record(&w, "橙子识别");
     let polish = model::context(&w.catalog, "素材润色", &[("别的名字", Some(orange.id.as_str()))], "cn");
-    assert!(polish.starts_with("【共用准则：定位】"), "{polish}");
-    for part in ["【素材润色：维护简历素材】\n先读素材。", "【素材润色：事实与职责】", "【有效个人约定】\n- 自维护内容：基本信息由用户自维护\n- 不催稿：不催稿", "【已确认事实】\n个人事实：\n- 到岗时间：2027 年后到岗\n- 语言成绩：CET-4", "【经历档案：橙子识别 经历档案】"] {
+    // Markdown: # 组, ## 标题, points numbered (共用准则 first, then 写作规则 and the task's group)
+    assert!(polish.starts_with("# 共用准则\n\n## 定位\n1. "), "{polish}");
+    for part in ["# 素材润色\n\n## 维护简历素材\n1. 先读素材。", "## 事实与职责\n1. 不编造事实", "## 有效个人约定\n1. 自维护内容：基本信息由用户自维护\n2. 不催稿", "# 已确认事实\n\n## 个人事实\n- 到岗时间：2027 年后到岗\n- 语言成绩：CET-4", "# 经历档案\n\n## 橙子识别 经历档案"] {
         assert!(polish.contains(part), "{part}\n{polish}");
     }
-    assert!(!polish.contains("审查边界"));
+    assert!(!polish.contains("审查边界") && !polish.contains("【"));
     let review = model::context(&w.catalog, "整体审查", &[("柚子笔记", Some("x"))], "cn");
-    assert!(review.contains("【整体审查：审查边界】") && !review.contains("事实与职责") && !review.contains("有效个人约定") && !review.contains("经历档案"), "{review}");
+    assert!(review.contains("# 整体审查\n\n## 审查边界") && !review.contains("事实与职责") && !review.contains("有效个人约定") && !review.contains("经历档案"), "{review}");
 }
 
 #[test]
@@ -235,7 +238,7 @@ fn source_changes_keep_the_chosen_points_and_edits_undo_in_one_step() {
     assert_eq!(crate::undo::undo(&c, &mut h).unwrap(), None);
 }
 
-/// The draft as the tests' template slots expect it, with a confirmed version, an export and links.
+/// The draft as the tests' template slots expect it.
 fn full_workspace(c: &Connection, dir: &Path) -> Workspace {
     let w = imported(c, dir);
     let picks: Vec<workflow::Selection> = w.choices.iter().filter(|s| w.catalog.records.iter().any(|r| r.id == s.record_id && r.lang == "cn")).cloned().collect();
@@ -243,7 +246,6 @@ fn full_workspace(c: &Connection, dir: &Path) -> Workspace {
     d.jd = "数据分析".into();
     save(c, &d).unwrap();
     workflow::baseline(c, &d).unwrap();
-    c.execute("INSERT INTO seeker_versions (label, body) VALUES ('第一版', ?1)", [serde_json::to_string(&d).unwrap()]).unwrap();
     super::set_settings(c, "folder", &dir.to_string_lossy()).unwrap();
     super::set_settings(c, "options", r#"{"selectionModel":"local:qwen","thinking":true}"#).unwrap();
     read(c).unwrap()
@@ -283,40 +285,40 @@ fn the_resume_fills_the_template_and_export_never_overwrites() {
     assert!(["me@example.com", "+86 100 0000 0000", "上海", "v1.2", "2025.07"].iter().all(|v| !output::is_link(v)));
     assert_eq!(output::separator(Some("[电话]｜[邮箱]")), "｜");
     assert_eq!(output::separator(Some("[电话] [邮箱]")), " · ");
-    // 技能: points only; 项目: heading in four columns, the note, the points
+    // 技能: points only; 项目: heading 名称 ⇥ 角色 ⇥ 时间 (no 地点), the note, the points
     let skills = text.iter().position(|l| l == "3 专业技能").unwrap();
     assert_eq!(text[skills + 1], "6 **编程语言**：Python、SQL");
-    let project = text.iter().position(|l| l.starts_with("7 2026.03")).unwrap();
-    assert_eq!(text[project..project + 3], ["7 2026.03 - 至今\t柚子笔记\t独立开发\t", "5 读书笔记整理工具", "6 **数据整理**：把零散笔记合成卷"]);
+    let project = text.iter().position(|l| l.starts_with("7 柚子笔记")).unwrap();
+    assert_eq!(text[project..project + 3], ["7 柚子笔记\t独立开发\t2026.03 - 至今", "5 读书笔记整理工具", "6 **数据整理**：把零散笔记合成卷"]);
     let docx = word::resume_from_template(&word::tests::resume_template_docx(), &lines).unwrap();
     let items = word::read_docx(&docx).unwrap().items;
     assert_eq!(items[0].text, "**林小柚**");
-    assert!(items.iter().any(|i| i.text == "**2026.03 - 至今\t柚子笔记\t**独立开发\t"), "{:?}", items.iter().map(|i| &i.text).collect::<Vec<_>>());
+    assert!(items.iter().any(|i| i.text == "**柚子笔记\t独立开发\t**2026.03 - 至今"), "{:?}", items.iter().map(|i| &i.text).collect::<Vec<_>>());
     assert!(items.iter().any(|i| i.text == "- **数据整理**：把零散笔记合成卷"));
 
     // 另存: once; the same name again is refused and leaves no record; no page count
     let out = dir.join("cv");
     std::fs::create_dir_all(&out).unwrap();
     let job = |id: i64| output::JobSnapshot { id, company: "示例公司".into(), position: Some("分析师".into()), location: None, link: None, note: None, created_at: "2026-10-01T00:00:00.000Z".into() };
-    let first = output::save_export(&c, &draft, &t, &docx, &out, "简历.docx", Some(job(7))).unwrap();
+    let first = output::save_export(&c, &draft, &docx, &out, "简历.docx", Some(job(7))).unwrap();
     assert_eq!(std::fs::read(out.join("简历.docx")).unwrap(), docx);
     assert_eq!(first.path, out.join("简历.docx").to_string_lossy());
     assert!(serde_json::to_value(&first).unwrap().get("pages").is_none());
-    assert!(output::save_export(&c, &draft, &t, &docx, &out, "简历.docx", None).unwrap_err().contains("同名"));
-    assert!(output::save_export(&c, &draft, &t, &docx, &out, "../x.docx", None).is_err());
+    assert!(output::save_export(&c, &draft, &docx, &out, "简历.docx", None).unwrap_err().contains("同名"));
+    assert!(output::save_export(&c, &draft, &docx, &out, "../x.docx", None).is_err());
     let mut other = draft.clone();
     other.name = "别人".into();
-    assert!(output::save_export(&c, &other, &t, &docx, &out, "简历3.docx", None).unwrap_err().contains("改过"));
+    assert!(output::save_export(&c, &other, &docx, &out, "简历3.docx", None).unwrap_err().contains("改过"));
     assert_eq!(read(&c).unwrap().output.exports.len(), 1);
     assert!(!out.join("简历3.docx").exists());
 
     // a second export linked to the same job becomes the one used; the first link stays
-    let second = output::save_export(&c, &draft, &t, &docx, &out, "简历-2.docx", Some(job(7))).unwrap();
+    let second = output::save_export(&c, &draft, &docx, &out, "简历-2.docx", Some(job(7))).unwrap();
     let links = read(&c).unwrap().output.links;
-    assert_eq!(links.iter().map(|l| (l.export_id.clone(), l.current)).collect::<Vec<_>>(), [(second.id.clone(), true), (first.id.clone(), false)]);
-    output::associate(&c, &first, job(7)).unwrap();
+    assert_eq!(links.iter().map(|l| (l.path.clone(), l.current)).collect::<Vec<_>>(), [(second.path.clone(), true), (first.path.clone(), false)]);
+    output::associate(&c, &first.path, &draft.jd, job(7), true).unwrap();
     let links = read(&c).unwrap().output.links;
-    assert_eq!(links.iter().map(|l| (l.export_id.clone(), l.current)).collect::<Vec<_>>(), [(second.id.clone(), false), (first.id.clone(), true)]);
+    assert_eq!(links.iter().map(|l| (l.path.clone(), l.current)).collect::<Vec<_>>(), [(second.path.clone(), false), (first.path.clone(), true)]);
     assert_eq!(links[1].jd, "数据分析");
 
     // an export from before (with its page count) still reads
@@ -391,6 +393,24 @@ fn jobs_find_their_company_in_knowledge_by_name() {
     assert_eq!(m("苹果公司"), None);
     assert_eq!(m("柚子银行和橙子科技"), None);
 
+    // a name the user gives (Seeker 设置): shown and matched; blank goes back to the found one
+    let folders: Vec<String> = list.iter().map(|c| c.folder.clone()).collect();
+    let given = |pairs: &[(&str, &str)]| pairs.iter().map(|(f, n)| (f.to_string(), n.to_string())).collect::<std::collections::BTreeMap<_, _>>();
+    let names = company::clean_names(&given(&[("seek-keyreply", " 钥匙回复 "), ("seek-orange", ""), ("seek-gone", "已删的")]), &folders).unwrap();
+    assert_eq!(names, given(&[("seek-keyreply", "钥匙回复")]));
+    let renamed = company::named(list.clone(), &names);
+    assert_eq!(renamed.iter().map(|c| (c.name.as_str(), c.auto.as_str())).collect::<Vec<_>>(), [("钥匙回复", "seek-keyreply"), ("橙子科技", "橙子科技"), ("柚子银行", "柚子银行")]);
+    assert_eq!(company::matched("钥匙回复新加坡", &renamed).as_deref(), Some("seek-keyreply"));
+    assert_eq!(company::matched("Key Reply", &renamed).as_deref(), Some("seek-keyreply"));
+    assert!(company::clean_names(&given(&[("seek-keyreply", "柚子"), ("seek-pomelo", "柚 子")]), &folders).unwrap_err().contains("都叫"));
+    // kept by the settings command, through the data file
+    let s = memory_db();
+    set_settings(&s, "options", &serde_json::to_string(&catalog::Settings { company_names: names.clone(), ..Default::default() }).unwrap()).unwrap();
+    assert_eq!(settings_of(&s).unwrap().company_names, names);
+    let b = memory_db();
+    replace(&b, &read(&s).unwrap()).unwrap();
+    assert_eq!(settings_of(&b).unwrap().company_names, names);
+
     // the user's choice wins over the name and goes back to it when cleared; undone with the rest
     let c = memory_db();
     company::choose(&c, &bank(), Some("seek-orange")).unwrap();
@@ -409,10 +429,12 @@ fn the_workspace_goes_through_the_data_file_whole() {
     let a = memory_db();
     let w = full_workspace(&a, &dir);
     let draft = w.cn.draft.clone().unwrap();
-    let export = output::Export { id: "e1".into(), label: "简历.docx".into(), draft: draft.clone(), path: "/x/简历.docx".into(), template: output::Template { path: "/x/t.docx".into(), slots: template().slots, paragraphs: vec![Some("[姓名]".into()), None] }, created_at: "2026-10-02T00:00:00.000Z".into() };
+    let export = output::Export { id: "e1".into(), label: "简历.docx".into(), path: "/x/简历.docx".into(), lang: "cn".into(), materials: output::materials_of(&draft), created_at: "2026-10-02T00:00:00.000Z".into(), draft: None };
+    let old_template = output::Template { path: "/x/t.docx".into(), slots: template().slots, paragraphs: vec![Some("[姓名]".into()), None] };
     a.execute("INSERT INTO seeker_exports (id, body) VALUES ('e1', ?1)", [serde_json::to_string(&export).unwrap()]).unwrap();
-    output::associate(&a, &export, output::JobSnapshot { id: 3, company: "示例".into(), position: None, location: None, link: None, note: None, created_at: "2026-09-01T00:00:00.000Z".into() }).unwrap();
-    a.execute("UPDATE seeker_settings SET template = ?1", [serde_json::to_string(&export.template).unwrap()]).unwrap();
+    output::associate(&a, &export.path, &draft.jd, output::JobSnapshot { id: 3, company: "示例".into(), position: None, location: None, link: None, note: None, created_at: "2026-09-01T00:00:00.000Z".into() }, true).unwrap();
+    a.execute("UPDATE seeker_settings SET template = ?1", [serde_json::to_string(&old_template).unwrap()]).unwrap();
+    rename_group_for_test(&a);
     let mut record = catalog::load(&a).unwrap().records[0].clone();
     record.text.push_str("\n补一句");
     catalog::put(&a, &record).unwrap();
@@ -424,7 +446,8 @@ fn the_workspace_goes_through_the_data_file_whole() {
     let json = serde_json::to_value(&rec).unwrap();
     assert!(json["seeker"].get("warnings").is_none() && json["seeker"].get("choices").is_none());
     let seeker = rec.seeker.as_ref().unwrap();
-    assert_eq!((seeker.catalog.records.len(), seeker.catalog.revisions.len(), seeker.catalog.versions.len(), seeker.output.exports.len(), seeker.output.links.len()), (17, 1, 1, 1, 1));
+    assert_eq!((seeker.catalog.records.len(), seeker.catalog.revisions.len(), seeker.catalog.groups.len(), seeker.output.exports.len(), seeker.output.links.len()), (16, 1, 1, 1, 1)); // the two 个人约定 are one rule now
+    assert!(!seeker.output.exports[0].materials.is_empty());
     assert!(seeker.output.template.is_some() && seeker.catalog.settings.thinking && seeker.cn.baseline.is_some());
     assert_eq!((seeker.job_companies.len(), seeker.cn.draft.as_ref().unwrap().job.as_ref().map(|j| j.id)), (1, Some(4)));
 
@@ -459,7 +482,8 @@ fn records_saved_before_format_21_still_read() {
     // the old 技术栈 point is still left out unless 纯开发岗
     assert_eq!(w.choices.iter().find(|s| s.record_id == "m").unwrap().point_ids, ["a"]);
     let ctx = model::context(&w.catalog, "素材润色", &[("旧项目", Some("m"))], "cn");
-    for part in ["【素材润色：中文素材润色规则】\n## 事实\n- 不编造", "【已确认事实】\n已确认事实：\n- 已确认事实：| 事项 | 口径 |", "【经历档案：旧项目 经历档案】\n本人负责。"] {
+    // an old rule's text read as points (its sub-heading too)
+    for part in ["## 中文素材润色规则\n1. 事实\n2. 不编造", "# 已确认事实\n\n## 已确认事实\n- 已确认事实：| 事项 | 口径 |", "# 经历档案\n\n## 旧项目 经历档案\n本人负责。"] {
         assert!(ctx.contains(part), "{part}\n{ctx}");
     }
 }
@@ -508,7 +532,7 @@ fn english_files_come_in_as_english_and_dossiers_hang_on_both_languages() {
             ("material", "工作", "Example Securities, Research"),
             ("material", "证书", "Certifications"),
             ("rule", "素材润色", "适用范围"),
-            ("decision", "素材润色", "自维护与冻结"),
+            ("rule", "素材润色", "有效个人约定"),
             ("rule", "整体审查", "产物"),
         ]
     );
@@ -533,8 +557,8 @@ fn english_files_come_in_as_english_and_dossiers_hang_on_both_languages() {
     let w = imported(&c, &dir);
     let orange_en = record(&w, "Orange Classifier: Fruit CNN").id.clone();
     let polish = model::context(&w.catalog, "素材润色", &[("Orange Classifier: Fruit CNN", Some(orange_en.as_str()))], "en");
-    assert!(polish.starts_with("【共用准则：定位】"), "{polish}");
-    for part in ["【素材润色：维护简历素材】", "【素材润色：适用范围】\n正文保持英文。", "【有效个人约定】\n- 自维护与冻结：CONTACT 由用户维护", "【已确认事实】", "【经历档案：橙子识别 经历档案】"] {
+    assert!(polish.starts_with("# 共用准则\n\n## 定位"), "{polish}");
+    for part in ["## 维护简历素材", "## 适用范围\n1. 正文保持英文。", "## 有效个人约定\n1. 自维护与冻结：CONTACT 由用户维护", "# 已确认事实", "# 经历档案\n\n## 橙子识别 经历档案"] {
         assert!(polish.contains(part), "{part}\n{polish}");
     }
     assert!(!polish.contains("事实与职责") && !polish.contains("不催稿"), "{polish}");
@@ -597,8 +621,11 @@ fn an_english_resume_has_a_summary_its_own_order_and_reminders_apart_from_the_ch
     let docx = word::resume_from_template(&word::tests::resume_template_en_docx(), &output::lines(&d, &t)).unwrap();
     let out = dir.join("cv-en");
     std::fs::create_dir_all(&out).unwrap();
-    let export = output::save_export(&c, &d, &t, &docx, &out, "resume.docx", None).unwrap();
-    assert_eq!(export.draft.lang, "en");
+    let export = output::save_export(&c, &d, &docx, &out, "resume.docx", None).unwrap();
+    assert_eq!(export.lang, "en");
+    // the record keeps no copy of the résumé
+    let body: String = c.query_row("SELECT body FROM seeker_exports WHERE id = ?1", [&export.id], |r| r.get(0)).unwrap();
+    assert!(!body.contains("sections") && !body.contains("template") && body.contains("\"materials\""), "{body}");
 }
 
 fn en_slots() -> output::Slots {
@@ -738,17 +765,19 @@ fn cv_resumes_are_told_apart_by_series_and_version_and_material_is_names_only() 
     assert_eq!(files::series("vivo"), ("vivo".to_string(), None));
     let dir = seeker_folder("seeker-files");
     let docx = word::tests::sample_docx();
-    for (p, bytes) in [("cv/en/seek-it-keyreply-resume-v4.docx", docx.clone()), ("cv/en/seek-it-keyreply-resume-v5.docx", docx.clone()), ("cv/en/seek-it-iss-cv-v1.docx", docx.clone()), ("cv/cn/林小柚-简历-2026-10-20.docx", docx.clone()), ("cv/cn/模板.docx", docx.clone()), ("cv/en/notes.txt", vec![]), ("cv/en/~$seek-it.docx", vec![]), ("material/certificates/四级-林小柚.pdf", vec![]), ("material/证件照.jpg", vec![]), ("material/.DS_Store", vec![])] {
+    for (p, bytes) in [("cv/en/seek-it-keyreply-resume-v4.docx", docx.clone()), ("cv/en/seek-it-keyreply-resume-v5.docx", docx.clone()), ("cv/en/seek-it-iss-cv-v1.docx", docx.clone()), ("cv/cn/林小柚-简历-2026-10-20.docx", docx.clone()), ("cv/cn/模板.docx", docx.clone()), ("cv/cn/seek-it-cn-template-v1.docx", docx.clone()), ("cv/cn/seek-it-cn-template-v2.docx", docx.clone()), ("cv/en/notes.txt", vec![]), ("cv/en/~$seek-it.docx", vec![]), ("material/certificates/四级-林小柚.pdf", vec![]), ("material/证件照.jpg", vec![]), ("material/.DS_Store", vec![])] {
         let path = dir.join(p);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, bytes).unwrap();
     }
-    let template = dir.join("cv/cn/模板.docx").to_string_lossy().into_owned();
     let export = dir.join("cv/cn/林小柚-简历-2026-10-20.docx").to_string_lossy().into_owned();
     let jobs = vec![("KeyReply · 软件开发实习".to_string(), "KeyReply".to_string()), ("NUS-ISS 学院代投 · 实习".to_string(), "NUS-ISS 学院代投".to_string()), ("腾讯 · 后台开发".to_string(), "腾讯".to_string())];
-    let f = files::scan(&dir, &[template], &[export], &jobs);
+    let f = files::scan(&dir, &[("e1".to_string(), export)], &jobs);
     let got: Vec<(&str, &str, &str, Option<u32>, bool, bool, Vec<String>)> = f.cv.iter().map(|x| (x.name.as_str(), x.lang.as_str(), x.series.as_str(), x.version, x.template, x.export, x.jobs.clone())).collect();
+    // 模板: only the newest version of a template series (v1 is an old one)
     assert_eq!(got, [
+        ("cn/seek-it-cn-template-v2.docx", "cn", "seek-it-cn-template", Some(2), true, false, vec![]),
+        ("cn/seek-it-cn-template-v1.docx", "cn", "seek-it-cn-template", Some(1), false, false, vec![]),
         ("cn/林小柚-简历-2026-10-20.docx", "cn", "林小柚-简历", None, false, true, vec![]),
         ("cn/模板.docx", "cn", "模板", None, true, false, vec![]),
         ("en/seek-it-iss-cv-v1.docx", "en", "seek-it-iss-cv", Some(1), false, false, vec!["NUS-ISS 学院代投 · 实习".to_string()]),
@@ -756,7 +785,7 @@ fn cv_resumes_are_told_apart_by_series_and_version_and_material_is_names_only() 
         ("en/seek-it-keyreply-resume-v4.docx", "en", "seek-it-keyreply-resume", Some(4), false, false, vec!["KeyReply · 软件开发实习".to_string()]),
     ]);
     assert_eq!(f.material.iter().map(|m| (m.group.as_str(), m.name.as_str())).collect::<Vec<_>>(), [("certificates", "四级-林小柚.pdf"), ("", "证件照.jpg")]);
-    assert!(f.transfer && f.cv[0].size > 0 && f.cv[0].modified > 0);
+    assert!(f.transfer && f.cv[2].size > 0 && f.cv[2].modified > 0 && f.cv[2].export_id.as_deref() == Some("e1"));
     // a resume's text: only inside cv/
     let text = files::text(&dir, &dir.join("cv/en/seek-it-keyreply-resume-v5.docx")).unwrap();
     assert!(!text.is_empty());
@@ -769,7 +798,7 @@ fn cv_resumes_are_told_apart_by_series_and_version_and_material_is_names_only() 
     let local = crate::picky::data::Access::default();
     let run = |args: &str| crate::picky::skills::seeker::run(&c, crate::picky::Mode::Mock, &local, args, 4000);
     let list = run(r#"{"view":"files"}"#);
-    assert!(list.text.contains("cv/ 有 5 份简历，material/ 有 2 个证书原件") && list.text.contains("- cv/en/seek-it-keyreply-resume-v5.docx（英文，第 5 版") && list.text.contains("- material/certificates：四级-林小柚.pdf"), "{}", list.text);
+    assert!(list.text.contains("cv/ 有 7 份简历，material/ 有 2 个证书原件") && list.text.contains("- cv/en/seek-it-keyreply-resume-v5.docx（英文，第 5 版") && list.text.contains("- material/certificates：四级-林小柚.pdf"), "{}", list.text);
     let one = run(r#"{"view":"cv","keyword":"keyreply-resume-v5"}"#);
     assert_eq!((one.state, one.module.as_deref()), ("ok", Some("seeker")));
     assert!(run(r#"{"view":"cv","keyword":"keyreply"}"#).text.contains("对上了 2 份"));
@@ -873,5 +902,307 @@ fn real_seeker() {
     eprintln!("{text}");
     if let Ok(out) = std::env::var("POMELO_SEEKER_OUT") {
         std::fs::write(out, text).unwrap();
+    }
+}
+
+#[test]
+fn records_keep_the_users_order_and_change_several_at_once() {
+    let c = memory_db();
+    let dir = seeker_folder("seeker-order");
+    let w = imported(&c, &dir);
+    let projects: Vec<String> = w.catalog.records.iter().filter(|r| r.kind == "material" && r.category == "项目").map(|r| r.id.clone()).collect();
+    let titles = |c: &Connection| read(c).unwrap().catalog.records.iter().filter(|r| r.kind == "material" && r.category == "项目").map(|r| r.title.clone()).collect::<Vec<_>>();
+    assert_eq!(titles(&c), ["柚子笔记", "橙子识别"]);
+    // a group reordered: its places swap, everything else stays; one undo step
+    let before = read(&c).unwrap().catalog.records.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+    let mut h = crate::undo::History::default();
+    crate::undo::tests::step(&c, &mut h, "调整顺序", |c| catalog::reorder(c, &[projects[1].clone(), projects[0].clone()]));
+    assert_eq!(titles(&c), ["橙子识别", "柚子笔记"]);
+    let after = read(&c).unwrap().catalog.records.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+    assert_eq!(after.iter().filter(|id| !projects.contains(id)).collect::<Vec<_>>(), before.iter().filter(|id| !projects.contains(id)).collect::<Vec<_>>());
+    // a new one goes last; the order goes through the data file
+    catalog::put(&c, &Record { id: "new".into(), kind: "material".into(), category: "项目".into(), title: "新项目".into(), ..Default::default() }).unwrap();
+    assert_eq!(titles(&c), ["橙子识别", "柚子笔记", "新项目"]);
+    let b = memory_db();
+    replace(&b, &read(&c).unwrap()).unwrap();
+    assert_eq!(titles(&b), ["橙子识别", "柚子笔记", "新项目"]);
+    crate::undo::undo(&c, &mut h).unwrap(); // the reorder alone goes back
+    assert_eq!(titles(&c), ["柚子笔记", "橙子识别", "新项目"]);
+    assert!(catalog::reorder(&c, &["gone".into()]).is_err());
+    // 停用 / 启用 several: each a new version, one step; unchanged ones untouched
+    let ids = vec![projects[0].clone(), projects[1].clone()];
+    catalog::set_enabled(&c, &ids, false).unwrap();
+    let w = read(&c).unwrap();
+    assert!(w.catalog.records.iter().filter(|r| ids.contains(&r.id)).all(|r| !r.enabled && r.revision == 2));
+    catalog::set_enabled(&c, &ids, false).unwrap();
+    assert!(read(&c).unwrap().catalog.records.iter().filter(|r| ids.contains(&r.id)).all(|r| r.revision == 2));
+    assert!(catalog::set_enabled(&c, &["gone".into()], true).is_err());
+}
+
+#[test]
+fn a_development_jd_chooses_the_tech_stack_by_default() {
+    assert!(workflow::dev_jd("后端开发工程师，熟悉 Go") && workflow::dev_jd("Software Engineer Intern") && !workflow::dev_jd("数据分析实习生：SQL、报表") && !workflow::dev_jd(""));
+    let c = memory_db();
+    let dir = seeker_folder("seeker-dev-jd");
+    let w = imported(&c, &dir);
+    let notes = record(&w, "柚子笔记").clone();
+    let chosen = |c: &Connection| read(c).unwrap().choices.iter().find(|s| s.record_id == notes.id).unwrap().point_ids.clone();
+    assert!(!chosen(&c).contains(&"技术栈".to_string()));
+    let mut d = workflow::initial(&w.catalog.records, "cn").unwrap();
+    d.jd = "后端开发工程师".into();
+    save(&c, &d).unwrap();
+    assert_eq!(chosen(&c).first().map(String::as_str), Some("技术栈"));
+}
+
+/// A fuller made-up resume (林小柚, fictional) in `lang`, every material of the fake Seeker folder
+/// with a few more points, as the export would take it.
+fn sample_resume(c: &Connection, dir: &Path, lang: &str) -> Draft {
+    let w = imported(c, dir);
+    let more: &[(&str, &[&str])] = if lang == "en" {
+        &[("Pomelo Notes: Reading Notes Tool", &["Built semantic search over 3,000 reading notes with a local embedding model; top-5 hit rate rose from 54% to 81% on 120 test questions", "Merged scattered notes into per-book volumes, cutting duplicates by 30%", "Kept every byte offline in one SQLite file with one-click backup"]), ("Orange Classifier: Fruit CNN", &["Led a 3-person team through two tuning rounds; test accuracy reached 0.91 on a 60-image set", "Rebalanced a 20:75 class split with weighted sampling; validation Macro-F1 rose from 0.88 to 0.92"])]
+    } else {
+        &[("柚子笔记", &["**检索改进**：用本地向量模型做按意思搜索，在 120 条测试问题上前 5 条命中率从 54% 提到 81%", "**数据整理**：把零散笔记按书合并成卷，去重后条数减少 30%", "**离线优先**：全部数据存在本机 SQLite，单文件备份"]), ("橙子识别", &["**模型迭代**：带 3 人小组两轮调参，测试集准确率 0.91", "**类别均衡**：样本 20:75 失衡，加权采样后验证集 Macro-F1 从 0.88 到 0.92"])]
+    };
+    for (title, points) in more {
+        let mut r = record(&w, title).clone();
+        r.points = points.iter().enumerate().map(|(i, t)| Point { id: format!("p{i}"), text: t.to_string() }).collect();
+        catalog::put(c, &r).unwrap();
+    }
+    let w = read(c).unwrap();
+    let picks: Vec<workflow::Selection> = w.catalog.records.iter().filter(|r| r.kind == "material" && r.lang == lang && r.title != "Agent Summary" && r.title != "Third Project").map(|r| workflow::Selection { record_id: r.id.clone(), point_ids: r.choosable().iter().filter(|p| !workflow::is_stack(p)).map(|p| p.id.clone()).collect() }).collect();
+    let mut d = workflow::assemble(&w.catalog.records, Some(workflow::initial(&w.catalog.records, lang).unwrap()), &picks, true, lang).unwrap();
+    if lang == "en" {
+        d.form = "resume".into();
+    }
+    for h in d.header.iter_mut() {
+        h.visible = h.visible || ["GitHub", "LinkedIn"].contains(&h.label.as_str());
+    }
+    d
+}
+
+#[test]
+fn the_built_in_templates_take_every_part_of_a_resume() {
+    for lang in LANGS {
+        let (t, bytes) = output::builtin(lang).unwrap();
+        output::check_slots(&t.slots, &t.paragraphs).unwrap();
+        let dir = english_folder(&format!("seeker-builtin-{lang}"));
+        let c = memory_db();
+        let d = sample_resume(&c, &dir, lang);
+        let docx = word::resume_from_template(bytes, &output::lines(&d, &t)).unwrap();
+        let text = word::tests::textutil_text(&dir, &docx);
+        let expect: &[&str] = if lang == "en" { &["LIN XIAOYOU", "top-5 hit rate rose", "Example University", "IELTS Academic"] } else { &["林小柚", "检索改进", "示例大学", "项目经历"] };
+        for part in expect {
+            assert!(text.contains(part), "{lang}: {part}\n{text}");
+        }
+        // no placeholder left behind
+        assert!(!text.contains("YOUR NAME") && !text.contains("[姓名]"), "{text}");
+        // 中文经历抬头: 名称 ⇥ 角色 ⇥ 时间, no 地点
+        if lang == "cn" {
+            assert!(text.lines().any(|l| l == "橙子识别\t课程项目\t2025.10 - 2025.12"), "{text}");
+        }
+        // opt-in: write the sample for a look in Word (POMELO_RESUME_PREVIEW=<folder>)
+        if let Ok(out) = std::env::var("POMELO_RESUME_PREVIEW") {
+            std::fs::write(Path::new(&out).join(format!("样例-{}.docx", if lang == "en" { "英文" } else { "中文" })), &docx).unwrap();
+        }
+    }
+}
+
+#[test]
+fn migration_28_keeps_the_job_links_by_their_exports_path() {
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
+    crate::db::configure(&c).unwrap();
+    crate::db::migrate_as(&mut c, &crate::picky::store::MIGRATIONS[..27], None, crate::backup::Store::Picky).unwrap();
+    let export = |id: &str, path: &str| format!(r#"{{"id":"{id}","label":"{id}.docx","draft":{{"name":"林小柚","header":[],"sections":[],"jd":"分析"}},"path":"{path}","template":{{"path":"","slots":{{"name":0,"contact":1,"section":2,"entry":3,"point":4}},"paragraphs":[]}},"createdAt":"2026-10-01T00:00:00.000Z"}}"#);
+    let link = |id: &str, export: &str| format!(r#"{{"id":"{id}","exportId":"{export}","job":{{"id":3,"company":"示例","position":null,"location":null,"link":null,"note":null,"createdAt":"2026-09-01T00:00:00.000Z"}},"jd":"分析","createdAt":"2026-10-01T00:00:00.000Z","current":false}}"#);
+    for (id, path) in [("e1", "/cv/cn/a.docx"), ("e2", "/cv/cn/b.docx")] {
+        c.execute("INSERT INTO seeker_exports (id, body) VALUES (?1, ?2)", params![id, export(id, path)]).unwrap();
+    }
+    for (id, e, current) in [("l1", "e1", 0), ("l2", "e2", 1)] {
+        c.execute("INSERT INTO seeker_job_exports (id, export_id, job_id, job_created_at, body, current) VALUES (?1, ?2, 3, '2026-09-01T00:00:00.000Z', ?3, ?4)", params![id, e, link(id, e), current]).unwrap();
+    }
+    crate::db::migrate_as(&mut c, crate::picky::store::MIGRATIONS, None, crate::backup::Store::Picky).unwrap();
+    let links = read(&c).unwrap().output.links;
+    assert_eq!(links.iter().map(|l| (l.id.as_str(), l.path.as_str(), l.current, l.jd.as_str())).collect::<Vec<_>>(), [("l2", "/cv/cn/b.docx", true, "分析"), ("l1", "/cv/cn/a.docx", false, "分析")]);
+    let body: String = c.query_row("SELECT body FROM seeker_job_resumes WHERE id = 'l1'", [], |r| r.get(0)).unwrap();
+    assert!(!body.contains("exportId") && body.contains("\"path\":\"/cv/cn/a.docx\""), "{body}");
+}
+
+#[test]
+fn a_job_uses_any_resume_under_cv_and_the_old_field_moves_over_once() {
+    let dir = seeker_folder("seeker-job-resumes");
+    let docx = word::tests::sample_docx();
+    for p in ["cv/en/seek-it-keyreply-resume-v4.docx", "cv/en/seek-it-keyreply-resume-v5.docx", "cv/cn/林小柚-简历.docx", "material/a.pdf"] {
+        std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(p), &docx).unwrap();
+    }
+    let real = |p: &str| std::fs::canonicalize(dir.join(p)).unwrap().to_string_lossy().into_owned();
+    // only a résumé file under cv/
+    assert_eq!(files::in_cv(&dir, &dir.join("cv/en/seek-it-keyreply-resume-v5.docx")).unwrap(), real("cv/en/seek-it-keyreply-resume-v5.docx"));
+    assert!(files::in_cv(&dir, &dir.join("material/a.pdf")).is_err() && files::in_cv(&dir, &dir.join("cv/en/none.docx")).is_err());
+
+    let home = crate::db::tests::temp_dir("seeker-job-resumes-app");
+    let st = crate::AppState::init(crate::paths::DataPaths::new(home.to_path_buf()), &home, crate::picky::Mode::Mock);
+    // no Seeker folder yet: nothing moves, tried again later
+    let job = |company: &str, resume: Option<String>| st.with_db(|c| { c.execute("INSERT INTO jobs (company, resume) VALUES (?1, ?2)", params![company, resume]).map_err(err)?; Ok(c.last_insert_rowid()) }).unwrap();
+    let keyreply = job("KeyReply", Some(dir.join("cv/en/seek-it-keyreply-resume-v4.docx").to_string_lossy().into_owned()));
+    let iss = job("NUS-ISS", Some("~/Desktop/别处的简历.docx".into()));
+    let tencent = job("腾讯", Some(dir.join("cv/cn/林小柚-简历.docx").to_string_lossy().into_owned()));
+    assert_eq!(output::adopt_job_resumes(&st).unwrap(), 0);
+    st.picky.with_db(|c| c.execute("INSERT INTO seeker_settings (id, folder) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET folder = excluded.folder", [dir.to_string_lossy()]).map_err(err)).unwrap();
+    // 腾讯 already has a résumé in use: the old one goes beside it
+    let snap = |id: i64| output::job(&st, id).unwrap();
+    st.picky.with_db(|c| output::associate(c, &real("cv/en/seek-it-keyreply-resume-v5.docx"), "", snap(tencent), true)).unwrap();
+    assert_eq!(output::adopt_job_resumes(&st).unwrap(), 2);
+    assert_eq!(output::adopt_job_resumes(&st).unwrap(), 0);
+    let links = st.picky.with_db(|c| Ok(read(c)?.output.links)).unwrap();
+    let of = |id: i64| links.iter().filter(|l| l.job.id == id).map(|l| (l.path.clone(), l.current)).collect::<Vec<_>>();
+    assert_eq!(of(keyreply), [(real("cv/en/seek-it-keyreply-resume-v4.docx"), true)]);
+    assert!(of(iss).is_empty());
+    assert_eq!(of(tencent), [(real("cv/cn/林小柚-简历.docx"), false), (real("cv/en/seek-it-keyreply-resume-v5.docx"), true)]);
+
+    // the panel: linked files still under cv/ (newest first), and every résumé to pick from
+    let cv = files::scan(&dir, &[], &[]).cv;
+    let shown = output::job_resumes(&links, &snap(tencent), cv.clone());
+    assert_eq!(shown.iter().map(|l| (l.name.as_str(), l.current)).collect::<Vec<_>>(), [("cn/林小柚-简历.docx", false), ("en/seek-it-keyreply-resume-v5.docx", true)]);
+    std::fs::remove_file(dir.join("cv/cn/林小柚-简历.docx")).unwrap();
+    let cv = files::scan(&dir, &[], &[]).cv;
+    assert_eq!(output::job_resumes(&links, &snap(tencent), cv).len(), 1);
+    assert_eq!(st.picky.with_db(|c| Ok(read(c)?.output.links.len())).unwrap(), 3); // the record stays
+}
+
+#[test]
+fn an_old_data_file_links_jobs_by_export() {
+    let c = memory_db();
+    // an export of format 26 carried its draft: its language and materials are kept, the draft isn't
+    let export: output::Export = serde_json::from_str(r#"{"id":"e1","label":"a.docx","path":"/cv/cn/a.docx","createdAt":"2026-10-01T00:00:00.000Z","template":{"path":""},"draft":{"lang":"en","name":"林小柚","header":[],"jd":"分析","sections":[{"id":"s","title":"Projects","category":"项目","entries":[{"id":"e","time":"","name":"Pomelo","role":"","location":"","note":"","points":[],"source":{"recordId":"m1","revision":1,"pointIds":[]}}]}]}}"#).unwrap();
+    let link: output::JobResume = serde_json::from_str(r#"{"id":"l1","exportId":"e1","job":{"id":3,"company":"示例","position":null,"location":null,"link":null,"note":null,"createdAt":"2026-09-01T00:00:00.000Z"},"jd":"分析","createdAt":"2026-10-01T00:00:00.000Z","current":true}"#).unwrap();
+    output::replace(&c, &output::Output { exports: vec![export], links: vec![link], ..Default::default() }).unwrap();
+    let w = read(&c).unwrap();
+    assert_eq!((w.output.exports[0].lang.as_str(), w.output.exports[0].materials.clone(), w.output.exports[0].draft.is_none()), ("en", vec!["m1".to_string()], true));
+    let links = w.output.links;
+    assert_eq!((links[0].path.as_str(), links[0].current), ("/cv/cn/a.docx", true));
+    assert!(!serde_json::to_string(&links[0]).unwrap().contains("exportId"));
+}
+
+fn rename_group_for_test(c: &Connection) {
+    catalog::rename_group(c, "material", "cn", "教育", "教育背景").unwrap();
+}
+
+#[test]
+fn groups_rename_by_their_shown_name_or_by_category() {
+    let dir = seeker_folder("seeker-groups");
+    let c = memory_db();
+    let w = imported(&c, &dir);
+    let before: Vec<(String, String)> = w.catalog.records.iter().map(|r| (r.id.clone(), r.category.clone())).collect();
+    // a built-in group only shows another name; the program still knows it as 教育 / 素材润色
+    catalog::rename_group(&c, "material", "cn", "教育", "教育背景").unwrap();
+    catalog::rename_group(&c, "rule", "en", "素材润色", "润色要点和素材").unwrap();
+    let w = read(&c).unwrap();
+    assert_eq!(w.catalog.records.iter().map(|r| (r.id.clone(), r.category.clone())).collect::<Vec<_>>(), before);
+    assert_eq!(w.catalog.groups.iter().map(|g| (g.kind.as_str(), g.lang.as_str(), g.category.as_str(), g.label.as_str())).collect::<Vec<_>>(), [("material", "cn", "教育", "教育背景"), ("rule", "", "素材润色", "润色要点和素材")]);
+    // its own name again: back to plain
+    catalog::rename_group(&c, "material", "cn", "教育", "教育").unwrap();
+    assert_eq!(read(&c).unwrap().catalog.groups.len(), 1);
+    // a group of the user's own: its records move (a new version each; this language only)
+    let mut prize = catalog::Record { id: "m-prize".into(), category: "竞赛".into(), title: "数学建模".into(), ..Default::default() };
+    catalog::put(&c, &prize).unwrap();
+    prize = catalog::Record { id: "m-prize-en".into(), lang: "en".into(), ..prize };
+    catalog::put(&c, &prize).unwrap();
+    catalog::rename_group(&c, "material", "cn", "竞赛", "奖项").unwrap();
+    let w = read(&c).unwrap();
+    let of = |id: &str| w.catalog.records.iter().find(|r| r.id == id).map(|r| (r.category.clone(), r.revision)).unwrap();
+    assert_eq!((of("m-prize"), of("m-prize-en")), (("奖项".to_string(), 2), ("竞赛".to_string(), 1)));
+    assert!(catalog::rename_group(&c, "material", "cn", "奖项", " ").is_err());
+    assert!(catalog::rename_group(&c, "fact", "cn", "个人事实", "x").is_err());
+}
+
+#[test]
+fn migration_29_drops_versions_and_the_copies_in_exports() {
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
+    crate::db::configure(&c).unwrap();
+    crate::db::migrate_as(&mut c, &crate::picky::store::MIGRATIONS[..28], None, crate::backup::Store::Picky).unwrap();
+    c.execute("INSERT INTO seeker_versions (label, body) VALUES ('第一版', '{}')", []).unwrap();
+    let body = r#"{"id":"e1","label":"a.docx","path":"/cv/en/a.docx","createdAt":"2026-10-01T00:00:00.000Z","template":{"path":"t"},"draft":{"lang":"en","sections":[{"entries":[{"source":{"recordId":"m1"}},{"source":null},{"source":{"recordId":"m2"}}]},{"entries":[{"source":{"recordId":"m1"}}]}]}}"#;
+    c.execute("INSERT INTO seeker_exports (id, body) VALUES ('e1', ?1)", [body]).unwrap();
+    crate::db::migrate_as(&mut c, crate::picky::store::MIGRATIONS, None, crate::backup::Store::Picky).unwrap();
+    let gone: i64 = c.query_row("SELECT count(*) FROM sqlite_master WHERE name = 'seeker_versions'", [], |r| r.get(0)).unwrap();
+    assert_eq!(gone, 0);
+    let e = &read(&c).unwrap().output.exports[0];
+    assert_eq!((e.lang.as_str(), e.materials.clone(), e.label.as_str()), ("en", vec!["m1".to_string(), "m2".to_string()], "a.docx"));
+    let body: String = c.query_row("SELECT body FROM seeker_exports", [], |r| r.get(0)).unwrap();
+    assert!(!body.contains("draft") && !body.contains("template"), "{body}");
+}
+
+#[test]
+fn each_function_shows_the_groups_it_reads_and_its_system_message() {
+    let dir = seeker_folder("seeker-prompts");
+    let c = memory_db();
+    imported(&c, &dir);
+    for (category, title, text) in [("素材润色", "润色口径", "只润色不加事实 POLISH-ONLY"), ("整体审查", "审查口径", "先看匹配 REVIEW-ONLY")] {
+        catalog::put(&c, &catalog::Record { id: title.into(), kind: "rule".into(), category: category.into(), title: title.into(), text: text.into(), lang: "".into(), ..Default::default() }).unwrap();
+    }
+    let w = read(&c).unwrap();
+    let cn = model::previews(&w, "cn");
+    assert_eq!(cn.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["select", "review", "polish", "material"]);
+    let of = |k: &str| cn.iter().find(|p| p.key == k).unwrap();
+    assert!(of("select").system.contains("REVIEW-ONLY") && !of("select").system.contains("POLISH-ONLY"), "{}", of("select").system);
+    assert!(of("polish").system.contains("POLISH-ONLY") && !of("polish").system.contains("REVIEW-ONLY"));
+    assert_eq!(of("material").groups, ["共用准则", "写作规则", "素材润色", "个人范例"]);
+    // no draft yet: a fresh one with a placeholder JD; English has the Summary too
+    assert!(cn.iter().all(|p| !p.system.starts_with("（现在看不了")), "{cn:?}");
+    assert_eq!(model::previews(&w, "en").len(), 5);
+    // Rater: every function, from the same builders as the calls
+    let bank = crate::picky::assistants::rater::read(&c).unwrap();
+    let rater = crate::picky::assistants::rater::previews(&w, &bank);
+    assert_eq!(rater.len(), 9);
+    // 润色答案 and 挑卡 need a question in the bank: they say so
+    assert!(rater.iter().all(|p| ["polish", "pick"].contains(&p.key.as_str()) == p.system.starts_with("（现在看不了")), "{rater:?}");
+    assert_eq!(rater.iter().find(|p| p.key == "突击题").unwrap().groups, ["共用准则", "题库维护", "突击题"]);
+}
+
+/// Refine R5: a rule is a title and points; older text (lists, tables, paragraphs) and 个人约定 are read
+/// as points, and a rule without one isn't saved.
+#[test]
+fn rules_are_points_and_older_text_is_split() {
+    let text = "以下为依据。素材润色仅可参考。\n\n- 第一条\n2. 第二条\n\n| 维度 | 检查重点 |\n|---|---|\n| 内容 | 是否对应 |\n| 形式 | 是否重复 |\n\n### 用词\n避免空话！";
+    let points: Vec<String> = catalog::split_points(text).into_iter().map(|p| p.text).collect();
+    assert_eq!(points, ["以下为依据。", "素材润色仅可参考。", "第一条", "第二条", "内容：是否对应", "形式：是否重复", "用词", "避免空话！"]);
+    assert_eq!(catalog::split_points(text).iter().map(|p| p.id.as_str()).take(3).collect::<Vec<_>>(), ["p1", "p2", "p3"]);
+    let mut old = Record { id: "d".into(), kind: "decision".into(), category: "素材润色".into(), title: "按步骤".into(), text: "按用户指定步骤处理".into(), lang: "cn".into(), ..Default::default() };
+    catalog::normalize(&mut old);
+    assert_eq!((old.kind.as_str(), old.text.as_str(), old.points.iter().map(|p| p.text.as_str()).collect::<Vec<_>>()), ("rule", "", vec!["按用户指定步骤处理"]));
+    assert_eq!(catalog::rule_markdown(&old), "## 按步骤\n1. 按用户指定步骤处理");
+    // saving: empty points dropped; none left → refused; an old-shaped rule is taken as points
+    let c = memory_db();
+    let empty = Record { id: "r".into(), kind: "rule".into(), category: "共用准则".into(), title: "空的".into(), points: vec![Point { id: "p1".into(), text: "  ".into() }], lang: String::new(), ..Default::default() };
+    assert!(catalog::put(&c, &empty).unwrap_err().contains("至少一个要点"));
+    let kept = Record { points: vec![Point { id: "p1".into(), text: " 一句 ".into() }, Point { id: "p2".into(), text: "".into() }], ..empty.clone() };
+    catalog::put(&c, &kept).unwrap();
+    assert_eq!(read(&c).unwrap().catalog.records[0].points, [Point { id: "p1".into(), text: "一句".into() }]);
+    catalog::put(&c, &Record { id: "t".into(), text: "甲。乙。".into(), points: vec![], ..empty }).unwrap();
+    let t = read(&c).unwrap().catalog.records.into_iter().find(|r| r.id == "t").unwrap();
+    assert_eq!((t.text.as_str(), t.points.len()), ("", 2));
+}
+
+/// Opt-in: every Seeker and Rater function's 发给模型的说明 from a copy of a picky.db (never the real one:
+/// copy it first). POMELO_PROMPTS_DB=<copy> [POMELO_PROMPTS_OUT=<file.md>]
+#[test]
+#[ignore]
+fn prompts_of_a_copy() {
+    let path = std::env::var("POMELO_PROMPTS_DB").expect("POMELO_PROMPTS_DB");
+    assert!(!path.contains("Application Support/Pomelo OS/"), "copy the database first");
+    let c = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let w = read(&c).unwrap();
+    let bank = crate::picky::assistants::rater::read(&c).unwrap();
+    let mut out = vec![];
+    for (who, list) in [("Seeker · 中文", model::previews(&w, "cn")), ("Seeker · English", model::previews(&w, "en")), ("Rater", crate::picky::assistants::rater::previews(&w, &bank))] {
+        for p in list {
+            out.push(format!("## {who} · {}\n\n读的规则：{}\n\n```\n{}\n```\n", p.label, p.groups.join("、"), p.system));
+        }
+    }
+    let text = out.join("\n");
+    match std::env::var("POMELO_PROMPTS_OUT") {
+        Ok(f) => std::fs::write(f, text).unwrap(),
+        Err(_) => println!("{text}"),
     }
 }

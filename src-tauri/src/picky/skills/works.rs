@@ -163,7 +163,7 @@ fn edits(a: &str, b: &str) -> usize {
 
 /// Two names of one person: same letters, one inside the other, or (spelt differently: Dostoyevsky /
 /// Dostoevsky) last names a couple of letters apart.
-fn same_person(a: &str, b: &str) -> bool {
+pub(crate) fn same_person(a: &str, b: &str) -> bool {
     let (x, y) = (norm(a), norm(b));
     if x.is_empty() || y.is_empty() {
         return false;

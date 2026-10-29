@@ -5,6 +5,11 @@
 //! Rater's questions (the 题库 SKILLs, skills/qbank.rs; v0.7 阶段 ⑤) are items too: their input is the
 //! question; confirming writes them into picky.db as their own undo step (a card with both writes
 //! Pomelo's first, then Rater's); 已撤销 = the question is gone.
+//! - Changing a pending item (v0.7 refine R4): each item has a 编号 for the model (`12-1`: run 12's
+//!   first item). A write tool called with `replace` = that 编号 checks its new arguments like a new
+//!   proposal and puts the result in the item's place (`replace`, `replace_rater`) — this reply's
+//!   card or an earlier reply's on the conversation's shown path, while the user hasn't confirmed or
+//!   cancelled it. The earlier ones are listed for the model with their 编号 (`pending_text`).
 
 use super::ops::{self, Op, Written};
 use super::{act, label_of, Field, Proposal};
@@ -70,15 +75,104 @@ pub struct Pick {
     pub option: Option<i64>,
 }
 
-/// Adds a proposal to the reply's card; its 1-based number.
-pub fn add(conn: &Connection, run_id: i64, p: &Proposal) -> Result<usize, String> {
-    let (title, fields, input, options) = match p.choices.as_slice() {
+/// A proposal as an item's columns: title, fields, input, options.
+fn columns(p: &Proposal) -> Result<(String, String, String, Option<String>), String> {
+    Ok(match p.choices.as_slice() {
         [one] => (one.title.clone(), json(&one.fields)?, json(&one.op)?, None),
         many => {
             let stored: Vec<Stored> = many.iter().map(|c| Stored { title: c.title.clone(), fields: c.fields.clone(), input: c.op.clone() }).collect();
             (format!("{} 条待选", many.len()), "[]".to_string(), json(&many[0].op)?, Some(json(&stored)?))
         }
+    })
+}
+
+/// An item's 编号 for the model: `12-1` = run 12's first item.
+pub fn reference(run_id: i64, position: i64) -> String {
+    format!("{run_id}-{}", position + 1)
+}
+
+/// A 编号 the model gave (`12-1`; a bare `2` = this reply's second): (run, position, the item's tool),
+/// when it is an item of a pending card among `runs` (this conversation's shown path and this reply).
+pub fn find_ref(conn: &Connection, runs: &[i64], this: i64, r: &str) -> Result<(i64, i64, String), String> {
+    let r = r.trim().trim_start_matches("编号").trim();
+    let parsed = match r.split_once('-') {
+        Some((a, b)) => a.trim().parse::<i64>().ok().zip(b.trim().parse::<i64>().ok()),
+        None => r.parse::<i64>().ok().map(|n| (this, n)),
     };
+    let Some((run, n)) = parsed.filter(|(_, n)| *n >= 1) else { return Err(format!("编号「{r}」不对：照卡片列表或工具结果里的写，如 12-1")) };
+    let state: Option<String> = if run == this || runs.contains(&run) { conn.query_row("SELECT state FROM cards WHERE run_id = ?1", [run], |x| x.get(0)).optional().map_err(err)? } else { None };
+    match state.as_deref() {
+        None => return Err(format!("这个对话里没有编号 {r} 的卡片")),
+        Some("pending") => {}
+        Some(_) => return Err(format!("编号 {r} 那张卡片用户已经确认或取消了，不能再改：要改就不写 replace，新提议一条")),
+    }
+    let tool: String = conn.query_row("SELECT tool FROM card_items WHERE run_id = ?1 AND position = ?2", params![run, n - 1], |x| x.get(0)).optional().map_err(err)?.ok_or_else(|| format!("卡片里没有编号 {r} 这一条"))?;
+    Ok((run, n - 1, tool))
+}
+
+/// Puts a checked proposal in place of a pending card's item (nothing is written: the user confirms).
+pub fn replace(conn: &Connection, run_id: i64, position: i64, p: &Proposal) -> Result<(), String> {
+    let (title, fields, input, options) = columns(p)?;
+    let n = conn
+        .execute(
+            "UPDATE card_items SET tool = ?3, module = ?4, title = ?5, fields = ?6, input = ?7, options = ?8, chosen = NULL WHERE run_id = ?1 AND position = ?2 AND (SELECT state FROM cards WHERE run_id = ?1) = 'pending'",
+            params![run_id, position, p.tool, p.module, title, fields, input, options],
+        )
+        .map_err(err)?;
+    if n == 0 { Err("那一条已经不能改了".into()) } else { Ok(()) }
+}
+
+/// A pending item's Rater question (the input of a 题库 item).
+pub fn rater_item(conn: &Connection, run_id: i64, position: i64) -> Result<Question, String> {
+    let input: String = conn.query_row("SELECT input FROM card_items WHERE run_id = ?1 AND position = ?2", params![run_id, position], |r| r.get(0)).optional().map_err(err)?.ok_or("卡片里没有这一条")?;
+    serde_json::from_str(&input).map_err(err)
+}
+
+/// Puts one of Rater's questions in place of a pending card's 题库 item.
+pub fn replace_rater(conn: &Connection, run_id: i64, position: i64, tool: &str, title: &str, fields: &[Field], question: &Question) -> Result<(), String> {
+    qbank::category(tool).ok_or("没有这个工具")?;
+    let n = conn
+        .execute(
+            "UPDATE card_items SET tool = ?3, module = ?4, title = ?5, fields = ?6, input = ?7, options = NULL, chosen = NULL WHERE run_id = ?1 AND position = ?2 AND (SELECT state FROM cards WHERE run_id = ?1) = 'pending'",
+            params![run_id, position, tool, data::RATER, title, json(&fields)?, json(question)?],
+        )
+        .map_err(err)?;
+    if n == 0 { Err("那一条已经不能改了".into()) } else { Ok(()) }
+}
+
+/// One line of an item for the model: `作者 甲 → 乙`, a long text clipped.
+pub fn field_text(f: &Field) -> String {
+    match &f.before {
+        Some(b) if !f.long => format!("{} {b} → {}", f.label, f.after),
+        _ if f.long => format!("{}：{}", f.label, f.after.chars().take(80).collect::<String>()),
+        _ => format!("{} {}", f.label, f.after),
+    }
+}
+
+/// The pending cards of `runs` (earlier replies on the conversation's shown path) for the system
+/// message: each item this model may see (`allows`: hidden and cloud-refused modules aren't) with its
+/// 编号 ("" when none).
+pub fn pending_text(conn: &Connection, runs: &[i64], allows: impl Fn(&str) -> bool) -> Result<String, String> {
+    let mut lines = vec![];
+    for &run in runs {
+        let Some(card) = card_of(conn, run)?.filter(|c| c.state == "pending") else { continue };
+        for it in card.items.iter().filter(|it| allows(&it.module)) {
+            let what = match &it.options {
+                Some(o) => format!("找到 {} 条，等用户在卡片里选", o.len()),
+                None => it.fields.iter().map(field_text).collect::<Vec<_>>().join("；"),
+            };
+            lines.push(format!("- 编号 {} · {} · {}：{what}", reference(run, it.position), it.label, it.title));
+        }
+    }
+    if lines.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!("【还没确认的卡片】前面的回答放进卡片、用户还没点确认的：\n{}\n用户要改其中一条时，用原来的工具重新调用、加上 replace 写那一条的编号（参数写全，没变的照抄），柚儿园检查后把卡片里那一条换掉，不多出一条；题库的题写 replace 和 request，会按 request 重写那道题的答案。编号只用来改卡片，回答里不用提。", lines.join("\n")))
+}
+
+/// Adds a proposal to the reply's card; its 1-based number.
+pub fn add(conn: &Connection, run_id: i64, p: &Proposal) -> Result<usize, String> {
+    let (title, fields, input, options) = columns(p)?;
     let tx = Tx::begin(conn)?;
     tx.execute("INSERT OR IGNORE INTO cards (run_id) VALUES (?1)", [run_id]).map_err(err)?;
     let n: i64 = tx.query_row("SELECT count(*) FROM card_items WHERE run_id = ?1", [run_id], |r| r.get(0)).map_err(err)?;

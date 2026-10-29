@@ -192,9 +192,9 @@ fn each_prompt_reads_what_it_needs() {
     seeded(&c);
     play(&c, &["n2"], &[UNSURE]);
     let (w, bank) = (seeker::read(&c).unwrap(), read(&c).unwrap());
-    // the rules: 共用准则, 面试 and its 约定, the skeleton; not other uses
+    // the rules: 共用准则, 面试 (an older 个人约定 as a rule of one point), the skeleton; not other uses
     let rules = rules(&w);
-    for part in ["【共用准则：定位】", "【面试：复盘】", "- 语气：少说套话。", "【答案】答案是用户自己的口述稿"] {
+    for part in ["# 共用准则\n\n## 定位\n1. 只做指定的事。", "# 面试\n\n## 复盘\n1. 事实和判断分开。\n\n## 语气\n1. 少说套话。", "# 答案\n答案是用户自己的口述稿"] {
         assert!(rules.contains(part), "{part}\n{rules}");
     }
     assert!(!rules.contains("不该读到"));
@@ -208,7 +208,7 @@ fn each_prompt_reads_what_it_needs() {
     // 追问 on a 简历题: the question, the 口述稿, what was typed, the material and its 档案, the JD
     let r = begin(&c, &start("自己挑", &["n1"]), None).unwrap();
     let (system, user) = follow_prompt(&w, &bank, &r, 0, "我负责写代码", Some(&job()));
-    assert!(system.contains("扮演面试官") && system.contains("\"question\"") && system.contains("【面试：复盘】"), "{system}");
+    assert!(system.contains("扮演面试官") && system.contains("\"question\"") && system.contains("## 复盘"), "{system}");
     for part in ["【简历题】柚子笔记里你负责什么？\n用户题库里的口述稿：全部代码。", "用户这次说的：我负责写代码", "素材 m-notes【项目】柚子笔记", "经历档案《柚子笔记 经历档案》", "JD：\n负责信贷数据分析"] {
         assert!(user.contains(part), "{part}\n{user}");
     }
@@ -448,4 +448,28 @@ fn real_practice() {
     if let Ok(out) = std::env::var("POMELO_PRACTICE_OUT") {
         std::fs::write(out, text).unwrap();
     }
+}
+
+#[test]
+fn questions_keep_the_users_order_and_go_several_at_once() {
+    let c = memory_db();
+    seeded(&c);
+    let order = |c: &Connection| read(c).unwrap().questions.iter().filter(|q| q.category == "通用题").map(|q| q.id.clone()).collect::<Vec<_>>();
+    assert_eq!(order(&c), ["g1", "g2"]);
+    reorder(&c, &["g2".into(), "g1".into()]).unwrap();
+    assert_eq!(order(&c), ["g2", "g1"]);
+    // the rest kept their places
+    assert_eq!(read(&c).unwrap().questions.iter().map(|q| q.id.as_str()).filter(|id| !id.starts_with('g')).collect::<Vec<_>>(), ["n1", "n2", "j1", "j2"]);
+    let b = memory_db();
+    crate::picky::transfer::replace(&b, &crate::picky::transfer::export(&c).unwrap()).unwrap();
+    assert_eq!(order(&b), ["g2", "g1"]);
+    // rounds: several deleted in one go
+    let r1 = play(&c, &["g1"], &[KNOW]);
+    let r2 = play(&c, &["g2"], &[UNSURE]);
+    let tx = Tx::begin(&c).unwrap();
+    for id in [&r1.id, &r2.id] {
+        remove(&tx, id).unwrap();
+    }
+    tx.commit().unwrap();
+    assert!(practice(&c).unwrap().rounds.is_empty());
 }

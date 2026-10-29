@@ -1,4 +1,4 @@
-//! Assembling the draft from materials, a material's newer version, confirmed versions, sorting.
+//! Assembling the draft from materials, a material's newer version, sorting.
 //! 增加 appends the chosen materials not in the draft yet (text, order and header stay); 重新组装 and
 //! 新建 start over from 基本信息 + 教育 (+ the chosen ones; 重新组装 keeps the JD, its job and Resume / CV).
 //! Each is one undo step. Everything works on one language's draft with that language's materials.
@@ -50,7 +50,14 @@ pub fn id() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// 技术栈 lines: chosen by default only for 纯开发岗.
+/// Does a JD read like a development job? Then a material's 技术栈 line is chosen by default (the
+/// user can still untick it; 选材 decides from the JD itself).
+pub fn dev_jd(jd: &str) -> bool {
+    let t = jd.to_lowercase();
+    ["开发", "研发", "工程师", "程序员", "后端", "前端", "全栈", "developer", "engineer", "software", "programmer", "backend", "back-end", "frontend", "front-end", "full stack", "full-stack"].iter().any(|k| t.contains(k))
+}
+
+/// 技术栈 lines: chosen by default only for a development JD (`dev_jd`).
 pub fn is_stack(p: &Point) -> bool {
     let t = p.text.trim_start_matches(['*', ' ']).to_lowercase();
     t.starts_with("技术栈") || t.starts_with("tech stack")
@@ -212,33 +219,6 @@ pub async fn picky_seeker_source_apply(state: State<'_, AppState>, change: Sourc
         }
         *entry = change.after;
         save(c, &draft)?;
-        read(c)
-    })
-}
-
-#[tauri::command]
-pub async fn picky_seeker_confirm(state: State<'_, AppState>, label: String, lang: String) -> Result<Workspace, String> {
-    let lang = lang_of(&lang)?;
-    state.with_picky_undo("确认简历版本", |c| {
-        let tx = Tx::begin(c)?;
-        let draft = read(&tx)?.draft(lang).cloned().ok_or("还没有草稿")?;
-        let label = if label.trim().is_empty() { "确认版本" } else { label.trim() };
-        tx.execute("INSERT INTO seeker_versions (label, body) VALUES (?1, ?2)", params![label, serde_json::to_string(&draft).map_err(err)?]).map_err(err)?;
-        baseline(&tx, &draft)?;
-        tx.commit()?;
-        read(c)
-    })
-}
-
-#[tauri::command]
-pub async fn picky_seeker_restore(state: State<'_, AppState>, version_id: i64) -> Result<Workspace, String> {
-    state.with_picky_undo("从历史另开草稿", |c| {
-        let tx = Tx::begin(c)?;
-        let body: String = tx.query_row("SELECT body FROM seeker_versions WHERE id = ?1", [version_id], |r| r.get(0)).map_err(|_| "找不到这个版本".to_string())?;
-        let draft: Draft = serde_json::from_str(&body).map_err(err)?;
-        save(&tx, &draft)?;
-        baseline(&tx, &draft)?;
-        tx.commit()?;
         read(c)
     })
 }

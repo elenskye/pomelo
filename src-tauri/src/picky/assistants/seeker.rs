@@ -1,23 +1,25 @@
 //! Seeker (助手, v0.7): the user's resume workflow, a Chinese and (阶段 ③) an English resume. picky.db
 //! tables (migrations 0020, 0022, 0023):
 //! - `seeker_settings` (one row): the remembered Seeker folder (only a path; nothing is read until
-//!   the user previews an import), workflow options (models, thinking, cloud, 纯开发岗, the language
+//!   the user previews an import), workflow options (models, thinking, cloud, the language
 //!   the page shows) and the Word template mapping per language (`template`, `template_en`).
 //!   `seeker_draft` (one row per language, `cn` / `en`): the current draft (JSON `Draft`) and the
-//!   baseline 「修改差异」 compares with (set by 新建 / 重新组装 / 确认 / 另开草稿; 增加 keeps it).
+//!   baseline 「修改差异」 compares with (set by 新建 / 重新组装; 增加 keeps it).
 //! - `seeker_records`: materials, 基本信息, facts, rules, 范例, 网申 (catalog.rs); `seeker_record_history`
-//!   keeps every replaced or deleted version. `seeker_versions`: confirmed drafts, never changed.
-//! - `seeker_exports` / `seeker_job_exports`: Word exports (immutable snapshots) and job links (output.rs).
+//!   keeps every replaced or deleted version; `seeker_groups` (0029): the names built-in groups show. No
+//!   copies of whole résumés are kept (确认版本 went in 0029).
+//! - `seeker_exports` / `seeker_job_resumes`: Word exports (name, path, language, time, the materials used;
+//!   no copy of the résumé) and the résumés jobs used (by path: an export or any file under cv/; output.rs).
 //!   `seeker_job_companies` (0022): a job's company folder in knowledge/ when the user chose one (company.rs).
 //! - Languages: a record's `lang` (catalog.rs: materials and 基本信息 are one language; rules, 约定 and 范例
 //!   one or both; facts, 档案 and 网申 always both); a draft's `lang` says which row it is and goes with
-//!   its versions and exports. Everything a command does is in one language; nothing is translated.
+//!   its exports. Everything a command does is in one language; nothing is translated.
 //!   An English draft is a Resume or a CV (`form`): only reminders differ (`warnings`).
 //! - The draft can be for a 投石问路 job (`Draft.job`, set by 「做简历」 or the job list of 岗位与建议):
 //!   its 备注 is the JD, exports default to linking it, 选材 / 审查 search its company's knowledge/.
 //! - Edits go through `with_picky_undo` (one step each, batch deletes included); settings (folder,
-//!   options, templates) aren't undone (like the other assistants'), nor is a Word export and its
-//!   snapshot (like Work's files). Editing the draft never writes back to materials.
+//!   options, templates) aren't undone (like the other assistants'), nor is a Word export (like
+//!   Work's files). Editing the draft never writes back to materials.
 //! - Models only propose (model.rs); the user sees a diff and accepts. Block ids (header fields,
 //!   sections, entries, points) are unique and non-empty; they key selection, sorting and deletion.
 //! - Data file (format 19; 20 with the job and company choices; 22 with English): the whole workspace
@@ -143,7 +145,8 @@ pub struct Workspace {
     pub output: output::Output,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub job_companies: Vec<company::Choice>,
-    /// The default choice of points per enabled material (技术栈 only for 纯开发岗).
+    /// The default choice of points per enabled material (技术栈 only when the draft of its language has a
+    /// development JD, workflow.rs `dev_jd`).
     #[serde(default, skip_deserializing, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<workflow::Selection>,
 }
@@ -153,7 +156,7 @@ impl Workspace {
         let c = &self.catalog;
         usize::from(self.cn.draft.is_some() || self.en.draft.is_some() || !self.folder.is_empty() || c.settings != catalog::Settings::default())
             + c.records.len()
-            + c.versions.len()
+            + c.groups.len()
             + self.output.exports.len()
             + usize::from(self.output.template.is_some())
             + usize::from(self.output.template_en.is_some())
@@ -228,7 +231,8 @@ pub fn read(conn: &Connection) -> Result<Workspace, String> {
     let parsed = |t: Option<String>| t.map(|t| serde_json::from_str(&t).map_err(err)).transpose();
     output.template = parsed(template)?;
     output.template_en = parsed(template_en)?;
-    let choices = catalog.records.iter().filter(|r| r.kind == "material" && r.enabled).map(|r| workflow::Selection { record_id: r.id.clone(), point_ids: r.choosable().iter().filter(|p| catalog.settings.developer_role || !workflow::is_stack(p)).map(|p| p.id.clone()).collect() }).collect();
+    let dev = |lang: &str| (if lang == "en" { &en } else { &cn }).draft.as_ref().is_some_and(|d| workflow::dev_jd(&d.jd));
+    let choices = catalog.records.iter().filter(|r| r.kind == "material" && r.enabled).map(|r| workflow::Selection { record_id: r.id.clone(), point_ids: r.choosable().iter().filter(|p| dev(&r.lang) || !workflow::is_stack(p)).map(|p| p.id.clone()).collect() }).collect();
     let job_companies = company::load(conn)?;
     Ok(Workspace { folder, cn, en, catalog, output, job_companies, choices })
 }
@@ -258,8 +262,13 @@ pub fn save(conn: &Connection, draft: &Draft) -> Result<(), String> {
 
 /// Seeker's 「允许发给云端」 (the 「Seeker 资料」 skill and Rater follow it).
 pub fn cloud_allowed(conn: &Connection) -> Result<bool, String> {
+    Ok(settings_of(conn)?.cloud_allowed)
+}
+
+/// The stored options (models, thinking, cloud, language, company names); unreadable: the defaults.
+pub fn settings_of(conn: &Connection) -> Result<catalog::Settings, String> {
     let raw: Option<String> = conn.query_row("SELECT options FROM seeker_settings WHERE id = 1", [], |r| r.get(0)).optional().map_err(err)?;
-    Ok(raw.and_then(|s| serde_json::from_str::<catalog::Settings>(&s).ok()).is_some_and(|s| s.cloud_allowed))
+    Ok(raw.and_then(|s| serde_json::from_str::<catalog::Settings>(&s).ok()).unwrap_or_default())
 }
 
 /// Settings (folder, options, template) are not undone, like the other assistants' settings.
@@ -281,7 +290,7 @@ pub fn from_before_english(w: &mut Workspace) {
 
 /// The data-file import (inside its transaction): the file's workspace replaces Seeker's tables.
 pub fn replace(conn: &Connection, w: &Workspace) -> Result<(), String> {
-    conn.execute_batch("DELETE FROM seeker_job_companies; DELETE FROM seeker_job_exports; DELETE FROM seeker_exports; DELETE FROM seeker_versions; DELETE FROM seeker_record_history; DELETE FROM seeker_records; DELETE FROM seeker_draft; DELETE FROM seeker_settings;").map_err(err)?;
+    conn.execute_batch("DELETE FROM seeker_job_companies; DELETE FROM seeker_job_resumes; DELETE FROM seeker_exports; DELETE FROM seeker_groups; DELETE FROM seeker_record_history; DELETE FROM seeker_records; DELETE FROM seeker_draft; DELETE FROM seeker_settings;").map_err(err)?;
     let template = |t: &Option<output::Template>| t.as_ref().map(serde_json::to_string).transpose().map_err(err);
     conn.execute("INSERT INTO seeker_settings (id, folder, options, template, template_en) VALUES (1, ?1, ?2, ?3, ?4)", params![w.folder, serde_json::to_string(&w.catalog.settings).map_err(err)?, template(&w.output.template)?, template(&w.output.template_en)?]).map_err(err)?;
     for (lang, desk) in [("cn", &w.cn), ("en", &w.en)] {

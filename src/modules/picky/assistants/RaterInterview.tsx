@@ -1,13 +1,14 @@
 // Rater 面试 (v0.7 阶段 ⑦; Rust picky/assistants/rater/interview.rs): one 投石问路 job at a time — its 准备
 // (小拾 picks the bank's questions, adds likely follow-ups, writes a one-page 速查卡 the user edits and
 // saves as Word; 用这些题练一轮 starts a card round) and its 复盘 (what was asked and answered, the
-// feedback, the user's own judgement; 对照准备 → hits, misses, questions to keep, 个人约定 to adopt).
+// feedback, the user's own judgement; 对照准备 → hits, misses, questions to keep, rule points to adopt).
 // The job panel's 「面试」 opens this page with the job (and the prep / review dialog) via useOpenRequest.
+import { PickField } from "@/shared/PickField";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ChevronRight, FileDown, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
-import { jobLabel, useJobs, type Job } from "@/modules/jobs/api";
+import { jobLabel, useJobs, type Job, jobPicks } from "@/modules/jobs/api";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
@@ -16,7 +17,7 @@ import { api as ipc } from "@/shared/ipc";
 import { useOpenRequest } from "@/shared/open";
 import { Button, EmptyState, Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { MarkdownView } from "../MarkdownView";
-import { SEEKER_KEY, seekerApi } from "./seekerApi";
+import { SEEKER_KEY, seekerApi, seekerJobResumesKey } from "./seekerApi";
 import { RATER_INTERVIEWS_KEY, RATER_INTERVIEW_LANGS, RATER_KEY, RATER_MODES, RATER_PRACTICE_KEY, RATER_RESULTS, interviewApi, raterApi, sameJob, type RaterAsked, type RaterBank, type RaterFollow, type RaterInterviews, type RaterPrep, type RaterReview } from "./raterApi";
 
 type Guarded = (action: () => Promise<void>) => Promise<boolean>;
@@ -59,7 +60,7 @@ export function RaterInterview(p: Props) {
   return <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1 pt-4 pb-6">
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <Dropdown<number | null> ariaLabel="岗位" value={jobId} placeholder="选择岗位" options={list.map((j) => { const n = of(j); return { value: j.id, label: n.preps.length + n.reviews.length ? `${jobLabel(j)}（准备 ${n.preps.length} · 复盘 ${n.reviews.length}）` : jobLabel(j) }; })} onChange={setJobId} />
+        <PickField<number | null> ariaLabel="岗位" title="哪个岗位的面试" value={jobId} placeholder="选择岗位" options={list.map((j, i) => { const n = of(j); const base = jobPicks([j])[0]; return { ...base, detail: n.preps.length + n.reviews.length ? `准备 ${n.preps.length} · 复盘 ${n.reviews.length}` : base.detail, group: n.preps.length + n.reviews.length ? "有面试记录" : "其他岗位", value: list[i].id as number | null }; }).sort((a, b) => Number(a.group !== "有面试记录") - Number(b.group !== "有面试记录"))} onChange={setJobId} />
         <span className="flex-1" />
         <Button disabled={!job || p.busy || !p.model} onClick={() => setPrepping(true)}><Sparkles size={14} />准备面试</Button>
         <Button disabled={!job || p.busy} onClick={() => setEditing(blankReview())}><Plus size={14} />复盘</Button>
@@ -83,12 +84,11 @@ function PrepDialog(props: { job: Job; model: string | null; close: () => void; 
   const [request, setRequest] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // the resume it will read (as Rust picks it): the job's export in use, else the draft of that language
+  // the resume it will read (as Rust picks it): the job's résumé in use still under cv/, else the draft of that language
   const w = seeker.data;
-  const links = w?.output.links.filter((l) => l.job.id === props.job.id && l.job.createdAt === props.job.createdAt) ?? [];
-  const link = links.find((l) => l.current) ?? links.at(-1);
-  const exported = link && w?.output.exports.find((e) => e.id === link.exportId);
-  const resume = exported ? `${exported.label}（本次使用）` : lang === "English" ? (w?.en?.draft ? "英文草稿" : "没有英文简历") : w?.draft ? "中文草稿" : "没有中文简历";
+  const used = useQuery({ queryKey: seekerJobResumesKey(props.job.id), queryFn: () => seekerApi.jobResumes(props.job.id) }).data?.linked;
+  const link = used?.find((l) => l.current) ?? used?.[0];
+  const resume = link ? `${link.name.split("/").pop()}${link.current ? "（本次使用）" : ""}` : lang === "English" ? (w?.en?.draft ? "英文草稿" : "没有英文简历") : w?.draft ? "中文草稿" : "没有中文简历";
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setRunning(true); setError(null);
@@ -221,7 +221,7 @@ function ReviewCard(p: Props & { review: RaterReview; first: boolean; preps: Rat
         {a.hits.length > 0 && <div><p className="text-xs text-muted-foreground">准备到了</p><ul className="list-disc space-y-0.5 pl-5">{a.hits.map((h, i) => <li key={i}>{asked(h.asked)}<span className="text-muted-foreground"> → {h.text}</span></li>)}</ul></div>}
         {a.misses.length > 0 && <div><p className="text-xs text-primary">没准备到</p><ul className="list-disc space-y-0.5 pl-5">{a.misses.map((h, i) => <li key={i}>{asked(h.asked)}<span className="text-muted-foreground"> → {h.text}</span></li>)}</ul></div>}
         {a.questions.length > 0 && <div className="space-y-2"><p className="text-xs text-muted-foreground">值得加进题库</p><ul className="space-y-2">{a.questions.map((f, i) => <FollowItem key={i} f={f} busy={p.busy} keep={() => void p.write(() => interviewApi.reviewKeep(r.id, i))} />)}</ul></div>}
-        {a.rules.length > 0 && <div className="space-y-2"><p className="text-xs text-muted-foreground">提议的个人约定</p>{a.rules.map((x, i) => <div key={i} className="space-y-1 rounded-control border px-3 py-2"><p><span className="font-medium">{x.title}</span><span className="ml-2 text-xs text-muted-foreground">{x.use}</span></p><p>{x.text}</p>{x.why && <p className="text-xs text-muted-foreground">{x.why}</p>}{x.adopted ? <span className="text-xs text-muted-foreground">已加进规则</span> : <Button variant="ghost" className="-ml-2" disabled={p.busy} onClick={() => void p.write(() => interviewApi.reviewRule(r.id, i))}><Plus size={14} />加进规则</Button>}</div>)}</div>}
+        {a.rules.length > 0 && <div className="space-y-2"><p className="text-xs text-muted-foreground">提议的规则</p>{a.rules.map((x, i) => <div key={i} className="space-y-1 rounded-control border px-3 py-2"><p><span className="font-medium">{x.title}</span><span className="ml-2 text-xs text-muted-foreground">{x.use}</span></p><p>{x.text}</p>{x.why && <p className="text-xs text-muted-foreground">{x.why}</p>}{x.adopted ? <span className="text-xs text-muted-foreground">已加进规则</span> : <Button variant="ghost" className="-ml-2" disabled={p.busy} onClick={() => void p.write(() => interviewApi.reviewRule(r.id, i))}><Plus size={14} />加进规则</Button>}</div>)}</div>}
       </>}
     </section>
     {dialog}
@@ -234,13 +234,13 @@ function ReviewEditor(props: { initial: RaterReview; busy: boolean; close: () =>
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<RaterReview>) => setV((x) => ({ ...x, ...patch }));
   const setItem = (i: number, patch: Partial<RaterAsked>) => set({ items: v.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) });
-  return <Modal wide title={props.initial.id ? "编辑复盘" : "复盘"} error={error} onClose={props.close} submitLabel="保存" submitDisabled={props.busy} onSubmit={(e) => { e.preventDefault(); void props.save(v).then((ok) => { if (!ok) setError("没存上，请重试"); }); }}>
+  return <Modal size="xl" title={props.initial.id ? "编辑复盘" : "复盘"} error={error} onClose={props.close} submitLabel="保存" submitDisabled={props.busy} onSubmit={(e) => { e.preventDefault(); void props.save(v).then((ok) => { if (!ok) setError("没存上，请重试"); }); }}>
     <fieldset disabled={props.busy} className="-m-1 max-h-[64vh] space-y-3 overflow-y-auto p-1">
       <div className="grid grid-cols-[10rem_1fr_1fr_8rem] gap-3">
         <Field label="日期"><DateInput ariaLabel="日期" value={v.date} onChange={(date) => set({ date })} /></Field>
         <Field label="轮次"><TextInput aria-label="轮次" value={v.round} maxLength={40} onChange={(e) => set({ round: e.target.value })} /></Field>
         <Field label="形式"><TextInput aria-label="形式" value={v.form} maxLength={60} onChange={(e) => set({ form: e.target.value })} /></Field>
-        <Field label="结果"><Dropdown ariaLabel="结果" value={v.result} options={RATER_RESULTS.map((x) => ({ value: x, label: x }))} onChange={(result) => set({ result })} /></Field>
+        <Field label="结果"><Dropdown block ariaLabel="结果" value={v.result} options={RATER_RESULTS.map((x) => ({ value: x, label: x }))} onChange={(result) => set({ result })} /></Field>
       </div>
       <Field label="问了什么" action={<button type="button" className="text-xs text-primary" onClick={() => set({ items: [...v.items, { question: "", answer: "", feedback: "" }] })}>＋ 一条</button>}>
         <ol className="space-y-3">{v.items.map((it, i) => <li key={i} className="space-y-1.5 rounded-control border p-2">

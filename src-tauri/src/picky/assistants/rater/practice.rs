@@ -17,8 +17,8 @@
 //! - Feedback: the page lists 不熟 / 会 / 追问; when the user typed or asked follow-ups
 //!   (`Round::wants_comment`) Rater's model writes what went well, the gaps (which experience they
 //!   can't explain) and a note on each typed answer (`comment_prompt`).
-//! - The model is Rater's own (qbank.rs `chosen_model`, `call`); rules: 共用准则, 题库维护, 面试 and
-//!   their 个人约定, the answer skeleton.
+//! - The model is Rater's own (qbank.rs `chosen_model`, `call`); rules: 共用准则, 题库维护, 面试, the
+//!   answer skeleton.
 //! - Data file (format 24): rounds go with Rater's bank (`Bank::rounds`); a file without them leaves
 //!   them as they are.
 use super::qbank::{self, Options};
@@ -435,18 +435,15 @@ pub fn replace(c: &Connection, rounds: &[Round]) -> Result<(), String> {
 
 // ---------- the model's part ----------
 
-/// What practice tells the model: 共用准则, 题库维护, 面试 (and their 个人约定), the answer skeleton.
+/// What practice tells the model: 共用准则, 题库维护, 面试 (Markdown, points numbered), the answer skeleton.
+/// The rule groups 卡片练习 and 面试 read.
+pub const READS: [&str; 3] = ["共用准则", RULES[0], RULES[1]];
+
 pub fn rules(w: &Workspace) -> String {
     let on: Vec<&seeker::catalog::Record> = w.catalog.records.iter().filter(|r| r.enabled && r.for_lang("cn")).collect();
-    let mut out = vec![];
-    for use_ in ["共用准则", RULES[0], RULES[1]] {
-        out.extend(on.iter().filter(|r| r.kind == "rule" && r.category == use_).map(|r| format!("【{use_}：{}】\n{}", r.title, r.text)));
-    }
-    let decisions: Vec<String> = on.iter().filter(|r| r.kind == "decision" && RULES.contains(&r.category.as_str())).map(|r| format!("- {}：{}", r.title, r.text)).collect();
-    if !decisions.is_empty() {
-        out.push(format!("【有效个人约定】\n{}", decisions.join("\n")));
-    }
-    out.push(format!("【答案】{}", qbank::SKELETON));
+    let groups: Vec<(String, Vec<&seeker::catalog::Record>)> = READS.iter().map(|use_| (seeker::catalog::group_label(&w.catalog, use_), on.iter().filter(|r| r.kind == "rule" && r.category == *use_).copied().collect())).collect();
+    let mut out = seeker::catalog::rules_markdown(&groups);
+    out.push(format!("# 答案\n{}", qbank::SKELETON));
     out.join("\n\n")
 }
 
@@ -665,6 +662,18 @@ pub async fn picky_rater_stop(state: tauri::State<'_, AppState>, id: String) -> 
 pub async fn picky_rater_round_delete(state: tauri::State<'_, AppState>, id: String) -> Result<Practice, String> {
     state.with_picky_undo("删除这一轮", |c| {
         remove(c, &id)?;
+        practice(c)
+    })
+}
+
+#[tauri::command]
+pub async fn picky_rater_rounds_delete(state: tauri::State<'_, AppState>, ids: Vec<String>) -> Result<Practice, String> {
+    state.with_picky_undo(&format!("删除 {} 轮练习", ids.len()), |c| {
+        let tx = Tx::begin(c)?;
+        for id in &ids {
+            remove(&tx, id)?;
+        }
+        tx.commit()?;
         practice(c)
     })
 }

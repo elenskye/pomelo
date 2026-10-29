@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /** Rater's question bank (Rust picky/assistants/rater.rs). */
+import type { SeekerPromptView } from "./seekerApi";
 export const RATER_CATEGORIES = ["简历题", "通用题", "突击题"] as const;
 /** Rater's rules: Seeker records of these 用途 (the last three: each 题库 SKILL's workflow). */
 export const RATER_USES = [{ value: "题库维护", label: "题库维护" }, { value: "面试", label: "面试" }, ...RATER_CATEGORIES.map((c) => ({ value: c, label: `${c} SKILL` }))];
@@ -44,11 +45,17 @@ export const raterApi = {
   bank: () => invoke<RaterBank>("picky_rater"),
   save: (question: RaterQuestion) => invoke<RaterBank>("picky_rater_save", { question }),
   remove: (id: string) => invoke<RaterBank>("picky_rater_delete", { id }),
+  removeMany: (ids: string[]) => invoke<RaterBank>("picky_rater_delete_many", { ids }),
+  /** The user's order for a group of questions. */
+  order: (ids: string[]) => invoke<RaterBank>("picky_rater_order", { ids }),
+  removeRounds: (ids: string[]) => invoke<RaterPractice>("picky_rater_rounds_delete", { ids }),
   seconds: (text: string) => invoke<number>("picky_rater_seconds", { text }),
+  /** 规则页 · 发给模型的说明 (Rust rater.rs `previews`). */
+  prompts: () => invoke<SeekerPromptView[]>("picky_rater_prompts"),
   suggest: (ask: RaterAsk) => invoke<RaterProposal>("picky_rater_suggest", { ask }),
   add: (questions: RaterQuestion[]) => invoke<RaterBank>("picky_rater_add", { questions }),
   /** Each SKILL's built-in workflow: [category, text]. */
-  defaults: () => invoke<[string, string][]>("picky_rater_defaults"),
+  defaults: () => invoke<[string, string[]][]>("picky_rater_defaults"),
   options: () => invoke<RaterOptions>("picky_rater_options"),
   setOptions: (options: RaterOptions) => invoke<RaterOptions>("picky_rater_options_set", { options }),
   practice: () => invoke<RaterPractice>("picky_rater_practice"),

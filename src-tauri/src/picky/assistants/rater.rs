@@ -22,6 +22,7 @@ pub mod interview;
 pub mod practice;
 pub mod qbank;
 use crate::modules::common::{err, Tx};
+use crate::picky::assistants::seeker;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -131,7 +132,7 @@ fn json<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, String> {
 }
 
 pub fn read(c: &Connection) -> Result<Bank, String> {
-    let mut st = c.prepare("SELECT body FROM rater_questions ORDER BY rowid").map_err(err)?;
+    let mut st = c.prepare("SELECT body FROM rater_questions ORDER BY sort, rowid").map_err(err)?;
     let questions: Vec<Question> = st.query_map([], |r| r.get::<_, String>(0)).map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?.iter().map(|b| json(b)).collect::<Result<_, _>>()?;
     let mut st = c.prepare("SELECT id, question_id, body, saved_at FROM rater_question_history ORDER BY id DESC").map_err(err)?;
     let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?, r.get(3)?))).map_err(err)?.collect::<Result<Vec<(i64, String, String, String)>, _>>().map_err(err)?;
@@ -192,7 +193,7 @@ pub fn put(c: &Connection, input: &Question) -> Result<(), String> {
         None if input.revision != 0 => return Err("这道题已经删除了".into()),
         None => q.revision = 1,
     }
-    c.execute("INSERT INTO rater_questions (id, body, revision) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET body = excluded.body, revision = excluded.revision", params![q.id, serde_json::to_string(&q).map_err(err)?, q.revision]).map_err(err)?;
+    c.execute("INSERT INTO rater_questions (id, body, revision, sort) VALUES (?1, ?2, ?3, (SELECT coalesce(max(sort), 0) + 1 FROM rater_questions)) ON CONFLICT(id) DO UPDATE SET body = excluded.body, revision = excluded.revision", params![q.id, serde_json::to_string(&q).map_err(err)?, q.revision]).map_err(err)?;
     Ok(())
 }
 
@@ -206,12 +207,26 @@ pub fn delete(c: &Connection, id: &str) -> Result<(), String> {
     tx.commit()
 }
 
+/// The user's order for some questions (a group on the page): they take the places they had, in the
+/// new order; the rest stay where they are.
+pub fn reorder(c: &Connection, ids: &[String]) -> Result<(), String> {
+    let mut places = vec![];
+    for id in ids {
+        places.push(c.query_row("SELECT sort FROM rater_questions WHERE id = ?1", [id], |r| r.get::<_, i64>(0)).map_err(|_| "有题已经删除了，请刷新".to_string())?);
+    }
+    places.sort_unstable();
+    for (id, place) in ids.iter().zip(places) {
+        c.execute("UPDATE rater_questions SET sort = ?1 WHERE id = ?2", params![place, id]).map_err(err)?;
+    }
+    Ok(())
+}
+
 /// The data-file import (inside its transaction): the file's bank replaces Rater's tables.
 pub fn replace(c: &Connection, bank: &Bank) -> Result<(), String> {
     c.execute_batch("DELETE FROM rater_question_history; DELETE FROM rater_questions;").map_err(err)?;
     for q in &bank.questions {
         validate(q)?;
-        c.execute("INSERT INTO rater_questions (id, body, revision) VALUES (?1, ?2, ?3)", params![q.id, serde_json::to_string(q).map_err(err)?, q.revision]).map_err(|_| "Rater：题目重复了".to_string())?;
+        c.execute("INSERT INTO rater_questions (id, body, revision, sort) VALUES (?1, ?2, ?3, (SELECT coalesce(max(sort), 0) + 1 FROM rater_questions))", params![q.id, serde_json::to_string(q).map_err(err)?, q.revision]).map_err(|_| "Rater：题目重复了".to_string())?;
     }
     for r in &bank.revisions {
         c.execute("INSERT INTO rater_question_history (id, question_id, body, saved_at) VALUES (?1, ?2, ?3, ?4)", params![r.id, r.question_id, serde_json::to_string(&r.body).map_err(err)?, r.saved_at]).map_err(err)?;
@@ -244,6 +259,58 @@ pub async fn picky_rater_delete(state: State<'_, AppState>, id: String) -> Resul
         delete(c, &id)?;
         read(c)
     })
+}
+
+#[tauri::command]
+pub async fn picky_rater_order(state: State<'_, AppState>, ids: Vec<String>) -> Result<Bank, String> {
+    state.with_picky_undo("调整题目顺序", |c| {
+        reorder(c, &ids)?;
+        read(c)
+    })
+}
+
+#[tauri::command]
+pub async fn picky_rater_delete_many(state: State<'_, AppState>, ids: Vec<String>) -> Result<Bank, String> {
+    state.with_picky_undo(&format!("删除 {} 道题", ids.len()), |c| {
+        let tx = Tx::begin(c)?;
+        for id in &ids {
+            delete(&tx, id)?;
+        }
+        tx.commit()?;
+        read(c)
+    })
+}
+
+/// 规则页 · 发给模型的说明: each Rater function's system message as its real call builds it (on a
+/// placeholder job 「（岗位）」 and the bank's first question; the JD, questions and materials go with
+/// the call itself) and the rule groups it reads.
+pub fn previews(w: &seeker::Workspace, bank: &Bank) -> Vec<seeker::model::PromptView> {
+    use seeker::model::PromptView;
+    let job = seeker::output::JobSnapshot { id: 0, company: "（岗位）".into(), position: None, location: None, link: None, note: Some("（JD）".into()), created_at: String::new() };
+    let first = bank.questions.first();
+    let round = practice::Round { cards: vec![practice::Card { question: first.map(|q| q.id.clone()).unwrap_or_default(), text: first.map_or("（题目）".into(), |q| q.question.clone()), category: first.map_or("通用题".into(), |q| q.category.clone()), mark: Some(practice::UNSURE.into()), ..Default::default() }], ..Default::default() };
+    let view = |key: &str, label: &str, groups: &[&str], system: Result<String, String>| PromptView { key: key.into(), label: label.into(), groups: groups.iter().map(|g| g.to_string()).collect(), system: system.unwrap_or_else(|e| format!("（现在看不了：{e}）")) };
+    let mut out = vec![];
+    for category in CATEGORIES {
+        let ask = qbank::Ask { kind: category.into(), job: (category == "突击题").then_some(0), ..Default::default() };
+        out.push(view(category, &format!("补题 · {category}"), &qbank::reads(category), qbank::prompt(w, bank, &ask, (category == "突击题").then_some(&job), "").map(|(s, _)| s)));
+    }
+    let polish = first.ok_or_else(|| "题库还是空的".to_string()).and_then(|q| qbank::prompt(w, bank, &qbank::Ask { kind: qbank::POLISH.into(), question: Some(q.id.clone()), ..Default::default() }, None, "").map(|(s, _)| s));
+    // 润色答案 reads the workflow of the question's own category
+    out.push(view("polish", "润色答案", &["共用准则", RULES[0], CATEGORIES[0], CATEGORIES[1], CATEGORIES[2]], polish));
+    out.push(view("pick", "卡片练习 · 按 JD 挑卡", &practice::READS, practice::pick_prompt(w, bank, &job).map(|(s, _)| s)));
+    out.push(view("follow", "卡片练习 · 追问", &practice::READS, Ok(practice::follow_prompt(w, bank, &round, 0, "", None).0)));
+    out.push(view("comment", "卡片练习 · 点评", &practice::READS, Ok(practice::comment_prompt(w, bank, &round, None).0)));
+    let ask = interview::PrepAsk { lang: interview::LANGS[0].into(), ..Default::default() };
+    out.push(view("prep", "面试 · 准备", &practice::READS, interview::prep_prompt(w, bank, &ask, &job, None, "").map(|(s, _)| s)));
+    out.push(view("compare", "面试 · 复盘对照", &practice::READS, Ok(interview::compare_prompt(w, bank, &interview::Review::default(), None, None).0)));
+    out
+}
+
+#[tauri::command]
+pub async fn picky_rater_prompts(state: State<'_, AppState>) -> Result<Vec<seeker::model::PromptView>, String> {
+    let (w, bank) = state.picky.with_db(|c| Ok((seeker::read(c)?, read(c)?)))?;
+    Ok(previews(&w, &bank))
 }
 
 /// The editor's live length (the same rule as the bank's).
