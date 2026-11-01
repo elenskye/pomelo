@@ -1,7 +1,7 @@
 //! 定时任务 (v0.4 phase 7; requirements「小拾 · 定时任务、今日简报、年度总结」):
 //! - A schedule: 名称, when (every day / a weekday / a day of the month, at HH:MM local time; a month
-//!   without that day uses its last), the model (None = what 小拾 has selected), 要做什么 (the question
-//!   it asks), on / off. Ready-made (migration 12, editable and deletable): 每周回顾, 每月回顾.
+//!   without that day uses its last), the model (None = what 小拾 has selected), 提示词 (the question
+//!   it asks; a workflow — 年度总结 — shows its `flow` instead), on / off. Ready-made (migration 12, editable and deletable): 每周回顾, 每月回顾.
 //! - Due = enabled and its latest time (≤ now) is after both the last time it ran for
 //!   (`schedule_state`) and `since` (made / time changed / switched on: never runs for the past).
 //!   The monitor checks every 30 s, so Pomelo closed at the time runs it when next open — once, for
@@ -118,6 +118,8 @@ pub struct Schedule {
     pub thinking: bool,
     pub enabled: bool,
     pub builtin: Option<String>,
+    /// A workflow (年度总结): how it goes, drawn in 定时 instead of its prompt.
+    pub flow: Option<&'static [super::skills::Flow]>,
     /// The next time it runs ("YYYY-MM-DD HH:MM"; None when off).
     pub next: Option<String>,
     /// The conversation it wrote last, and when.
@@ -155,7 +157,7 @@ pub fn check_input(i: &ScheduleInput) -> Result<(), String> {
 
 fn checked(i: &ScheduleInput) -> Result<ScheduleInput, String> {
     let name = require(&i.name, "名称", NAME_MAX)?;
-    let prompt = require(&i.prompt, "要做什么", PROMPT_MAX)?;
+    let prompt = require(&i.prompt, "提示词", PROMPT_MAX)?;
     let (day, month) = match i.every.as_str() {
         "day" => (None, None),
         "week" => (Some(i.day.filter(|d| (1..=7).contains(d)).ok_or("请选星期几")?), None),
@@ -202,6 +204,7 @@ fn rows(conn: &Connection, filter: &str, args: &[&dyn rusqlite::ToSql]) -> Resul
                     model: r.get(6)?,
                     thinking: r.get(14)?,
                     enabled: r.get(7)?,
+                    flow: (r.get::<_, Option<String>>(8)?.as_deref() == Some(super::yearly::BUILTIN)).then_some(super::yearly::FLOW),
                     builtin: r.get(8)?,
                     next: None,
                     last_session: r.get(9)?,
@@ -620,6 +623,8 @@ mod tests {
         assert_eq!(all.iter().map(|s| (s.name.as_str(), s.builtin.as_deref())).collect::<Vec<_>>(), [("每周回顾", Some("weekly")), ("每月回顾", Some("monthly")), ("年度总结", Some("yearly"))]);
         assert_eq!(all[2].next.as_deref(), Some("2026-12-31 21:00"));
         assert_eq!(all[2].rule.text(), "每年 12 月 31 日 21:00");
+        // 年度总结 is a workflow: its flow is shown, the others' prompts
+        assert!(all[2].flow == Some(crate::picky::yearly::FLOW) && all[0].flow.is_none() && all[1].flow.is_none());
         assert_eq!(all[0].next.as_deref(), Some("2026-10-19 09:00"));
         for s in &all {
             set_since(&c, s.id, "2026-10-14 10:00");

@@ -69,7 +69,7 @@ pub struct KeySpec {
 
 /// One node of a skill's flow (the 插件库 draws it): what happens, in order, with the checks and the
 /// loops the code really has.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Flow {
     Step { text: &'static str },
@@ -80,15 +80,15 @@ pub enum Flow {
     Again { text: &'static str, back: &'static str },
 }
 
-const fn s(text: &'static str) -> Flow {
+pub(crate) const fn s(text: &'static str) -> Flow {
     Flow::Step { text }
 }
 
-const fn check(ask: &'static str, yes: &'static str, side: &'static [&'static str], join: &'static str, no: &'static str) -> Flow {
+pub(crate) const fn check(ask: &'static str, yes: &'static str, side: &'static [&'static str], join: &'static str, no: &'static str) -> Flow {
     Flow::Check { ask, yes, side, join, no }
 }
 
-const fn again(text: &'static str, back: &'static str) -> Flow {
+pub(crate) const fn again(text: &'static str, back: &'static str) -> Flow {
     Flow::Again { text, back }
 }
 
@@ -762,17 +762,17 @@ mod tests {
     use super::*;
     use crate::picky::store::tests::memory_db;
 
-    /// Each flow starts and ends with a step, and a branch goes on at / a loop goes back to one of its
-    /// own steps.
+    /// Each flow (the skills', 年度总结's) starts and ends with a step, and a branch goes on at / a loop
+    /// goes back to one of its own steps.
     #[test]
     fn every_flow_joins_its_own_steps() {
-        for skill in SKILLS {
-            let steps: Vec<&str> = skill.flow.iter().filter_map(|f| if let Flow::Step { text } = f { Some(*text) } else { None }).collect();
-            assert!(matches!(skill.flow.first(), Some(Flow::Step { .. })) && matches!(skill.flow.last(), Some(Flow::Step { .. })), "{}", skill.name);
-            for f in skill.flow {
+        for (name, flow) in SKILLS.iter().map(|s| (s.name, s.flow)).chain([("年度总结", crate::picky::yearly::FLOW)]) {
+            let steps: Vec<&str> = flow.iter().filter_map(|f| if let Flow::Step { text } = f { Some(*text) } else { None }).collect();
+            assert!(matches!(flow.first(), Some(Flow::Step { .. })) && matches!(flow.last(), Some(Flow::Step { .. })), "{name}");
+            for f in flow {
                 match f {
-                    Flow::Check { join, side, .. } => assert!((join.is_empty() || steps.contains(join)) && !side.is_empty(), "{}: {join}", skill.name),
-                    Flow::Again { back, .. } => assert!(steps.contains(back), "{}: {back}", skill.name),
+                    Flow::Check { join, side, .. } => assert!((join.is_empty() || steps.contains(join)) && !side.is_empty(), "{name}: {join}"),
+                    Flow::Again { back, .. } => assert!(steps.contains(back), "{name}: {back}"),
                     Flow::Step { .. } => {}
                 }
             }
@@ -786,6 +786,7 @@ mod tests {
         for skill in SKILLS {
             println!("FLOW {} {}", skill.key, serde_json::to_string(skill.flow).unwrap());
         }
+        println!("FLOW yearly {}", serde_json::to_string(crate::picky::yearly::FLOW).unwrap());
     }
 
     #[test]

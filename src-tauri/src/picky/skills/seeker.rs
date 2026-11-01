@@ -153,7 +153,8 @@ pub fn run(c: &Connection, mode: Mode, access: &Access, arguments: &str, budget:
         };
         let mut rows: Vec<String> = all.preps.iter().filter(|p| has(&p.job.label, keyword)).map(prep_text).collect();
         rows.extend(all.reviews.iter().filter(|r| has(&r.job.label, keyword)).map(review_text));
-        let head = vec![format!("Rater 面试记录：准备 {} 份、复盘 {} 次，符合的 {} 条：", all.preps.len(), all.reviews.len(), rows.len())];
+        rows.extend(all.summaries.iter().filter(|s| has(&s.job.label, keyword)).map(|s| summary_text(s, &all.reviews)));
+        let head = vec![format!("Rater 面试记录：准备 {} 份、复盘 {} 次、总结 {} 份，符合的 {} 条：", all.preps.len(), all.reviews.len(), all.summaries.len(), rows.len())];
         return done(Found::new(String::new(), head).rows(rows.into_iter().map(data::row).collect()));
     }
     if view == "files" || view == "cv" {
@@ -259,6 +260,16 @@ fn review_text(r: &interview::Review) -> String {
         if !a.misses.is_empty() {
             lines.push(format!("遗漏：{}", a.misses.iter().map(|m| format!("{}（{}）", r.items.get(m.asked).map_or("", |x| x.question.as_str()), m.text)).collect::<Vec<_>>().join("；")));
         }
+    }
+    lines.join("\n")
+}
+
+fn summary_text(s: &interview::Summary, reviews: &[interview::Review]) -> String {
+    let asked = |m: &interview::Matched| reviews.iter().find(|r| r.id == m.review).and_then(|r| r.items.get(m.asked)).map_or("", |a| a.question.as_str()).to_string();
+    let rounds: Vec<String> = s.reviews.iter().filter_map(|id| reviews.iter().find(|r| &r.id == id)).map(|r| [r.date.as_str(), r.round.as_str()].iter().filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(" ")).collect();
+    let mut lines = vec![format!("【总结 · {} · {}】{}", &s.created_at[..10.min(s.created_at.len())], s.job.label, rounds.join("、")), format!("总评：{}", s.analysis.summary)];
+    if !s.analysis.misses.is_empty() {
+        lines.push(format!("遗漏：{}", s.analysis.misses.iter().map(|m| format!("{}（{}）", asked(m), m.text)).collect::<Vec<_>>().join("；")));
     }
     lines.join("\n")
 }

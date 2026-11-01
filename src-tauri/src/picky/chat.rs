@@ -48,6 +48,7 @@
 //!   its reply or summary is written (they share its slot).
 
 use super::act;
+use super::assistants::rater::record;
 use super::knowledge;
 use super::work;
 use super::skills;
@@ -98,7 +99,7 @@ pub struct Session {
 }
 
 pub fn sessions(conn: &Connection) -> Result<Vec<Session>, String> {
-    let mut st = conn.prepare("SELECT id, title, updated_at FROM sessions ORDER BY updated_at DESC, id DESC").map_err(err)?;
+    let mut st = conn.prepare("SELECT id, title, updated_at FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records) ORDER BY updated_at DESC, id DESC").map_err(err)?;
     let rows = st.query_map([], |r| Ok(Session { id: r.get(0)?, title: r.get(1)?, updated_at: r.get(2)? })).map_err(err)?;
     rows.collect::<Result<_, _>>().map_err(err)
 }
@@ -1120,6 +1121,8 @@ struct AppHost<'a> {
     looked: usize,
     /// The earlier replies on the shown path (their pending cards' items can be replaced).
     cards: Vec<i64>,
+    /// Rater 复盘 · 记录: the session whose table `record::TOOL` fills.
+    record: Option<i64>,
 }
 
 /// The runs of the earlier replies on the conversation's shown path.
@@ -1247,6 +1250,13 @@ impl Host for AppHost<'_> {
                 self.send_card(run);
                 a
             }
+            record::TOOL => match self.record {
+                Some(session) => self.app.state::<AppState>().picky.with_db(|c| record::fill(c, session, &call.arguments)).map_or_else(
+                    |e| data::Answer { module: None, label: "复盘表 · 没填上".into(), state: "failed", text: format!("没填上：{e}"), records: vec![] },
+                    |(d, text)| data::Answer { module: None, label: format!("填复盘表（{} 个问题{}）", d.review.items.len(), if d.ready { "，填好了" } else { "" }), state: "ok", text, records: vec![] },
+                ),
+                None => data::Answer { module: None, label: "复盘表 · 没填上".into(), state: "failed", text: "这个对话不是复盘记录。".into(), records: vec![] },
+            },
             skills::SEEKER_TOOL => self
                 .app
                 .state::<AppState>()
@@ -1290,7 +1300,7 @@ impl Host for AppHost<'_> {
 #[allow(clippy::too_many_arguments)]
 async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], forced: &[String], question: &str, cost: i64, counter: &Counter, request: &Request, mut messages: Vec<Msg>, window: i64, mut used: i64) -> Result<(), String> {
     let (mut round, mut position) = (0usize, 0usize);
-    let writes: Vec<serde_json::Value> = tools.iter().filter(|t| t["function"]["name"].as_str().is_some_and(|n| act::is_act(n) || skills::toolbox::is_tool(n) || skills::qbank::category(n).is_some())).cloned().collect();
+    let writes: Vec<serde_json::Value> = tools.iter().filter(|t| t["function"]["name"].as_str().is_some_and(|n| act::is_act(n) || skills::toolbox::is_tool(n) || skills::qbank::category(n).is_some() || n == record::TOOL)).cloned().collect();
     // 联网 asked for: the question searched first, the results after it
     if forced.iter().any(|f| f == skills::WEB_TOOL) {
         let q: String = question.trim().chars().take(300).collect();
@@ -1391,6 +1401,18 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     }
     let counter = Counter::for_target(&route.target);
     let question = request.prompt.clone(); // before the page joins it
+    // Rater 复盘 · 记录: its task and table go with 小拾's instructions; its tool with the lookups
+    let rec = app.state::<AppState>().picky.with_db(|c| {
+        let session: i64 = c.query_row("SELECT session_id FROM runs WHERE id = ?1", [shared.run_id], |r| r.get(0)).map_err(err)?;
+        Ok(record::is_record(c, session)?.then_some(session))
+    });
+    let rec = match rec.and_then(|s| s.map(|s| record::system_now(&app.state::<AppState>(), s).map(|t| (s, t))).transpose()) {
+        Ok(r) => r,
+        Err(e) => return finalize(&app, &shared, "failed", Some(e)),
+    };
+    if let Some((_, task)) = &rec {
+        request.system = [request.system.as_str(), task.as_str()].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n\n");
+    }
     let tables = app.state::<AppState>().picky.with_db(|c| Ok(big_tables(c, &request.sources))).unwrap_or_default();
     // 读文件: the question's files; 查知识库: the conversation's libraries under this model's rules
     let materials = skills::files::materials(&request.sources);
@@ -1418,7 +1440,10 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
         Some((access, today)) => {
             request.with_lookups(|q| access.may_send(q));
             request.with_page(|q| access.may_send(q));
-            let extra = if tables.is_empty() { vec![] } else { vec![super::office::table_tool()] };
+            let mut extra = if tables.is_empty() { vec![] } else { vec![super::office::table_tool()] };
+            if rec.is_some() {
+                extra.push(record::tool());
+            }
             lookup_plan(&app, access, today, &counter, &request.skills, request.read_only, extra, ctx).await
         }
         None => {
@@ -1465,7 +1490,7 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     publish(&app, &shared, &sources, 0);
     let result = match lookup {
         Some(l) if !read => {
-            let mut host = AppHost { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now(), access: l.access, today: l.today, sources, question: question.clone(), tables, materials, kb, word_files, text_files, images: vec![], looked: 0, cards };
+            let mut host = AppHost { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now(), access: l.access, today: l.today, sources, question: question.clone(), tables, materials, kb, word_files, text_files, images: vec![], looked: 0, cards, record: rec.map(|(s, _)| s) };
             answer_with_lookups(&mut host, &l.tools, &l.forced, &question, l.cost, &counter, &request, messages, window, window - kept - max_tokens).await
         }
         _ => {
@@ -1558,11 +1583,14 @@ pub struct Sent {
 const BUSY_HERE: &str = "这个对话正在生成回复，等它写完或先停止。";
 
 /// What a new question / version needs before anything is saved: the conversation's slot is free
-/// (None: a new one), and where it goes (the selected model) resolves.
-fn prepare(app: &AppHandle, session_id: Option<i64>) -> Result<Route, String> {
+/// (None: a new one), and where it goes (the selected model; a Rater 复盘 · 记录: Rater's) resolves.
+async fn prepare(app: &AppHandle, session_id: Option<i64>) -> Result<Route, String> {
     let st = app.state::<AppState>();
     if session_id.is_some_and(|s| st.picky.runs.busy_in(s)) {
         return Err(BUSY_HERE.into());
+    }
+    if let Some(s) = session_id.filter(|s| st.picky.with_db(|c| record::is_record(c, *s)).unwrap_or(false)) {
+        return record::route(app, s).await;
     }
     st.picky.target()
 }
@@ -1608,7 +1636,7 @@ pub async fn picky_send(
         "" => return Err("问题不能为空".into()),
         t => t,
     };
-    let route = prepare(&app, session_id)?;
+    let route = prepare(&app, session_id).await?;
     let new = NewSession { project: project_id, setting: instructions.unwrap_or_default(), memory_off, thinking_off: thinking == Some(false), knowledge: knowledge.unwrap_or_default() };
     // the page it was asked on (the 小窗): Rust fetches what it may, under this model's rules
     let page = page.and_then(|ctx| {
@@ -1626,7 +1654,7 @@ pub async fn picky_send(
 /// A new version of a question (edited text) and its reply.
 #[tauri::command]
 pub async fn picky_edit(app: AppHandle, message_id: i64, text: String, passages: Vec<Passage>, memories: Vec<UsedMemory>, on_event: Channel<StreamEvent>) -> Result<Sent, String> {
-    let route = prepare(&app, Some(session_of_message(&app, message_id)?))?;
+    let route = prepare(&app, Some(session_of_message(&app, message_id)?)).await?;
     let b = app.state::<AppState>().picky.with_db(|c| begin_version(c, message_id, Some(&text), &route.model, &route.name, &passages, &memories))?;
     Ok(start(&app, b, route, on_event))
 }
@@ -1634,7 +1662,7 @@ pub async fn picky_edit(app: AppHandle, message_id: i64, text: String, passages:
 /// A new version of a reply (regenerate, or retry a failed / stopped / interrupted one).
 #[tauri::command]
 pub async fn picky_regenerate(app: AppHandle, message_id: i64, passages: Vec<Passage>, memories: Vec<UsedMemory>, on_event: Channel<StreamEvent>) -> Result<Sent, String> {
-    let route = prepare(&app, Some(session_of_message(&app, message_id)?))?;
+    let route = prepare(&app, Some(session_of_message(&app, message_id)?)).await?;
     let b = app.state::<AppState>().picky.with_db(|c| begin_version(c, message_id, None, &route.model, &route.name, &passages, &memories))?;
     Ok(start(&app, b, route, on_event))
 }

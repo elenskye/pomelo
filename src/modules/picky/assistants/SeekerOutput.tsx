@@ -1,5 +1,5 @@
 import { PickField } from "@/shared/PickField";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FileText } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -8,22 +8,30 @@ import { Button, Field, TextInput } from "@/shared/ui";
 import { errorText, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";
 import { useJobs, jobPicks } from "@/modules/jobs/api";
-import { SEEKER_FILES_KEY, SEEKER_JOB_RESUMES_KEY, seekerApi, type SeekerForm, type SeekerJobRef, type SeekerLang, type SeekerOutput, type SeekerWorkspace } from "./seekerApi";
+import { SEEKER_FILES_KEY, SEEKER_JOB_RESUMES_KEY, seekerApi, type SeekerJobRef, type SeekerLang, type SeekerOutput, type SeekerWorkspace } from "./seekerApi";
 import { when } from "./SeekerParts";
 import { useSeekerFiles } from "./SeekerFiles";
 
 /** 另存 Word with Pomelo's built-in template of the language (Rust output.rs): no page count (Word
- * opens it right after, to see the pages). Default folder cv/cn/ or cv/en/, default job the draft's. */
-export function SeekerExportDialog(props: { lang: SeekerLang; form: SeekerForm; name: string; folder: string; job: SeekerJobRef | null | undefined; flush: () => Promise<boolean>; saved: (workspace: SeekerWorkspace) => void; close: () => void }) {
+ * opens it right after, to see the pages). Default folder cv/cn/ or cv/en/, default job the draft's,
+ * default name seek-it-<公司>[-resume|-cv]-v<N> (Rust `export_name`; follows the job until typed over). */
+export function SeekerExportDialog(props: { lang: SeekerLang; folder: string; job: SeekerJobRef | null | undefined; flush: () => Promise<boolean>; saved: (workspace: SeekerWorkspace) => void; close: () => void }) {
   const toast = useToast();
   const jobs = useJobs();
   const [directory, setDirectory] = useState(() => (props.folder ? `${props.folder}/cv/${props.lang}` : ""));
-  const [filename, setFilename] = useState(() => `${props.name || "简历"}${props.lang === "en" ? (props.form === "cv" ? "-CV" : "-Resume") : ""}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.docx`);
+  const [filename, setFilename] = useState("");
+  const [typed, setTyped] = useState(false);
   const own = jobs.data?.find((j) => props.job && j.id === props.job.id && j.createdAt === props.job.createdAt)?.id ?? null;
   const [picked, setPicked] = useState<number | null | undefined>(undefined);
   const jobId = picked === undefined ? own : picked;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (typed) return;
+    let live = true;
+    seekerApi.exportName(props.lang, jobId).then((name) => { if (live) setFilename(name); }, (e) => { if (live) setError(errorText(e)); });
+    return () => { live = false; };
+  }, [props.lang, jobId, typed]);
   const qc = useQueryClient();
   const save = async () => {
     if (busy) return;
@@ -39,7 +47,7 @@ export function SeekerExportDialog(props: { lang: SeekerLang; form: SeekerForm; 
   return <Modal wide title="导出 Word" error={error} onClose={() => { if (!busy) props.close(); }} submitLabel={busy ? "正在导出…" : "另存 Word"} submitDisabled={busy || !directory.trim() || !filename.trim()} onSubmit={(e) => { e.preventDefault(); void save(); }}>
     <fieldset disabled={busy} className="space-y-4">
       <Field label="导出到"><div className="flex items-center gap-2"><p className="selectable min-w-0 flex-1 truncate text-sm" title={directory}>{directory.replace(/^\/Users\/[^/]+/, "~") || "还没选文件夹"}</p><Button onClick={() => void open({ directory: true, multiple: false, defaultPath: directory || undefined }).then((p) => { if (typeof p === "string") setDirectory(p); }).catch((e) => setError(errorText(e)))}>选择…</Button></div></Field>
-      <Field label="文件名"><TextInput aria-label="文件名" value={filename} onChange={(e) => setFilename(e.target.value)} /></Field>
+      <Field label="文件名"><TextInput aria-label="文件名" value={filename} onChange={(e) => { setTyped(true); setFilename(e.target.value); }} /></Field>
       <Field label="关联投石问路"><PickField<number | null> block ariaLabel="关联投石问路" title="关联投石问路的岗位" value={jobId} options={[{ value: null, label: "暂不关联" }, ...jobPicks(jobs.data ?? [])]} onChange={setPicked} /></Field>
       {jobs.isError && <p className="text-xs text-destructive">{errorText(jobs.error)}</p>}
     </fieldset>

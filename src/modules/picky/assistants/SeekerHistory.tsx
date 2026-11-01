@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button, Segmented } from "@/shared/ui";
 import { useConfirm } from "@/shared/feedback";
 import { SeekerDiff, recordText, when } from "./SeekerParts";
-import { seekerApi, type SeekerCatalog, type SeekerLang, type SeekerOutput } from "./seekerApi";
+import { SHARED_KINDS, seekerApi, type SeekerCatalog, type SeekerLang, type SeekerOutput } from "./seekerApi";
 import { SeekerExports } from "./SeekerOutput";
 import { SeekerCvHistory } from "./SeekerFiles";
 import type { SeekerWrite } from "./SeekerLibrary";
@@ -12,7 +12,7 @@ import type { SeekerWrite } from "./SeekerLibrary";
 export function SeekerHistory(props: { lang: SeekerLang; output: SeekerOutput; catalog: SeekerCatalog; busy: boolean; write: SeekerWrite }) {
   const [part, setPart] = useState<"cv" | "records">("cv");
   const [confirm, dialog] = useConfirm();
-  const revisions = props.catalog.revisions.filter((r) => ["fact", "application"].includes(r.body.kind) || r.body.lang === "" || (r.body.lang ?? "cn") === props.lang);
+  const revisions = props.catalog.revisions.filter((r) => SHARED_KINDS.includes(r.body.kind) || r.body.lang === "" || (r.body.lang ?? "cn") === props.lang);
   return <div className="-m-1 flex-1 space-y-4 overflow-auto p-1 pt-4">
     <SeekerExports lang={props.lang} output={props.output} />
     <Segmented<"cv" | "records"> ariaLabel="历史" value={part} onChange={setPart} options={[{ value: "cv", label: "简历版本" }, { value: "records", label: "资料修订" }]} />

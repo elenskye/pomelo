@@ -5,8 +5,9 @@
 //!   the page shows) and the Word template mapping per language (`template`, `template_en`).
 //!   `seeker_draft` (one row per language, `cn` / `en`): the current draft (JSON `Draft`) and the
 //!   baseline 「修改差异」 compares with (set by 新建 / 重新组装; 增加 keeps it).
-//! - `seeker_records`: materials, 基本信息, facts, rules, 范例, 网申 (catalog.rs); `seeker_record_history`
-//!   keeps every replaced or deleted version; `seeker_groups` (0029): the names built-in groups show. No
+//! - `seeker_records`: materials, 基本信息, facts, rules, 豁免情况, 网申 (catalog.rs); `seeker_record_history`
+//!   keeps every replaced or deleted version; `seeker_groups` (0029, 0030): the names built-in groups show
+//!   and the order of each page's groups. No
 //!   copies of whole résumés are kept (确认版本 went in 0029).
 //! - `seeker_exports` / `seeker_job_resumes`: Word exports (name, path, language, time, the materials used;
 //!   no copy of the résumé) and the résumés jobs used (by path: an export or any file under cv/; output.rs).
@@ -22,6 +23,11 @@
 //!   Work's files). Editing the draft never writes back to materials.
 //! - Models only propose (model.rs); the user sees a diff and accepts. Block ids (header fields,
 //!   sections, entries, points) are unique and non-empty; they key selection, sorting and deletion.
+//! - 批注 (v0.7 R7, `Draft.notes`): what 审查整份简历, 润色要点 and 改写 Summary leave on the draft, each on
+//!   one block (a point, an entry, a section; "" the whole résumé), some with the text to put in
+//!   (`edit`: points and the Summary only). Only those commands and `settle` (采用 / ✓) change them: a
+//!   draft the page saves keeps the stored ones; a note whose block is gone goes when the draft is
+//!   saved; 新建 and 重新组装 start without.
 //! - Data file (format 19; 20 with the job and company choices; 22 with English): the whole workspace
 //!   replaces Seeker's tables; paths are metadata only.
 pub mod catalog;
@@ -114,6 +120,27 @@ pub struct Draft {
     pub jd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<JobRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
+}
+
+/// A 批注 (see the top): `kind` review · polish · summary; `target` a block id ("" the whole résumé);
+/// `edit` the new text of that point (or Summary) when there is one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    pub kind: String,
+    pub target: String,
+    pub comment: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<String>,
+}
+
+impl Draft {
+    /// Every block id: header fields, sections, entries, points.
+    pub fn block_ids(&self) -> impl Iterator<Item = &String> {
+        self.header.iter().map(|h| &h.id).chain(self.sections.iter().flat_map(|s| std::iter::once(&s.id).chain(s.entries.iter().flat_map(|e| std::iter::once(&e.id).chain(e.points.iter().map(|p| &p.id))))))
+    }
 }
 
 /// One language's draft, its baseline and the reminders about it.
@@ -243,8 +270,7 @@ pub fn validate(draft: &Draft) -> Result<(), String> {
         return Err("简历的类型不对".into());
     }
     let mut ids = HashSet::new();
-    let all = draft.header.iter().map(|h| &h.id).chain(draft.sections.iter().flat_map(|s| std::iter::once(&s.id).chain(s.entries.iter().flat_map(|e| std::iter::once(&e.id).chain(e.points.iter().map(|p| &p.id))))));
-    for id in all {
+    for id in draft.block_ids() {
         if id.is_empty() || !ids.insert(id) {
             return Err("简历中有空白或重复的块编号".into());
         }
@@ -252,10 +278,12 @@ pub fn validate(draft: &Draft) -> Result<(), String> {
     Ok(())
 }
 
-/// Into its language's row.
+/// Into its language's row (without the notes whose block is gone).
 pub fn save(conn: &Connection, draft: &Draft) -> Result<(), String> {
     validate(draft)?;
-    let body = serde_json::to_string(draft).map_err(err)?;
+    let ids: HashSet<&String> = draft.block_ids().collect();
+    let kept = |n: &&Note| n.target.is_empty() || ids.contains(&n.target);
+    let body = if draft.notes.iter().all(|n| kept(&n)) { serde_json::to_string(draft) } else { serde_json::to_string(&Draft { notes: draft.notes.iter().filter(kept).cloned().collect(), ..draft.clone() }) }.map_err(err)?;
     conn.execute(&format!("INSERT INTO seeker_draft (lang, body) VALUES (?1, ?2) ON CONFLICT(lang) DO UPDATE SET body = excluded.body, updated_at = {NOW} WHERE body != excluded.body"), params![draft.lang, body]).map_err(err)?;
     Ok(())
 }
@@ -366,9 +394,50 @@ pub async fn picky_seeker_use_job(state: State<'_, AppState>, job_id: Option<i64
     })
 }
 
+/// The stored draft of `lang` (its row only).
+pub fn stored(c: &Connection, lang: &str) -> Result<Option<Draft>, String> {
+    let body: Option<String> = c.query_row("SELECT body FROM seeker_draft WHERE lang = ?1", [lang], |r| r.get(0)).optional().map_err(err)?;
+    body.map(|b| serde_json::from_str::<Draft>(&b).map(|d| Draft { lang: lang.into(), ..d }).map_err(|e| format!("Seeker 草稿读不出来：{e}"))).transpose()
+}
+
+/// The page's draft with the stored notes (a review may have added some since the page read it).
+pub fn save_page(c: &Connection, mut draft: Draft) -> Result<(), String> {
+    draft.notes = stored(c, &draft.lang)?.map(|d| d.notes).unwrap_or_default();
+    save(c, &draft)
+}
+
 #[tauri::command]
 pub async fn picky_seeker_save(state: State<'_, AppState>, draft: Draft) -> Result<Workspace, String> {
     state.with_picky_undo("编辑简历", |c| {
+        save_page(c, draft)?;
+        read(c)
+    })
+}
+
+/// 采用 (`apply`: each one's edit goes into its point or Summary) and ✓ (`done`); both take the notes away.
+pub fn settle(draft: &mut Draft, apply: &[String], done: &[String]) -> Result<(), String> {
+    for id in apply {
+        let note = draft.notes.iter().find(|n| &n.id == id).cloned().ok_or("这条批注已经不在了")?;
+        let edit = note.edit.ok_or("这条批注没有改稿")?;
+        let point = draft.sections.iter_mut().flat_map(|s| &mut s.entries).flat_map(|e| &mut e.points).find(|p| p.id == note.target);
+        if let Some(p) = point {
+            p.text = edit;
+        } else if let Some(e) = draft.sections.iter_mut().filter(|s| s.category == workflow::SUMMARY).flat_map(|s| &mut s.entries).find(|e| e.id == note.target) {
+            e.note = edit;
+        } else {
+            return Err("批注对着的内容已经不在了".into());
+        }
+    }
+    draft.notes.retain(|n| !apply.contains(&n.id) && !done.contains(&n.id));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn picky_seeker_notes_settle(state: State<'_, AppState>, lang: String, apply: Vec<String>, done: Vec<String>) -> Result<Workspace, String> {
+    let lang = lang_of(&lang)?;
+    state.with_picky_undo(if apply.is_empty() { "处理完批注" } else { "采用简历修改" }, |c| {
+        let mut draft = stored(c, lang)?.ok_or("还没有简历草稿")?;
+        settle(&mut draft, &apply, &done)?;
         save(c, &draft)?;
         read(c)
     })

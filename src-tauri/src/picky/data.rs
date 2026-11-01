@@ -1953,6 +1953,13 @@ fn progress_view(conn: &Connection, a: &Args, readable: &[&Made], today: &str) -
 
 /// Which lookups the mock model makes for a question (only among `offered` tools).
 pub fn mock_calls(question: &str, system: &str, offered: &[&str]) -> Vec<ToolCall> {
+    // Rater 复盘 · 记录: what the user said goes into the table
+    use super::assistants::rater::record;
+    if offered.contains(&record::TOOL) {
+        if let Some(args) = record::mock_fill(question, system) {
+            return vec![ToolCall { id: "mock0".into(), name: record::TOOL.into(), arguments: args.to_string() }];
+        }
+    }
     let today = system.split("今天是 ").nth(1).map(|s| s.chars().take(10).collect::<String>()).filter(|d| common::check_date(&Some(d.clone()), "").is_ok());
     let Some(today) = today else { return vec![] };
     let has = |words: &[&str]| words.iter().any(|w| question.contains(w));
@@ -2039,6 +2046,9 @@ pub fn mock_answer(messages: &[Msg]) -> String {
     }
     if !starts.is_empty() {
         out.push_str("\n\n");
+    }
+    if let Some(filled) = results.iter().find(|r| r.starts_with(super::assistants::rater::record::FILLED)) {
+        return if filled.contains("已标为填好") { "这是开发版的**模拟回答**：表填好了，看一遍没问题就保存。".into() } else { "这是开发版的**模拟回答**：记下了。还问了别的吗？说「就这些」我就把表标成填好。".into() };
     }
     let carded = results.iter().filter(|r| r.starts_with("已放进确认卡片")).count();
     let failed: Vec<&str> = results.iter().filter_map(|r| r.strip_prefix("没放进卡片：")).collect();

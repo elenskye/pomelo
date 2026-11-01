@@ -87,7 +87,7 @@ pub fn search(conn: &Connection, q: &str, f: &Filter, limit: usize) -> Result<Ve
     let msg_sql = format!(
         "SELECT m.session_id, s.title, m.id, m.content, m.created_at, r.model_name, s.archived_at IS NOT NULL
          FROM messages m JOIN sessions s ON s.id = m.session_id LEFT JOIN runs r ON r.id = m.run_id
-         WHERE m.state <> 'streaming' AND {} {archived}
+         WHERE m.state <> 'streaming' AND s.id NOT IN (SELECT session_id FROM rater_records) AND {} {archived}
            AND (?{model_i} IS NULL OR r.model_name = ?{model_i}) AND (?{since_i} IS NULL OR m.created_at >= ?{since_i})
          ORDER BY m.created_at DESC, m.id DESC",
         cond("m.content")
@@ -109,7 +109,7 @@ pub fn search(conn: &Connection, q: &str, f: &Filter, limit: usize) -> Result<Ve
 
     let title_sql = format!(
         "SELECT s.id, s.title, s.updated_at, s.archived_at IS NOT NULL FROM sessions s
-         WHERE {} {archived}
+         WHERE s.id NOT IN (SELECT session_id FROM rater_records) AND {} {archived}
            AND (?{model_i} IS NULL OR EXISTS (SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.model_name = ?{model_i}))
            AND (?{since_i} IS NULL OR s.updated_at >= ?{since_i})
          ORDER BY s.updated_at DESC, s.id DESC",

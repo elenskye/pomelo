@@ -112,7 +112,7 @@ pub fn live(conn: &Connection, today: &str) -> Result<Live, String> {
 /// picky.db's part: conversations and the 助手 (`generating` / `pub2md_busy` come from memory).
 pub fn picky_live(conn: &Connection, generating: bool, pub2md_busy: usize) -> Result<Live, String> {
     let mut out = Live::new();
-    let sessions = count(conn, "SELECT count(*) FROM sessions", [])?;
+    let sessions = count(conn, "SELECT count(*) FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records)", [])?;
     if generating {
         out.insert("picky".into(), "正在写…".into());
     } else if sessions > 0 {

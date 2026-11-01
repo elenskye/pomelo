@@ -139,7 +139,7 @@ impl Library {
 
 fn sessions(conn: &Connection) -> Result<Vec<SessionRow>, String> {
     let mut st = conn
-        .prepare("SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge FROM sessions ORDER BY updated_at DESC, id DESC")
+        .prepare("SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records) ORDER BY updated_at DESC, id DESC")
         .map_err(err)?;
     let rows = st
         .query_map([], |r| {

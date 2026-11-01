@@ -12,7 +12,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { useSortable } from "@/shared/sortable";
-import { Button, IconButton, Switch, TextInput } from "@/shared/ui";
+import { Button, IconButton, RefreshButton, Switch, TextInput } from "@/shared/ui";
 import { LIBRARY_KEY, pickyApi, useLibrary, type KbDraft, type KbLibrary, type KbPlan, type KbSource, type Library } from "./api";
 import { toolClass } from "./Composer";
 import { WebDialog } from "./Files";
@@ -233,6 +233,7 @@ export function KnowledgeDialog(props: { onClose: () => void }) {
       <div className="flex items-center gap-4 border-b px-5 py-3">
         <p className="text-base font-bold">知识库</p>
         <div className="flex-1" />
+        <RefreshButton label="重新读文件夹" onRefresh={async () => { await pickyApi.kbScan(); await qc.invalidateQueries({ queryKey: KB_KEY }); }} />
         <IconButton label="关闭" onClick={props.onClose}>
           <X size={16} />
         </IconButton>

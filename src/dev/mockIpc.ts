@@ -8,6 +8,7 @@ import { addDays, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/picky/assistants/seekerApi";
 import type { SkillFlowNode } from "@/modules/picky/api";
 import { seekerHandlers, seekerMock } from "./seekerMock";
+import type { RaterRecord, RaterReview } from "@/modules/picky/assistants/raterApi";
 
 type Args = Record<string, unknown>;
 type Row = Record<string, unknown> & { id: number; title: string; status: string };
@@ -3592,9 +3593,11 @@ const pPlan = (s: PSession) => {
   const source = prefix.slice(prev ? prev.i + 1 : 0).filter(done).map((m) => (m.role === "user" ? "用户：\n" : "助手：\n") + m.content).join("\n\n");
   return { through: boundary.id, source, previous: prev?.x.content ?? null };
 };
-/** library.rs: which list a session shows in. */
+/** Rater 复盘 · 记录 (rater/record.rs): a review filled in a conversation of its own, kept out of 小拾's lists. */
+const pRecords = new Map<number, RaterRecord>();
+/** library.rs: which list a session shows in (a 复盘 · 记录: none). */
 const pListOf = (s: PSession) =>
-  s.archived ? "archived" : s.pinned ? "pinned" : s.projectId != null && pky.projects.some((p) => p.id === s.projectId) ? `project:${s.projectId}` : s.scheduled ? "scheduled" : "recent";
+  pRecords.has(s.id) ? "rater" : s.archived ? "archived" : s.pinned ? "pinned" : s.projectId != null && pky.projects.some((p) => p.id === s.projectId) ? `project:${s.projectId}` : s.scheduled ? "scheduled" : "recent";
 const pRow = (s: PSession) => ({ id: s.id, title: s.title, projectId: s.projectId, pinned: s.pinned, archived: s.archived, updatedAt: s.updatedAt, scheduled: s.scheduled, unseen: s.unseen, private: !!s.private, thinking: s.thinking !== false, knowledge: !!s.knowledge, libraries: pKbOwn("s", s.id) });
 const pMembers = (list: string) => {
   const ms = pky.sessions.filter((x) => pListOf(x) === list).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id);
@@ -3702,6 +3705,11 @@ const pLocalBusy = () => [...pky.runs.values()].some((r) => r.model.startsWith("
 /** `session`: the conversation the reply goes in (its slot must be free; null = a new one). */
 const pTarget = (session: number | null = null) => {
   if (pBusyIn(session)) throw "这个对话正在生成回复，等它写完或先停止。";
+  // a Rater 复盘 · 记录: Rater's model (chat.rs `prepare`)
+  if (session != null && pRecords.has(session)) {
+    seekerMock.modelCheck("record");
+    return { modelName: "模拟模型（Rater）", ability: "switch" };
+  }
   if (pky.selection.startsWith("cloud:")) {
     const m = pky.cloud.find((x) => `cloud:${x.id}` === pky.selection)!;
     if (!pky.keys.has(m.service)) throw "尚未保存这个云端接口的 API Key。";
@@ -3777,6 +3785,20 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
         run.timer = window.setTimeout(step, 400);
       };
       run.timer = window.setTimeout(step, 400);
+    } else if (pRecords.has(s.id)) {
+      // 复盘 · 记录 (record.rs `mock_fill`): what the user said becomes a question; 「就这些」 marks it filled
+      const d = pRecords.get(s.id)!;
+      const ready = ["就这些", "没了", "填好了"].some((w) => prompt.includes(w));
+      if (ready) Object.assign(d.review, { feedback: "（模拟）整体不错，细节再准备", thoughts: "（模拟）项目题答得还行，数据口径没讲清" });
+      else d.review.items.push({ question: prompt.slice(0, 40), answer: "（模拟）我先讲了结论，再说了做法。", feedback: "（模拟）点头，追问了数据" });
+      Object.assign(d, { ready, fills: d.fills + 1 });
+      if (!ready) d.review.form = "视频 · 技术面（模拟）";
+      const q: PQuery = { module: null, label: `填复盘表（${d.review.items.length} 个问题${ready ? "，填好了" : ""}）`, state: "ok", result: "", records: [] };
+      pky.queries.set(msg.id, [q]);
+      run.timer = window.setTimeout(() => {
+        emit({ kind: "query", ...q });
+        run.timer = pStream(msg, thinking, prompt, emit, done, ready ? "这是开发版的**模拟回答**：表填好了，看一遍没问题就保存。" : "这是开发版的**模拟回答**：记下了。还问了别的吗？说「就这些」我就把表标成填好。");
+      }, 450);
     } else if (pSkillCalls(prompt, pAskedOf(user.id)).length) {
       // the skills the question asked for (or 「查一下《X》」), one by one, then the answer citing them
       const calls = pSkillCalls(prompt, pAskedOf(user.id));
@@ -3918,13 +3940,15 @@ const pSchedules: PSchedule[] = [
   { id: nextId++, name: "每月回顾", prompt: "回顾我上个月：收支和总资产的变化、读完看完的书和影视、画了多少。分几块写，简洁；和再上一个月比一比。", every: "month", day: 1, at: "09:00", model: null, thinking: true, enabled: true, builtin: "monthly", sortOrder: 1, since: pLocalNow(), lastSlot: null },
   { id: nextId++, name: "年度总结", prompt: "写我这一年的年度总结：一封写给我的信，陪我回看这一年。", every: "year", month: 12, day: 31, at: "21:00", model: null, thinking: true, enabled: true, builtin: "yearly", sortOrder: 2, since: pLocalNow(), lastSlot: null },
 ];
+// 年度总结's flow (yearly.rs `FLOW`; `cargo test skill_flows_json -- --ignored --nocapture`), drawn instead of its prompt
+const pYearlyFlow = [{"kind":"step","text":"到点或立即运行（1 月运行的写刚过完的那一年）"},{"kind":"check","ask":"用的是云端模型？","yes":"是","side":["不许发给云端的模块不读，在开头说一句"],"join":"按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和小拾的对话（私密对话、隐藏的模块不读）","no":"否"},{"kind":"step","text":"按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和小拾的对话（私密对话、隐藏的模块不读）"},{"kind":"step","text":"读全年的书影、画画、求职、打卡、出行，数今年和去年同期的数字，找去年的年度总结（钱来钱往、芝麻开门从来不读）"},{"kind":"check","ask":"整年的记录放得下模型的上下文？","yes":"是","side":["一次读完"],"join":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）","no":"否"},{"kind":"step","text":"下一个有记录的月份"},{"kind":"check","ask":"记录和上次读时一样？","yes":"是","side":["用上次存的要点"],"join":"下一个有记录的月份","no":"否"},{"kind":"check","ask":"这个月的记录太多？","yes":"是","side":["分几段读，每段先记要点"],"join":"写这个月的要点，存下来","no":"否"},{"kind":"step","text":"写这个月的要点，存下来"},{"kind":"again","text":"还有月份没读（云端 4 个月一起读，本地一个一个）","back":"下一个有记录的月份"},{"kind":"check","ask":"要点加起来放不下？","yes":"是","side":["不带去年的年度总结；还放不下就停下，请你换个上下文大的模型"],"join":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）","no":"否"},{"kind":"step","text":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）"}];
 let pScheduleRunning: number | null = null;
 const pScheduleCheck = (a: Args): PRule & { name: string; prompt: string; model: string | null; thinking: boolean } => {
   const name = String(a.name ?? "").trim();
   const prompt = String(a.prompt ?? "").trim();
   if (!name) throw "名称不能为空";
   if ([...name].length > 30) throw "名称太长了（最多 30 个字）";
-  if (!prompt) throw "要做什么不能为空";
+  if (!prompt) throw "提示词不能为空";
   const every = a.every as PRule["every"];
   const day = (a.day as number | null) ?? null;
   if (every === "week" && !(day != null && day >= 1 && day <= 7)) throw "请选星期几";
@@ -3938,7 +3962,7 @@ const pScheduleCheck = (a: Args): PRule & { name: string; prompt: string; model:
 };
 const pScheduleOut = (s: PSchedule) => {
   const last = [...pky.sessions].filter((x) => x.scheduleId === s.id).sort((a, b) => b.id - a.id)[0];
-  return { id: s.id, name: s.name, prompt: s.prompt, every: s.every, day: s.day, month: s.month ?? null, at: s.at, model: s.model, thinking: s.thinking, enabled: s.enabled, builtin: s.builtin, next: s.enabled ? pSlots(s, pLocalNow(), 1) : null, lastSession: last?.id ?? null, lastAt: last?.createdAt ?? null, running: pScheduleRunning === s.id };
+  return { id: s.id, name: s.name, prompt: s.prompt, every: s.every, day: s.day, month: s.month ?? null, at: s.at, model: s.model, thinking: s.thinking, enabled: s.enabled, builtin: s.builtin, flow: s.builtin === "yearly" ? pYearlyFlow : null, next: s.enabled ? pSlots(s, pLocalNow(), 1) : null, lastSession: last?.id ?? null, lastAt: last?.createdAt ?? null, running: pScheduleRunning === s.id };
 };
 /** A run: the model (started if needed), then a read-only reply in a new conversation under 定时. */
 /** 年度总结 (yearly.rs): reading the year month by month (notes folded under the reply), then the year. */
@@ -4041,11 +4065,18 @@ const pScheduleRun = (s: PSchedule, slot?: string) => {
 };
 // 今日简报 (brief.rs)
 type PBriefDay = { content: string; state: "writing" | "done" | "failed"; error: string | null; modelName: string | null; leftOut: string[] };
-const pBrief = { enabled: new URLSearchParams(location.search).get("brief") !== "off", model: null as string | null, thinking: true, writing: false, phase: null as null | "starting" | "writing", days: new Map<string, PBriefDay>() };
+// brief.rs `DEFAULT_PROMPT`
+const pBriefDefault = `你是小拾，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
+- 根据读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。
+- 只写这几件事：今天要做的、快到期的和过期的待办（看【一步一步】）；快到的日子，还有几天或者就是今天（看【来日方长】）；该跟进的投递、正在笔试面试的（看【投石问路】）；最近两周的笔记里常在想什么，一两句，像朋友一样提一下（看【念念不忘】）。
+- 没读到的就一个字都不要提（比如没读到笔记，就不要说笔记）。
+- 提到具体的事照抄它的名称；不要编，也不要建议用户去记录什么。
+- 最后单独一行写今天的心情，只能是这四个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事（看今天的事多不多、有没有好消息或烦心的事）。`;
+const pBrief = { enabled: new URLSearchParams(location.search).get("brief") !== "off", model: null as string | null, thinking: true, prompt: null as string | null, writing: false, phase: null as null | "starting" | "writing", days: new Map<string, PBriefDay>() };
 const pBriefOut = () => {
   const day = toYmd(new Date());
   const r = pBrief.days.get(day);
-  return { enabled: pBrief.enabled, model: pBrief.model, thinking: pBrief.thinking, day, content: r?.content ?? "", state: r?.state ?? "none", error: r?.error ?? null, modelName: r?.modelName ?? null, leftOut: r?.leftOut ?? [], phase: r?.state === "writing" ? pBrief.phase : null, mood: r?.content ? (new URLSearchParams(location.search).get("mood") ?? "busy") : null };
+  return { enabled: pBrief.enabled, model: pBrief.model, thinking: pBrief.thinking, prompt: pBrief.prompt ?? pBriefDefault, custom: pBrief.prompt != null, day, content: r?.content ?? "", state: r?.state ?? "none", error: r?.error ?? null, modelName: r?.modelName ?? null, leftOut: r?.leftOut ?? [], phase: r?.state === "writing" ? pBrief.phase : null, mood: r?.content ? (new URLSearchParams(location.search).get("mood") ?? "busy") : null };
 };
 window.setInterval(() => {
   if (pScheduleRunning != null) return;
@@ -4141,6 +4172,13 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pBrief.enabled = !!a.enabled;
     pBrief.model = model;
     pBrief.thinking = thinking;
+    return pBriefOut();
+  },
+  picky_brief_prompt: (a) => {
+    const p = a.prompt == null ? null : String(a.prompt).trim();
+    if (p === "") throw "提示词不能为空";
+    if (p && [...p].length > 2000) throw "提示词太长了（最多 2000 个字）";
+    pBrief.prompt = p === pBriefDefault ? null : p;
     return pBriefOut();
   },
   picky_seen: (a) => {
@@ -4255,7 +4293,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     return null;
   },
   picky_cloud_key_remove: (a) => (pky.keys.delete(a.service as string), null),
-  picky_sessions: () => [...pky.sessions].sort((x, y) => y.updatedAt.localeCompare(x.updatedAt) || y.id - x.id).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+  picky_sessions: () => [...pky.sessions].filter((x) => !pRecords.has(x.id)).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt) || y.id - x.id).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
   picky_messages: (a) => {
     const s = pky.sessions.find((x) => x.id === a.sessionId);
     if (!s) throw "找不到这个对话，可能已经被删除了";
@@ -4373,6 +4411,40 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     const t = sib[sib.indexOf(m) + (a.delta as number)];
     if (t) pShow(s, t);
     return (t ?? m).id;
+  },
+  picky_rater_records: () => [...pRecords.values()].sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((r) => structuredClone(r)),
+  picky_rater_record: (a) => { const r = pRecords.get(a.session as number); if (!r) throw new Error("这次记录已经存好或放弃了"); return structuredClone(r); },
+  picky_rater_record_start: (a) => {
+    seekerMock.modelCheck("record");
+    if (!String(a.date).trim()) throw new Error("请填写面试日期");
+    const job = seekerMock.jobLink(a.job as number);
+    const sess = Object.assign(pNewSession(`复盘 · ${job.label} · ${a.round}`), { titleSource: "user" as const, private: true, knowledge: true });
+    pky.sessions.push(sess);
+    const r: RaterRecord = { session: sess.id, review: { id: "", job, date: String(a.date), round: String(a.round), form: "", result: "待定", items: [], feedback: "", thoughts: "", analysis: null, createdAt: "" }, ready: false, fills: 0, createdAt: now() };
+    pRecords.set(sess.id, r);
+    return structuredClone(r);
+  },
+  picky_rater_record_edit: (a) => {
+    const r = pRecords.get(a.session as number);
+    if (!r) throw new Error("这次记录已经存好或放弃了");
+    Object.assign(r, { review: { ...structuredClone(a.review as RaterReview), job: r.review.job }, ready: false });
+    return structuredClone(r);
+  },
+  picky_rater_record_save: undoable("记复盘", (a) => {
+    const r = pRecords.get(a.session as number);
+    if (!r) throw new Error("这次记录已经存好或放弃了");
+    if (pBusyIn(r.session)) throw new Error("小拾还在回复，等它说完再存");
+    const review = a.review as RaterReview;
+    if (!review.items.some((x) => x.question.trim())) throw new Error("还没记下问了什么");
+    const out = seekerHandlers.picky_rater_review_save({ review: { ...review, id: "" }, jobId: r.review.job.id });
+    pRecords.delete(r.session);
+    pky.sessions = pky.sessions.filter((x) => x.id !== r.session);
+    return out;
+  }),
+  picky_rater_record_discard: (a) => {
+    if (!pRecords.delete(a.session as number)) throw new Error("这次记录已经存好或放弃了");
+    pky.sessions = pky.sessions.filter((x) => x.id !== a.session);
+    return [...pRecords.values()].map((r) => structuredClone(r));
   },
   picky_library: () => ({
     pinned: pMembers("pinned").map(pRow),
@@ -4769,7 +4841,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
   },
   picky_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
   // reading, settings and the Word export itself aren't undone (as in Rust)
-  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_rater", "picky_rater_interviews", "picky_rater_prep", "picky_rater_review_compare", "picky_rater_prep_word_place", "picky_rater_prep_word", "picky_seeker_files", "picky_seeker_cv_text", "picky_rater_practice", "picky_rater_round", "picky_rater_pick", "picky_rater_follow", "picky_rater_comment", "picky_rater_seconds", "picky_rater_suggest", "picky_rater_defaults", "picky_rater_options", "picky_rater_options_set", "picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_import_preview", "picky_seeker_output_save", "picky_seeker_knowledge", "picky_seeker_knowledge_add", "picky_seeker_company_names", "picky_seeker_job_company", "picky_seeker_job_resumes", "picky_seeker_prompts", "picky_rater_prompts"].includes(key) ? handler : undoable(key === "picky_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "picky_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "picky_seeker_records_delete" ? "删除 Seeker 资料" : key === "picky_rater_order" ? "调整题目顺序" : key === "picky_rater_delete_many" ? "删除题目" : key === "picky_rater_rounds_delete" ? "删除练习" : key === "picky_rater_prep_save" ? "改速查卡" : key === "picky_rater_prep_keep" ? "追问存进题库" : key === "picky_rater_review_save" ? "记复盘" : key === "picky_rater_review_keep" ? "复盘的题存进题库" : key === "picky_rater_review_rule" ? "复盘的约定加进规则" : key === "picky_rater_interview_delete" ? "删除面试记录" : key === "picky_rater_add" ? "补题" : key === "picky_rater_round_start" ? "开始练习" : key === "picky_rater_mark" ? "练习" : key === "picky_rater_stop" ? "停下练习" : key === "picky_rater_round_delete" ? "删除这一轮" : key === "picky_rater_keep" ? "追问存进题库" : key === "picky_rater_save" ? "保存题目" : key === "picky_rater_delete" ? "删除题目" : key === "picky_seeker_job_resume" ? "关联简历" : key === "picky_seeker_group_rename" ? "分组改名" : key === "picky_seeker_use_job" ? "为岗位做简历" : key === "picky_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
+  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_rater", "picky_rater_interviews", "picky_rater_prep", "picky_rater_summarize", "picky_rater_prep_word_place", "picky_rater_prep_word", "picky_seeker_files", "picky_seeker_cv_text", "picky_rater_practice", "picky_rater_round", "picky_rater_pick", "picky_rater_follow", "picky_rater_comment", "picky_rater_seconds", "picky_rater_suggest", "picky_rater_defaults", "picky_rater_options", "picky_rater_options_set", "picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_review", "picky_seeker_notes_settle", "picky_seeker_export_name", "picky_seeker_import_preview", "picky_seeker_output_save", "picky_seeker_knowledge", "picky_seeker_knowledge_add", "picky_seeker_company_names", "picky_seeker_job_company", "picky_seeker_job_resumes", "picky_seeker_prompts", "picky_rater_prompts"].includes(key) ? handler : undoable(key === "picky_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "picky_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "picky_seeker_records_delete" ? "删除 Seeker 资料" : key === "picky_rater_order" ? "调整题目顺序" : key === "picky_rater_delete_many" ? "删除题目" : key === "picky_rater_rounds_delete" ? "删除练习" : key === "picky_rater_prep_save" ? "改速查卡" : key === "picky_rater_prep_keep" ? "追问存进题库" : key === "picky_rater_review_save" ? "记复盘" : key === "picky_rater_review_keep" ? "复盘的题存进题库" : key === "picky_rater_review_rule" ? "复盘的约定加进规则" : key === "picky_rater_interview_delete" ? "删除面试记录" : key === "picky_rater_add" ? "补题" : key === "picky_rater_round_start" ? "开始练习" : key === "picky_rater_mark" ? "练习" : key === "picky_rater_stop" ? "停下练习" : key === "picky_rater_round_delete" ? "删除这一轮" : key === "picky_rater_keep" ? "追问存进题库" : key === "picky_rater_save" ? "保存题目" : key === "picky_rater_delete" ? "删除题目" : key === "picky_seeker_job_resume" ? "关联简历" : key === "picky_seeker_group_rename" ? "分组改名" : key === "picky_seeker_use_job" ? "为岗位做简历" : key === "picky_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
   picky_pub2md: () => p2View(),
   picky_pub2md_settings: (a) => {
     p2.settings = { ...(a.settings as P2Settings), parallel: Math.min(8, Math.max(1, (a.settings as P2Settings).parallel)) };

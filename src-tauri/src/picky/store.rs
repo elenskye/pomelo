@@ -40,6 +40,8 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 27, name: "record_order", sql: include_str!("../../migrations/picky/0027_record_order.sql") },
     Migration { version: 28, name: "job_resumes", sql: include_str!("../../migrations/picky/0028_job_resumes.sql") },
     Migration { version: 29, name: "no_resume_copies", sql: include_str!("../../migrations/picky/0029_no_resume_copies.sql") },
+    Migration { version: 30, name: "seeker_group_order", sql: include_str!("../../migrations/picky/0030_seeker_group_order.sql") },
+    Migration { version: 31, name: "rater_records", sql: include_str!("../../migrations/picky/0031_rater_records.sql") },
 ];
 
 pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";

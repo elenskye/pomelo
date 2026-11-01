@@ -4,7 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SeekerPromptView } from "./seekerApi";
 export const RATER_CATEGORIES = ["简历题", "通用题", "突击题"] as const;
 /** Rater's rules: Seeker records of these 用途 (the last three: each 题库 SKILL's workflow). */
-export const RATER_USES = [{ value: "题库维护", label: "题库维护" }, { value: "面试", label: "面试" }, ...RATER_CATEGORIES.map((c) => ({ value: c, label: `${c} SKILL` }))];
+export const RATER_USES = [{ value: "题库维护", label: "题库维护" }, { value: "卡片练习", label: "卡片练习" }, { value: "面试", label: "面试" }, { value: "复盘", label: "复盘" }, ...RATER_CATEGORIES.map((c) => ({ value: c, label: `${c} SKILL` }))];
+/** A rule the program brings until the user writes their own (Rust qbank.rs `Builtin`): whole = any rule of the group stands in for it, else one of the same title. */
+export type RaterBuiltin = { category: string; title: string; points: string[]; whole: boolean };
 /** Answers longer than this (seconds) are flagged. */
 export const RATER_LIMIT = 90;
 export type RaterJob = { id: number; createdAt: string; label: string };
@@ -18,8 +20,16 @@ export type RaterBank = { questions: RaterQuestion[]; revisions: RaterRevision[]
 export type RaterAsk = { kind: string; materials: string[]; job: number | null; count: number; question: string | null; request: string };
 /** New questions (revision 0, checked by Rust) to tick, or one question with its new answer. */
 export type RaterProposal = { kind: string; model: string; note: string; advice: string; questions: RaterQuestion[]; before: RaterQuestion | null; after: RaterQuestion | null };
-/** Rater's own model for its SKILLs (not undone). */
-export type RaterOptions = { model: string | null; thinking: boolean };
+/** Rater's models (not undone): the default, and the functions with their own (Rust qbank.rs `Options`). */
+export type RaterChoice = { model: string | null; thinking: boolean };
+export type RaterOptions = RaterChoice & { features: Record<string, RaterChoice> };
+/** Rater's AI functions (设置 page rows; Rust qbank.rs `FEATURES`). */
+export const RATER_FEATURES = [["suggest", "补题"], ["polish", "润色答案"], ["pick", "卡片练习 · 按 JD 挑卡"], ["follow", "卡片练习 · 追问"], ["comment", "卡片练习 · 点评"], ["prep", "面试 · 准备"], ["record", "复盘 · 记录"], ["summary", "复盘 · 总结"]] as const;
+export type RaterFeature = (typeof RATER_FEATURES)[number][0];
+/** Whether a function has a model (its own or the default). */
+export type RaterCan = (f: RaterFeature) => boolean;
+/** The model and 思考 a function uses. */
+export const raterChoice = (o: RaterOptions, f: RaterFeature): RaterChoice => o.features[f] ?? { model: o.model, thinking: o.thinking };
 export const RATER_POLISH = "润色";
 /** 卡片练习 (Rust rater/practice.rs). */
 export const RATER_MODES = ["自己挑", "按 JD", "随机"] as const;
@@ -54,8 +64,8 @@ export const raterApi = {
   prompts: () => invoke<SeekerPromptView[]>("picky_rater_prompts"),
   suggest: (ask: RaterAsk) => invoke<RaterProposal>("picky_rater_suggest", { ask }),
   add: (questions: RaterQuestion[]) => invoke<RaterBank>("picky_rater_add", { questions }),
-  /** Each SKILL's built-in workflow: [category, text]. */
-  defaults: () => invoke<[string, string[]][]>("picky_rater_defaults"),
+  /** The rules the program brings. */
+  defaults: () => invoke<RaterBuiltin[]>("picky_rater_defaults"),
   options: () => invoke<RaterOptions>("picky_rater_options"),
   setOptions: (options: RaterOptions) => invoke<RaterOptions>("picky_rater_options_set", { options }),
   practice: () => invoke<RaterPractice>("picky_rater_practice"),
@@ -76,13 +86,18 @@ export const RATER_RESULTS = ["待定", "通过", "没过"] as const;
 export type RaterFollow = { about: string; category: string; question: string; answer: string; saved: string | null };
 export type RaterPrep = { id: string; job: RaterJob; resume: string; lang: string; form: string; request: string; questions: string[]; follows: RaterFollow[]; sheet: string; advice: string; model: string; note: string; createdAt: string };
 export type RaterAsked = { question: string; answer: string; feedback: string };
-/** asked: index into the review's items. */
-export type RaterMatched = { asked: number; text: string };
+/** asked: index into the review's items (a summary's: of `review`). */
+export type RaterMatched = { review?: string; asked: number; text: string };
 export type RaterRuleIdea = { use: string; title: string; text: string; why: string; adopted: string | null };
 export type RaterAnalysis = { model: string; prep: string | null; summary: string; hits: RaterMatched[]; misses: RaterMatched[]; questions: RaterFollow[]; rules: RaterRuleIdea[] };
 export type RaterReview = { id: string; job: RaterJob; date: string; round: string; form: string; result: string; items: RaterAsked[]; feedback: string; thoughts: string; analysis: RaterAnalysis | null; createdAt: string };
+/** 总结复盘: some reviews of a job (oldest first) against a prep (none: the bank only). */
+export type RaterSummary = { id: string; job: RaterJob; prep: string | null; reviews: string[]; analysis: RaterAnalysis; createdAt: string };
 /** Newest first. */
-export type RaterInterviews = { preps: RaterPrep[]; reviews: RaterReview[] };
+export type RaterInterviews = { preps: RaterPrep[]; reviews: RaterReview[]; summaries: RaterSummary[] };
+/** 复盘 · 记录: a review being filled in a conversation (Rust rater/record.rs `Draft`); session = its 小拾 conversation. */
+export type RaterRecord = { session: number; review: RaterReview; ready: boolean; fills: number; createdAt: string };
+export const RATER_RECORDS_KEY = ["picky", "rater", "records"];
 export type RaterPrepAsk = { job: number; lang: string; form: string; request: string };
 export const RATER_INTERVIEWS_KEY = ["picky", "rater", "interviews"];
 export const sameJob = (a: { id: number; createdAt: string }, b: { id: number; createdAt: string }) => a.id === b.id && a.createdAt === b.createdAt;
@@ -92,10 +107,18 @@ export const interviewApi = {
   prepSave: (prep: RaterPrep) => invoke<RaterInterviews>("picky_rater_prep_save", { prep }),
   prepKeep: (id: string, index: number) => invoke<RaterInterviews>("picky_rater_prep_keep", { id, index }),
   reviewSave: (review: RaterReview, jobId: number | null) => invoke<RaterInterviews>("picky_rater_review_save", { review, jobId }),
-  compare: (id: string, prep: string | null) => invoke<RaterInterviews>("picky_rater_review_compare", { id, prep }),
+  summarize: (reviews: string[], prep: string | null) => invoke<RaterInterviews>("picky_rater_summarize", { reviews, prep }),
   reviewKeep: (id: string, index: number) => invoke<RaterInterviews>("picky_rater_review_keep", { id, index }),
   reviewRule: (id: string, index: number) => invoke<RaterInterviews>("picky_rater_review_rule", { id, index }),
   remove: (id: string) => invoke<RaterInterviews>("picky_rater_interview_delete", { id }),
   wordPlace: (id: string) => invoke<{ folder: string; name: string }>("picky_rater_prep_word_place", { id }),
   word: (id: string, folder: string, name: string) => invoke<string>("picky_rater_prep_word", { id, folder, name }),
+  records: () => invoke<RaterRecord[]>("picky_rater_records"),
+  record: (session: number) => invoke<RaterRecord>("picky_rater_record", { session }),
+  recordStart: (job: number, date: string, round: string) => invoke<RaterRecord>("picky_rater_record_start", { job, date, round }),
+  /** The user's edits to the table (kept for the conversation; not undone). */
+  recordEdit: (session: number, review: RaterReview) => invoke<RaterRecord>("picky_rater_record_edit", { session, review }),
+  /** 确认: the table becomes a review, the conversation goes (one undo step). */
+  recordSave: (session: number, review: RaterReview) => invoke<RaterInterviews>("picky_rater_record_save", { session, review }),
+  recordDiscard: (session: number) => invoke<RaterRecord[]>("picky_rater_record_discard", { session }),
 };

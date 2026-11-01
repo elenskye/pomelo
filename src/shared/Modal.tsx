@@ -11,6 +11,8 @@ export function Modal(props: {
   footerLeft?: ReactNode;
   submitLabel: string;
   submitDisabled?: boolean;
+  /** The close button's word (取消). */
+  cancelLabel?: string;
   extra?: ReactNode;
   wide?: boolean;
   /** "xl": 720 wide (editors with rows of fields, diffs). */
@@ -37,7 +39,7 @@ export function Modal(props: {
         <div className="flex items-center gap-2 pt-1">
           {props.footerLeft}
           <div className="flex-1" />
-          <Button onClick={props.onClose}>取消</Button>
+          <Button onClick={props.onClose}>{props.cancelLabel ?? "取消"}</Button>
           <Button type="submit" variant="primary" disabled={props.submitDisabled}>
             {props.submitLabel}
           </Button>

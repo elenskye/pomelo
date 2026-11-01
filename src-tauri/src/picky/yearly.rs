@@ -18,8 +18,8 @@
 //! - Thinking as the schedule says (default on: month readers and the letter, each with room for it).
 //! - The letter: to 「你」 from 小拾; 关键词 line, 总述, 数字 (copied), themes with
 //!   content, 3～5 quotes with dates, 之最, last year woven in, 写给明年; length by how much there is;
-//!   empty months / parts in a sentence; nothing about how it was read. The schedule's 要做什么 comes
-//!   last and wins.
+//!   empty months / parts in a sentence; nothing about how it was read. The schedule's prompt (定时 shows
+//!   `FLOW` instead) comes last and wins.
 //! - The year: the run's time (one in January → the year just ended, schedule.rs `year_of`); kept
 //!   with the run (`year_runs`) for 首页's new-year card (`card`) and next year's comparison.
 //! - Model rules as other 定时任务; for a cloud model the modules not sent are left out and said at
@@ -28,12 +28,33 @@
 use super::context::{self, Counter};
 use super::data::{self, month_label, Access, Count};
 use super::provider::{Msg, Options, Target};
+use super::skills::{again, check, s, Flow};
 use crate::modules::common::err;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::VecDeque;
 
 pub const BUILTIN: &str = "yearly";
+
+const READ: &str = "按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和小拾的对话（私密对话、隐藏的模块不读）";
+const NEXT: &str = "下一个有记录的月份";
+const MONTH: &str = "写这个月的要点，存下来";
+const LETTER: &str = "写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）";
+/// How a run goes (`compose`), drawn in 定时 instead of its prompt.
+pub const FLOW: &[Flow] = &[
+    s("到点或立即运行（1 月运行的写刚过完的那一年）"),
+    check("用的是云端模型？", "是", &["不许发给云端的模块不读，在开头说一句"], READ, "否"),
+    s(READ),
+    s("读全年的书影、画画、求职、打卡、出行，数今年和去年同期的数字，找去年的年度总结（钱来钱往、芝麻开门从来不读）"),
+    check("整年的记录放得下模型的上下文？", "是", &["一次读完"], LETTER, "否"),
+    s(NEXT),
+    check("记录和上次读时一样？", "是", &["用上次存的要点"], NEXT, "否"),
+    check("这个月的记录太多？", "是", &["分几段读，每段先记要点"], MONTH, "否"),
+    s(MONTH),
+    again("还有月份没读（云端 4 个月一起读，本地一个一个）", NEXT),
+    check("要点加起来放不下？", "是", &["不带去年的年度总结；还放不下就停下，请你换个上下文大的模型"], LETTER, "否"),
+    s(LETTER),
+];
 /// Start the system messages (the mock model answers by them).
 pub const MONTH_MARK: &str = "【年度总结 · 每月要点】";
 pub const PIECE_MARK: &str = "【年度总结 · 分段要点】";
@@ -256,7 +277,7 @@ fn year_system(year: &str, facts: &Facts) -> String {
     )
 }
 
-/// The request for the letter: the rules first, then everything read, the user's 要做什么 last.
+/// The request for the letter: the rules first, then everything read, the schedule's prompt last.
 pub fn year_messages(year: &str, system: &str, read: Read, facts: &Facts, instruction: &str) -> Vec<Msg> {
     let rules = year_system(year, facts);
     let system = [system.trim(), rules.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n");

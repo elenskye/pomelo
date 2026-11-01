@@ -1,9 +1,10 @@
 // Seeker's records by page (requirements「Seeker」; kinds in Rust catalog.rs): 素材 (基本信息, the materials by
-// category), 档案 (经历档案, 已确认事实 by group), 规则 (rules and 有效个人约定 by task, 个人范例), 网申. A
-// material, 档案, rule, 范例 or 网申 answer is a card that opens; a fact or 约定 is a row. Each edit goes
+// category), 档案 (经历档案, 已确认事实 by group), 规则 (rules by task, 豁免情况), 网申 (groups of lines and
+// cards). A material, 档案, rule, 豁免情况 or 网申 card opens; a fact or 网申 line is a row. Each edit goes
 // through RecordEditor (its kind's fields → 查看差异 → 确认保存, one undo step). 素材 and 规则 show the page's
 // language (规则 also the ones for both); 档案 and 网申 are both languages'. Cards drag into the user's order
-// within their group; 「选择」 ticks several to 启用 / 停用 / 删除 at once (select.tsx; one undo step each).
+// within their group; groups of 规则, 档案 and 网申 move up and down (SeekerGroups.tsx `useGroupMove`);
+// 「选择」 ticks several to 启用 / 停用 / 删除 at once (select.tsx; one undo step each).
 import { PickField } from "@/shared/PickField";
 import { useState, type ReactNode } from "react";
 import { ChevronRight, Copy, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
@@ -17,14 +18,14 @@ import { PointEditor } from "./SeekerPoint";
 import { SeekerMaterialFiles } from "./SeekerFiles";
 import { SeekerDiff, SeekerSort, recordText, when } from "./SeekerParts";
 import { SUMMARY } from "./SeekerParts";
-import { RATER_USES } from "./raterApi";
+import { RATER_USES, type RaterBuiltin } from "./raterApi";
 import { PickRow, SelectBar, SelectButton, SortGroup, picked, useSelect, type Select } from "./select";
-import { GroupHead, PromptsButton, fedTo, useGroupActions, usePrompts } from "./SeekerGroups";
-import { groupName, recordIn, seekerApi, seekerBatch, type SeekerCatalog, type SeekerImport, type SeekerLang, type SeekerPoint, type SeekerRecord, type SeekerWorkspace } from "./seekerApi";
+import { GroupHead, PromptsButton, fedTo, useGroupActions, useGroupMove, usePrompts } from "./SeekerGroups";
+import { EXEMPT, SHARED_KINDS, groupName, orderedGroups, recordIn, seekerApi, seekerBatch, type SeekerCatalog, type SeekerImport, type SeekerLang, type SeekerPoint, type SeekerRecord, type SeekerWorkspace } from "./seekerApi";
 
 export type SeekerWrite = (action: () => Promise<SeekerWorkspace>) => Promise<boolean>;
-/** A rule's or 约定's category: which model task reads it (Rust model.rs `context`). */
-export const USES = [{ value: "共用准则", label: "共用准则" }, { value: "素材润色", label: "素材润色" }, { value: "整体审查", label: "选材和审查" }, { value: "写作规则", label: "所有任务" }];
+/** A rule's category: which model task reads it (Rust model.rs `reads`); the names as Rust catalog.rs `RULE_LABELS`. */
+export const USES = [{ value: "写作规则", label: "通用规则" }, { value: "素材润色", label: "素材润色" }, { value: "整体审查", label: "选材和审查" }];
 type Use = { value: string; label: string };
 const useLabel = (c: string, uses: Use[] = USES) => uses.find((u) => u.value === c)?.label ?? c;
 /** Rater's rules (题库维护, 面试) live with Seeker's records but show only on Rater's 规则 page. */
@@ -37,7 +38,7 @@ const MATERIALS = ["教育", "技能", "项目", "工作"];
 /** English materials in the order of the resume (Rust workflow.rs `ORDER_EN`). */
 const MATERIALS_EN = [SUMMARY, "技能", "教育", "项目", "工作", "证书"];
 const materialsOf = (lang: string | undefined) => (lang === "en" ? MATERIALS_EN : MATERIALS);
-/** A rule's, 约定's or 范例's language. */
+/** A rule's or 豁免情况's language. */
 const LANGS = [{ value: "cn", label: "中文" }, { value: "en", label: "English" }, { value: "", label: "中英共用" }];
 const NAMES = ["姓名", "Name"];
 const DOSSIER = "经历档案";
@@ -52,8 +53,9 @@ const blank = (kind: string, category: string, lang: string): SeekerRecord => ({
 const matches = (r: SeekerRecord, q: string) => !q || [r.title, r.text, r.role, r.stack, r.category, ...r.points.map((p) => p.text), ...r.fields.map((f) => `${f.label}${f.value}`)].join("\n").toLowerCase().includes(q.toLowerCase());
 
 /** uses: the 用途 groups of the 规则 page (Rater passes its own; Seeker's leaves Rater's out). */
-/** defaults: a group's built-in points while it has no rules (Rater's SKILL workflows). */
-type PageProps = { lang: SeekerLang; catalog: SeekerCatalog; busy: boolean; write: SeekerWrite; aiBusy: boolean; onPolish: (id: string) => void; tools?: ReactNode; uses?: Use[]; defaults?: Record<string, string[]> };
+/** defaults: Rater's built-in rules, each shown while nothing stands in for it (whole: any enabled rule of the group, else an enabled one of the same title). */
+/** polish: 润色 on a card (素材, 网申): runs in the background (seekerJobs), its line shows on the card. */
+type PageProps = { lang: SeekerLang; catalog: SeekerCatalog; busy: boolean; write: SeekerWrite; polish?: { run: (id: string) => void; running: (id: string) => boolean; line: (id: string) => ReactNode }; tools?: ReactNode; uses?: Use[]; defaults?: RaterBuiltin[] };
 
 /** Editing, history and deleting, shared by the pages. */
 function useRecords(p: PageProps) {
@@ -72,7 +74,7 @@ function useRecords(p: PageProps) {
   </>;
   // new facts and 网申 are both languages'; everything else the page's
   // a new rule starts with one empty point (or the given ones: 改成我的)
-  return { add: (kind: string, category: string, text = "", title = "", points: string[] = kind === "rule" ? [""] : []) => setEditing({ ...blank(kind, category, ["fact", "application"].includes(kind) ? "" : p.lang), text, title, points: points.map((t) => ({ id: crypto.randomUUID(), text: t })) }), edit: (r: SeekerRecord) => setEditing(structuredClone(r)), history: setPast, remove, open, toggle, dialogs };
+  return { add: (kind: string, category: string, text = "", title = "", points: string[] = kind === "rule" ? [""] : []) => setEditing({ ...blank(kind, category, SHARED_KINDS.includes(kind) ? "" : p.lang), text, title, points: points.map((t) => ({ id: crypto.randomUUID(), text: t })) }), edit: (r: SeekerRecord) => setEditing(structuredClone(r)), history: setPast, remove, open, toggle, dialogs };
 }
 type Records = ReturnType<typeof useRecords>;
 
@@ -81,7 +83,7 @@ function Actions(props: { r: SeekerRecord; a: Records; p: PageProps; polish?: bo
   const { r, a, p } = props;
   return <div className="flex shrink-0 items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
     {props.copy && <IconButton label="复制" onClick={() => void navigator.clipboard.writeText(r.text).then(() => toast("已复制"), (e) => toast(errorText(e), "error"))}><Copy size={14} /></IconButton>}
-    {props.polish && <IconButton label="润色" disabled={p.busy || p.aiBusy} onClick={() => p.onPolish(r.id)}><Sparkles size={14} /></IconButton>}
+    {props.polish && p.polish && <IconButton label="润色" disabled={p.busy || p.polish.running(r.id)} onClick={() => p.polish!.run(r.id)}><Sparkles size={14} /></IconButton>}
     <IconButton label="编辑" disabled={p.busy} onClick={() => a.edit(r)}><Pencil size={14} /></IconButton>
     <IconButton label="历史" onClick={() => a.history(r.id)}><History size={14} /></IconButton>
     <IconButton label="删除" danger disabled={p.busy} onClick={() => void a.remove(r)}><Trash2 size={14} /></IconButton>
@@ -97,15 +99,17 @@ function Frame(props: { query: string; setQuery: (q: string) => void; tools?: Re
   </div>;
 }
 
-function Group(props: { title: string; onAdd?: () => void; addLabel?: string; menu?: ReactNode; note?: string; children?: ReactNode }) {
+/** add: its own ＋ (网申: a menu of the two kinds) instead of onAdd's. */
+function Group(props: { title: string; onAdd?: () => void; addLabel?: string; add?: ReactNode; menu?: ReactNode; move?: ReactNode; note?: string; children?: ReactNode }) {
   return <section className="space-y-2">
-    <GroupHead title={props.title} add={props.onAdd && <IconButton label={props.addLabel ?? `新增${props.title}`} onClick={props.onAdd}><Plus size={14} /></IconButton>} menu={props.menu} note={props.note} />
+    <GroupHead title={props.title} add={props.add ?? (props.onAdd && <IconButton label={props.addLabel ?? `新增${props.title}`} onClick={props.onAdd}><Plus size={14} /></IconButton>)} menu={props.menu} move={props.move} note={props.note} />
     {props.children}
   </section>;
 }
 
 /** A card that opens: its head, then (open) its body. */
-function Card(props: { r: SeekerRecord; a: Records; meta?: ReactNode; actions: ReactNode; children: ReactNode; sel?: Select; drag?: Record<string, unknown> }) {
+/** status: a line under the head that stays (润色 running, done, failed). */
+function Card(props: { r: SeekerRecord; a: Records; meta?: ReactNode; actions: ReactNode; children: ReactNode; sel?: Select; drag?: Record<string, unknown>; status?: ReactNode }) {
   const open = props.a.open.has(props.r.id);
   const on = !!props.sel?.has(props.r.id);
   const selecting = !!props.sel?.on;
@@ -119,17 +123,18 @@ function Card(props: { r: SeekerRecord; a: Records; meta?: ReactNode; actions: R
       </button>
       {!props.sel?.on && props.actions}
     </div>
+    {props.status && <div className="px-3 pb-2 empty:hidden">{props.status}</div>}
     {open && <div className="border-t px-4 py-3 text-sm">{props.children}</div>}
   </article>;
 }
 
-/** Rows of name + text (已确认事实, 有效个人约定). */
-function Rows(props: { rows: SeekerRecord[]; a: Records; p: PageProps; shared?: boolean; sel: Select }) {
+/** Rows of name + text (已确认事实; 网申 lines: plain text, with 复制). */
+function Rows(props: { rows: SeekerRecord[]; a: Records; p: PageProps; shared?: boolean; sel: Select; plain?: boolean }) {
   if (!props.rows.length) return null;
   return <SortGroup items={props.rows} disabled={props.p.busy || props.sel.on} onSort={(ids) => void props.p.write(() => seekerBatch.order(ids))} className="divide-y rounded-card border bg-card">{(r, drag) => <div {...drag} role={props.sel.on ? "checkbox" : undefined} aria-checked={props.sel.on ? props.sel.has(r.id) : undefined} onClick={props.sel.on ? props.sel.pick(r.id) : undefined} className={`group flex items-start gap-4 px-3 py-2 text-sm ${props.sel.has(r.id) ? "bg-accent text-accent-foreground" : "bg-card"} ${props.sel.on ? "cursor-pointer" : ""} ${r.enabled ? "" : "opacity-60"}`}>
     <span className="w-44 shrink-0 pt-1 font-medium">{r.title}{props.shared && r.lang === "" && <span className="ml-2 text-xs font-normal text-muted-foreground">中英共用</span>}</span>
-    <p className="min-w-0 flex-1 pt-1 break-words whitespace-pre-wrap"><InlineMd text={r.text} /></p>
-    {!props.sel.on && <Actions r={r} a={props.a} p={props.p} />}
+    <p className="min-w-0 flex-1 pt-1 break-words whitespace-pre-wrap">{props.plain ? r.text : <InlineMd text={r.text} />}</p>
+    {!props.sel.on && <Actions r={r} a={props.a} p={props.p} copy={props.plain} />}
   </div>}</SortGroup>;
 }
 
@@ -180,7 +185,7 @@ export function SeekerMaterials(p: PageProps) {
       return <Group key={c} title={name} onAdd={() => a.add("material", c)} addLabel={`在「${name}」里新增`} menu={!query && groups.menu("material", c, name, p.catalog.records.filter((r) => r.kind === "material" && r.category === c && (r.lang ?? "cn") === p.lang).map((r) => r.id))}>
         <Cards rows={rows} p={p} sel={sel}>{(r, drag) => {
           const dossier = dossierOf(r.id);
-          return <Card r={r} a={a} sel={sel} drag={drag} meta={[r.role, r.time, r.location].filter(Boolean).join(" · ")} actions={<Actions r={r} a={a} p={p} polish />}>
+          return <Card r={r} a={a} sel={sel} drag={drag} meta={[r.role, r.time, r.location].filter(Boolean).join(" · ")} actions={<Actions r={r} a={a} p={p} polish />} status={p.polish?.line(r.id)}>
             <div className="space-y-2">
               {r.text && <p className={`whitespace-pre-wrap ${r.category === SUMMARY ? "" : "text-muted-foreground"}`}>{r.text}</p>}
               {r.stack && <p className="text-xs text-muted-foreground">技术栈：{r.stack}</p>}
@@ -197,17 +202,23 @@ export function SeekerMaterials(p: PageProps) {
 export function SeekerDossiers(p: PageProps) {
   const a = useRecords(p);
   const [query, setQuery] = useState("");
-  const facts = p.catalog.records.filter((r) => r.kind === "fact" && matches(r, query));
+  const all = p.catalog.records.filter((r) => r.kind === "fact");
+  const facts = all.filter((r) => matches(r, query));
   const dossiers = facts.filter((r) => r.category === DOSSIER);
-  const groups = [...new Set(facts.filter((r) => r.category !== DOSSIER).map((r) => r.category))];
+  // 经历档案 and the fact groups, in the user's order (上移 / 下移)
+  const order = orderedGroups(p.catalog, "fact", "", [DOSSIER, ...new Set(all.filter((r) => r.category !== DOSSIER).map((r) => r.category))]);
+  const shown = order.filter((g) => !query || facts.some((r) => r.category === g));
+  const groups = order.filter((g) => g !== DOSSIER);
   const title = (id: string | null | undefined) => p.catalog.records.find((r) => r.id === id && r.kind === "material")?.title;
   const hung = (r: SeekerRecord) => [title(r.material), title(r.materialEn)].filter(Boolean).join(" · ");
-  const sel = useSelect([...dossiers, ...groups.flatMap((g) => facts.filter((r) => r.category === g))].map((r) => r.id));
+  const sel = useSelect(shown.flatMap((g) => facts.filter((r) => r.category === g)).map((r) => r.id));
+  const move = useGroupMove(p.write, "fact", "", order, p.busy);
   return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<SelectButton select={sel} /><Button disabled={p.busy} onClick={() => a.add("fact", groups[0] ?? "个人事实")}><Plus size={14} />事实</Button></>} bar={<RecordBar sel={sel} p={p} />} empty={!facts.length} dialogs={a.dialogs}>
-    {(dossiers.length > 0 || !query) && <Group title={DOSSIER} onAdd={() => a.add("fact", DOSSIER)}>
-      <Cards rows={dossiers} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} meta={hung(r) ? `素材：${hung(r)}` : "没挂素材"} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>}</Cards>
-    </Group>}
-    {groups.map((g) => <Group key={g} title={g} onAdd={() => a.add("fact", g)} addLabel={`在「${g}」里新增`}><Rows rows={facts.filter((r) => r.category === g)} a={a} p={p} sel={sel} /></Group>)}
+    {shown.map((g) => g === DOSSIER
+      ? <Group key={g} title={DOSSIER} onAdd={() => a.add("fact", DOSSIER)} move={!query && move(g)}>
+        <Cards rows={dossiers} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} meta={hung(r) ? `素材：${hung(r)}` : "没挂素材"} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>}</Cards>
+      </Group>
+      : <Group key={g} title={g} onAdd={() => a.add("fact", g)} addLabel={`在「${g}」里新增`} move={!query && move(g)}><Rows rows={facts.filter((r) => r.category === g)} a={a} p={p} sel={sel} /></Group>)}
   </Frame>;
 }
 
@@ -220,36 +231,53 @@ export function SeekerRules(p: PageProps) {
   const shared = (r: SeekerRecord) => (r.lang === "" && !rater ? "中英共用" : undefined);
   const uses = [...own.map((u) => u.value), ...new Set(records.filter((r) => r.kind !== "example").map((r) => r.category).filter((c) => !own.some((u) => u.value === c)))];
   const examples = rater ? [] : records.filter((r) => r.kind === "example");
-  const shown = (u: string) => !((query || u === "写作规则") && !records.some((r) => r.kind !== "example" && r.category === u));
-  const sel = useSelect([...uses.filter(shown).flatMap((u) => records.filter((r) => r.kind === "rule" && r.category === u)), ...examples].map((r) => r.id));
+  // the rule groups and (Seeker) 豁免情况, in the user's order (上移 / 下移)
+  const order = orderedGroups(p.catalog, "rule", "", [...uses, ...(rater ? [] : [EXEMPT])]);
+  const has = (g: string) => (g === EXEMPT ? examples.length > 0 : records.some((r) => r.kind === "rule" && r.category === g));
+  const shown = order.filter((g) => !query || has(g));
+  const sel = useSelect(shown.flatMap((g) => (g === EXEMPT ? examples : records.filter((r) => r.kind === "rule" && r.category === g))).map((r) => r.id));
   const groups = useGroupActions(p.write, p.lang, p.busy);
+  const move = useGroupMove(p.write, "rule", "", order, p.busy);
   const prompts = usePrompts(p.lang);
   // a group's name: the user's for a built-in one, else the page's word for it
   const nameOf = (u: string) => { const custom = groupName(p.catalog, "rule", "", u); return custom !== u ? custom : useLabel(u, own); };
-  return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<PromptsButton title={rater ? "Rater · 发给模型的说明" : "Seeker · 发给模型的说明"} list={rater ? prompts.rater : prompts.seeker} label={(g) => g === "个人范例" ? g : nameOf(g)} refetch={prompts.refetch} /><SelectButton select={sel} /></>} bar={<RecordBar sel={sel} p={p} />} empty={!!query && !records.length} dialogs={<>{a.dialogs}{groups.dialogs}</>}>
-    {uses.map((u) => {
+  return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<PromptsButton title={rater ? "Rater · 发给模型的说明" : "Seeker · 发给模型的说明"} list={rater ? prompts.rater : prompts.seeker} label={(g) => g === EXEMPT ? g : nameOf(g)} refetch={prompts.refetch} /><SelectButton select={sel} /></>} bar={<RecordBar sel={sel} p={p} />} empty={!!query && !records.length} dialogs={<>{a.dialogs}{groups.dialogs}</>}>
+    {shown.map((u) => {
+      if (u === EXEMPT) return <Group key={u} title={EXEMPT} note={fedTo(EXEMPT, prompts)} onAdd={() => a.add("example", EXEMPT)} move={!query && move(u)}><Cards rows={examples} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} meta={shared(r)} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>}</Cards></Group>;
       const rules = records.filter((r) => r.kind === "rule" && r.category === u);
-      if ((query || u === "写作规则") && !rules.length) return null;
       const name = nameOf(u);
-      return <Group key={u} title={name} onAdd={() => a.add("rule", u)} addLabel={`在「${name}」里新增规则`} note={fedTo(u, prompts)} menu={!query && groups.menu("rule", u, name, p.catalog.records.filter((r) => r.kind === "rule" && r.category === u && recordIn(r, p.lang)).map((r) => r.id))}>
+      return <Group key={u} title={name} onAdd={() => a.add("rule", u)} addLabel={`在「${name}」里新增规则`} note={fedTo(u, prompts)} menu={!query && groups.menu("rule", u, name, p.catalog.records.filter((r) => r.kind === "rule" && r.category === u && recordIn(r, p.lang)).map((r) => r.id))} move={!query && move(u)}>
         <Cards rows={rules} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} meta={shared(r)} actions={<Actions r={r} a={a} p={p} />}><RulePoints points={r.points} /></Card>}</Cards>
-        {!rules.length && p.defaults?.[u] && !query && <article className="rounded-card border border-dashed px-4 py-3 text-sm">
-          <div className="mb-2 flex items-center gap-2"><span className="mr-auto text-xs text-muted-foreground">程序自带的工作流</span><Button variant="ghost" disabled={p.busy} onClick={() => a.add("rule", u, "", "工作流", p.defaults![u])}><Pencil size={13} />改成我的</Button></div>
-          <RulePoints points={p.defaults[u].map((text, i) => ({ id: String(i), text }))} />
-        </article>}
+        {!query && (p.defaults ?? []).filter((d) => d.category === u && (d.whole ? !rules.some((r) => r.enabled) : !rules.some((r) => r.enabled && r.title.trim() === d.title))).map((d) => <article key={d.title} className="rounded-card border border-dashed px-4 py-3 text-sm">
+          <div className="mb-2 flex items-center gap-2"><span className="mr-auto"><span className="font-medium">{d.title}</span><span className="ml-2 text-xs text-muted-foreground">程序自带的</span></span><Button variant="ghost" disabled={p.busy} onClick={() => a.add("rule", u, "", d.title, d.points)}><Pencil size={13} />改成我的</Button></div>
+          <RulePoints points={d.points.map((text, i) => ({ id: String(i), text }))} />
+        </article>)}
       </Group>;
     })}
-    {!rater && (examples.length > 0 || !query) && <Group title="个人范例" note={fedTo("个人范例", prompts)} onAdd={() => a.add("example", "个人范例")}><Cards rows={examples} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} meta={shared(r)} actions={<Actions r={r} a={a} p={p} />}><Markdown text={r.text} /></Card>}</Cards></Group>}
   </Frame>;
 }
 
+/** 网申's two kinds: a line (事项 · 内容, plain) and a card (名称 + Markdown). */
+const APPLY = [{ value: "application_line", label: "一行" }, { value: "application", label: "卡片" }];
+
+/** 网申: groups (both kinds share them) of lines, then cards; 复制 copies the text as written. */
 export function SeekerApplications(p: PageProps) {
   const a = useRecords(p);
   const [query, setQuery] = useState("");
-  const rows = p.catalog.records.filter((r) => r.kind === "application" && matches(r, query));
-  const sel = useSelect(rows.map((r) => r.id));
-  return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<SelectButton select={sel} /><Button disabled={p.busy} onClick={() => a.add("application", "网申")}><Plus size={14} />网申资料</Button></>} bar={<RecordBar sel={sel} p={p} />} empty={!rows.length} dialogs={a.dialogs} after={<SeekerMaterialFiles />}>
-    <Cards rows={rows} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} meta={r.category !== "网申" ? r.category : undefined} actions={<Actions r={r} a={a} p={p} copy polish />}><p className="whitespace-pre-wrap">{r.text}</p></Card>}</Cards>
+  const all = p.catalog.records.filter((r) => APPLY.some((k) => k.value === r.kind));
+  const rows = all.filter((r) => matches(r, query));
+  const order = orderedGroups(p.catalog, "application", "", [...new Set(all.map((r) => r.category))]);
+  const shown = order.filter((g) => !query || rows.some((r) => r.category === g));
+  const of = (kind: string, g: string) => rows.filter((r) => r.kind === kind && r.category === g);
+  const sel = useSelect(shown.flatMap((g) => [...of("application_line", g), ...of("application", g)]).map((r) => r.id));
+  const move = useGroupMove(p.write, "application", "", order, p.busy);
+  // ＋ asks which kind
+  const add = (group: string, label: string, trigger: ReactNode, className: string) => <Dropdown<string | null> plain ariaLabel={label} value={null} options={APPLY} onChange={(kind) => kind && a.add(kind, group)} renderTrigger={() => trigger} triggerClassName={`${className} outline-none focus-visible:ring-2 focus-visible:ring-ring ${p.busy ? "pointer-events-none opacity-50" : ""}`} />;
+  return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<SelectButton select={sel} />{add(order[0] ?? "网申", "新增网申资料", <><Plus size={14} />网申资料</>, "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control border bg-card px-3 py-1.5 text-sm transition-colors duration-150 hover:bg-muted")}</>} bar={<RecordBar sel={sel} p={p} />} empty={!rows.length} dialogs={a.dialogs} after={<SeekerMaterialFiles />}>
+    {shown.map((g) => <Group key={g} title={g} add={add(g, `在「${g}」里新增`, <Plus size={14} />, "inline-flex shrink-0 items-center justify-center rounded-control p-1.5 text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground")} move={!query && move(g)}>
+      <Rows rows={of("application_line", g)} a={a} p={p} sel={sel} plain />
+      <Cards rows={of("application", g)} p={p} sel={sel}>{(r, drag) => <Card r={r} a={a} sel={sel} drag={drag} actions={<Actions r={r} a={a} p={p} copy polish />} status={p.polish?.line(r.id)}><Markdown text={r.text} /></Card>}</Cards>
+    </Group>)}
   </Frame>;
 }
 
@@ -264,7 +292,7 @@ function HistoryDialog(props: { id: string; catalog: SeekerCatalog; busy: boolea
   </Modal>;
 }
 
-const KIND_TITLE: Record<string, string> = { material: "素材", profile: "基本信息", fact: "已确认事实", rule: "规则", example: "个人范例", application: "网申资料" };
+const KIND_TITLE: Record<string, string> = { material: "素材", profile: "基本信息", fact: "已确认事实", rule: "规则", example: EXEMPT, application: "网申卡片", application_line: "网申条目" };
 
 /** One record's fields (by kind) → 查看差异 → 确认保存. */
 /** uses: the 用途 to choose from (Rater's rules: its own, Chinese only, no language to pick). */
@@ -331,18 +359,22 @@ function RecordEditor(props: { initial: SeekerRecord; catalog: SeekerCatalog; bu
           </Field></>;
       case "example":
         return <><div className="grid grid-cols-[1fr_8rem] gap-3">{input("名称", "title")}{language}</div>{text("正文", 10)}</>;
+      case "application_line":
+        return <><div className="grid grid-cols-[1fr_10rem] gap-3">{input("事项", "title")}{input("分组", "category")}</div>{text("内容", 3)}</>;
+      case "application":
+        return <><div className="grid grid-cols-[1fr_10rem] gap-3">{input("名称", "title")}{input("分组", "category")}</div>{text("正文", 12)}</>;
       default:
         return <>{input("名称", "title")}{text("正文", 10)}</>;
     }
   })();
-  const toggle = v.kind === "material" ? "用于选材" : v.kind === "profile" || v.kind === "application" ? null : "发给模型";
-  const ready = v.title.trim() && !(v.kind === "fact" && !v.category.trim()) && !(v.kind === "rule" && !v.points.some((x) => x.text.trim()));
+  const toggle = v.kind === "material" ? "用于选材" : v.kind === "profile" || v.kind.startsWith("application") ? null : "发给模型";
+  const ready = v.title.trim() && !(SHARED_KINDS.includes(v.kind) && !v.category.trim()) && !(v.kind === "rule" && !v.points.some((x) => x.text.trim()));
   return <Modal size="xl" title={review ? "确认修改" : props.initial.revision ? `编辑${name}` : `新增${name}`} error={error} onClose={props.close} submitDisabled={props.busy || !ready} submitLabel={review ? "确认保存" : "查看差异"} footerLeft={review ? <Button disabled={props.busy} onClick={() => setReview(false)}>返回编辑</Button> : toggle ? <div className="flex items-center gap-2 text-sm"><Switch label={toggle} checked={v.enabled} onChange={(enabled) => set({ enabled })} /><span>{toggle}</span></div> : undefined} onSubmit={(e) => { e.preventDefault(); if (!review) { setReview(true); return; } void props.write(() => seekerApi.recordSave(v)).then((ok) => (ok ? props.close() : setError("没存上，请重试或重新打开这一条"))); }}>
     {review ? <SeekerDiff before={props.initial.revision ? recordText(props.initial) : ""} after={recordText(v)} /> : <fieldset disabled={props.busy} className="-m-1 max-h-[62vh] space-y-3 overflow-y-auto p-1">{body}</fieldset>}
   </Modal>;
 }
 
-const PAGE_OF: Record<string, string> = { material: "素材", profile: "素材", fact: "档案", rule: "规则", example: "规则", application: "网申" };
+const PAGE_OF: Record<string, string> = { material: "素材", profile: "素材", fact: "档案", rule: "规则", example: "规则", application: "网申", application_line: "网申" };
 const pageOf = (r: SeekerRecord) => (isRater(r) ? "Rater 规则" : PAGE_OF[r.kind] ?? "");
 
 /** transfer/ → records: per page, each new or changed item (ticked) and the ones the files don't have any more (ticked: remove). */

@@ -1,6 +1,7 @@
 // 呦呦漫游: the personal website. Header: 正式网站 · love-shuyu (the hidden page, online) · 本地预览 (starts the
 // site's dev server first) · GitHub · Vercel. Pages: 发布 · 作品 · Now · 关于我 · 职业 · 资源库 · 站点; leaving unsaved edits (another work, another
-// page) asks first. A folder that can't be used shows why (开发版 without its copy: 建副本).
+// page) asks first. A folder that can't be used shows why (开发版 without its copy: 建副本). The ↻ at the
+// sub-page row reads the folder again (after changes made outside Pomelo; unsaved edits are asked about first).
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -10,8 +11,8 @@ import { useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
-import { Button, EmptyState, PageHeader, Segmented } from "@/shared/ui";
-import { OVERVIEW_KEY, siteApi, useHistory, useOverview, type Overview } from "./api";
+import { Button, EmptyState, PageHeader, RefreshButton, Segmented } from "@/shared/ui";
+import { OVERVIEW_KEY, SITE_KEY, rereadSite, siteApi, useHistory, useOverview, type Overview } from "./api";
 import { AboutPage } from "./About";
 import { AssetsPage } from "./Assets";
 import { CareerPage } from "./Career";
@@ -158,6 +159,12 @@ export default function SitePage() {
   const qc = useQueryClient();
   const onError = (e: unknown) => toast(errorText(e), "error");
   const changed = () => void qc.invalidateQueries({ queryKey: ["site", "changes"] });
+  const reread = async () => {
+    if (!(await guard.confirmLeave())) return;
+    dirty.current = false;
+    rereadSite();
+    await qc.invalidateQueries({ queryKey: SITE_KEY });
+  };
   usePageContext({ module: "site", page: TABS.find((t) => t.value === tab)!.label });
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -167,8 +174,10 @@ export default function SitePage() {
           <ProblemView o={o} />
         ) : (
           <>
-            <div className="shrink-0 px-8 pb-3">
+            <div className="flex shrink-0 items-center gap-2 px-8 pb-3">
               <Segmented ariaLabel="页面" value={tab} onChange={(t) => void switchTab(t)} options={TABS} />
+              <span className="flex-1" />
+              <RefreshButton label="重新读网站文件夹" onRefresh={reread} />
             </div>
             {tab === "publish" ? (
               <PublishPage o={o} history={history ?? null} />

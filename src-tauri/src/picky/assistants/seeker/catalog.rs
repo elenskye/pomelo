@@ -2,14 +2,17 @@
 //! - 素材 page: 简历素材 (material: category 教育 / 技能 / 项目 / 工作…; `stack` 技术栈), 基本信息 (profile: fields).
 //! - 档案 page: 已确认事实 (fact: category = its group, title 事项, text 口径) and 经历档案 (fact, category
 //!   经历档案: a Markdown body; `material` = the material it is about).
-//! - 规则 page: 规则 (rule: a title and its points, one sentence each, in order; category 共用准则 /
-//!   写作规则 / 素材润色 / 整体审查 = which model task reads it, 写作规则: every Seeker task), 个人范例 (example).
+//! - 规则 page: 规则 (rule: a title and its points, one sentence each, in order; category 写作规则 (shown
+//!   通用规则) / 素材润色 / 整体审查 = which model task reads it, 写作规则: every Seeker task), 豁免情况
+//!   (example: exceptions to the rules; it was 个人范例). v0.7 refine R6: 共用准则 is gone (the program's
+//!   `model::PRINCIPLES`; migration 0030 and older data files drop its rules).
 //!   v0.7 refine R5: a rule's points (no body text), sent to models as `## 标题` and `1. …` (`rule_markdown`);
 //!   an older rule's text is split into points when loaded (`normalize`: one per list item, table row or
 //!   sentence), and an older 个人约定 (decision: title 名称, text 内容; no longer made) becomes a rule of
 //!   one point. Loading does this, so the pages, models and data files only see the new shape; the
 //!   database row keeps the old one until the record is saved again.
-//! - 网申 page: 网申资料 (application: never a resume candidate).
+//! - 网申 page (never a resume candidate; R6): cards (application: 名称 and a Markdown body) and lines
+//!   (application_line: 事项 and a plain 内容, like a fact), in groups both kinds share (category).
 //! Languages (阶段 ③): `lang` is `cn` or `en` for materials and 基本信息, `cn` / `en` / "" (both) for
 //! rules, 约定 and 范例; facts, 经历档案 and 网申 are both languages' whatever it says. A 经历档案 hangs on a
 //! Chinese material (`material`) and an English one (`material_en`).
@@ -17,11 +20,15 @@
 //! Groups (v0.7 refine R3): a built-in group of 素材 (`MATERIAL_GROUPS`) or 规则 (`RULE_GROUPS`) keeps
 //! its name inside (the program lays out 教育, sends 素材润色 to polishing…) and may show another one
 //! (`seeker_groups`); renaming a group of the user's own changes its records' category. Deleting a
-//! group is deleting its records (the page sends their ids).
+//! group is deleting its records (the page sends their ids). R6: `seeker_groups` also keeps each page's
+//! group order (上移 / 下移, `order_groups`; `GROUP_KINDS`); a group without one comes after, in the
+//! page's own order.
 use super::*;
 use crate::modules::common::Tx;
 
-pub const KINDS: [&str; 6] = ["material", "profile", "fact", "rule", "example", "application"];
+pub const KINDS: [&str; 7] = ["material", "profile", "fact", "rule", "example", "application", "application_line"];
+/// The 规则 page's group of examples (kind `example`) in `seeker_groups` and on the page.
+pub const EXEMPT: &str = "豁免情况";
 /// A 技术栈 line's point id (chosen like a point; by default only when the draft's JD is a development job).
 pub const STACK: &str = "技术栈";
 
@@ -77,7 +84,7 @@ impl Record {
 }
 
 /// Kinds that are both languages' whatever their `lang` says.
-pub const SHARED: [&str; 2] = ["fact", "application"];
+pub const SHARED: [&str; 3] = ["fact", "application", "application_line"];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -103,19 +110,27 @@ pub struct Revision {
     pub saved_at: String,
 }
 
-/// The name a built-in group shows (`lang`: the page's for 素材, "" for 规则).
+/// A page's group (`kind`: the page, `GROUP_KINDS`; `lang`: the page's for 素材, "" for the others):
+/// the name a built-in one shows (`label`, "" = its own) and its place on the page (`sort`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupName {
     pub kind: String,
     pub lang: String,
     pub category: String,
+    #[serde(default)]
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<i64>,
 }
 
+/// Pages whose groups keep an order: 素材, 规则 (Seeker's and Rater's), 档案 (facts), 网申 (both kinds).
+pub const GROUP_KINDS: [&str; 4] = ["material", "rule", "fact", "application"];
 /// 素材's groups the program knows (layout, 技术栈, Summary…).
 pub const MATERIAL_GROUPS: [&str; 6] = ["教育", "技能", "项目", "工作", "证书", "摘要"];
 /// 规则's groups: which functions read them (model.rs `reads`, Rater's qbank / practice).
-pub const RULE_GROUPS: [&str; 9] = ["共用准则", "素材润色", "整体审查", "写作规则", "题库维护", "面试", "简历题", "通用题", "突击题"];
+pub const RULE_GROUPS: [&str; 10] = ["写作规则", "素材润色", "整体审查", "题库维护", "卡片练习", "面试", "复盘", "简历题", "通用题", "突击题"];
+/// Built-in rule groups whose page name isn't their own (src SeekerLibrary.tsx `USES` says the same).
+pub const RULE_LABELS: [(&str, &str); 2] = [("写作规则", "通用规则"), ("整体审查", "选材和审查")];
 
 /// Older data files' 确认版本 are read and dropped (`versions`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -209,9 +224,12 @@ pub fn rules_markdown(groups: &[(String, Vec<&Record>)]) -> Vec<String> {
     groups.iter().filter(|(_, rules)| !rules.is_empty()).map(|(heading, rules)| format!("# {heading}\n\n{}", rules.iter().map(|r| rule_markdown(r)).collect::<Vec<_>>().join("\n\n"))).collect()
 }
 
-/// A rule group's name on the page (the user's for a built-in one).
+/// A rule group's name on the page and for models (the user's for a built-in one, else `RULE_LABELS`).
 pub fn group_label(catalog: &Catalog, category: &str) -> String {
-    catalog.groups.iter().find(|g| g.kind == "rule" && g.category == category).map_or_else(|| category.to_string(), |g| g.label.clone())
+    match catalog.groups.iter().find(|g| g.kind == "rule" && g.category == category && !g.label.is_empty()) {
+        Some(g) => g.label.clone(),
+        None => RULE_LABELS.iter().find(|(c, _)| *c == category).map_or(category, |(_, l)| l).to_string(),
+    }
 }
 
 pub fn load(c: &Connection) -> Result<Catalog, String> {
@@ -230,7 +248,7 @@ pub fn load(c: &Connection) -> Result<Catalog, String> {
             Ok(Revision { id, record_id, body, saved_at })
         })
         .collect::<Result<_, String>>()?;
-    let groups = rows(c, "SELECT kind, lang, category, label FROM seeker_groups ORDER BY kind, lang, category", |r| Ok(GroupName { kind: r.get(0)?, lang: r.get(1)?, category: r.get(2)?, label: r.get(3)? }))?;
+    let groups = rows(c, "SELECT kind, lang, category, label, sort FROM seeker_groups ORDER BY kind, lang, category", |r| Ok(GroupName { kind: r.get(0)?, lang: r.get(1)?, category: r.get(2)?, label: r.get(3)?, sort: r.get(4)? }))?;
     let raw: Option<String> = c.query_row("SELECT options FROM seeker_settings WHERE id = 1", [], |r| r.get(0)).optional().map_err(err)?;
     let settings = raw.map(|s| json(&s)).transpose()?.unwrap_or_default();
     Ok(Catalog { records, revisions, groups, settings })
@@ -252,6 +270,9 @@ pub fn validate_record(r: &Record) -> Result<(), String> {
     }
     if r.kind == "rule" && (!r.text.trim().is_empty() || !r.points.iter().any(|p| !p.text.trim().is_empty())) {
         return Err("规则要有至少一个要点".into());
+    }
+    if r.kind.starts_with("application") && r.category.trim().is_empty() {
+        return Err("请填写分组".into());
     }
     Ok(())
 }
@@ -320,10 +341,50 @@ fn set_group_name(c: &Connection, kind: &str, lang: &str, category: &str, label:
     if !built_in {
         return Err("只有程序自带的分组能另起名字".into());
     }
-    if label.trim().is_empty() || label.trim() == category {
-        c.execute("DELETE FROM seeker_groups WHERE kind = ?1 AND lang = ?2 AND category = ?3", params![kind, lang, category]).map_err(err)?;
-    } else {
-        c.execute("INSERT INTO seeker_groups (kind, lang, category, label) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(kind, lang, category) DO UPDATE SET label = excluded.label", params![kind, lang, category, label.trim()]).map_err(err)?;
+    let label = if label.trim() == category { "" } else { label.trim() };
+    // the row keeps the group's place (`sort`); one with neither goes
+    c.execute("INSERT INTO seeker_groups (kind, lang, category, label) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(kind, lang, category) DO UPDATE SET label = excluded.label", params![kind, lang, category, label]).map_err(err)?;
+    c.execute("DELETE FROM seeker_groups WHERE label = '' AND sort IS NULL", []).map_err(err)?;
+    Ok(())
+}
+
+/// The language a page's groups are kept under: 素材's own, "" for the pages both languages share.
+fn group_lang<'a>(kind: &str, lang: &'a str) -> Result<&'a str, String> {
+    match kind {
+        "material" => lang_of(lang),
+        _ if GROUP_KINDS.contains(&kind) => Ok(""),
+        _ => Err("未知的分组".into()),
+    }
+}
+
+/// 上移 / 下移: a page's groups (`categories`, all it shows) in the user's order. Groups it doesn't name
+/// keep their place (Seeker's and Rater's 规则 pages share `rule`, each with its own groups).
+pub fn order_groups(c: &Connection, kind: &str, lang: &str, categories: &[String]) -> Result<(), String> {
+    let lang = group_lang(kind, lang)?;
+    let mut seen = HashSet::new();
+    if categories.iter().any(|g| g.trim().is_empty() || !seen.insert(g.as_str())) {
+        return Err("分组有空的或重复的".into());
+    }
+    for (i, category) in categories.iter().enumerate() {
+        c.execute("INSERT INTO seeker_groups (kind, lang, category, sort) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(kind, lang, category) DO UPDATE SET sort = excluded.sort", params![kind, lang, category, i as i64 + 1]).map_err(err)?;
+    }
+    Ok(())
+}
+
+/// A data file's group row as it was (a name only for a built-in group).
+fn put_group(c: &Connection, g: &GroupName) -> Result<(), String> {
+    if group_lang(&g.kind, &g.lang)? != g.lang || g.category.trim().is_empty() {
+        return Err("Seeker：分组的数据不对".into());
+    }
+    if !g.label.is_empty() {
+        return set_group_name(c, &g.kind, &g.lang, &g.category, &g.label).and_then(|_| order_one(c, g));
+    }
+    order_one(c, g)
+}
+
+fn order_one(c: &Connection, g: &GroupName) -> Result<(), String> {
+    if let Some(sort) = g.sort {
+        c.execute("INSERT INTO seeker_groups (kind, lang, category, sort) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(kind, lang, category) DO UPDATE SET sort = excluded.sort", params![g.kind, g.lang, g.category, sort]).map_err(err)?;
     }
     Ok(())
 }
@@ -344,12 +405,21 @@ pub fn rename_group(c: &Connection, kind: &str, lang: &str, from: &str, to: &str
     if built_in {
         return set_group_name(c, kind, lang, from, to);
     }
+    if kind == "rule" && to == EXEMPT {
+        return Err(format!("「{EXEMPT}」是程序自带的分组，换一个名字"));
+    }
+    if to == from {
+        return Ok(());
+    }
     let tx = Tx::begin(c)?;
     let all = load(&tx)?;
     let mine = |r: &&Record| r.category == from && if kind == "material" { r.kind == "material" && r.lang == lang } else { r.kind == "rule" };
     for r in all.records.iter().filter(mine) {
         put(&tx, &Record { category: to.into(), ..r.clone() })?;
     }
+    // its place goes with it (unless the name is a group that has one)
+    tx.execute("UPDATE OR IGNORE seeker_groups SET category = ?3 WHERE kind = ?1 AND lang = ?2 AND category = ?4", params![kind, lang, to, from]).map_err(err)?;
+    tx.execute("DELETE FROM seeker_groups WHERE kind = ?1 AND lang = ?2 AND category = ?3", params![kind, lang, from]).map_err(err)?;
     tx.commit()
 }
 
@@ -380,9 +450,17 @@ pub fn replace(c: &Connection, catalog: &Catalog) -> Result<(), String> {
         c.execute("INSERT INTO seeker_record_history (id, record_id, body, saved_at) VALUES (?1, ?2, ?3, ?4)", params![r.id, r.record_id, serde_json::to_string(&body).map_err(err)?, r.saved_at]).map_err(err)?;
     }
     for g in &catalog.groups {
-        set_group_name(c, &g.kind, &g.lang, &g.category, &g.label)?;
+        put_group(c, g)?;
     }
     Ok(())
+}
+
+/// A data file before format 30 (v0.7 refine R6): the rule group 共用准则 is gone, like migration 0030:
+/// its rules are left out (their history stays) and so is the name it showed.
+pub fn without_shared_rules(catalog: &mut Catalog) {
+    const SHARED_RULES: &str = "共用准则";
+    catalog.records.retain(|r| !(["rule", "decision"].contains(&r.kind.as_str()) && r.category == SHARED_RULES));
+    catalog.groups.retain(|g| !(g.kind == "rule" && g.category == SHARED_RULES));
 }
 
 #[tauri::command]
@@ -425,6 +503,14 @@ pub async fn picky_seeker_records_delete(state: State<'_, AppState>, ids: Vec<St
 pub async fn picky_seeker_group_rename(state: State<'_, AppState>, kind: String, lang: String, from: String, to: String) -> Result<Workspace, String> {
     state.with_picky_undo(&format!("分组「{from}」改名"), |c| {
         rename_group(c, &kind, &lang, &from, &to)?;
+        read(c)
+    })
+}
+
+#[tauri::command]
+pub async fn picky_seeker_groups_order(state: State<'_, AppState>, kind: String, lang: String, categories: Vec<String>) -> Result<Workspace, String> {
+    state.with_picky_undo("调整分组的顺序", |c| {
+        order_groups(c, &kind, &lang, &categories)?;
         read(c)
     })
 }

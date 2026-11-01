@@ -2,14 +2,15 @@
 // 题库 (questions by category: 简历题 by the material they're about, 突击题 by job; each with its practice
 // record), 卡片 (RaterCards.tsx), 面试 (RaterInterview.tsx) and 规则 (Seeker records of Rater's 用途,
 // the same editor as Seeker's; a SKILL without its own workflow shows the built-in one). The three
-// 题库 SKILLs: 「让小拾补题」 (a list to tick, then one undo step) and 润色 (a diff). Rater's own model and
-// 思考 sit on the sub-page row (题库, 卡片 and 面试 use them).
+// 题库 SKILLs: 「让小拾补题」 (a list to tick, then one undo step) and 润色 (a diff). 设置: the default model
+// and 思考, and each AI function's own (Rust qbank.rs `Options`; not undone).
 // Each edit: fields → 查看差异 → 确认保存, one undo step; lengths come from Rust.
 import { PickField } from "@/shared/PickField";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { Row, Section } from "@/settings/layout";
 import { useSubPage } from "@/app/subpage";
 import { jobLabel, useJobs, jobPicks } from "@/modules/jobs/api";
 import { Dropdown } from "@/shared/Dropdown";
@@ -24,9 +25,9 @@ import { SeekerRules, type SeekerWrite } from "./SeekerLibrary";
 import { SeekerDiff, when } from "./SeekerParts";
 import { flushSeekerDraft } from "./seekerDraft";
 import { SEEKER_KEY, seekerApi, type SeekerRecord, type SeekerWorkspace } from "./seekerApi";
-import { RATER_CATEGORIES, RATER_KEY, RATER_LIMIT, RATER_MODES, RATER_OPTIONS_KEY, RATER_POLISH, RATER_PRACTICE_KEY, RATER_UNSURE, RATER_USES, raterApi, type RaterAsk, type RaterBank, type RaterOptions, type RaterProposal, type RaterQuestion } from "./raterApi";
+import { RATER_CATEGORIES, RATER_FEATURES, RATER_KEY, RATER_LIMIT, RATER_MODES, RATER_OPTIONS_KEY, RATER_POLISH, RATER_PRACTICE_KEY, RATER_UNSURE, RATER_USES, raterApi, raterChoice, type RaterAsk, type RaterBank, type RaterCan, type RaterChoice, type RaterFeature, type RaterOptions, type RaterProposal, type RaterQuestion } from "./raterApi";
 
-type Tab = "bank" | "cards" | "interview" | "rules";
+type Tab = "bank" | "cards" | "interview" | "rules" | "settings";
 const TABS = (moduleById("rater").subs ?? []) as { value: Tab; label: string }[];
 const ALL = "全部";
 const blank = (category: string): RaterQuestion => ({ id: crypto.randomUUID(), category, question: "", answer: "", tags: [], material: null, job: null, from: null, revision: 0 });
@@ -55,7 +56,7 @@ export function RaterPage() {
     qc.setQueryData(SEEKER_KEY, await action());
   });
   const { options, set } = useRaterOptions();
-  const { models, keep } = useModels(options.model, options.thinking);
+  const can: RaterCan = (f) => raterChoice(options, f).model != null;
   const failed = bank.isError ? bank.error : seeker.isError ? seeker.error : null;
   if (failed) return <EmptyState title="Rater 暂时打不开" hint={errorText(failed)} action={<Button onClick={() => { void bank.refetch(); void seeker.refetch(); }}>重试</Button>} />;
   if (!bank.data || !seeker.data) return <EmptyState title="正在读取 Rater…" />;
@@ -63,30 +64,55 @@ export function RaterPage() {
   return <div className="relative flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-4">
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-3">
       <div className="-m-1 overflow-x-auto p-1"><Segmented<Tab> ariaLabel="Rater 子页面" value={tab} onChange={setTab} options={TABS} /></div>
-      {tab !== "rules" && <div className="ml-auto flex items-center gap-2">
-        <Dropdown<string | null> ariaLabel="Rater 的模型" value={options.model} placeholder="选择模型" options={models.filter((m) => m.value != null)} onChange={(model) => set({ ...options, model })} />
-        <label className="flex items-center gap-2 text-sm"><Switch label="思考" checked={options.thinking} onChange={(thinking) => set({ model: keep(options.model, thinking), thinking })} />思考</label>
-      </div>}
     </div>
     {tab === "bank"
-      ? <QuestionBank bank={bank.data} seeker={seeker.data} materials={materials} model={options.model} busy={busy} write={writeBank} toCards={() => setTab("cards")} />
+      ? <QuestionBank bank={bank.data} seeker={seeker.data} materials={materials} can={can} busy={busy} write={writeBank} toCards={() => setTab("cards")} />
       : tab === "cards"
-        ? <RaterCards bank={bank.data} materials={materials} model={options.model} busy={busy} guarded={guarded} />
+        ? <RaterCards bank={bank.data} materials={materials} can={can} busy={busy} guarded={guarded} />
         : tab === "interview"
-          ? <RaterInterview bank={bank.data} model={options.model} busy={busy} guarded={guarded} toCards={() => setTab("cards")} />
-          : <SeekerRules lang="cn" uses={RATER_USES} defaults={Object.fromEntries(defaults.data ?? [])} catalog={seeker.data.catalog} busy={busy} write={writeSeeker} aiBusy={false} onPolish={() => {}} />}
+          ? <RaterInterview bank={bank.data} can={can} busy={busy} guarded={guarded} toCards={() => setTab("cards")} />
+          : tab === "rules"
+            ? <SeekerRules lang="cn" uses={RATER_USES} defaults={defaults.data ?? []} catalog={seeker.data.catalog} busy={busy} write={writeSeeker} />
+            : <RaterSettings options={options} set={set} />}
   </div>;
 }
 
-type BankProps = { bank: RaterBank; seeker: SeekerWorkspace; materials: SeekerRecord[]; model: string | null; busy: boolean; write: (action: () => Promise<RaterBank>) => Promise<boolean>; toCards?: () => void };
+type BankProps = { bank: RaterBank; seeker: SeekerWorkspace; materials: SeekerRecord[]; can: RaterCan; busy: boolean; write: (action: () => Promise<RaterBank>) => Promise<boolean>; toCards?: () => void };
 
-/** Rater's model and 思考 for its SKILLs (not undone, like the other assistants' settings). */
+/** Rater's models and 思考 (not undone, like the other assistants' settings). */
 function useRaterOptions() {
   const qc = useQueryClient();
   const toast = useToast();
   const options = useQuery({ queryKey: RATER_OPTIONS_KEY, queryFn: raterApi.options });
   const set = (next: RaterOptions) => void raterApi.setOptions(next).then((o) => qc.setQueryData(RATER_OPTIONS_KEY, o), (e) => toast(errorText(e), "error"));
-  return { options: options.data ?? { model: null, thinking: false }, set };
+  return { options: options.data ?? { model: null, thinking: false, features: {} }, set };
+}
+
+/** The settings page's sections: the default, then each function by where it is. */
+const SETTING_GROUPS: [string, RaterFeature[]][] = [["题库", ["suggest", "polish"]], ["卡片练习", ["pick", "follow", "comment"]], ["面试", ["prep"]], ["复盘", ["record", "summary"]]];
+const SAME = "";
+
+/** 设置: the default model and 思考; each function follows it (跟默认) or has its own. */
+function RaterSettings(props: { options: RaterOptions; set: (o: RaterOptions) => void }) {
+  const o = props.options;
+  const label = (f: RaterFeature) => RATER_FEATURES.find(([k]) => k === f)![1].split(" · ").at(-1)!;
+  const setFeature = (f: RaterFeature, choice: RaterChoice | null) => { const features = { ...o.features }; if (choice) features[f] = choice; else delete features[f]; props.set({ ...o, features }); };
+  return <div className="-m-1 flex-1 overflow-y-auto p-1"><div className="mx-auto max-w-3xl py-5">
+    <Section title="默认"><ModelRow label="模型" name="默认" choice={o} onChange={(c) => props.set({ ...o, ...c })} /></Section>
+    {SETTING_GROUPS.map(([title, fs]) => <Section key={title} title={title}>{fs.map((f) => <ModelRow key={f} label={label(f)} choice={o.features[f] ?? null} fallback={o} onChange={(c) => setFeature(f, c)} />)}</Section>)}
+  </div></div>;
+}
+
+/** One row: a model (or 跟默认, when `fallback` is given) and 思考. */
+function ModelRow(props: { label: string; name?: string; choice: RaterChoice | null; fallback?: RaterChoice; onChange: (c: RaterChoice | null) => void }) {
+  const shown = props.choice ?? props.fallback ?? { model: null, thinking: false };
+  const { models, keep } = useModels(shown.model, shown.thinking);
+  const own = models.filter((m) => m.value != null);
+  const name = props.name ?? props.label;
+  const options = props.fallback ? [{ value: SAME, label: "跟默认" }, ...own.map((m) => ({ ...m, value: m.value as string }))] : own.map((m) => ({ ...m, value: m.value as string }));
+  return <Row label={props.label} actions={<label className="flex items-center gap-2 text-sm"><Switch label={`${name} · 思考`} checked={shown.thinking} disabled={!!props.fallback && !props.choice} onChange={(thinking) => props.onChange({ model: keep(shown.model, thinking), thinking })} />思考</label>}>
+    <Dropdown<string> block ariaLabel={`${name} · 模型`} value={props.choice?.model ?? (props.fallback ? SAME : "")} placeholder="选择模型" options={options} onChange={(m) => props.onChange(m === SAME && props.fallback ? null : { model: m, thinking: shown.thinking })} />
+  </Row>;
 }
 
 /** The questions by category; 简历题 by material, 突击题 by job. */
@@ -147,7 +173,7 @@ function QuestionBank(p: BankProps) {
           <span className="min-w-0 shrink-0 truncate text-xs text-muted-foreground"><span className={seconds > RATER_LIMIT ? "text-primary" : ""}>{q.answer.trim() ? `约 ${seconds} 秒` : "还没写答案"}</span>{q.tags.length > 0 && ` · ${q.tags.join("、")}`}{polishing === q.id && " · 正在润色…"}</span>
         </button>
         <div className={`${sel.on ? "hidden" : "flex"} shrink-0 items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100`}>
-          <IconButton label="润色" disabled={p.busy || !!polishing || !p.model} onClick={() => void runPolish(q)}><Sparkles size={14} /></IconButton>
+          <IconButton label="润色" disabled={p.busy || !!polishing || !p.can("polish")} onClick={() => void runPolish(q)}><Sparkles size={14} /></IconButton>
           <IconButton label="编辑" disabled={p.busy} onClick={() => setEditing(structuredClone(q))}><Pencil size={14} /></IconButton>
           <IconButton label="历史" onClick={() => setPast(q.id)}><History size={14} /></IconButton>
           <IconButton label="删除" danger disabled={p.busy} onClick={() => void remove(q)}><Trash2 size={14} /></IconButton>
@@ -163,7 +189,7 @@ function QuestionBank(p: BankProps) {
       {tags.length > 0 && <Dropdown ariaLabel="标签" value={tag} options={[{ value: ALL, label: "全部标签" }, ...tags.map((t) => ({ value: t, label: t }))]} onChange={setTag} />}
       <span className="flex-1" />
       <SelectButton select={sel} />
-      <Button disabled={p.busy || !p.model} onClick={() => setAsking(true)}><Sparkles size={14} />让小拾补题</Button>
+      <Button disabled={p.busy || !p.can("suggest")} onClick={() => setAsking(true)}><Sparkles size={14} />让小拾补题</Button>
       <Button disabled={p.busy} onClick={() => setEditing(blank(category === ALL ? "简历题" : category))}><Plus size={14} />题目</Button>
     </div>
     <SelectBar select={sel}>

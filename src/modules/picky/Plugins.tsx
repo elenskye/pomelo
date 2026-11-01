@@ -2,9 +2,9 @@
 // Rust skills/). Left the list, right the chosen one: what it does and sends, 启用 / 小拾自己决定用, its
 // keys (keychain only: shown as 已保存, never read back). 小工具 get their own group when one exists.
 // Also here: the skills a draft asks for (chips above the input, the 联网 button), sent with it.
-import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { X, ArrowDown, CornerDownRight, RefreshCw } from "lucide-react";
+import { X, RefreshCw } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, IconButton, Switch, TextInput } from "@/shared/ui";
 import { SKILLS_KEY, pickyApi, useSkills, type Skill, type SkillFlowNode, type SkillKey } from "./api";
@@ -26,7 +26,7 @@ export function PluginsDialog(props: { onClose: () => void }) {
         e.preventDefault();
         props.onClose();
       }}
-      className="m-auto flex h-[70vh] max-h-[640px] w-[760px] max-w-[92vw] flex-col rounded-card border bg-popover p-0 text-foreground shadow-xl backdrop:bg-black/30"
+      className="m-auto flex h-[78vh] max-h-[760px] w-[1000px] max-w-[94vw] flex-col rounded-card border bg-popover p-0 text-foreground shadow-xl backdrop:bg-black/30"
     >
       <div className="flex items-center gap-4 border-b px-5 py-3">
         <p className="text-base font-bold">插件库</p>
@@ -35,7 +35,7 @@ export function PluginsDialog(props: { onClose: () => void }) {
           <X size={16} />
         </IconButton>
       </div>
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <nav aria-label="插件" className="-m-1 w-52 shrink-0 overflow-y-auto border-r p-1 px-3 py-3">
           <p className="px-2 pb-1 text-xs text-muted-foreground">技能</p>
           {skills.map((s) => (
@@ -67,79 +67,170 @@ function SkillPane(props: { skill: Skill }) {
       (e) => toast(errorText(e), "error"),
     );
   return (
-    <div className="flex max-w-lg flex-col gap-4 text-sm">
+    <div className="flex flex-col gap-4 text-sm">
       <div className="flex items-baseline gap-2">
         <p className="text-base font-bold">{s.name}</p>
         <span className="rounded-control bg-muted px-1.5 text-xs text-muted-foreground">{s.command}</span>
       </div>
-      <SkillFlow flow={s.flow} />
-      <ul className="list-disc space-y-1 pl-5 leading-relaxed">{s.features.map((f) => <li key={f}>{f}</li>)}</ul>
-      <div className="flex flex-col gap-2.5 border-t pt-4">
-        <label className="flex items-center justify-between gap-4">
-          <span>启用</span>
-          <Switch label="启用" checked={s.enabled} onChange={(v) => set({ enabled: v })} />
-        </label>
-        <label className={`flex items-center justify-between gap-4 ${s.enabled ? "" : "opacity-50"}`}>
-          <span>小拾自己决定用</span>
-          <Switch label="小拾自己决定用" checked={s.auto} onChange={(v) => s.enabled && set({ auto: v })} />
-        </label>
+      <FlowChart flow={s.flow} />
+      <div className="flex max-w-lg flex-col gap-4">
+        <ul className="list-disc space-y-1 pl-5 leading-relaxed">{s.features.map((f) => <li key={f}>{f}</li>)}</ul>
+        <div className="flex flex-col gap-2.5 border-t pt-4">
+          <label className="flex items-center justify-between gap-4">
+            <span>启用</span>
+            <Switch label="启用" checked={s.enabled} onChange={(v) => set({ enabled: v })} />
+          </label>
+          <label className={`flex items-center justify-between gap-4 ${s.enabled ? "" : "opacity-50"}`}>
+            <span>小拾自己决定用</span>
+            <Switch label="小拾自己决定用" checked={s.auto} onChange={(v) => s.enabled && set({ auto: v })} />
+          </label>
+        </div>
+        {s.usesContact && <ContactField value={s.contact} />}
+        {s.keys.map((k) => (
+          <KeyField key={k.account} spec={k} />
+        ))}
       </div>
-      {s.usesContact && <ContactField value={s.contact} />}
-      {s.keys.map((k) => (
-        <KeyField key={k.account} spec={k} />
+    </div>
+  );
+}
+
+type Check = Extract<SkillFlowNode, { kind: "check" }>;
+/** merge: the check's 是 side goes on at a later step, the other side (`rest`: the steps until then) too,
+ * and both meet there; else its 是 side ends (or goes back) and the line goes straight on. */
+type Tree = Exclude<SkillFlowNode, Check> | { kind: "fork"; check: Check; merge: boolean; rest: Tree[] };
+
+/** The flow as a tree; `exit`: the step this run flows into (where an outer fork meets). */
+function grow(nodes: SkillFlowNode[], exit: string | null): Tree[] {
+  const out: Tree[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (n.kind !== "check") {
+      out.push(n);
+      continue;
+    }
+    const rest = nodes.slice(i + 1);
+    const at = n.join ? rest.findIndex((m) => m.kind === "step" && m.text === n.join) : -1;
+    if (at >= 0) {
+      out.push({ kind: "fork", check: n, merge: true, rest: grow(rest.slice(0, at), n.join) });
+      i += at;
+    } else if (n.join && n.join === exit) {
+      out.push({ kind: "fork", check: n, merge: true, rest: grow(rest, exit) });
+      break;
+    } else out.push({ kind: "fork", check: n, merge: false, rest: [] });
+  }
+  return out;
+}
+
+/** A line down (`grow`: as long as its branch). */
+const Down = (props: { grow?: boolean; short?: boolean }) => <span aria-hidden className={`block w-px shrink-0 bg-muted-foreground/45 ${props.grow ? "min-h-3 flex-1" : props.short ? "h-2" : "h-3.5"}`} />;
+/** A branch's half of the bar it hangs from (top) or meets the other on (bottom): the half toward the middle. */
+const Half = (props: { side: "left" | "right"; at: "top" | "bottom" }) => <span aria-hidden className={`absolute h-px bg-muted-foreground/45 ${props.at === "top" ? "top-0" : "bottom-0"} ${props.side === "left" ? "right-0 left-1/2" : "right-1/2 left-0"}`} />;
+
+function Box(props: { tone?: "first" | "last" | "check"; narrow?: boolean; children: ReactNode }) {
+  const tone = props.tone === "first" ? "bg-accent text-accent-foreground" : props.tone === "last" ? "border-primary bg-card" : props.tone === "check" ? "bg-muted" : "bg-card";
+  return <span className={`block rounded-card border px-3 py-1.5 text-center ${props.narrow ? "max-w-[9rem] text-xs" : "max-w-[15rem] text-sm"} ${tone}`}>{props.children}</span>;
+}
+
+/** One side of a fork: hangs from the bar, its label, its steps; `on`: goes on down to where both meet. */
+function Branch(props: { side: "left" | "right"; label: string; on: boolean; children?: ReactNode }) {
+  return (
+    <div className="relative flex flex-col items-center px-2.5">
+      <Half side={props.side} at="top" />
+      <Down short />
+      <span className="py-0.5 text-xs text-muted-foreground">{props.label}</span>
+      <Down short />
+      {props.children}
+      {props.on && (
+        <>
+          <Down grow />
+          <Half side={props.side} at="bottom" />
+        </>
+      )}
+    </div>
+  );
+}
+
+function Run(props: { items: Tree[]; ends: string[]; narrow?: boolean }) {
+  return (
+    <div className="flex flex-col items-center">
+      {props.items.map((t, i) => (
+        <Fragment key={i}>
+          {i > 0 && <Down />}
+          <Node t={t} ends={props.ends} narrow={props.narrow} />
+        </Fragment>
       ))}
     </div>
   );
 }
 
-/** A skill's flow: rounded boxes from the input (tinted) to the result (柚红 edge), arrows between; a
- * check is a dashed box with its branch indented beside a dashed line (label, small boxes, where it goes
- * on), the arrow on down labelled; a loop is a ↻ line saying where it goes back to. */
-function SkillFlow(props: { flow: SkillFlowNode[] }) {
-  const steps = props.flow.filter((n) => n.kind === "step");
-  const box = "rounded-card border px-3 py-1.5 text-sm";
+function Node(props: { t: Tree; ends: string[]; narrow?: boolean }) {
+  const t = props.t;
+  if (t.kind === "step") return <Box narrow={props.narrow} tone={t.text === props.ends[0] ? "first" : t.text === props.ends[1] ? "last" : undefined}>{t.text}</Box>;
+  if (t.kind === "again")
+    return (
+      <span className={`flex items-center gap-1.5 rounded-card border px-3 py-1 text-xs text-muted-foreground ${props.narrow ? "max-w-[9rem]" : "max-w-[15rem]"}`}>
+        <RefreshCw size={12} className="shrink-0" aria-hidden />
+        {t.text}，回到「{t.back}」
+      </span>
+    );
+  const c = t.check;
+  const side = (
+    <div className="flex flex-col items-center">
+      {c.side.map((s, j) => (
+        <Fragment key={j}>
+          {j > 0 && <Down />}
+          <Box narrow>{s}</Box>
+        </Fragment>
+      ))}
+      {!t.merge && c.join && (
+        <>
+          <Down short />
+          <span className="flex max-w-[9rem] items-center gap-1 text-center text-xs text-muted-foreground">
+            <RefreshCw size={12} className="shrink-0" aria-hidden />
+            回到「{c.join}」
+          </span>
+        </>
+      )}
+    </div>
+  );
   return (
-    <ol aria-label="流程" className="flex flex-col items-start">
-      {props.flow.map((n, i) => {
-        const prev = props.flow[i - 1];
-        return (
-          <li key={i} className="flex flex-col items-start">
-            {i > 0 && (
-              <span className="my-1 ml-4 flex items-center gap-1 text-xs text-muted-foreground">
-                <ArrowDown size={14} aria-hidden />
-                {prev?.kind === "check" && prev.no}
-              </span>
-            )}
-            {n.kind === "step" ? (
-              <span className={`${box} ${n === steps[0] ? "bg-accent text-accent-foreground" : n === steps[steps.length - 1] ? "border-primary bg-card" : "bg-card"}`}>{n.text}</span>
-            ) : n.kind === "check" ? (
-              <>
-                <span className={`${box} border-dashed bg-card`}>{n.ask}</span>
-                <div className="mt-1 ml-4 flex flex-col items-start gap-1 border-l-2 border-dashed pt-0.5 pb-1 pl-3">
-                  <span className="text-xs text-muted-foreground">{n.yes}</span>
-                  {n.side.map((t, j) => (
-                    <Fragment key={j}>
-                      {j > 0 && <ArrowDown size={12} className="ml-3 text-muted-foreground" aria-hidden />}
-                      <span className="rounded-card border bg-muted/50 px-2.5 py-1 text-xs">{t}</span>
-                    </Fragment>
-                  ))}
-                  {n.join && (
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <CornerDownRight size={12} aria-hidden />接到「{n.join}」
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : (
-              <span className="flex items-center gap-1.5 rounded-card border border-dashed px-3 py-1 text-xs text-muted-foreground">
-                <RefreshCw size={12} aria-hidden />
-                {n.text}，回到「{n.back}」
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <div className="flex flex-col items-center">
+      <Box tone="check" narrow={props.narrow}>{c.ask}</Box>
+      <Down />
+      {t.merge ? (
+        <div className="flex">
+          <Branch side="left" label={c.yes} on>{side}</Branch>
+          <Branch side="right" label={c.no} on>{t.rest.length > 0 && <Run items={t.rest} ends={props.ends} narrow />}</Branch>
+        </div>
+      ) : (
+        // the line goes straight on: the 是 side to the left, as much room kept on the right
+        <div className="grid grid-cols-[1fr_auto_1fr]">
+          <Branch side="left" label={c.yes} on={false}>{side}</Branch>
+          <div className="relative flex flex-col items-center">
+            <Half side="right" at="top" />
+            <Down short />
+            <span className="px-1 py-0.5 text-xs text-muted-foreground">{c.no}</span>
+            <Down grow />
+          </div>
+          <span />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A flow (a skill's; 年度总结's in 定时) as a tree, in the middle: boxes top to bottom (the input tinted, the result with a 柚红
+ * edge, a check filled) joined by solid lines; a check splits into two labelled lines, which meet again
+ * where its 是 side goes on, or its 是 side branches off and ends (or says where it goes back to) while
+ * the line goes straight on. A loop is a box saying where it goes back to. Wider than the pane: scrolls. */
+export function FlowChart(props: { flow: SkillFlowNode[] }) {
+  const steps = props.flow.flatMap((n) => (n.kind === "step" ? [n.text] : []));
+  return (
+    <div aria-label="流程" className="-m-1 overflow-x-auto p-1">
+      <div className="mx-auto flex w-max min-w-full justify-center py-1">
+        <Run items={grow(props.flow, null)} ends={[steps[0], steps[steps.length - 1]]} />
+      </div>
+    </div>
   );
 }
 

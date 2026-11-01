@@ -131,7 +131,7 @@ pub const SOURCES: &[Source] = &[
               FROM jobs j LEFT JOIN kinds k ON k.id = j.kind_id",
     },
     Source { module: "notes", kind: "note", label: "笔记", db: Db::Pomelo, sql: "SELECT id, content, NULL, NULL, date(created_at, 'localtime'), created_at, content FROM notes" },
-    Source { module: "picky", kind: "session", label: "小拾对话", db: Db::Picky, sql: "SELECT id, title, NULL, NULL, NULL, created_at, title FROM sessions" },
+    Source { module: "picky", kind: "session", label: "小拾对话", db: Db::Picky, sql: "SELECT id, title, NULL, NULL, NULL, created_at, title FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records)" },
     Source {
         module: "picky",
         kind: "message",
@@ -140,7 +140,7 @@ pub const SOURCES: &[Source] = &[
         // parent = the conversation; detail = who wrote it; reasoning never
         sql: "SELECT m.id, s.title, CASE m.role WHEN 'user' THEN '你' ELSE coalesce(r.model_name, '小拾') END, m.session_id, NULL, m.created_at, m.content
               FROM messages m JOIN sessions s ON s.id = m.session_id LEFT JOIN runs r ON r.id = m.run_id
-              WHERE m.state <> 'streaming' AND trim(m.content) <> ''",
+              WHERE m.state <> 'streaming' AND trim(m.content) <> '' AND m.session_id NOT IN (SELECT session_id FROM rater_records)",
     },
     // last: a source's place numbers its vectors. 证件: the name only (never what a note might hold)
     Source {

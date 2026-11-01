@@ -9,8 +9,12 @@
 //!   or a number two. Over `LIMIT` seconds is flagged. Worked out on reading, never stored.
 //! - Saving checks the revision the user started from (like Seeker's records); the replaced or
 //!   deleted version goes to the history. Each save / delete is one undo step.
-//! - Its rules (题库维护, 面试) are Seeker records (seeker/catalog.rs, `RULES`), imported with the rest of
-//!   transfer/ (rules/qbank.md, rules/interview.md) and shown on Rater's 规则 page only.
+//! - Its rules (题库维护, 卡片练习, 面试, 复盘 and the SKILLs' workflows) are Seeker records
+//!   (seeker/catalog.rs, `RULE_GROUPS`), imported with the rest of transfer/ (rules/qbank.md, rules/interview.md)
+//!   and shown on Rater's 规则 page only. Some are the program's until the user writes their own
+//!   (qbank.rs `builtins`: the workflows; 准备面试, 记录复盘, 总结复盘).
+//! - Each AI function may have its own model and 思考 (设置 page, qbank.rs `Options`, `FEATURES`).
+//! - 复盘 · 记录 (record.rs): a conversation (小拾's own, kept out of its list) fills a review.
 //! - Data file (format 23): the whole bank replaces Rater's tables; an older file leaves it as it is.
 //!   Format 24 adds the practice rounds (practice.rs, 阶段 ⑥), 25 the interviews (interview.rs, 阶段 ⑦);
 //!   a file without them leaves them.
@@ -21,6 +25,7 @@
 pub mod interview;
 pub mod practice;
 pub mod qbank;
+pub mod record;
 use crate::modules::common::{err, Tx};
 use crate::picky::assistants::seeker;
 use crate::AppState;
@@ -30,8 +35,10 @@ use std::collections::BTreeMap;
 use tauri::State;
 
 pub const CATEGORIES: [&str; 3] = ["简历题", "通用题", "突击题"];
-/// Rater's rules: Seeker records of these categories (用途).
-pub const RULES: [&str; 2] = ["题库维护", "面试"];
+pub const QBANK: &str = "题库维护";
+pub const PRACTICE: &str = "卡片练习";
+pub const INTERVIEW: &str = "面试";
+pub const REVIEW: &str = "复盘";
 /// Answers longer than this (seconds) are flagged.
 pub const LIMIT: i64 = 90;
 
@@ -297,13 +304,15 @@ pub fn previews(w: &seeker::Workspace, bank: &Bank) -> Vec<seeker::model::Prompt
     }
     let polish = first.ok_or_else(|| "题库还是空的".to_string()).and_then(|q| qbank::prompt(w, bank, &qbank::Ask { kind: qbank::POLISH.into(), question: Some(q.id.clone()), ..Default::default() }, None, "").map(|(s, _)| s));
     // 润色答案 reads the workflow of the question's own category
-    out.push(view("polish", "润色答案", &["共用准则", RULES[0], CATEGORIES[0], CATEGORIES[1], CATEGORIES[2]], polish));
+    out.push(view("polish", "润色答案", &[QBANK, CATEGORIES[0], CATEGORIES[1], CATEGORIES[2]], polish));
     out.push(view("pick", "卡片练习 · 按 JD 挑卡", &practice::READS, practice::pick_prompt(w, bank, &job).map(|(s, _)| s)));
     out.push(view("follow", "卡片练习 · 追问", &practice::READS, Ok(practice::follow_prompt(w, bank, &round, 0, "", None).0)));
     out.push(view("comment", "卡片练习 · 点评", &practice::READS, Ok(practice::comment_prompt(w, bank, &round, None).0)));
     let ask = interview::PrepAsk { lang: interview::LANGS[0].into(), ..Default::default() };
-    out.push(view("prep", "面试 · 准备", &practice::READS, interview::prep_prompt(w, bank, &ask, &job, None, "").map(|(s, _)| s)));
-    out.push(view("compare", "面试 · 复盘对照", &practice::READS, Ok(interview::compare_prompt(w, bank, &interview::Review::default(), None, None).0)));
+    out.push(view("prep", "面试 · 准备", &interview::PREP_READS, interview::prep_prompt(w, bank, &ask, &job, None, "").map(|(s, _)| s)));
+    let draft = record::Draft { review: interview::Review { job: qbank::job_link(&job), date: "（日期）".into(), round: "（第几轮）".into(), ..Default::default() }, ..Default::default() };
+    out.push(view("record", "复盘 · 记录", &record::READS, Ok(record::system(w, &interview::Interviews::default(), &draft, Some(&job)))));
+    out.push(view("summary", "复盘 · 总结", &interview::SUMMARY_READS, Ok(interview::summary_prompt(w, bank, &[&interview::Review::default()], None, None).0)));
     out
 }
 

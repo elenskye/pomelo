@@ -1,6 +1,6 @@
 //! Seeker with a made-up Seeker folder shaped like the real transfer/ (all content fictional).
 use super::catalog::{self, Record};
-use super::{company, import, model, output, workflow, *};
+use super::{company, files, import, model, output, workflow, *};
 use crate::db::tests::{temp_dir, TempDir};
 use crate::picky::store::tests::memory_db;
 use crate::picky::word;
@@ -61,7 +61,7 @@ fn transfer_files_become_records_and_a_second_import_shows_only_what_changed() {
         [
             ("fact", "个人事实", "到岗时间"),
             ("fact", "个人事实", "语言成绩"),
-            ("rule", "共用准则", "定位"),
+            ("rule", "写作规则", "定位"),
             ("rule", "素材润色", "维护简历素材"),
             ("profile", "基本信息", "基本信息"),
             ("material", "教育", "示例大学 · 信息学院"),
@@ -131,14 +131,14 @@ fn the_model_reads_the_rules_for_its_task_and_the_linked_dossier() {
     let w = imported(&c, &dir);
     let orange = record(&w, "橙子识别");
     let polish = model::context(&w.catalog, "素材润色", &[("别的名字", Some(orange.id.as_str()))], "cn");
-    // Markdown: # 组, ## 标题, points numbered (共用准则 first, then 写作规则 and the task's group)
-    assert!(polish.starts_with("# 共用准则\n\n## 定位\n1. "), "{polish}");
+    // Markdown: # 组 (the name the page shows), ## 标题, points numbered (通用规则 first, then the task's group)
+    assert!(polish.starts_with("# 通用规则\n\n## 定位\n1. "), "{polish}");
     for part in ["# 素材润色\n\n## 维护简历素材\n1. 先读素材。", "## 事实与职责\n1. 不编造事实", "## 有效个人约定\n1. 自维护内容：基本信息由用户自维护\n2. 不催稿", "# 已确认事实\n\n## 个人事实\n- 到岗时间：2027 年后到岗\n- 语言成绩：CET-4", "# 经历档案\n\n## 橙子识别 经历档案"] {
         assert!(polish.contains(part), "{part}\n{polish}");
     }
     assert!(!polish.contains("审查边界") && !polish.contains("【"));
     let review = model::context(&w.catalog, "整体审查", &[("柚子笔记", Some("x"))], "cn");
-    assert!(review.contains("# 整体审查\n\n## 审查边界") && !review.contains("事实与职责") && !review.contains("有效个人约定") && !review.contains("经历档案"), "{review}");
+    assert!(review.contains("# 选材和审查\n\n## 审查边界") && !review.contains("事实与职责") && !review.contains("有效个人约定") && !review.contains("经历档案"), "{review}");
 }
 
 #[test]
@@ -441,6 +441,9 @@ fn the_workspace_goes_through_the_data_file_whole() {
     // the draft is for a job, whose company the user chose
     use_job(&a, Some(&bank()), "cn").unwrap();
     company::choose(&a, &bank(), Some("seek-pomelo")).unwrap();
+    // and has a 批注
+    let point = draft.sections.iter().flat_map(|s| &s.entries).flat_map(|e| &e.points).next().unwrap().id.clone();
+    model::add_notes(&a, "cn", "review", &[], vec![Note { id: "n1".into(), kind: "review".into(), target: point, comment: "写出结果".into(), edit: Some("新的要点".into()) }]).unwrap();
 
     let rec = crate::picky::transfer::export(&a).unwrap();
     let json = serde_json::to_value(&rec).unwrap();
@@ -449,7 +452,7 @@ fn the_workspace_goes_through_the_data_file_whole() {
     assert_eq!((seeker.catalog.records.len(), seeker.catalog.revisions.len(), seeker.catalog.groups.len(), seeker.output.exports.len(), seeker.output.links.len()), (16, 1, 1, 1, 1)); // the two 个人约定 are one rule now
     assert!(!seeker.output.exports[0].materials.is_empty());
     assert!(seeker.output.template.is_some() && seeker.catalog.settings.thinking && seeker.cn.baseline.is_some());
-    assert_eq!((seeker.job_companies.len(), seeker.cn.draft.as_ref().unwrap().job.as_ref().map(|j| j.id)), (1, Some(4)));
+    assert_eq!((seeker.job_companies.len(), seeker.cn.draft.as_ref().unwrap().job.as_ref().map(|j| j.id), seeker.cn.draft.as_ref().unwrap().notes.len()), (1, Some(4), 1));
 
     let b = memory_db();
     crate::picky::transfer::replace(&b, &serde_json::from_value(json).unwrap()).unwrap();
@@ -557,7 +560,7 @@ fn english_files_come_in_as_english_and_dossiers_hang_on_both_languages() {
     let w = imported(&c, &dir);
     let orange_en = record(&w, "Orange Classifier: Fruit CNN").id.clone();
     let polish = model::context(&w.catalog, "素材润色", &[("Orange Classifier: Fruit CNN", Some(orange_en.as_str()))], "en");
-    assert!(polish.starts_with("# 共用准则\n\n## 定位"), "{polish}");
+    assert!(polish.starts_with("# 通用规则\n\n## 定位"), "{polish}");
     for part in ["## 维护简历素材", "## 适用范围\n1. 正文保持英文。", "## 有效个人约定\n1. 自维护与冻结：CONTACT 由用户维护", "# 已确认事实", "# 经历档案\n\n## 橙子识别 经历档案"] {
         assert!(polish.contains(part), "{part}\n{polish}");
     }
@@ -737,7 +740,10 @@ fn migration_23_keeps_the_chinese_draft_and_shares_the_seeker_rules() {
     assert_eq!((d.lang.as_str(), d.jd.as_str(), w.cn.baseline.as_ref().map(|b| b.name.as_str())), ("cn", "分析", Some("林小柚")));
     assert!(w.en.draft.is_none() && w.output.template_en.is_none());
     let langs: Vec<(&str, &str)> = w.catalog.records.iter().map(|r| (r.id.as_str(), r.lang.as_str())).collect();
-    assert_eq!(langs, [("a", ""), ("b", ""), ("c", "cn"), ("d", "")]);
+    assert_eq!(langs, [("b", ""), ("c", "cn")]);
+    // 0030: 共用准则 is gone, its rules into the history (both languages' by 0023)
+    let gone: Vec<(&str, &str)> = w.catalog.revisions.iter().map(|r| (r.record_id.as_str(), r.body.lang.as_str())).collect();
+    assert_eq!(gone, [("d", ""), ("a", "")]);
 }
 
 #[test]
@@ -747,7 +753,7 @@ fn rater_rules_come_from_qbank_and_interview_and_stay_out_of_seeker_tasks() {
     std::fs::write(dir.join("transfer/rules/interview.md"), "# 准备面试与复盘\n\n给 Rater 用（文件说明，不导入）。\n\n## 准备面试\n\n先确认语言。\n\n## 面试复盘\n\n记下实际问题。\n").unwrap();
     let c = memory_db();
     let w = imported(&c, &dir);
-    let rater: Vec<(&str, &str, &str)> = w.catalog.records.iter().filter(|r| crate::picky::assistants::rater::RULES.contains(&r.category.as_str())).map(|r| (r.category.as_str(), r.title.as_str(), r.lang.as_str())).collect();
+    let rater: Vec<(&str, &str, &str)> = w.catalog.records.iter().filter(|r| [crate::picky::assistants::rater::QBANK, crate::picky::assistants::rater::INTERVIEW].contains(&r.category.as_str())).map(|r| (r.category.as_str(), r.title.as_str(), r.lang.as_str())).collect();
     assert_eq!(rater, [("面试", "准备面试", "cn"), ("面试", "面试复盘", "cn"), ("题库维护", "适用范围", "cn"), ("题库维护", "答案要求", "cn")]);
     for task in ["素材润色", "整体审查"] {
         let ctx = model::context(&w.catalog, task, &[], "cn");
@@ -845,7 +851,9 @@ fn real_seeker() {
         if only.as_deref().is_some_and(|o| !label.starts_with(o)) {
             continue;
         }
-        let (system, user, result) = model::prompt(&view, kind, record, "", lang, "").unwrap();
+        // 润色要点: every point of the draft
+        let points: Vec<String> = if kind == "polish" { view.draft(lang).unwrap().sections.iter().flat_map(|s| &s.entries).flat_map(|e| &e.points).map(|p| p.id.clone()).collect() } else { vec![] };
+        let (system, user, result) = model::prompt(&view, kind, record, &points, "", lang, "").unwrap();
         let room = match &target {
             Target::Cloud { model, .. } if model.thinking.thinks(think) => crate::picky::context::think_room(model.context_window),
             _ if think => crate::picky::context::think_room(16384),
@@ -870,6 +878,24 @@ fn real_seeker() {
             out.dedup();
             if out.is_empty() { String::new() } else { format!("（⚠️ 资料里没有的数字：{}）", out.join("、")) }
         };
+        if model::ON_DRAFT.contains(&kind) {
+            let draft = view.draft(lang).unwrap();
+            let text = |id: &str| draft.sections.iter().flat_map(|s| &s.entries).find_map(|e| if e.id == id { Some(e.note.clone()) } else { e.points.iter().find(|p| p.id == id).map(|p| p.text.clone()) });
+            match model::notes_from(kind, &answer, draft, &points) {
+                Err(e) => report.push(format!("- **没通过检查**：{e}\n\n```\n{answer}\n```\n")),
+                Ok((notes, skipped)) => {
+                    report.push(format!("- {} 条批注，对不上略过 {skipped} 条", notes.len()));
+                    for n in &notes {
+                        report.push(format!("  - 【{}】{}", if n.target.is_empty() { "整篇".to_string() } else { text(&n.target).map_or_else(|| "某一块".to_string(), |t| t.chars().take(24).collect()) }, n.comment));
+                        if let Some(edit) = &n.edit {
+                            report.push(format!("    原：{}\n    新：{edit}{}", text(&n.target).unwrap_or_default(), odd(edit)));
+                        }
+                    }
+                    report.push(String::new());
+                }
+            }
+            continue;
+        }
         match model::parse(result, &answer, &view.catalog, lang) {
             Err(e) => report.push(format!("- **没通过检查**：{e}\n\n```\n{answer}\n```\n")),
             Ok(s) => {
@@ -878,12 +904,6 @@ fn real_seeker() {
                     for sel in &s.selections {
                         let r = view.catalog.records.iter().find(|r| r.id == sel.record_id).unwrap();
                         report.push(format!("  - 选了【{}】{}（{} 条要点）", r.category, r.title, sel.point_ids.len()));
-                    }
-                }
-                let points = |d: &Draft| d.sections.iter().flat_map(|s| &s.entries).flat_map(|e| e.points.iter().map(|p| p.text.clone()).chain(std::iter::once(e.note.clone()).filter(|n| !n.is_empty()))).collect::<Vec<_>>();
-                if let (Some(b), Some(a)) = (&s.before_draft, &s.after_draft) {
-                    for (x, y) in points(b).iter().zip(points(a).iter()).filter(|(x, y)| x != y) {
-                        report.push(format!("  - 原：{x}\n    新：{y}{}", odd(y)));
                     }
                 }
                 if let (Some(b), Some(a)) = (&s.before_record, &s.after_record) {
@@ -1147,17 +1167,24 @@ fn each_function_shows_the_groups_it_reads_and_its_system_message() {
     let of = |k: &str| cn.iter().find(|p| p.key == k).unwrap();
     assert!(of("select").system.contains("REVIEW-ONLY") && !of("select").system.contains("POLISH-ONLY"), "{}", of("select").system);
     assert!(of("polish").system.contains("POLISH-ONLY") && !of("polish").system.contains("REVIEW-ONLY"));
-    assert_eq!(of("material").groups, ["共用准则", "写作规则", "素材润色", "个人范例"]);
+    assert_eq!(of("material").groups, ["写作规则", "素材润色", "豁免情况"]);
+    // the principles (what 共用准则 said) come first, then the task, then the rules by the names the page shows
+    let system = &of("polish").system;
+    let at = |s: &str| system.find(s).unwrap_or_else(|| panic!("{s}\n{system}"));
+    assert!(at("工作原则：\n1. 说明通俗、精简") < at("\n\n任务：只润色「待润色」") && at("\n\n任务：") < at("规则与事实：\n# 通用规则") && at("# 通用规则") < at("# 素材润色"), "{system}");
+    assert!(system.contains("6. 你只给建议") && !system.contains("共用准则"), "{system}");
     // no draft yet: a fresh one with a placeholder JD; English has the Summary too
     assert!(cn.iter().all(|p| !p.system.starts_with("（现在看不了")), "{cn:?}");
     assert_eq!(model::previews(&w, "en").len(), 5);
     // Rater: every function, from the same builders as the calls
     let bank = crate::picky::assistants::rater::read(&c).unwrap();
     let rater = crate::picky::assistants::rater::previews(&w, &bank);
-    assert_eq!(rater.len(), 9);
+    assert_eq!(rater.len(), 10);
+    assert_eq!((rater.iter().find(|p| p.key == "record").unwrap().groups.clone(), rater.iter().find(|p| p.key == "summary").unwrap().groups.clone()), (vec!["复盘".to_string()], vec!["题库维护".to_string(), "复盘".to_string()]));
     // 润色答案 and 挑卡 need a question in the bank: they say so
     assert!(rater.iter().all(|p| ["polish", "pick"].contains(&p.key.as_str()) == p.system.starts_with("（现在看不了")), "{rater:?}");
-    assert_eq!(rater.iter().find(|p| p.key == "突击题").unwrap().groups, ["共用准则", "题库维护", "突击题"]);
+    assert_eq!(rater.iter().find(|p| p.key == "突击题").unwrap().groups, ["题库维护", "突击题"]);
+    assert!(rater.iter().filter(|p| !p.system.starts_with("（现在看不了")).all(|p| p.system.contains("工作原则：\n1. 说明通俗、精简")), "{rater:?}");
 }
 
 /// Refine R5: a rule is a title and points; older text (lists, tables, paragraphs) and 个人约定 are read
@@ -1174,7 +1201,7 @@ fn rules_are_points_and_older_text_is_split() {
     assert_eq!(catalog::rule_markdown(&old), "## 按步骤\n1. 按用户指定步骤处理");
     // saving: empty points dropped; none left → refused; an old-shaped rule is taken as points
     let c = memory_db();
-    let empty = Record { id: "r".into(), kind: "rule".into(), category: "共用准则".into(), title: "空的".into(), points: vec![Point { id: "p1".into(), text: "  ".into() }], lang: String::new(), ..Default::default() };
+    let empty = Record { id: "r".into(), kind: "rule".into(), category: "写作规则".into(), title: "空的".into(), points: vec![Point { id: "p1".into(), text: "  ".into() }], lang: String::new(), ..Default::default() };
     assert!(catalog::put(&c, &empty).unwrap_err().contains("至少一个要点"));
     let kept = Record { points: vec![Point { id: "p1".into(), text: " 一句 ".into() }, Point { id: "p2".into(), text: "".into() }], ..empty.clone() };
     catalog::put(&c, &kept).unwrap();
@@ -1205,4 +1232,199 @@ fn prompts_of_a_copy() {
         Ok(f) => std::fs::write(f, text).unwrap(),
         Err(_) => println!("{text}"),
     }
+}
+
+/// Refine R6: each page's groups keep the user's order (上移 / 下移, one undo step); a built-in group's
+/// name and place share a row; a renamed group of the user's own keeps its place; the data file keeps it.
+#[test]
+fn groups_keep_the_users_order() {
+    let c = memory_db();
+    let order = |c: &Connection, kind: &str| {
+        let mut g: Vec<(String, i64)> = read(c).unwrap().catalog.groups.iter().filter(|g| g.kind == kind).filter_map(|g| g.sort.map(|s| (g.category.clone(), s))).collect();
+        g.sort_by_key(|x| x.1);
+        g.into_iter().map(|x| x.0).collect::<Vec<_>>()
+    };
+    let mut h = crate::undo::History::default();
+    crate::undo::tests::step(&c, &mut h, "调整分组的顺序", |c| catalog::order_groups(c, "fact", "cn", &["个人事实".into(), "经历档案".into()]));
+    assert_eq!(order(&c, "fact"), ["个人事实", "经历档案"]);
+    assert!(read(&c).unwrap().catalog.groups.iter().all(|g| g.lang.is_empty() && g.label.is_empty())); // 档案 is both languages'
+    crate::undo::undo(&c, &mut h).unwrap();
+    assert!(order(&c, "fact").is_empty());
+    // a built-in rule group: name and place in one row; its own name again keeps the place
+    catalog::order_groups(&c, "rule", "", &["素材润色".into(), "写作规则".into(), catalog::EXEMPT.into()]).unwrap();
+    catalog::rename_group(&c, "rule", "", "素材润色", "润色").unwrap();
+    assert_eq!(catalog::group_label(&read(&c).unwrap().catalog, "素材润色"), "润色");
+    catalog::rename_group(&c, "rule", "", "素材润色", "素材润色").unwrap();
+    let w = read(&c).unwrap();
+    assert_eq!(order(&c, "rule"), ["素材润色", "写作规则", "豁免情况"]);
+    assert_eq!((catalog::group_label(&w.catalog, "素材润色"), catalog::group_label(&w.catalog, "写作规则"), catalog::group_label(&w.catalog, "整体审查")), ("素材润色".into(), "通用规则".into(), "选材和审查".into()));
+    // a group of the user's own keeps its place when renamed; 豁免情况 is taken
+    catalog::put(&c, &Record { id: "r".into(), kind: "rule".into(), category: "我的".into(), title: "x".into(), points: vec![Point { id: "p1".into(), text: "一句".into() }], lang: String::new(), ..Default::default() }).unwrap();
+    catalog::order_groups(&c, "rule", "", &["我的".into(), "写作规则".into(), "素材润色".into(), catalog::EXEMPT.into()]).unwrap();
+    catalog::rename_group(&c, "rule", "", "我的", "自己的").unwrap();
+    assert_eq!(order(&c, "rule"), ["自己的", "写作规则", "素材润色", "豁免情况"]);
+    assert!(catalog::rename_group(&c, "rule", "", "自己的", catalog::EXEMPT).is_err());
+    // 素材 by language; wrong input refused
+    catalog::order_groups(&c, "material", "en", &["项目".into(), "教育".into()]).unwrap();
+    assert!(read(&c).unwrap().catalog.groups.iter().any(|g| g.kind == "material" && g.lang == "en" && g.category == "项目" && g.sort == Some(1)));
+    assert!(catalog::order_groups(&c, "rule", "", &["a".into(), "a".into()]).is_err());
+    assert!(catalog::order_groups(&c, "rule", "", &[" ".into()]).is_err());
+    assert!(catalog::order_groups(&c, "example", "", &["a".into()]).is_err());
+    assert!(catalog::order_groups(&c, "material", "fr", &["教育".into()]).is_err());
+    // the data file keeps names and places
+    let b = memory_db();
+    replace(&b, &read(&c).unwrap()).unwrap();
+    assert_eq!(read(&b).unwrap().catalog.groups, read(&c).unwrap().catalog.groups);
+}
+
+/// Refine R6: 网申 has cards (application: Markdown) and lines (application_line: 事项 · 内容), both
+/// languages', each in a group.
+#[test]
+fn applications_are_cards_or_lines_in_groups() {
+    let c = memory_db();
+    let line = Record { id: "l".into(), kind: "application_line".into(), category: "联系方式".into(), title: "手机".into(), text: "138 0000 0000".into(), lang: String::new(), ..Default::default() };
+    catalog::put(&c, &line).unwrap();
+    catalog::put(&c, &Record { id: "a".into(), kind: "application".into(), category: "联系方式".into(), title: "为什么选择我们".into(), text: "1. 因为……\n2. 而且……".into(), lang: String::new(), ..Default::default() }).unwrap();
+    let w = read(&c).unwrap();
+    assert!(w.catalog.records.iter().all(|r| r.for_lang("cn") && r.for_lang("en")));
+    assert!(catalog::put(&c, &Record { id: "x".into(), category: " ".into(), ..line.clone() }).unwrap_err().contains("分组"));
+    // never a resume candidate, never in a model's rules
+    assert!(workflow::initial(&w.catalog.records, "cn").unwrap().sections.iter().all(|s| s.entries.is_empty()));
+    assert!(!model::context(&w.catalog, "整体审查", &[], "cn").contains("138"));
+}
+
+#[test]
+fn migration_30_drops_the_shared_rules_and_keeps_the_other_names() {
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
+    crate::db::configure(&c).unwrap();
+    crate::db::migrate_as(&mut c, &crate::picky::store::MIGRATIONS[..29], None, crate::backup::Store::Picky).unwrap();
+    let body = |id: &str, kind: &str, category: &str| format!(r#"{{"id":"{id}","kind":"{kind}","category":"{category}","title":"{id}","points":[{{"id":"p1","text":"一句"}}],"lang":"","revision":1,"enabled":true}}"#);
+    for (id, kind, category) in [("a", "rule", "共用准则"), ("b", "decision", "共用准则"), ("c", "rule", "写作规则"), ("d", "example", "个人范例")] {
+        c.execute("INSERT INTO seeker_records (id, body, sort) VALUES (?1, ?2, (SELECT count(*) FROM seeker_records))", params![id, body(id, kind, category)]).unwrap();
+    }
+    c.execute("INSERT INTO seeker_groups (kind, lang, category, label) VALUES ('rule', '', '共用准则', '通用规则'), ('material', 'cn', '教育', '教育背景')", []).unwrap();
+    crate::db::migrate_as(&mut c, crate::picky::store::MIGRATIONS, None, crate::backup::Store::Picky).unwrap();
+    let w = read(&c).unwrap();
+    assert_eq!(w.catalog.records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["c", "d"]);
+    assert_eq!(w.catalog.revisions.iter().map(|r| r.record_id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+    assert_eq!(w.catalog.groups, [catalog::GroupName { kind: "material".into(), lang: "cn".into(), category: "教育".into(), label: "教育背景".into(), sort: None }]);
+    // every page's groups can keep an order now
+    catalog::order_groups(&c, "application", "", &["联系方式".into()]).unwrap();
+}
+
+#[test]
+fn an_old_data_file_loses_the_shared_rules() {
+    let rule = |id: &str, category: &str| Record { id: id.into(), kind: "rule".into(), category: category.into(), title: id.into(), points: vec![Point { id: "p1".into(), text: "一句".into() }], lang: String::new(), ..Default::default() };
+    let group = |category: &str, label: &str| catalog::GroupName { kind: "rule".into(), lang: String::new(), category: category.into(), label: label.into(), sort: None };
+    let mut old = catalog::Catalog { records: vec![rule("a", "共用准则"), rule("b", "写作规则")], groups: vec![group("共用准则", "通用规则"), group("素材润色", "润色")], ..Default::default() };
+    catalog::without_shared_rules(&mut old);
+    assert_eq!((old.records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), old.groups.len()), (vec!["b"], 1));
+    let c = memory_db();
+    catalog::replace(&c, &old).unwrap();
+    assert_eq!(read(&c).unwrap().catalog.groups, old.groups);
+}
+
+#[test]
+fn review_notes_sit_on_their_blocks_and_go_when_taken_or_done() {
+    let dir = seeker_folder("seeker-notes");
+    let c = memory_db();
+    let w = imported(&c, &dir);
+    let picks = vec![w.choices.iter().find(|s| s.record_id == record(&w, "柚子笔记").id).unwrap().clone()];
+    let mut d = workflow::assemble(&w.catalog.records, None, &picks, true, "cn").unwrap();
+    d.jd = "数据分析".into();
+    save(&c, &d).unwrap();
+    // the model reads the draft with short names, in order
+    let (text, names) = model::outline(&d);
+    let project = d.sections[1].entries[0].clone();
+    let (pa, pb) = (project.points[0].id.clone(), project.points[1].id.clone());
+    let short = |id: &str| names.iter().find(|(_, real)| real == id).unwrap().0.clone();
+    assert_eq!((short(&d.sections[1].id), short(&project.id)), ("S2".to_string(), "E3".to_string()));
+    assert!(text.contains(&format!("## [S2] 项目经历\n### [E3] 柚子笔记 | 独立开发 | 2026.03 - 至今\n读书笔记整理工具\n- [{}] **数据整理**", short(&pa))));
+    let (system, user, _) = model::prompt(&read(&c).unwrap(), "polish", None, &[pb.clone()], "", "cn", "").unwrap();
+    assert!(user.contains(&format!("待润色：{}", short(&pb))) && !user.contains(&pa) && system.contains("待润色"));
+
+    // 审查: a note on the whole, one with an edit, an edit that changes nothing (kept as a note), one on an
+    // entry (no edit there), a wrong name (dropped, counted)
+    let answer = serde_json::json!({"notes": [
+        {"id": "", "comment": "整篇太短"},
+        {"id": short(&pa), "comment": "写出结果", "edit": "整理了 300 篇笔记"},
+        {"id": format!("[{}]", short(&pb)), "comment": "可以", "edit": project.points[1].text.clone()},
+        {"id": "P99", "comment": "对不上"},
+        {"id": short(&project.id), "comment": "名称可以更具体", "edit": "不该有"},
+    ]});
+    let (found, skipped) = model::notes_from("review", &format!("好的：\n```json\n{answer}\n```"), &d, &[]).unwrap();
+    assert_eq!(skipped, 1);
+    assert_eq!(found.iter().map(|n| (n.target.as_str(), n.edit.as_deref())).collect::<Vec<_>>(), [("", None), (pa.as_str(), Some("整理了 300 篇笔记")), (pb.as_str(), None), (project.id.as_str(), None)]);
+    assert_eq!(model::add_notes(&c, "cn", "review", &[], found).unwrap(), 4);
+    // 润色要点: only the chosen points
+    let answer = serde_json::json!({"edits": [{"id": short(&pa), "text": "新的", "why": "更具体"}, {"id": short(&pb), "text": "没选的"}]}).to_string();
+    let (found, skipped) = model::notes_from("polish", &answer, &d, &[pa.clone()]).unwrap();
+    assert_eq!((found.len(), skipped, found[0].comment.as_str()), (1, 1, "更具体"));
+    model::add_notes(&c, "cn", "polish", &[pa.clone()], found).unwrap();
+    assert_eq!(stored(&c, "cn").unwrap().unwrap().notes.len(), 5);
+
+    // the page's own copy (without them) doesn't take them away
+    let mut typed = d.clone();
+    typed.sections[1].entries[0].points[1].text = "打的字".into();
+    save_page(&c, typed).unwrap();
+    let mut now = stored(&c, "cn").unwrap().unwrap();
+    assert_eq!((now.notes.len(), now.sections[1].entries[0].points[1].text.as_str()), (5, "打的字"));
+
+    // 采用 puts the edit in, ✓ only takes the note away; a note that isn't there changes nothing
+    let take = now.notes.iter().find(|n| n.kind == "review" && n.edit.is_some()).unwrap().id.clone();
+    let whole = now.notes.iter().find(|n| n.target.is_empty()).unwrap().id.clone();
+    assert!(settle(&mut now.clone(), &["没有".into()], &[]).is_err());
+    assert!(settle(&mut now.clone(), &[whole.clone()], &[]).is_err());
+    settle(&mut now, &[take], &[whole]).unwrap();
+    assert_eq!((now.sections[1].entries[0].points[0].text.as_str(), now.notes.len()), ("整理了 300 篇笔记", 3));
+    save(&c, &now).unwrap();
+    // a new 审查 replaces the last one's notes, not 润色要点's
+    model::add_notes(&c, "cn", "review", &[], vec![]).unwrap();
+    assert_eq!(stored(&c, "cn").unwrap().unwrap().notes.iter().map(|n| n.kind.as_str()).collect::<Vec<_>>(), ["polish"]);
+    // deleting a block takes its notes along
+    let mut now = stored(&c, "cn").unwrap().unwrap();
+    delete_blocks(&mut now, &[project.id.clone()]);
+    save(&c, &now).unwrap();
+    assert!(stored(&c, "cn").unwrap().unwrap().notes.is_empty());
+
+    // a mock model's answers go through the same reading
+    for (kind, points) in [("review", vec![]), ("polish", vec![pa.clone(), pb.clone()])] {
+        let (found, skipped) = model::notes_from(kind, &model::mock_answer(kind, &d, &points), &d, &points).unwrap();
+        assert_eq!((found.len(), skipped), (2, 0), "{kind}");
+    }
+}
+
+#[test]
+fn a_summary_rewrite_is_a_note_on_the_summary() {
+    let dir = english_folder("seeker-notes-en");
+    let c = memory_db();
+    let w = imported(&c, &dir);
+    let mut d = workflow::initial(&w.catalog.records, "en").unwrap();
+    d.jd = "Data analyst".into();
+    save(&c, &d).unwrap();
+    let summary = d.sections[0].entries[0].clone();
+    let (found, _) = model::notes_from("summary", &model::mock_answer("summary", &d, &[]), &d, &[]).unwrap();
+    assert_eq!((found[0].target.as_str(), found[0].edit.as_deref()), (summary.id.as_str(), Some("Data student who builds tools. (mock)")));
+    model::add_notes(&c, "en", "summary", &[], found.clone()).unwrap();
+    let mut now = stored(&c, "en").unwrap().unwrap();
+    settle(&mut now, &[found[0].id.clone()], &[]).unwrap();
+    assert_eq!((now.sections[0].entries[0].note.as_str(), now.notes.len()), ("Data student who builds tools. (mock)", 0));
+    // the same text again is no note
+    assert!(model::notes_from("summary", &serde_json::json!({"summary": summary.note}).to_string(), &d, &[]).unwrap().0.is_empty());
+}
+
+#[test]
+fn exports_are_named_by_company_and_the_next_version() {
+    let file = |lang: &str, stem: &str| {
+        let (series, version) = files::series(stem);
+        files::CvFile { lang: lang.into(), series, version, ..Default::default() }
+    };
+    let cv = [file("en", "seek-it-keyreply-resume-v5"), file("en", "seek-it-keyreply-resume-v3"), file("cn", "seek-it-keyreply-v2"), file("en", "seek-it-keyreply-cv-v1"), file("cn", "seek-it-cn-template-v2")];
+    let keyreply = Some(("KeyReply", Some("seek-keyreply")));
+    assert_eq!(output::export_name("en", "resume", keyreply, &cv), "seek-it-keyreply-resume-v6.docx");
+    assert_eq!(output::export_name("en", "cv", keyreply, &cv), "seek-it-keyreply-cv-v2.docx");
+    assert_eq!(output::export_name("cn", "", keyreply, &cv), "seek-it-keyreply-v3.docx");
+    assert_eq!(output::export_name("cn", "", Some(("中国银行 新加坡分行", None)), &cv), "seek-it-中国银行-新加坡分行-v1.docx");
+    assert_eq!(output::export_name("cn", "", None, &cv), "seek-it-cn-v1.docx");
+    assert_eq!(output::export_name("en", "resume", None, &cv), "seek-it-en-resume-v1.docx");
 }

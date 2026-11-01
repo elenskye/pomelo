@@ -17,7 +17,7 @@ fn job() -> JobSnapshot {
 fn draft(name: &str, ids: &[&str]) -> seeker::Draft {
     let title = |id: &str| match id { "m-notes" => "柚子笔记".to_string(), "m-orange" => "橙子识别".to_string(), _ => format!("经历 {id}") };
     let entries = ids.iter().map(|id| Entry { id: format!("e-{id}"), time: String::new(), name: title(id), role: String::new(), location: String::new(), note: String::new(), points: vec![Point { id: format!("p-{id}"), text: format!("{id} 的要点") }], source: Some(workflow::Source { record_id: id.to_string(), revision: 1, point_ids: vec![] }) }).collect();
-    seeker::Draft { lang: "cn".into(), form: String::new(), name: name.into(), header: vec![], sections: vec![Section { id: "s".into(), title: "项目经历".into(), entries, category: "项目".into() }], jd: String::new(), job: None }
+    seeker::Draft { lang: "cn".into(), form: String::new(), name: name.into(), header: vec![], sections: vec![Section { id: "s".into(), title: "项目经历".into(), entries, category: "项目".into() }], jd: String::new(), job: None, notes: vec![] }
 }
 
 /// Two materials (柚子笔记 with its 档案, 橙子识别), the 面试 rule, a bank: 通用题 g1, 简历题 n1 (柚子笔记)
@@ -51,7 +51,7 @@ fn a_prep_reads_the_resume_the_job_uses_its_jd_and_the_relevant_questions() {
     let txt = |p: &str| (p == "/x/a.docx").then(|| "林小柚\n柚子笔记 · 独立开发".to_string());
     let used = |w: &Workspace| resume(w, &job(), "中文", &|_| true, &txt);
     let (system, user) = prep_prompt(&w, &bank, &ask, &job(), used(&w).as_ref(), "").unwrap();
-    assert!(system.contains("面试语言：中文；形式：视频一面") && system.contains("# 面试\n\n## 复盘\n1. 事实和判断分开。") && system.contains("\"sheet\""), "{system}");
+    assert!(system.contains("面试语言：中文；形式：视频一面") && system.contains("# 面试\n\n## 复盘\n1. 事实和判断分开。") && system.contains("## 速查卡\n1. questions：") && system.contains("\"sheet\""), "{system}");
     for part in ["用户本次要求：多准备 SQL", "岗位：柚子银行 · 数据分析师（上海）\nJD：\n负责信贷数据分析", "投递的简历（中文草稿）：", "橙子识别\n", "题目 g1【通用题】", "题目 o1【简历题】", "题目 j1【突击题】", "[个人事实] 到岗时间"] {
         assert!(user.contains(part), "{part}\n{user}");
     }
@@ -87,18 +87,21 @@ fn the_model_answers_are_checked() {
     assert_eq!((picked, sheet.as_str(), advice.as_str()), (vec!["g1".to_string(), "n1".to_string()], "# 速查卡", "背熟"));
     assert_eq!(follows.iter().map(|f| (f.question.as_str(), f.category.as_str())).collect::<Vec<_>>(), [("窗口函数是什么？", "突击题"), ("怎么算的？", "简历题")]);
     assert!(parse_prep(&json!({ "questions": ["g1"] }), &bank).is_err());
-    // the review's comparison: numbers checked, known questions and odd uses dropped, two rules at most
-    let r = Review { items: vec![Asked { question: "自我介绍".into(), ..Default::default() }, Asked { question: "数据从哪来？".into(), ..Default::default() }], ..Default::default() };
-    let a = parse_compare(&json!({ "summary": "还行", "hits": [{ "asked": 1, "text": "g1" }, { "asked": 1, "text": "重复" }, { "asked": 5 }], "misses": [{ "asked": "问 2", "text": "讲不清" }], "questions": [{ "category": "突击题", "question": "数据从哪来？", "answer": "（待补）" }, { "question": "自我介绍（1 分钟）" }], "rules": [{ "use": "面试", "title": "先说口径", "text": "数字先说口径", "why": "被追问" }, { "use": "素材润色", "title": "x", "text": "y" }, { "use": "面试", "title": "", "text": "y" }] }), &r, &bank).unwrap();
-    assert_eq!((a.hits.len(), a.misses[0].asked, a.questions.len(), a.rules.len()), (1, 1, 1, 1));
-    assert!(parse_compare(&json!({}), &r, &bank).is_err());
+    // a summary of two reviews: the questions numbered on through both, known questions and odd uses
+    // dropped, two rules at most
+    let r1 = Review { id: "r1".into(), items: vec![Asked { question: "自我介绍".into(), ..Default::default() }, Asked { question: "数据从哪来？".into(), ..Default::default() }], ..Default::default() };
+    let r2 = Review { id: "r2".into(), items: vec![Asked { question: "为什么投我们？".into(), ..Default::default() }], ..Default::default() };
+    let both = [&r1, &r2];
+    let a = parse_summary(&json!({ "summary": "还行", "hits": [{ "asked": 1, "text": "g1" }, { "asked": 1, "text": "重复" }, { "asked": 5 }], "misses": [{ "asked": "问 3", "text": "讲不清" }], "questions": [{ "category": "突击题", "question": "数据从哪来？", "answer": "（待补）" }, { "question": "自我介绍（1 分钟）" }], "rules": [{ "use": "复盘", "title": "先说口径", "text": "数字先说口径", "why": "被追问" }, { "use": "素材润色", "title": "x", "text": "y" }, { "use": "面试", "title": "", "text": "y" }] }), &both, &bank).unwrap();
+    assert_eq!((a.hits.len(), a.hits[0].review.as_str(), (a.misses[0].review.as_str(), a.misses[0].asked), a.questions.len(), a.rules.len()), (1, "r1", ("r2", 0), 1, 1));
+    assert!(parse_summary(&json!({}), &both, &bank).is_err());
     // the mock model's answers pass the same checks
     assert!(parse_prep(&mock_prep(&bank, &job()), &bank).unwrap().0.contains(&"j1".to_string()));
-    assert!(parse_compare(&mock_compare(&r), &r, &bank).is_ok());
+    assert!(parse_summary(&mock_summary(&both), &both, &bank).is_ok());
 }
 
 #[test]
-fn reviews_save_compare_and_turn_into_questions_and_rules_one_step_each() {
+fn reviews_save_summaries_turn_into_questions_and_rules_one_step_each() {
     let c = memory_db();
     seeded(&c);
     let link = qbank::job_link(&job());
@@ -115,21 +118,31 @@ fn reviews_save_compare_and_turn_into_questions_and_rules_one_step_each() {
     });
     let r = get_review(&c, &id).unwrap();
     assert_eq!((r.round.as_str(), r.items.len(), r.job.label.as_str()), ("一面", 2, "柚子银行 · 数据分析师"));
-    // the comparison reads the prep and keeps facts apart from the user's judgement
+    // the summary reads the prep and keeps facts apart from the user's judgement
     let prep = Prep { id: "p1".into(), job: link.clone(), questions: vec!["g1".into()], follows: vec![Follow { question: "SQL 怎么学的？".into(), category: "突击题".into(), ..Default::default() }], sheet: "# 速查卡\n## 高频题".into(), created_at: "2026-10-27T00:00:00.000Z".into(), ..Default::default() };
     put_prep(&c, &prep).unwrap();
     let (w, bank) = (seeker::read(&c).unwrap(), read(&c).unwrap());
-    let (system, user) = compare_prompt(&w, &bank, &r, Some(&prep), Some(&job()));
-    assert!(system.contains("一次录取或拒绝不说明简历好坏") && system.contains("面试 / 题库维护"), "{system}");
-    for part in ["问 2：数据从哪来？\n  我答：（没记）\n  面试官当场的反应：追问了两次", "面试官的整体反馈（发生的事实）：\n基础扎实", "用户自己的判断（个人看法，不是事实）：\n感觉一般", "挑的题：\n- 【通用题】自我介绍（1 分钟）", "- 追问：SQL 怎么学的？", "## 高频题", "JD：\n负责信贷"] {
+    let (system, user) = summary_prompt(&w, &bank, &[&r], Some(&prep), Some(&job()));
+    assert!(system.contains("## 复盘卡") && system.contains("一次录取或拒绝不说明简历好坏") && system.contains("use 写 复盘 / 面试 / 卡片练习"), "{system}");
+    for part in ["这场面试（2026-10-28 · 一面 · 结果：待定）", "问 2：数据从哪来？\n  我答：（没记）\n  面试官当场的反应：追问了两次", "面试官的整体反馈（发生的事实）：基础扎实", "用户自己的判断（个人看法，不是事实）：感觉一般", "挑的题：\n- 【通用题】自我介绍（1 分钟）", "- 追问：SQL 怎么学的？", "## 高频题", "JD：\n负责信贷"] {
         assert!(user.contains(part), "{part}\n{user}");
     }
     assert!(!user.contains("别家的题"));
-    let a = Analysis { prep: Some("p1".into()), ..parse_compare(&mock_compare(&r), &r, &bank).unwrap() };
-    crate::undo::tests::step(&c, &mut h, "复盘对照", |c| set_analysis(c, &id, a).map(|_| ()));
-    // an edit keeps the analysis; the questions and the rule go in once each
+    let a = Analysis { prep: Some("p1".into()), ..parse_summary(&mock_summary(&[&r]), &[&r], &bank).unwrap() };
+    let mut sid = String::new();
+    crate::undo::tests::step(&c, &mut h, "总结复盘", |c| {
+        sid = add_summary(c, Summary { job: link.clone(), prep: Some("p1".into()), reviews: vec![id.clone()], analysis: a.clone(), ..Default::default() })?.id;
+        Ok(())
+    });
+    assert_eq!((read_all(&c).unwrap().summaries.len(), read_all(&c).unwrap().summaries[0].analysis.hits[0].review == id), (1, true));
+    // an edit keeps the review's own 对照 (from before R8); its questions go to the bank too
+    put_review_row(&c, &Review { analysis: Some(a.clone()), ..get_review(&c, &id).unwrap() }).unwrap();
     let edited = save_review(&c, &Review { result: "通过".into(), ..get_review(&c, &id).unwrap() }, None).unwrap();
     assert!(edited.analysis.is_some() && edited.result == "通过");
+    keep_question(&c, &id, 0).unwrap();
+    assert!(get_review(&c, &id).unwrap().analysis.unwrap().questions[0].saved.is_some());
+    // the summary's question and rule go in once each
+    let id = sid;
     crate::undo::tests::step(&c, &mut h, "复盘的题存进题库", |c| keep_question(c, &id, 0));
     let bank = read(&c).unwrap();
     let kept = bank.questions.iter().find(|x| x.question == "（模拟）你们的数据是怎么来的？").unwrap();
@@ -137,15 +150,18 @@ fn reviews_save_compare_and_turn_into_questions_and_rules_one_step_each() {
     assert!(keep_question(&c, &id, 0).unwrap_err().contains("已经"));
     crate::undo::tests::step(&c, &mut h, "加进规则", |c| adopt_rule(c, &id, 0));
     let rule = seeker::read(&c).unwrap().catalog.records.into_iter().find(|x| x.title == "（模拟）先说数据口径").unwrap();
-    assert_eq!((rule.kind.as_str(), rule.category.as_str(), rule.points.len()), ("rule", "面试", 1));
+    assert_eq!((rule.kind.as_str(), rule.category.as_str(), rule.points.len()), ("rule", "复盘", 1));
     assert!(adopt_rule(&c, &id, 0).is_err());
-    assert!(super::super::practice::rules(&seeker::read(&c).unwrap()).contains("## （模拟）先说数据口径\n1. 被问到数字时"), "{}", super::super::practice::rules(&seeker::read(&c).unwrap()));
+    let rules = qbank::rules_of(&seeker::read(&c).unwrap(), &SUMMARY_READS, true);
+    assert!(rules.contains("## （模拟）先说数据口径\n1. 被问到数字时") && rules.contains("## 复盘卡"), "{rules}");
     // each was one step
     crate::undo::undo(&c, &mut h).unwrap();
     assert!(seeker::read(&c).unwrap().catalog.records.iter().all(|x| x.title != "（模拟）先说数据口径"));
-    assert!(get_review(&c, &id).unwrap().analysis.unwrap().rules[0].adopted.is_none());
+    assert!(read_all(&c).unwrap().summaries[0].analysis.rules[0].adopted.is_none());
     crate::undo::undo(&c, &mut h).unwrap();
-    assert!(read(&c).unwrap().questions.iter().all(|x| x.question != "（模拟）你们的数据是怎么来的？"));
+    assert_eq!(read(&c).unwrap().questions.iter().filter(|x| x.question == "（模拟）你们的数据是怎么来的？").count(), 1);
+    crate::undo::undo(&c, &mut h).unwrap();
+    assert!(read_all(&c).unwrap().summaries.is_empty());
     // a prep's follow-up goes to the bank once; the 速查卡 is edited, not emptied
     keep_follow(&c, "p1", 0).unwrap();
     assert!(keep_follow(&c, "p1", 0).is_err());
@@ -163,18 +179,23 @@ fn interviews_go_through_the_data_file_and_word_never_overwrites() {
     let a = memory_db();
     seeded(&a);
     put_prep(&a, &Prep { id: "p1".into(), job: qbank::job_link(&job()), sheet: "# 速查卡".into(), created_at: "2026-10-27T00:00:00.000Z".into(), ..Default::default() }).unwrap();
-    save_review(&a, &Review { date: "2026-10-28".into(), items: vec![Asked { question: "自我介绍".into(), ..Default::default() }], ..Default::default() }, Some(qbank::job_link(&job()))).unwrap();
+    let r = save_review(&a, &Review { date: "2026-10-28".into(), items: vec![Asked { question: "自我介绍".into(), ..Default::default() }], ..Default::default() }, Some(qbank::job_link(&job()))).unwrap();
+    add_summary(&a, Summary { job: qbank::job_link(&job()), prep: Some("p1".into()), reviews: vec![r.id.clone()], analysis: Analysis { summary: "还行".into(), hits: vec![Matched { review: r.id, asked: 0, text: "准备到了".into() }], ..Default::default() }, ..Default::default() }).unwrap();
     let rec = crate::picky::transfer::export(&a).unwrap();
     let v = serde_json::to_value(&rec).unwrap();
-    assert_eq!((v["rater"]["interviews"]["preps"].as_array().unwrap().len(), v["rater"]["interviews"]["reviews"].as_array().unwrap().len()), (1, 1));
+    assert_eq!((v["rater"]["interviews"]["preps"].as_array().unwrap().len(), v["rater"]["interviews"]["reviews"].as_array().unwrap().len(), v["rater"]["interviews"]["summaries"].as_array().unwrap().len()), (1, 1, 1));
     let b = memory_db();
     crate::picky::transfer::replace(&b, &serde_json::from_value(v.clone()).unwrap()).unwrap();
     assert_eq!(crate::picky::transfer::export(&b).unwrap(), rec);
     // a file from before 面试 (format 24) leaves them
     let mut old = v;
     old["rater"].as_object_mut().unwrap().remove("interviews");
+    crate::picky::transfer::replace(&b, &serde_json::from_value(old.clone()).unwrap()).unwrap();
+    assert_eq!(read_all(&b).unwrap().len(), 3);
+    // a file from before 总结 (format 31): its preps and reviews replace these
+    old["rater"]["interviews"] = json!({ "preps": [], "reviews": v_reviews(&rec) });
     crate::picky::transfer::replace(&b, &serde_json::from_value(old).unwrap()).unwrap();
-    assert_eq!(read_all(&b).unwrap().len(), 2);
+    assert_eq!((read_all(&b).unwrap().reviews.len(), read_all(&b).unwrap().summaries.len()), (1, 0));
     // 另存 Word: a new file each time
     let dir = crate::db::tests::temp_dir("rater-word");
     let bytes = crate::picky::word::markdown_to_docx("# 速查卡\n\n- 一条", &[]).unwrap();
@@ -182,6 +203,10 @@ fn interviews_go_through_the_data_file_and_word_never_overwrites() {
     let second = write_new(&dir, "速查卡 柚子银行.docx", &bytes).unwrap();
     assert!(first.ends_with("速查卡 柚子银行.docx") && second.ends_with("速查卡 柚子银行 (2).docx"));
     assert!(write_new(&dir.join("没有"), "x", &bytes).is_err());
+}
+
+fn v_reviews(rec: &crate::picky::transfer::PickyRecord) -> Value {
+    serde_json::to_value(&rec.rater.as_ref().unwrap().interviews.as_ref().unwrap().reviews).unwrap()
 }
 
 /// Opt-in, a real model: 准备面试 (made-up data: two projects, a draft, a bank of six, a JD) and 对照 a
@@ -267,10 +292,10 @@ fn real_interview() {
         Asked { question: "SQL 里窗口函数用过吗？举个例子".into(), answer: "用得不多……".into(), feedback: "面试官说基础要补".into() },
         Asked { question: "信贷业务里你觉得最重要的指标是什么？".into(), answer: "逾期率？不太确定".into(), feedback: String::new() },
     ], feedback: "项目讲得清楚，SQL 和业务理解偏弱".into(), thoughts: "感觉挂了，SQL 没答好".into(), ..Default::default() };
-    let (system, user) = compare_prompt(&w, &bank, &review, prep.as_ref(), Some(&jd));
+    let (system, user) = summary_prompt(&w, &bank, &[&review], prep.as_ref(), Some(&jd));
     let (out, took) = ask(&system, &user, 4096);
-    report.push(format!("## 复盘对照（4 个问题：前两个准备到了，后两个没有）\n\n{took}"));
-    match out.and_then(|v| parse_compare(&v, &review, &bank)) {
+    report.push(format!("## 总结复盘（4 个问题：前两个准备到了，后两个没有）\n\n{took}"));
+    match out.and_then(|v| parse_summary(&v, &[&review], &bank)) {
         Err(e) => report.push(format!("- **没通过**：{e}\n")),
         Ok(a) => {
             report.push(format!("- 总评：{}", a.summary));

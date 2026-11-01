@@ -2,11 +2,12 @@
 //! - A card at the top of 首页: a few sentences 小拾 writes the first time 首页 is shown each day
 //!   (the page asks for it), kept for the day; 「重写」 writes it again. On / off and its model are set
 //!   in 管理 → 定时 (preferences `brief.enabled`, default on; `brief.model`, None = the selection;
-//!   `brief.thinking`, default on: the model must be able to, as for 定时任务).
-//! - Only: 今天的待办、快到期的（3 天内）和过期的；今天该提醒的日子（提前提醒的那几天和当天）；该跟进
-//!   的投递、在笔试面试的；最近两周的笔记里常在想什么. Rust reads them first (data.rs `brief_parts`, each part capped) and sends them in one request
-//!   (thinking as set, with room for it). It writes nothing but the brief.
-//! - Its last line gives the day's mood (轻松 / 很忙 / 有好消息 / 有烦心事 → calm / busy / good / worry),
+//!   `brief.thinking`, default on: the model must be able to, as for 定时任务; `brief.prompt`, the prompt
+//!   shown there and freely rewritten, None = `DEFAULT_PROMPT`; settings, not undoable or exported).
+//! - Reads only: 今天的待办、快到期的（3 天内）和过期的；今天该提醒的日子（提前提醒的那几天和当天）；该跟进
+//!   的投递、在笔试面试的；最近两周的笔记里常在想什么. Rust reads them first (data.rs `brief_parts`, each part capped) and sends them in one request:
+//!   the prompt (+ the user's instructions for the tone), then the day and what was read (thinking as set, with room for it). It writes nothing but the brief.
+//! - Its last line (the built-in prompt asks for it) gives the day's mood (轻松 / 很忙 / 有好消息 / 有烦心事 → calm / busy / good / worry),
 //!   kept in `briefs.mood` (not in the text) for the pomelo's face in the top bar; none = by the hour.
 //! - Model as 定时任务 (schedule.rs `route`): a stopped local model is started and stopped after (only
 //!   when it started it and nothing else is using it); another running local model is used; cloud
@@ -32,6 +33,7 @@ pub const MARK: &str = "【今日简报】";
 const ENABLED: &str = "brief.enabled";
 const MODEL: &str = "brief.model";
 const THINKING: &str = "brief.thinking";
+const PROMPT: &str = "brief.prompt";
 /// Tokens each part (待办, 日子, 投递, 笔记) may take.
 const PART_BUDGET: i64 = 1200;
 const MAX_TOKENS: i64 = 800;
@@ -43,6 +45,9 @@ pub struct Brief {
     /// local:<key> | cloud:<id>; None = the selection.
     pub model: Option<String>,
     pub thinking: bool,
+    /// The prompt in use (`custom`: the user's own, else `DEFAULT_PROMPT`).
+    pub prompt: String,
+    pub custom: bool,
     pub day: String,
     /// The text (the last good one while rewriting or after a failure).
     pub content: String,
@@ -105,12 +110,13 @@ pub fn set_settings(conn: &Connection, enabled: bool, model: Option<&str>, think
 /// Today's brief as the card shows it. A row left `writing` by a quit app reads as failed.
 pub fn get(conn: &Connection, day: &str) -> Result<Brief, String> {
     let (enabled, model, thinking) = settings(conn);
+    let (prompt, custom) = prompt_of(conn);
     type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>);
     let row: Option<Row> = conn
         .query_row("SELECT content, state, error, model_name, left_out, mood FROM briefs WHERE day = ?1", [day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
         .optional()
         .map_err(err)?;
-    let mut b = Brief { enabled, model, thinking, day: day.into(), content: String::new(), state: "none".into(), error: None, model_name: None, left_out: vec![], phase: None, mood: None };
+    let mut b = Brief { enabled, model, thinking, prompt, custom, day: day.into(), content: String::new(), state: "none".into(), error: None, model_name: None, left_out: vec![], phase: None, mood: None };
     if let Some((content, state, error, model_name, left_out, mood)) = row {
         let stale = state == "writing" && !writing();
         b = Brief {
@@ -159,33 +165,45 @@ fn save_failed(conn: &Connection, day: &str, error: &str) -> Result<(), String> 
 
 const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 
-/// What each part is for in the brief.
-fn topic(title: &str) -> &'static str {
-    match title {
-        "一步一步" => "今天要做的、快到期的和过期的待办",
-        "投石问路" => "该跟进的投递、正在笔试面试的",
-        "来日方长" => "快到的日子（还有几天，或者就是今天）",
-        _ => "最近两周的笔记里常在想什么（一两句，像朋友一样提一下）",
+/// The prompt 定时 shows and the user may rewrite (preference `brief.prompt`, None = this). Its last
+/// rule gives the mood line; without one the face goes by the hour.
+pub const DEFAULT_PROMPT: &str = "你是小拾，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
+- 根据读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。
+- 只写这几件事：今天要做的、快到期的和过期的待办（看【一步一步】）；快到的日子，还有几天或者就是今天（看【来日方长】）；该跟进的投递、正在笔试面试的（看【投石问路】）；最近两周的笔记里常在想什么，一两句，像朋友一样提一下（看【念念不忘】）。
+- 没读到的就一个字都不要提（比如没读到笔记，就不要说笔记）。
+- 提到具体的事照抄它的名称；不要编，也不要建议用户去记录什么。
+- 最后单独一行写今天的心情，只能是这四个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事（看今天的事多不多、有没有好消息或烦心的事）。";
+const PROMPT_MAX: usize = 2000;
+
+/// The prompt in use, and whether it's the user's own.
+pub fn prompt_of(conn: &Connection) -> (String, bool) {
+    match pref_get::<Option<String>>(conn, PROMPT).ok().flatten().flatten() {
+        Some(p) => (p, true),
+        None => (DEFAULT_PROMPT.into(), false),
     }
 }
 
-/// The request: what to write (only the parts it got), then what was read.
-pub fn prompt(parts: &[Part], today: &str, instructions: &str) -> Vec<Msg> {
+/// None or the built-in text = back to the built-in one.
+pub fn set_prompt(conn: &Connection, prompt: Option<&str>) -> Result<(), String> {
+    let own = match prompt {
+        Some(p) => Some(crate::modules::common::require(p, "提示词", PROMPT_MAX)?).filter(|p| p != DEFAULT_PROMPT),
+        None => None,
+    };
+    pref_set(conn, PROMPT, &own)
+}
+
+/// The request: the prompt (and the user's instructions, for the tone), then the day and what was read.
+pub fn prompt(written: &str, parts: &[Part], today: &str, instructions: &str) -> Vec<Msg> {
     let wd = WEEKDAYS[(crate::modules::common::weekday(today) as usize).clamp(1, 7) - 1];
-    let topics: Vec<String> = parts.iter().map(|p| format!("{}（看【{}】）", topic(&p.title), p.title)).collect();
-    let system = format!(
-        "{MARK}你是小拾，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。今天是 {today}（周{wd}）。\n\
-         - 根据下面读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。\n\
-         - 只写这{}件事：{}。没给的就一个字都不要提（比如没给笔记，就不要说笔记）。\n\
-         - 提到具体的事照抄它的名称；不要编，也不要建议用户去记录什么。\n\
-         - 最后单独一行写今天的心情，只能是这四个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事（看今天的事多不多、有没有好消息或烦心的事）。\n\
-         - 用户的指令只管语气：{}",
-        ["零", "一", "两", "三", "四"][topics.len().min(4)],
-        if topics.is_empty() { "（没有可读的数据，就写一句今天没什么要提醒的）".to_string() } else { topics.join("；") },
-        if instructions.trim().is_empty() { "没有。" } else { instructions.trim() }
-    );
+    let tone = if instructions.trim().is_empty() { String::new() } else { format!("\n- 用户的指令只管语气：{}", instructions.trim()) };
+    let system = format!("{MARK}{}{tone}", written.trim());
     let read: Vec<String> = parts.iter().map(|p| format!("【{}】\n{}", p.title, p.text)).collect();
-    let user = if read.is_empty() { "（这次什么数据都不能读。）".to_string() } else { read.join("\n\n") };
+    let user = if read.is_empty() {
+        format!("今天是 {today}（周{wd}）。这次什么数据都不能读，就写一句今天没什么要提醒的。")
+    } else {
+        let titles: String = parts.iter().map(|p| format!("【{}】", p.title)).collect();
+        format!("今天是 {today}（周{wd}）。这次读到了：{titles}。\n\n{}", read.join("\n\n"))
+    };
     vec![Msg::new("system", &system), Msg::new("user", &format!("{user}\n\n请写今天的简报。"))]
 }
 
@@ -211,7 +229,7 @@ pub(crate) async fn ask(target: &provider::Target, messages: Vec<Msg>, max_token
 async fn write(app: &AppHandle, day: &str) -> Result<(), String> {
     let st = app.state::<AppState>();
     let p: &Picky = &st.picky;
-    let (_, model, thinking) = p.with_db(|c| Ok(settings(c)))?;
+    let ((_, model, thinking), (written, _)) = p.with_db(|c| Ok((settings(c), prompt_of(c))))?;
     let local = match &model {
         Some(m) => m.starts_with("local:"),
         None => p.selection() == super::Selection::Local,
@@ -226,7 +244,7 @@ async fn write(app: &AppHandle, day: &str) -> Result<(), String> {
         let (parts, left_out) = st.with_db(|c| data::brief_parts(c, &access, &today, PART_BUDGET))?;
         let instructions = p.with_db(|c| super::instructions::global(c)).unwrap_or_default();
         let max = if thinking { MAX_TOKENS + super::context::think_room(route.window) } else { MAX_TOKENS };
-        let (text, _) = ask(&route.target, prompt(&parts, &today, &instructions), max, thinking).await?;
+        let (text, _) = ask(&route.target, prompt(&written, &parts, &today, &instructions), max, thinking).await?;
         if split_mood(&text).0.is_empty() {
             return Err("模型没有写出内容。".to_string());
         }
@@ -296,6 +314,16 @@ pub fn picky_brief_set(state: State<AppState>, enabled: bool, model: Option<Stri
     })
 }
 
+/// 管理 → 定时: the prompt (None = back to the built-in one). A setting: not undoable.
+#[tauri::command]
+pub fn picky_brief_prompt(state: State<AppState>, prompt: Option<String>) -> Result<Brief, String> {
+    let day = state.with_db(|c| crate::modules::todo::today(c))?;
+    state.picky.with_db(|c| {
+        set_prompt(c, prompt.as_deref())?;
+        get(c, &day)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +358,17 @@ mod tests {
         let b = get(&c, "2026-10-16").unwrap();
         assert_eq!((b.enabled, b.model.as_deref(), b.thinking), (false, Some("cloud:deepseek-flash"), false));
         assert!(!needs(&b, true));
+        // the prompt: the built-in one until rewritten; the built-in text or None goes back to it
+        assert_eq!((b.prompt.as_str(), b.custom), (DEFAULT_PROMPT, false));
+        set_prompt(&c, Some(" 写短一点。\n- 心情：轻松 \n")).unwrap();
+        let b = get(&c, "2026-10-16").unwrap();
+        assert_eq!((b.prompt.as_str(), b.custom), ("写短一点。\n- 心情：轻松", true));
+        assert!(set_prompt(&c, Some("  ")).is_err());
+        set_prompt(&c, Some(DEFAULT_PROMPT)).unwrap();
+        assert_eq!(prompt_of(&c), (DEFAULT_PROMPT.to_string(), false));
+        set_prompt(&c, Some("写短一点。")).unwrap();
+        set_prompt(&c, None).unwrap();
+        assert!(!prompt_of(&c).1);
     }
 
     #[test]
@@ -349,9 +388,10 @@ mod tests {
         let cloud = data::Access { cloud: true, cloud_allowed: vec!["todo".into(), "notes".into()], hidden: vec!["notes".into()], ..Default::default() };
         let (parts, left) = data::brief_parts(&pomelo, &cloud, today, PART_BUDGET).unwrap();
         assert_eq!((parts.len(), left), (1, vec!["来日方长", "投石问路"]));
-        let msgs = prompt(&parts, today, "叫我小柚");
-        assert!(msgs[0].content.starts_with(MARK) && msgs[0].content.contains("叫我小柚"));
-        assert!(msgs[1].content.contains("【一步一步】"));
+        let msgs = prompt(DEFAULT_PROMPT, &parts, today, "叫我小柚");
+        assert!(msgs[0].content.starts_with(MARK) && msgs[0].content.contains("叫我小柚") && msgs[0].content.contains("心情：轻松"));
+        assert!(msgs[1].content.contains("这次读到了：【一步一步】。") && msgs[1].content.contains("周一"));
+        assert!(!prompt(DEFAULT_PROMPT, &[], today, "").iter().any(|m| m.content.contains("指令") || m.content.contains("读到了")));
         // the mock model answers it
         let (text, _) = tauri::async_runtime::block_on(ask(&provider::Target::Mock { thinking: false }, msgs, MAX_TOKENS, true)).unwrap();
         assert!(text.contains("模拟简报"));
@@ -388,7 +428,7 @@ mod tests {
             }
         }
         let t = std::time::Instant::now();
-        let r = tauri::async_runtime::block_on(ask(&target, prompt(&parts, &today, ""), MAX_TOKENS + 8192, true));
+        let r = tauri::async_runtime::block_on(ask(&target, prompt(DEFAULT_PROMPT, &parts, &today, ""), MAX_TOKENS + 8192, true));
         println!("==== 今日简报 ({:.1}s, left out {left:?})\n{r:?}", t.elapsed().as_secs_f64());
         if let Ok((text, _)) = r {
             println!("\n{text}");

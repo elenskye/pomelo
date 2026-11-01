@@ -9,21 +9,34 @@ export type SeekerJobRef = { id: number; createdAt: string };
 export type SeekerLang = "cn" | "en";
 /** An English draft is a Resume or a CV (only the reminders differ). */
 export type SeekerForm = "resume" | "cv";
-export type SeekerDraft = { lang?: SeekerLang; form?: SeekerForm | ""; name: string; header: SeekerHeader[]; sections: SeekerSection[]; jd: string; job?: SeekerJobRef | null };
+/** A 批注 (Rust seeker.rs `Note`): kind review · polish · summary; target a block id ("" the whole résumé); edit the new text of that point or Summary. */
+export type SeekerNote = { id: string; kind: string; target: string; comment: string; edit?: string | null };
+/** notes: only Rust changes them (a draft the page saves keeps the stored ones). */
+export type SeekerDraft = { lang?: SeekerLang; form?: SeekerForm | ""; name: string; header: SeekerHeader[]; sections: SeekerSection[]; jd: string; job?: SeekerJobRef | null; notes?: SeekerNote[] };
 export const draftLang = (d: SeekerDraft | null | undefined): SeekerLang => (d?.lang === "en" ? "en" : "cn");
-/** kind: material · profile · fact (category 经历档案: a dossier, `material` / `materialEn` its Chinese / English material) · rule (a title and its points, in order; older text and 个人约定 come as points: Rust catalog.rs `normalize`) · example · application.
- * lang: cn · en · "" (both: rules, 约定, 范例); facts, 档案 and 网申 are both languages' whatever it says. */
+/** kind: material · profile · fact (category 经历档案: a dossier, `material` / `materialEn` its Chinese / English material) · rule (a title and its points, in order; older text and 个人约定 come as points: Rust catalog.rs `normalize`) · example (豁免情况) · application (网申 card: Markdown) · application_line (网申 line: 事项 · 内容).
+ * lang: cn · en · "" (both: rules, 豁免情况); facts, 档案 and 网申 are both languages' whatever it says. */
 export type SeekerRecord = { id: string; kind: string; category: string; title: string; text: string; time: string; role: string; location: string; points: SeekerPoint[]; fields: SeekerHeader[]; stack: string; material: string | null; materialEn?: string | null; lang?: string; source: string | null; revision: number; enabled: boolean };
+/** Kinds both languages share whatever their `lang` says (Rust catalog.rs `SHARED`). */
+export const SHARED_KINDS = ["fact", "application", "application_line"];
 /** Whether a page in `lang` shows the record (Rust catalog.rs `for_lang`). */
-export const recordIn = (r: SeekerRecord, lang: SeekerLang) => ["fact", "application"].includes(r.kind) || r.lang === "" || (r.lang ?? "cn") === lang;
+export const recordIn = (r: SeekerRecord, lang: SeekerLang) => SHARED_KINDS.includes(r.kind) || r.lang === "" || (r.lang ?? "cn") === lang;
 /** lang: the language the page shows ("en"; else Chinese). */
 export type SeekerSettings = { selectionModel: string | null; reviewModel: string | null; thinking: boolean; cloudAllowed: boolean; lang?: string };
 export type SeekerRevision = { id: number; recordId: string; body: SeekerRecord; savedAt: string };
-/** The name a built-in group of 素材 / 规则 shows (Rust catalog.rs `rename_group`); lang "" for 规则. */
-export type SeekerGroupName = { kind: "material" | "rule"; lang: string; category: string; label: string };
+/** A page's group (Rust catalog.rs `GroupName`): the name a built-in group of 素材 / 规则 shows (`label`, "" = its own) and its place (`sort`, 上移 / 下移). kind: the page (application: both 网申 kinds; rule: 豁免情况 too); lang: 素材's, else "". */
+export type SeekerGroupKind = "material" | "rule" | "fact" | "application";
+export type SeekerGroupName = { kind: SeekerGroupKind; lang: string; category: string; label: string; sort?: number | null };
 export type SeekerCatalog = { records: SeekerRecord[]; revisions: SeekerRevision[]; groups: SeekerGroupName[]; settings: SeekerSettings };
 /** The name a group shows: the user's for a built-in one, else its own. */
-export const groupName = (c: SeekerCatalog | undefined, kind: "material" | "rule", lang: string, category: string) => c?.groups.find((g) => g.kind === kind && g.lang === (kind === "rule" ? "" : lang) && g.category === category)?.label ?? category;
+export const groupName = (c: SeekerCatalog | undefined, kind: "material" | "rule", lang: string, category: string) => c?.groups.find((g) => g.kind === kind && g.lang === (kind === "rule" ? "" : lang) && g.category === category)?.label || category;
+/** A page's groups (`categories`, in the page's own order) in the user's: the ones with a place first, by it. */
+export function orderedGroups(c: SeekerCatalog, kind: SeekerGroupKind, lang: string, categories: string[]): string[] {
+  const place = (g: string) => c.groups.find((x) => x.kind === kind && x.lang === (kind === "material" ? lang : "") && x.category === g)?.sort ?? Infinity;
+  return categories.map((g, i) => ({ g, i, at: place(g) })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.g);
+}
+/** The 规则 page's group of 豁免情况 (kind example; Rust catalog.rs `EXEMPT`). */
+export const EXEMPT = "豁免情况";
 /** One function's 发给模型的说明 (Rust model.rs `PromptView`): the rule groups it reads, its system message. */
 export type SeekerPromptView = { key: string; label: string; groups: string[]; system: string };
 export type SeekerChoice = { jobId: number; jobCreatedAt: string; folder: string };
@@ -62,7 +75,12 @@ export const jobCompanyFolder = (c: SeekerJobCompany | undefined) => (c ? (c.cho
 export type SeekerSelection = { recordId: string; pointIds: string[] };
 export type SeekerImport = { items: { incoming: SeekerRecord; current: SeekerRecord | null }[]; gone: SeekerRecord[]; skipped: string[] };
 export type SourceChange = { entryId: string; title: string; before: SeekerEntry; after: SeekerEntry };
-export type SeekerSuggestion = { kind: string; model: string; note: string; advice: string; selections: SeekerSelection[]; beforeDraft: SeekerDraft | null; afterDraft: SeekerDraft | null; beforeRecord: SeekerRecord | null; afterRecord: SeekerRecord | null };
+/** 选材 and 润色一条素材 (shown, nothing saved). */
+export type SeekerSuggestion = { kind: string; model: string; note: string; advice: string; selections: SeekerSelection[]; beforeRecord: SeekerRecord | null; afterRecord: SeekerRecord | null };
+/** 审查 / 润色要点 / 改写 Summary: the 批注 are in the workspace; added, and skipped (names the model got wrong). */
+export type SeekerReviewed = { workspace: SeekerWorkspace; model: string; note: string; added: number; skipped: number };
+/** The kinds that leave 批注 on the draft (Rust model.rs `ON_DRAFT`). */
+export const ON_DRAFT = ["review", "polish", "summary"];
 export type SeekerEdit = { title: string; fields: { label: string; value: string }[]; apply: (draft: SeekerDraft, values: string[]) => void };
 export const SEEKER_KEY = ["picky", "seeker"];
 export const SEEKER_KNOWLEDGE_KEY = ["picky", "seeker", "knowledge"];
@@ -90,11 +108,18 @@ export const seekerApi = {
   sources: (lang: SeekerLang) => invoke<SourceChange[]>("picky_seeker_sources", { lang }),
   sourceApply: (change: SourceChange, lang: SeekerLang) => invoke<SeekerWorkspace>("picky_seeker_source_apply", { change, lang }),
   groupRename: (kind: "material" | "rule", lang: string, from: string, to: string) => invoke<SeekerWorkspace>("picky_seeker_group_rename", { kind, lang, from, to }),
+  /** 上移 / 下移: all the page's groups in the new order (one undo step). */
+  groupsOrder: (kind: SeekerGroupKind, lang: string, categories: string[]) => invoke<SeekerWorkspace>("picky_seeker_groups_order", { kind, lang, categories }),
   prompts: (lang: SeekerLang) => invoke<SeekerPromptView[]>("picky_seeker_prompts", { lang }),
   reorder: (kind: string, parent: string | null, ids: string[], lang: SeekerLang) => invoke<SeekerWorkspace>("picky_seeker_reorder", { kind, parent, ids, lang }),
-  apply: (before: SeekerDraft, after: SeekerDraft) => invoke<SeekerWorkspace>("picky_seeker_apply", { before, after }),
-  /** kind: select · review · polish · summary (English: rewrite the Summary for the JD) · material (recordId). */
+  /** kind: select · material (recordId). */
   suggest: (kind: string, request: string, lang: SeekerLang, recordId: string | null = null) => invoke<SeekerSuggestion>("picky_seeker_suggest", { kind, request, recordId, lang }),
+  /** kind: review · polish (points: the chosen ones) · summary (English: rewrite the Summary for the JD). */
+  review: (kind: string, request: string, lang: SeekerLang, points: string[]) => invoke<SeekerReviewed>("picky_seeker_review", { kind, request, lang, points }),
+  /** 采用 (apply: the notes whose edit goes in) and ✓ (done); one undo step. */
+  notesSettle: (lang: SeekerLang, apply: string[], done: string[]) => invoke<SeekerWorkspace>("picky_seeker_notes_settle", { lang, apply, done }),
+  /** The file name 另存 offers: seek-it-<公司>[-resume|-cv]-v<N>.docx. */
+  exportName: (lang: SeekerLang, jobId: number | null) => invoke<string>("picky_seeker_export_name", { lang, jobId }),
   outputSave: (directory: string, filename: string, jobId: number | null, lang: SeekerLang) => invoke<{ workspace: SeekerWorkspace; export: SeekerExport }>("picky_seeker_output_save", { directory, filename, jobId, lang }),
   /** A résumé under cv/ (by its path) as the one this job uses. */
   jobResume: (jobId: number, path: string) => invoke<SeekerWorkspace>("picky_seeker_job_resume", { jobId, path }),

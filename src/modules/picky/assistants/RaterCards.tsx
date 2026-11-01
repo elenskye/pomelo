@@ -14,10 +14,10 @@ import { Button, EmptyState, IconButton, Segmented, Switch, TextArea, TextInput 
 import { when } from "./SeekerParts";
 import { PickRow, SelectBar, SelectButton, useSelect } from "./select";
 import type { SeekerRecord } from "./seekerApi";
-import { RATER_CATEGORIES, RATER_FOLLOW_MAX, RATER_KEY, RATER_KNOW, RATER_MODES, RATER_PRACTICE_KEY, RATER_RANDOM_COUNT, RATER_UNSURE, raterApi, wantsComment, type RaterBank, type RaterCard, type RaterPick, type RaterPractice, type RaterQuestion, type RaterRound, type RaterTally } from "./raterApi";
+import { RATER_CATEGORIES, RATER_FOLLOW_MAX, RATER_KEY, RATER_KNOW, RATER_MODES, RATER_PRACTICE_KEY, RATER_RANDOM_COUNT, RATER_UNSURE, raterApi, wantsComment, type RaterBank, type RaterCan, type RaterCard, type RaterPick, type RaterPractice, type RaterQuestion, type RaterRound, type RaterTally } from "./raterApi";
 
 type Guarded = (action: () => Promise<void>) => Promise<boolean>;
-type Props = { bank: RaterBank; materials: SeekerRecord[]; model: string | null; busy: boolean; guarded: Guarded };
+type Props = { bank: RaterBank; materials: SeekerRecord[]; can: RaterCan; busy: boolean; guarded: Guarded };
 const ALL = "全部";
 
 /** 不熟 last time / 会 twice in a row / never: the words the page shows. */
@@ -126,7 +126,7 @@ function StartRound(p: Props & { practice: RaterPractice; write: Write; open: (i
       {mode === "按 JD" && <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <PickField<number | null> ariaLabel="岗位" title="按哪个岗位挑卡" value={job} placeholder="选择岗位" options={jobPicks(jobs.data ?? [])} onChange={(j) => { setJob(j); setPick(null); }} />
-          <Button disabled={p.busy || picking || job == null || !p.model} onClick={() => void runPick()}><Sparkles size={14} />{picking ? "正在挑…" : pick ? "重新挑" : "让小拾挑"}</Button>
+          <Button disabled={p.busy || picking || job == null || !p.can("pick")} onClick={() => void runPick()}><Sparkles size={14} />{picking ? "正在挑…" : pick ? "重新挑" : "让小拾挑"}</Button>
         </div>
         {pick && <div className="space-y-2">
           <p className="text-xs text-muted-foreground">{[pick.model, pick.note].filter(Boolean).join(" · ")}</p>
@@ -219,7 +219,7 @@ function Practice(p: Props & { round: RaterRound; write: Write; ended: (out: Rat
         {card.follow && (card.saved ? <span className="text-sm text-muted-foreground">已存进题库</span> : <Button variant="ghost" disabled={p.busy} onClick={keep}><Plus size={14} />存进题库</Button>)}
         <span className="flex-1" />
         {flipped && <>
-          <Button disabled={p.busy || following || !canFollow || !p.model} onClick={() => void follow()}><Sparkles size={14} />{following ? "正在追问…" : card.asked ? "已追问" : "追问"}</Button>
+          <Button disabled={p.busy || following || !canFollow || !p.can("follow")} onClick={() => void follow()}><Sparkles size={14} />{following ? "正在追问…" : card.asked ? "已追问" : "追问"}</Button>
           <Button disabled={p.busy || following} onClick={() => mark(RATER_UNSURE)}>不熟</Button>
           <Button variant="primary" disabled={p.busy || following} onClick={() => mark(RATER_KNOW)}>会</Button>
         </>}
@@ -248,10 +248,10 @@ function RoundView(p: Props & { id: string; fresh: boolean; write: Write; back: 
   };
   // a round that just ended here: 小拾 comments by itself, once
   useEffect(() => {
-    if (!r || tried.current || !p.fresh || !p.model || r.feedback || !wantsComment(r)) return;
+    if (!r || tried.current || !p.fresh || !p.can("comment") || r.feedback || !wantsComment(r)) return;
     tried.current = true;
     void comment();
-  }, [r, p.model]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [r, p.can("comment")]); // eslint-disable-line react-hooks/exhaustive-deps
   const lists = useMemo(() => {
     const cards = (r?.cards ?? []).map((c, i) => ({ c, i }));
     return { unsure: cards.filter(({ c }) => !c.follow && c.mark === RATER_UNSURE), know: cards.filter(({ c }) => !c.follow && c.mark === RATER_KNOW), follows: cards.filter(({ c }) => c.follow) };
@@ -291,7 +291,7 @@ function RoundView(p: Props & { id: string; fresh: boolean; write: Write; back: 
           {fb.summary && <p className="whitespace-pre-wrap">{fb.summary}</p>}
           {fb.good.length > 0 && <div><p className="text-xs text-muted-foreground">说得好</p><ul className="list-disc space-y-0.5 pl-5">{fb.good.map((g, i) => <li key={i}>{g}</li>)}</ul></div>}
           {fb.gaps.length > 0 && <div><p className="text-xs text-muted-foreground">讲不清的</p><ul className="list-disc space-y-0.5 pl-5">{fb.gaps.map((g, i) => <li key={i}>{g}</li>)}</ul></div>}
-        </> : commenting ? <p className="animate-pulse text-muted-foreground">正在写…</p> : <div className="flex items-center gap-2">{error && <p className="min-w-0 flex-1 text-destructive">{error}</p>}<Button disabled={p.busy || !p.model} onClick={() => void comment()}>{error ? "重试" : "让小拾点评"}</Button></div>}
+        </> : commenting ? <p className="animate-pulse text-muted-foreground">正在写…</p> : <div className="flex items-center gap-2">{error && <p className="min-w-0 flex-1 text-destructive">{error}</p>}<Button disabled={p.busy || !p.can("comment")} onClick={() => void comment()}>{error ? "重试" : "让小拾点评"}</Button></div>}
       </section>}
       {section("不熟", lists.unsure, "text-primary")}
       {section("会", lists.know)}

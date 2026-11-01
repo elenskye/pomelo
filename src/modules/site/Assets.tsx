@@ -49,9 +49,10 @@ function DeleteDialog(props: { entry: RegEntry; onClose: () => void; onDeleted: 
           <p className="text-xs text-muted-foreground">只删登记，文件留着。</p>
         </div>
       ) : (
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={withFile} onChange={(ev) => setWithFile(ev.target.checked)} />
-          没有地方在用，文件 <span className="font-mono text-xs">{e.file}</span> 也删掉
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" checked={withFile} onChange={(ev) => setWithFile(ev.target.checked)} className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]" />
+          {/* one run of text: in a flex row, text and the path would each wrap on their own */}
+          <span className="min-w-0">没有地方在用，文件 <span className="break-all font-mono text-xs">{e.file}</span> 也删掉</span>
         </label>
       )}
     </Modal>

@@ -1,7 +1,8 @@
 // 定时 (its own dialog beside 管理 and 插件库 at the bottom of the conversation list; rules in Rust schedule.rs): the list on the left (今日简报 first, then the tasks:
-// name, when, off / running), the chosen one on the right: 名称, 什么时候, 模型 and 思考, 要做什么, saved with
-// 保存 (one undoable step); 打开 switch, 立即运行, 删除, and 下次 / 上次 (opens the conversation it wrote last).
-// 今日简报 (brief.rs) only has 打开, 模型 and 思考, 重写今天的. With 思考 on only models that can think are
+// name, when, off / running), the chosen one on the right: 名称, 什么时候, 模型 and 思考, 提示词 (a workflow —
+// 年度总结 — draws its flow instead, as the 插件库 does), saved with 保存 (one undoable step); 打开 switch, 立即运行, 删除, and
+// 下次 / 上次 (opens the conversation it wrote last). 今日简报 (brief.rs) has 打开, 模型 and 思考, its 提示词 (保存 /
+// 恢复默认; a setting, not undoable), 重写今天的. With 思考 on only models that can think are
 // listed, off only ones that can do without; a chosen one that doesn't fit goes back to 小拾现在选的.
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,6 +13,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
 import { BRIEF_KEY, LIBRARY_KEY, SCHEDULES_KEY, pickyApi, ruleText, useBrief, usePickyStatus, useSchedules, type Schedule, type ScheduleInput } from "./api";
 import { modelOptions } from "./ModelMenu";
+import { FlowChart } from "./Plugins";
 import { thinkFits, thinkOf } from "./Thinking";
 
 type Confirm = ReturnType<typeof useConfirm>[0];
@@ -134,10 +136,19 @@ function BriefEditor() {
   const toast = useToast();
   const b = useBrief().data;
   const { models, keep } = useModels(b?.model ?? null, b?.thinking ?? true);
+  const [draft, setDraft] = useState<string | null>(null);
   if (!b) return null;
+  const text = draft ?? b.prompt;
+  const dirty = draft != null && draft !== b.prompt;
   const put = (enabled: boolean, model: string | null, thinking = b.thinking) =>
     void pickyApi.briefSet(enabled, model, thinking).then(
       (v) => qc.setQueryData(BRIEF_KEY, v),
+      (e) => toast(errorText(e), "error"),
+    );
+  /** null = back to the built-in prompt. */
+  const savePrompt = (prompt: string | null) =>
+    void pickyApi.briefPrompt(prompt).then(
+      (v) => (qc.setQueryData(BRIEF_KEY, v), setDraft(null)),
       (e) => toast(errorText(e), "error"),
     );
   const rewrite = () =>
@@ -169,14 +180,19 @@ function BriefEditor() {
           </span>
         </div>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">写什么</span>
-        <p className="text-sm leading-relaxed">今天的待办、快到期的和过期的；该跟进的投递、在笔试面试的；最近的笔记里常在想什么。</p>
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground">提示词</span>
+        <TextArea aria-label="提示词" value={text} onChange={(e) => setDraft(e.target.value)} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
       </div>
-      <div className="flex-1" />
       <div className="flex items-center gap-2">
-        <Button onClick={rewrite} disabled={!b.enabled || b.state === "writing"}>
+        <Button onClick={rewrite} disabled={!b.enabled || b.state === "writing" || dirty}>
           重写今天的
+        </Button>
+        <div className="flex-1" />
+        {b.custom && !dirty && <Button onClick={() => savePrompt(null)}>恢复默认</Button>}
+        {dirty && <Button onClick={() => setDraft(null)}>还原</Button>}
+        <Button variant="primary" disabled={!dirty || !text.trim()} onClick={() => savePrompt(text)}>
+          保存
         </Button>
       </div>
     </div>
@@ -232,60 +248,67 @@ function ScheduleEditor(props: { schedule: Schedule | null; confirm: Confirm; on
 
   return (
     <div className="flex h-full flex-col gap-4 p-5">
-      <div className="flex items-end gap-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">名称</span>
-          <TextInput aria-label="名称" value={form.name} maxLength={30} onChange={(e) => set({ name: e.target.value })} />
-        </div>
-        {s && (
-          <div className="flex items-center gap-2 pb-2 text-sm">
-            打开 <Switch label="打开" checked={s.enabled} onChange={enable} />
+      {/* a flow taller than the room scrolls with the fields, as in the 插件库 */}
+      <div className="-m-1 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-1">
+        <div className="flex items-end gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">名称</span>
+            <TextInput aria-label="名称" value={form.name} maxLength={30} onChange={(e) => set({ name: e.target.value })} />
           </div>
-        )}
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">什么时候</span>
-        <div className="flex flex-wrap items-center gap-2">
-          <Segmented<ScheduleInput["every"]>
-            value={form.every}
-            onChange={(every) =>
-              set({
-                every,
-                day: every === "day" ? null : every === form.every ? form.day : 1,
-                month: every === "year" ? (form.month ?? 1) : null,
-              })
-            }
-            options={[
-              { value: "day", label: "每天" },
-              { value: "week", label: "每周" },
-              { value: "month", label: "每月" },
-              { value: "year", label: "每年" },
-            ]}
-          />
-          {form.every === "week" && <Dropdown<number> ariaLabel="星期几" value={form.day ?? 1} options={WEEKDAYS.map((w, i) => ({ value: i + 1, label: w }))} onChange={(day) => set({ day })} />}
-          {form.every === "year" && (
-            <Dropdown<number> ariaLabel="几月" value={form.month ?? 1} menuMaxHeight={280} options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` }))} onChange={(month) => set({ month })} />
+          {s && (
+            <div className="flex items-center gap-2 pb-2 text-sm">
+              打开 <Switch label="打开" checked={s.enabled} onChange={enable} />
+            </div>
           )}
-          {(form.every === "month" || form.every === "year") && (
-            <Dropdown<number> ariaLabel="几号" value={form.day ?? 1} menuMaxHeight={280} options={DAYS(form.day)} onChange={(day) => set({ day })} />
-          )}
-          <TextInput aria-label="几点" value={form.at} maxLength={5} inputMode="numeric" onChange={(e) => set({ at: e.target.value })} className="max-w-20 text-center tabular-nums" />
         </div>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">模型</span>
-        <div className="flex items-center gap-4">
-          <Dropdown<string | null> ariaLabel="模型" value={form.model} options={models} foldKey="models" onChange={(model) => set({ model })} />
-          <span className="flex items-center gap-2 text-sm">
-            思考 <Switch label="思考" checked={form.thinking} onChange={(thinking) => set({ thinking, model: keep(form.model, thinking) })} />
-          </span>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-muted-foreground">什么时候</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented<ScheduleInput["every"]>
+              value={form.every}
+              onChange={(every) =>
+                set({
+                  every,
+                  day: every === "day" ? null : every === form.every ? form.day : 1,
+                  month: every === "year" ? (form.month ?? 1) : null,
+                })
+              }
+              options={[
+                { value: "day", label: "每天" },
+                { value: "week", label: "每周" },
+                { value: "month", label: "每月" },
+                { value: "year", label: "每年" },
+              ]}
+            />
+            {form.every === "week" && <Dropdown<number> ariaLabel="星期几" value={form.day ?? 1} options={WEEKDAYS.map((w, i) => ({ value: i + 1, label: w }))} onChange={(day) => set({ day })} />}
+            {form.every === "year" && (
+              <Dropdown<number> ariaLabel="几月" value={form.month ?? 1} menuMaxHeight={280} options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` }))} onChange={(month) => set({ month })} />
+            )}
+            {(form.every === "month" || form.every === "year") && (
+              <Dropdown<number> ariaLabel="几号" value={form.day ?? 1} menuMaxHeight={280} options={DAYS(form.day)} onChange={(day) => set({ day })} />
+            )}
+            <TextInput aria-label="几点" value={form.at} maxLength={5} inputMode="numeric" onChange={(e) => set({ at: e.target.value })} className="max-w-20 text-center tabular-nums" />
+          </div>
         </div>
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">要做什么</span>
-        <TextArea aria-label="要做什么" value={form.prompt} onChange={(e) => set({ prompt: e.target.value })} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
-        {s?.builtin === "yearly" && (
-          <p className="text-xs text-muted-foreground">读这一年的笔记、待办和打卡、画画、投递、出行、书影和跟小拾的对话（私密的不读）：模型放得下就一次读完，放不下先按月整理要点；钱来钱往不读。</p>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-muted-foreground">模型</span>
+          <div className="flex items-center gap-4">
+            <Dropdown<string | null> ariaLabel="模型" value={form.model} options={models} foldKey="models" onChange={(model) => set({ model })} />
+            <span className="flex items-center gap-2 text-sm">
+              思考 <Switch label="思考" checked={form.thinking} onChange={(thinking) => set({ thinking, model: keep(form.model, thinking) })} />
+            </span>
+          </div>
+        </div>
+        {s?.flow ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">流程</span>
+            <FlowChart flow={s.flow} />
+          </div>
+        ) : (
+          <div className="flex min-h-40 flex-1 flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">提示词</span>
+            <TextArea aria-label="提示词" value={form.prompt} onChange={(e) => set({ prompt: e.target.value })} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
+          </div>
         )}
       </div>
       {s && (

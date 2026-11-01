@@ -23,7 +23,7 @@ fn seeded(c: &Connection) {
     dossier.material = Some("m-notes".into());
     let mut shared = record("r1", "rule", "共用准则", "定位", "只做指定的事。");
     shared.lang = String::new();
-    for r in [notes, dossier, shared, record("r2", "rule", "面试", "复盘", "事实和判断分开。"), record("r3", "decision", "面试", "语气", "少说套话。"), record("x", "rule", "素材润色", "别的", "不该读到"), record("f", "fact", "个人事实", "到岗时间", "2027 年 4 月后")] {
+    for r in [notes, dossier, shared, record("r2", "rule", "卡片练习", "复盘", "事实和判断分开。"), record("r3", "decision", "卡片练习", "语气", "少说套话。"), record("r4", "rule", "面试", "准备", "只准备面试时读。"), record("x", "rule", "素材润色", "别的", "不该读到"), record("f", "fact", "个人事实", "到岗时间", "2027 年 4 月后")] {
         catalog::put(c, &r).unwrap();
     }
     let bank_job = qbank::job_link(&job());
@@ -192,12 +192,15 @@ fn each_prompt_reads_what_it_needs() {
     seeded(&c);
     play(&c, &["n2"], &[UNSURE]);
     let (w, bank) = (seeker::read(&c).unwrap(), read(&c).unwrap());
-    // the rules: 共用准则, 面试 (an older 个人约定 as a rule of one point), the skeleton; not other uses
+    // the rules: 题库维护, 卡片练习 (an older 个人约定 as a rule of one point), the skeleton; not other uses (面试, nor
+    // an old 共用准则: the principles say it now)
     let rules = rules(&w);
-    for part in ["# 共用准则\n\n## 定位\n1. 只做指定的事。", "# 面试\n\n## 复盘\n1. 事实和判断分开。\n\n## 语气\n1. 少说套话。", "# 答案\n答案是用户自己的口述稿"] {
+    for part in ["# 卡片练习\n\n## 复盘\n1. 事实和判断分开。\n\n## 语气\n1. 少说套话。", "# 答案\n答案是用户自己的口述稿"] {
         assert!(rules.contains(part), "{part}\n{rules}");
     }
-    assert!(!rules.contains("不该读到"));
+    assert!(!rules.contains("不该读到") && !rules.contains("只做指定的事") && !rules.contains("只准备面试时读"), "{rules}");
+    assert!(pick_prompt(&w, &bank, &job()).unwrap().0.contains("# 卡片练习"));
+    assert!(follow_prompt(&w, &bank, &Round { cards: vec![Card { question: "g1".into(), text: "自我介绍".into(), category: "通用题".into(), ..Default::default() }], ..Default::default() }, 0, "", None).0.contains("工作原则：\n1. 说明通俗、精简"));
     // 按 JD: the JD, 通用 / 简历 and this job's 突击题 with their records
     let (system, user) = pick_prompt(&w, &bank, &job()).unwrap();
     assert!(system.contains("挑 8 张左右") && system.contains("自我介绍打头"), "{system}");

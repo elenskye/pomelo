@@ -1,7 +1,7 @@
 // Shared UI primitives styled to docs/design.md (no component library). Dropdowns: ./Dropdown.tsx.
 import type { LucideIcon } from "lucide-react";
-import { Search } from "lucide-react";
-import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from "react";
+import { RefreshCw, Search } from "lucide-react";
+import { useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode } from "react";
 
 export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
   const Icon = props.icon;
@@ -136,6 +136,16 @@ export function IconButton(props: {
     >
       {props.children}
     </button>
+  );
+}
+
+/** 重新读文件夹 (a page showing what's in a folder: 呦呦漫游, Seeker, 知识库): spins until `onRefresh` is done. */
+export function RefreshButton(props: { label: string; onRefresh: () => Promise<unknown>; disabled?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <IconButton label={props.label} disabled={props.disabled || busy} onClick={() => { setBusy(true); void props.onRefresh().finally(() => setBusy(false)); }}>
+      <RefreshCw size={14} strokeWidth={1.75} className={busy ? "animate-spin" : ""} />
+    </IconButton>
   );
 }
 

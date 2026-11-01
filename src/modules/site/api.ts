@@ -135,10 +135,15 @@ export const useWorks = (enabled: boolean) => useQuery({ queryKey: WORKS_KEY, qu
 export const useAssets = (enabled: boolean, kind: AssetKind = "image") => useQuery({ queryKey: [...SITE_KEY, "assets", kind], queryFn: () => workApi.assets(kind), enabled, staleTime: 0, refetchOnMount: "always" });
 
 /** A stored path ("public/…") or site URL ("/…") → where the page loads it (lib.rs serves the site's public/). */
+/** Times the page read the folder again (↻): images get it in their address, so a file replaced under the
+ * same name is fetched anew (Rust reads only the path). */
+let rereads = 0;
+export const rereadSite = () => void rereads++;
+
 export function siteSrc(stored: string): string {
   const url = stored.startsWith("public/") ? stored.slice("public".length) : stored;
   const mock = (window as unknown as { __pomeloSiteSrc?: (url: string) => string }).__pomeloSiteSrc;
-  return mock ? mock(url) : `pomelo-site://localhost${encodeURI(url)}`;
+  return mock ? mock(url) : `pomelo-site://localhost${encodeURI(url)}${rereads ? `?r=${rereads}` : ""}`;
 }
 
 /** The work's page on the site. */

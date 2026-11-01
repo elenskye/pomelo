@@ -395,6 +395,8 @@ export const pickyApi = {
   briefWrite: (force: boolean) => invoke<Brief>("picky_brief_write", { force }),
   yearCard: () => invoke<YearLetter | null>("picky_year_card"),
   briefSet: (enabled: boolean, model: string | null, thinking: boolean) => invoke<Brief>("picky_brief_set", { enabled, model, thinking }),
+  /** null = back to the built-in prompt. */
+  briefPrompt: (prompt: string | null) => invoke<Brief>("picky_brief_prompt", { prompt }),
   rename: (id: number, title: string) => invoke<void>("picky_rename", { id, title }),
   pin: (ids: number[], pinned: boolean) => invoke<void>("picky_pin", { ids, pinned }),
   archive: (ids: number[], archived: boolean) => invoke<void>("picky_archive", { ids, archived }),
@@ -603,7 +605,8 @@ export const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.ev
  * model: local:<key> | cloud:<id> | null (= 小拾现在选的). next: "YYYY-MM-DD HH:MM" (null when off). */
 export type ScheduleRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
 export type ScheduleInput = ScheduleRule & { name: string; prompt: string; model: string | null; thinking: boolean };
-export type Schedule = ScheduleInput & { id: number; enabled: boolean; builtin: string | null; next: string | null; lastSession: number | null; lastAt: string | null; running: boolean };
+/** `flow`: a workflow (年度总结), drawn instead of its prompt. */
+export type Schedule = ScheduleInput & { id: number; enabled: boolean; builtin: string | null; flow: SkillFlowNode[] | null; next: string | null; lastSession: number | null; lastAt: string | null; running: boolean };
 export const SCHEDULES_KEY = ["picky", "schedules"];
 export const useSchedules = () => useQuery({ queryKey: SCHEDULES_KEY, queryFn: pickyApi.schedules, refetchInterval: (q) => (q.state.data?.some((s) => s.running) ? 1500 : 30_000) });
 
@@ -621,6 +624,9 @@ export type Brief = {
   enabled: boolean;
   model: string | null;
   thinking: boolean;
+  /** The prompt in use; `custom`: rewritten (else the built-in one). */
+  prompt: string;
+  custom: boolean;
   day: string;
   content: string;
   state: "none" | "writing" | "done" | "failed";

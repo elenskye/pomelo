@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Pencil, Plus } from "lucide-react";
+import { Check, MessageSquare, Pencil, Plus } from "lucide-react";
 import { InlineMd } from "@/shared/InlineMd";
-import { Button } from "@/shared/ui";
+import { diff } from "@/shared/diff";
+import { Button, IconButton } from "@/shared/ui";
 import { HEADLESS, SUMMARY, SeekerSort, contactLines } from "./SeekerParts";
 import { PointEditor } from "./SeekerPoint";
-import { draftLang, type SeekerDraft, type SeekerEdit, type SeekerEntry, type SeekerLang } from "./seekerApi";
+import { draftLang, type SeekerDraft, type SeekerEdit, type SeekerEntry, type SeekerLang, type SeekerNote } from "./seekerApi";
 
 /** An entry's heading as the Word export writes it (Rust output.rs `lines`): 中文 名称 ⇥ 角色 ⇥ 时间
  * (教育: 名称 ⇥ 时间, then 专业；说明); English 角色 ⇥ 时间, then 名称, 地点 (教育: 名称 ⇥ 时间, then the degree). */
@@ -26,8 +27,25 @@ export function ResumePreview({ draft, second }: { draft: SeekerDraft; second: b
   return <article className="mx-auto max-w-[794px] border bg-card p-8 text-sm"><h2 className={`text-center text-xl font-bold ${lang === "en" ? "uppercase" : ""}`}>{draft.name}</h2><div className="my-4 text-center">{contactLines(draft, second).map((line) => <p key={line}>{line}</p>)}</div>{draft.sections.map((s) => <section key={s.id} className="mb-5"><h3 className={`mb-3 border-b font-bold ${lang === "en" ? "uppercase" : ""}`}>{s.title}</h3>{s.entries.map((e) => <div key={e.id} className="mb-3">{s.category === SUMMARY ? <p className="whitespace-pre-wrap">{e.note}</p> : !HEADLESS.includes(s.category ?? "") && <EntryHead lang={lang} category={s.category ?? ""} entry={e} />}<ul className="mt-1 list-disc pl-5">{e.points.map((p) => <li key={p.id} className="whitespace-pre-wrap"><InlineMd text={p.text} /></li>)}</ul></div>)}</section>)}</article>;
 }
 
-export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selected: Set<string>; setSelected: (ids: Set<string>) => void; edit: (edit: SeekerEdit) => void; remove: () => void; reorder: (kind: string, parent: string | null, ids: string[]) => void; onDraft: (draft: SeekerDraft) => void }) {
+/** A 批注 under its block: the comment and ✓ (处理完了); with an edit, a card with the change that is
+ * picked by a click (柚红细边浅底) for 确认修改. `current`: the text the edit replaces. */
+function Remark(props: { note: SeekerNote; current: string | null; picked: boolean; busy: boolean; pick: () => void; done: () => void }) {
+  const n = props.note;
+  return <div data-seeker-note className="my-1 ml-6 rounded-control border-l-2 border-primary/60 bg-muted/60 px-2.5 py-1.5 text-xs">
+    <div className="flex items-start gap-2">
+      <MessageSquare size={12} className="mt-1 shrink-0 text-primary" aria-hidden />
+      <p className="min-w-0 flex-1 pt-0.5 break-words whitespace-pre-wrap">{n.comment || "改成："}</p>
+      <IconButton label="处理完了" disabled={props.busy} onClick={props.done}><Check size={13} /></IconButton>
+    </div>
+    {n.edit != null && props.current != null && <button type="button" aria-pressed={props.picked} disabled={props.busy} onClick={props.pick} className={`mt-1 block w-full rounded-control border px-2 py-1.5 text-left text-sm break-words whitespace-pre-wrap outline-none focus-visible:ring-2 focus-visible:ring-ring ${props.picked ? "border-primary bg-accent text-accent-foreground" : "bg-card hover:bg-muted/50"}`}>{diff(props.current, n.edit).map((part, i) => part.kind === "del" ? <del key={i} className="bg-destructive/10 text-destructive">{part.text}</del> : part.kind === "add" ? <ins key={i} className="bg-primary/10 text-primary no-underline">{part.text}</ins> : <span key={i}>{part.text}</span>)}</button>}
+  </div>;
+}
+
+/** notes: the stored draft's 批注, under their blocks (the whole résumé's above the name); picks: the ones
+ * picked for 确认修改. */
+export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selected: Set<string>; setSelected: (ids: Set<string>) => void; edit: (edit: SeekerEdit) => void; remove: () => void; reorder: (kind: string, parent: string | null, ids: string[]) => void; onDraft: (draft: SeekerDraft) => void; notes: SeekerNote[]; picks: Set<string>; pick: (id: string) => void; done: (id: string) => void }) {
   const { draft, busy, selected, setSelected, edit } = props;
+  const remarks = (target: string, current: string | null = null) => props.notes.filter((n) => n.target === target).map((n) => <Remark key={n.id} note={n} current={current} picked={props.picks.has(n.id)} busy={busy} pick={() => props.pick(n.id)} done={() => props.done(n.id)} />);
   const lang = draftLang(draft);
   const scroll = useRef<HTMLDivElement>(null);
   // a press on the page: a drag selects what its box touches; a click (no move) picks the block under it,
@@ -67,7 +85,7 @@ export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selecte
 
   return <div ref={scroll} tabIndex={0} aria-label="简历正文，多选编辑" className="relative -m-1 min-h-0 flex-1 overflow-auto p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     onKeyDown={(e) => {
-      if ((e.target as HTMLElement).closest("button,input,textarea,[contenteditable]")) return;
+      if ((e.target as HTMLElement).closest("button,input,textarea,[contenteditable],[data-seeker-note]")) return;
       if (e.key === "Escape") {
         cancelAnimationFrame(frame.current);
         if (drag.current && e.currentTarget.hasPointerCapture(drag.current.pointerId)) e.currentTarget.releasePointerCapture(drag.current.pointerId);
@@ -78,7 +96,7 @@ export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selecte
       if (!busy && selected.size && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); props.remove(); }
     }}
     onPointerDown={(e) => {
-      if (busy || e.button !== 0 || (e.target as HTMLElement).closest("button,input,textarea,a,[contenteditable]")) return;
+      if (busy || e.button !== 0 || (e.target as HTMLElement).closest("button,input,textarea,a,[contenteditable],[data-seeker-note]")) return;
       const root = e.currentTarget;
       const rect = root.getBoundingClientRect();
       e.preventDefault();
@@ -108,14 +126,17 @@ export function ResumeEditor(props: { draft: SeekerDraft; busy: boolean; selecte
     onLostPointerCapture={() => { cancelAnimationFrame(frame.current); drag.current = null; setBox(null); }}
     onPointerCancel={() => { cancelAnimationFrame(frame.current); drag.current = null; setBox(null); }}>
     <article className="mx-auto my-5 min-h-[650px] max-w-[794px] select-none rounded-sm border bg-card p-6 text-sm shadow-sm sm:p-8">
+      {remarks("")}
       <h2 className={`mb-3 text-center text-xl font-bold ${lang === "en" ? "uppercase" : ""}`}>{draft.name || "姓名"}</h2>
       <div className="mb-6 grid gap-1 sm:grid-cols-2">{draft.header.filter((h) => h.visible).map((h) => block(h.id, `${h.label}：${h.value || "—"}`, () => edit({ title: h.label, fields: [{ label: h.label, value: h.value }], apply: (d, values) => { d.header.find((field) => field.id === h.id)!.value = values[0]; } })))}</div>
       <SeekerSort items={draft.sections} disabled={busy} onSort={(ids) => props.reorder("section", null, ids)}>{(section, sectionHandle) => <section key={section.id} className="mb-6">
         <div className="border-b font-bold">{block(section.id, section.title || "未命名章节", () => edit({ title: "章节名称", fields: [{ label: "名称", value: section.title }], apply: (d, values) => { d.sections.find((s) => s.id === section.id)!.title = values[0]; } }), false, sectionHandle)}</div>
+        {remarks(section.id)}
         <SeekerSort items={section.entries} disabled={busy} onSort={(ids) => props.reorder("entry", section.id, ids)}>{(entry, entryHandle) => <div key={entry.id} className="mt-3">
           {section.category === SUMMARY ? block(entry.id, <p>{entry.note || "—"}</p>, () => edit({ title: "Summary", fields: [{ label: "正文", value: entry.note }], apply: (d, v) => { d.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!.note = v[0]; } }), selected.has(section.id), entryHandle)
             : !HEADLESS.includes(section.category ?? "") && block(entry.id, <EntryHead lang={lang} category={section.category ?? ""} entry={entry} />, () => edit({ title: "经历", fields: [{ label: "时间", value: entry.time }, { label: "名称", value: entry.name }, { label: "角色", value: entry.role }, { label: "地点", value: entry.location }, { label: "说明", value: entry.note }], apply: (d, v) => { const e = d.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!; [e.time, e.name, e.role, e.location, e.note] = v; } }), selected.has(section.id), entryHandle)}
-          {section.category !== SUMMARY && <><div className={HEADLESS.includes(section.category ?? "") ? "" : "pl-4"}><SeekerSort items={entry.points} disabled={busy} onSort={(ids) => props.reorder("point", entry.id, ids)}>{(point, pointHandle) => block(point.id, <PointEditor label="要点" value={point.text} disabled={busy} onChange={(text) => { const next = structuredClone(draft); next.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!.points.find((p) => p.id === point.id)!.text = text; props.onDraft(next); }} />, () => edit({ title: "要点", fields: [{ label: "正文", value: point.text }], apply: (d, v) => { d.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!.points.find((p) => p.id === point.id)!.text = v[0]; } }), selected.has(section.id) || selected.has(entry.id), pointHandle)}</SeekerSort></div>
+          {remarks(entry.id, section.category === SUMMARY ? entry.note : null)}
+          {section.category !== SUMMARY && <><div className={HEADLESS.includes(section.category ?? "") ? "" : "pl-4"}><SeekerSort items={entry.points} disabled={busy} onSort={(ids) => props.reorder("point", entry.id, ids)}>{(point, pointHandle) => <>{block(point.id, <PointEditor label="要点" value={point.text} disabled={busy} onChange={(text) => { const next = structuredClone(draft); next.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!.points.find((p) => p.id === point.id)!.text = text; props.onDraft(next); }} />, () => edit({ title: "要点", fields: [{ label: "正文", value: point.text }], apply: (d, v) => { d.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!.points.find((p) => p.id === point.id)!.text = v[0]; } }), selected.has(section.id) || selected.has(entry.id), pointHandle)}{remarks(point.id, point.text)}</>}</SeekerSort></div>
           <Button className="ml-4" variant="ghost" disabled={busy} onClick={() => edit({ title: "新要点", fields: [{ label: "正文", value: "" }], apply: (d, v) => { d.sections.find((s) => s.id === section.id)!.entries.find((e) => e.id === entry.id)!.points.push({ id: crypto.randomUUID(), text: v[0] }); } })}><Plus size={13} />要点</Button></>}
         </div>}</SeekerSort>
         {section.category !== SUMMARY && <Button variant="ghost" disabled={busy} onClick={() => edit({ title: "新经历", fields: [{ label: "时间", value: "" }, { label: "名称", value: "" }, { label: "角色", value: "" }, { label: "地点", value: "" }, { label: "说明", value: "" }], apply: (d, v) => { d.sections.find((s) => s.id === section.id)!.entries.push({ id: crypto.randomUUID(), time: v[0], name: v[1], role: v[2], location: v[3], note: v[4], points: [] }); } })}><Plus size={13} />经历</Button>}

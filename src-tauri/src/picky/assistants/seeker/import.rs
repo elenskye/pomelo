@@ -6,7 +6,7 @@
 //!   answer); `教育 / 技能 / 项目 / 工作` → materials: a `## 名称` per entry, then field lines
 //!   `- 角色：` (or 职位 / 专业 / 学历) `- 时间：` `- 地点：` `- 概览：` (or 说明) `- 技术栈：`, then the points
 //!   (`- **小标题**：…`). A file without `## ` (技能) is one material titled by its heading.
-//! - `SEEKER.md` (共用准则), `rules/cn-modules.md` (素材润色), `rules/cn-resume.md` (整体审查) → a rule per
+//! - `SEEKER.md` (写作规则 = 通用规则; 共用准则 until v0.7 refine R6), `rules/cn-modules.md` (素材润色), `rules/cn-resume.md` (整体审查) → a rule per
 //!   `## ` section (a first line `用于：…` sets the task), its lines as points (catalog.rs `split_points`);
 //!   a section named 「有效个人约定」 → one rule of that title, a point per bullet (`- **名称**：内容` →
 //!   「名称：内容」).
@@ -90,9 +90,9 @@ pub fn classify(path: &str) -> Result<(&'static str, &'static str, &'static str)
     match lower.as_str() {
         "rules/en-modules.md" => return Ok(("rule", "素材润色", "en")),
         "rules/en-resume.md" => return Ok(("rule", "整体审查", "en")),
-        "rules/qbank.md" => return Ok(("rule", crate::picky::assistants::rater::RULES[0], "cn")),
-        "rules/interview.md" => return Ok(("rule", crate::picky::assistants::rater::RULES[1], "cn")),
-        "seeker.md" => return Ok(("rule", "共用准则", "")),
+        "rules/qbank.md" => return Ok(("rule", crate::picky::assistants::rater::QBANK, "cn")),
+        "rules/interview.md" => return Ok(("rule", crate::picky::assistants::rater::INTERVIEW, "cn")),
+        "seeker.md" => return Ok(("rule", "写作规则", "")),
         "facts.md" => return Ok(("facts", "", "")),
         _ if lower.starts_with("projects/") => return Ok(("dossier", "经历档案", "")),
         _ => {}

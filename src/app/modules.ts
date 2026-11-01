@@ -113,6 +113,7 @@ export const ASSISTANT_MODULES: ModuleDef[] = [
       { value: "cards", label: "卡片" },
       { value: "interview", label: "面试" },
       { value: "rules", label: "规则" },
+      { value: "settings", label: "设置" },
     ],
   },
 ];

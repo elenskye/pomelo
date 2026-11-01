@@ -107,7 +107,7 @@ pub fn initial(records: &[Record], lang: &str) -> Result<Draft, String> {
     }
     let education = records.iter().filter(|r| material(r, lang) && r.category == "教育").map(|r| Ok(entry(r, &all(r), id()?))).collect::<Result<_, String>>()?;
     sections.push(Section { id: id()?, title: section_title("教育", lang), category: "教育".into(), entries: education });
-    Ok(Draft { lang: lang.into(), form: if english { "resume".into() } else { String::new() }, name, header, sections, jd: String::new(), job: None })
+    Ok(Draft { lang: lang.into(), form: if english { "resume".into() } else { String::new() }, name, header, sections, jd: String::new(), job: None, notes: vec![] })
 }
 
 pub fn baseline(c: &Connection, draft: &Draft) -> Result<(), String> {
@@ -249,18 +249,6 @@ pub async fn picky_seeker_reorder(state: State<'_, AppState>, kind: String, pare
         let mut draft = read(c)?.draft(lang).cloned().ok_or("还没有草稿")?;
         reorder(&mut draft, &kind, parent.as_deref(), &ids)?;
         save(c, &draft)?;
-        read(c)
-    })
-}
-
-/// A model's suggestion the user accepted: only onto the draft it was made from.
-#[tauri::command]
-pub async fn picky_seeker_apply(state: State<'_, AppState>, before: Draft, after: Draft) -> Result<Workspace, String> {
-    state.with_picky_undo("接受简历建议", |c| {
-        if after.lang != before.lang || read(c)?.draft(&before.lang) != Some(&before) {
-            return Err("草稿刚刚改过，请重新生成建议".into());
-        }
-        save(c, &after)?;
         read(c)
     })
 }

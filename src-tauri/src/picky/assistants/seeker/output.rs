@@ -21,6 +21,9 @@
 //! panel; one per job is 「本次使用」; they keep the job and the JD as they were. A link whose file is gone
 //! isn't shown (the record stays). The old 简历 field of 投石问路 moved here once (`adopt_job_resumes`).
 //! jobs is read first, then picky (never nested).
+//! The name 另存 offers (`export_name`, v0.7 R7): `seek-it-<公司>[-resume|-cv]-v<N>`, the company from the
+//! job's knowledge/ folder without `seek-` (else its name; no job: the language), N one past the
+//! newest version of that series under cv/<lang>/.
 use super::*;
 use crate::modules::common::Tx;
 use crate::picky::{word, Mode};
@@ -489,3 +492,41 @@ pub async fn picky_seeker_job_resume(state: State<'_, AppState>, job_id: i64, pa
     })
 }
 
+
+/// Lowercase, letters and digits (CJK too) kept, the rest one `-`.
+fn slug(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// The name 另存 offers (see the top): `company` the job's knowledge/ folder or its name (None: no
+/// job), `form` an English draft's; `cv` what is under cv/ now.
+pub fn export_name(lang: &str, form: &str, company: Option<(&str, Option<&str>)>, cv: &[files::CvFile]) -> String {
+    let key = match company {
+        Some((name, folder)) => folder.map(|f| f.strip_prefix("seek-").unwrap_or(f)).map(slug).filter(|s| !s.is_empty()).unwrap_or_else(|| slug(name)),
+        None => String::new(),
+    };
+    let key = if key.is_empty() { lang.to_string() } else { key };
+    let series = if lang == "en" { format!("seek-it-{key}-{}", if form == "cv" { "cv" } else { "resume" }) } else { format!("seek-it-{key}") };
+    let newest = cv.iter().filter(|f| f.lang == lang && f.series.eq_ignore_ascii_case(&series)).filter_map(|f| f.version).max().unwrap_or(0);
+    format!("{series}-v{}.docx", newest + 1)
+}
+
+#[tauri::command]
+pub async fn picky_seeker_export_name(state: State<'_, AppState>, lang: String, job_id: Option<i64>) -> Result<String, String> {
+    let lang = lang_of(&lang)?;
+    let form = state.picky.with_db(|c| Ok(super::stored(c, lang)?.map(|d| d.form).unwrap_or_default()))?;
+    let job = job_id.map(|id| job(&state, id)).transpose()?;
+    let folder = match &job {
+        Some(j) => super::company::job_company(&state, j).ok().and_then(|c| c.chosen.or(c.auto)).filter(|f| !f.is_empty()),
+        None => None,
+    };
+    Ok(export_name(lang, &form, job.as_ref().map(|j| (j.company.as_str(), folder.as_deref())), &files::list(&state).cv))
+}

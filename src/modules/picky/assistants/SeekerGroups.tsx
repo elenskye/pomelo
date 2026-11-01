@@ -1,17 +1,18 @@
 // Groups of 素材 and 规则 (Rust catalog.rs `rename_group`): ⋯ → 重命名 (a built-in group only shows the new
-// name; one of the user's own moves its records) or 删除这一组 (its records, one undo step). The 规则 page
+// name; one of the user's own moves its records) or 删除这一组 (its records, one undo step). 规则, 档案 and 网申
+// groups move up and down (`useGroupMove`; Rust `order_groups`, one undo step). The 规则 page
 // says under each group which functions read it, and 「发给模型的说明」 shows each function's system message
 // as the real call builds it (Rust model.rs / rater.rs `previews`).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Ellipsis, ScrollText, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Ellipsis, ScrollText, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { useConfirm } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { raterApi } from "./raterApi";
-import { seekerApi, seekerBatch, type SeekerLang, type SeekerPromptView, type SeekerWorkspace } from "./seekerApi";
+import { seekerApi, seekerBatch, type SeekerGroupKind, type SeekerLang, type SeekerPromptView, type SeekerWorkspace } from "./seekerApi";
 
 type Write = (action: () => Promise<SeekerWorkspace>) => Promise<boolean>;
 
@@ -46,6 +47,23 @@ export function useGroupActions(write: Write, lang: SeekerLang, busy: boolean) {
     </>
   );
   return { menu, dialogs };
+}
+
+/** 上移 / 下移 for a page's groups: `shown` is all of them in the order shown; a move sends the new order. */
+export function useGroupMove(write: Write, kind: SeekerGroupKind, lang: string, shown: string[], busy: boolean) {
+  return (group: string): ReactNode => {
+    const i = shown.indexOf(group);
+    if (i < 0 || shown.length < 2) return null;
+    const swap = (j: number) => {
+      const next = [...shown];
+      [next[i], next[j]] = [next[j], next[i]];
+      void write(() => seekerApi.groupsOrder(kind, lang, next));
+    };
+    return <>
+      <IconButton label={`「${group}」上移`} disabled={busy || i === 0} onClick={() => swap(i - 1)}><ArrowUp size={14} /></IconButton>
+      <IconButton label={`「${group}」下移`} disabled={busy || i === shown.length - 1} onClick={() => swap(i + 1)}><ArrowDown size={14} /></IconButton>
+    </>;
+  };
 }
 
 /** Both assistants' functions with the groups they read (the 规则 page's 「发给」 lines and the dialog). */
@@ -118,11 +136,11 @@ function PromptsDialog(props: { title: string; list: SeekerPromptView[]; label: 
   );
 }
 
-/** A group's head: its name, ＋, ⋯, and (规则) the 「发给」 line under it. */
-export function GroupHead(props: { title: string; add?: ReactNode; menu?: ReactNode; note?: string }) {
+/** A group's head: its name, ＋, ⋯, 上移 / 下移, and (规则) the 「发给」 line under it. */
+export function GroupHead(props: { title: string; add?: ReactNode; menu?: ReactNode; move?: ReactNode; note?: string }) {
   return (
     <div>
-      <div className="flex h-7 items-center gap-1"><h3 className="text-sm font-bold">{props.title}</h3>{props.add}{props.menu}</div>
+      <div className="flex h-7 items-center gap-1"><h3 className="text-sm font-bold">{props.title}</h3>{props.add}{props.menu}{props.move}</div>
       {props.note && <p className="text-xs text-muted-foreground">{props.note}</p>}
     </div>
   );
