@@ -193,16 +193,17 @@ fn joined(v: Vec<String>) -> String {
     if v.is_empty() { "（没有）".into() } else { v.join("、") }
 }
 
-/// The names a module's tools pick from.
+/// What a write goes to the cloud as: 钱来钱往's part (更新余额 → 资产, the rest 收支), else the module.
+pub fn cloud_key<'a>(tool: &str, module: &'a str) -> &'a str {
+    data::cloud_key(module, if tool == SET_BALANCE { "account" } else { "entry" })
+}
+
+/// The names a module's tools pick from (钱来钱往 by part).
 fn names(c: &Connection, module: &str, today: &str) -> Result<String, String> {
     let kind_names = |m: &str| -> Result<String, String> { Ok(joined(kinds::list(c, m)?.into_iter().map(|k| k.name).collect())) };
     Ok(match module {
-        "finance" => format!(
-            "钱来钱往：支出分类 {}；收入分类 {}；账户 {}",
-            kind_names(finance::OUT_KINDS)?,
-            kind_names(finance::IN_KINDS)?,
-            joined(finance::accounts(c)?.into_iter().filter(|a| !a.closed).map(|a| a.name).collect())
-        ),
+        data::FIN_FLOW => format!("钱来钱往：支出分类 {}；收入分类 {}", kind_names(finance::OUT_KINDS)?, kind_names(finance::IN_KINDS)?),
+        data::FIN_ASSETS => format!("钱来钱往：账户 {}", joined(finance::accounts(c)?.into_iter().filter(|a| !a.closed).map(|a| a.name).collect())),
         "todo" => {
             let groups = todo::groups(c)?;
             let goals: Vec<String> = todo::goals(c)?
@@ -232,7 +233,7 @@ fn names(c: &Connection, module: &str, today: &str) -> Result<String, String> {
 /// The part of the system message about writing: what may be proposed, the calendar and the names
 /// of the modules this model may write (empty when none).
 pub fn instructions(conn: &Connection, access: &Access, today: &str) -> Result<String, String> {
-    let writable: Vec<&Act> = ACTS.iter().filter(|a| access.allows(a.module) || (is_work(a.tool) && access.allows("films"))).collect();
+    let writable: Vec<&Act> = ACTS.iter().filter(|a| access.allows(cloud_key(a.tool, a.module)) || (is_work(a.tool) && access.allows("films"))).collect();
     if writable.is_empty() {
         return Ok(String::new());
     }
@@ -246,7 +247,7 @@ pub fn instructions(conn: &Connection, access: &Access, today: &str) -> Result<S
         writable.iter().map(|a| a.label).collect::<Vec<_>>().join("、"),
         assist::calendar(today)
     );
-    let mut modules: Vec<&str> = writable.iter().map(|a| a.module).collect();
+    let mut modules: Vec<&str> = writable.iter().map(|a| cloud_key(a.tool, a.module)).collect();
     if writable.iter().any(|a| is_work(a.tool)) {
         modules.push("films");
     }
@@ -395,12 +396,14 @@ pub fn refused(access: &Access, tool: &str, arguments: &str) -> Option<Answer> {
     if access.hidden.iter().any(|h| h == module) {
         return Some(Answer { module: Some(m.key.into()), label: format!("提议{label} · 已隐藏"), state: "blocked", text: format!("没有提议：{}在模块坞里隐藏了，小拾不改它的数据。", m.label), records: vec![] });
     }
-    if !access.allows(module) {
+    let key = cloud_key(tool, module);
+    if !access.allows(key) {
+        let what = data::part_label(key).unwrap_or(m.label);
         return Some(Answer {
-            module: Some(m.key.into()),
+            module: Some(key.into()),
             label: format!("提议{label} · 不发给云端"),
             state: "blocked",
-            text: format!("没有提议：{0}的数据不发给云端模型，所以用云端模型时不能记、不能改。请在回答开头写明「{0}不发给云端，这次不能记」，并提醒可以换本地模型再说。", m.label),
+            text: format!("没有提议：{0}的数据不发给云端模型，所以用云端模型时不能记、不能改。请在回答开头写明「{0}不发给云端，这次不能记」，并提醒可以换本地模型再说。", what),
             records: vec![],
         });
     }

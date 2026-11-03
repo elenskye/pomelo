@@ -1,6 +1,7 @@
 // 附件 UI: pictures as small squares (click → the viewer), other files as chips (click → their own app);
 // while editing each has an ×. The paperclip button picks files; drops and pastes reach the target
-// they land in (target.ts). A file not on this Mac shows dashed and greyed.
+// they land in (target.ts). A file not on this Mac shows dashed and greyed. `row`: one line that scrolls
+// sideways, smaller squares (a box's bottom edge, the 速记小窗).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ChevronLeft, ChevronRight, ExternalLink, FileText, ImageOff, Paperclip, X } from "lucide-react";
@@ -96,53 +97,57 @@ function Viewer(props: { images: FileInfo[]; index: number; onClose: () => void 
   );
 }
 
-export function AttachmentStrip(props: { files: FileInfo[]; onRemove?: (id: number) => void; className?: string }) {
+export function AttachmentStrip(props: { files: FileInfo[]; onRemove?: (id: number) => void; className?: string; row?: boolean }) {
   const toast = useToast();
   const [viewing, setViewing] = useState<number | null>(null);
   const images = props.files.filter((f) => f.kind === "image" && !f.missing);
   const others = props.files.filter((f) => f.kind !== "image" || f.missing);
   if (props.files.length === 0) return null;
+  const image = (f: FileInfo, i: number) => (
+    <div key={f.id} className="group/att relative shrink-0">
+      <button
+        type="button"
+        title={f.name}
+        aria-label={`看大图「${f.name}」`}
+        onClick={() => setViewing(i)}
+        className={`block overflow-hidden rounded-md border bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring ${props.row ? "size-11" : "size-20"}`}
+      >
+        <img src={fileSrc(f.id)} alt="" loading="lazy" draggable={false} className="size-full object-cover" />
+      </button>
+      {props.onRemove && <Remove name={f.name} onClick={() => props.onRemove!(f.id)} />}
+    </div>
+  );
+  const other = (f: FileInfo) => (
+    <div key={f.id} className={`group/att relative min-w-0 ${props.row ? "shrink-0" : ""}`}>
+      <button
+        type="button"
+        title={f.missing ? MISSING : f.name}
+        disabled={f.missing}
+        onClick={() => void attachmentsApi.open(f.id).catch((e) => toast(errorText(e), "error"))}
+        className={`flex min-w-0 items-center gap-1.5 rounded-control border px-2 py-1 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${props.row ? "max-w-48" : "max-w-64"} ${f.missing ? "border-dashed text-muted-foreground" : ""}`}
+      >
+        {f.missing ? <ImageOff size={13} className="shrink-0" /> : <FileText size={13} className="shrink-0 text-muted-foreground" />}
+        <span className="min-w-0 truncate">{f.name}</span>
+        {!f.missing && <span className="shrink-0 text-xs text-muted-foreground">{fileSize(f.bytes)}</span>}
+      </button>
+      {props.onRemove && <Remove name={f.name} onClick={() => props.onRemove!(f.id)} />}
+    </div>
+  );
+  const viewer = viewing !== null && <Viewer images={images} index={Math.min(viewing, images.length - 1)} onClose={() => setViewing(null)} />;
+  // the × sits over the corner: room for it above and to the right
+  if (props.row)
+    return (
+      <div className={`flex items-center gap-1.5 overflow-x-auto pt-1.5 pr-1.5 ${props.className ?? ""}`}>
+        {images.map(image)}
+        {others.map(other)}
+        {viewer}
+      </div>
+    );
   return (
     <div className={`space-y-2 ${props.className ?? ""}`}>
-      {images.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {images.map((f, i) => (
-            <div key={f.id} className="group/att relative">
-              <button
-                type="button"
-                title={f.name}
-                aria-label={`看大图「${f.name}」`}
-                onClick={() => setViewing(i)}
-                className="block size-20 overflow-hidden rounded-md border bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <img src={fileSrc(f.id)} alt="" loading="lazy" draggable={false} className="size-full object-cover" />
-              </button>
-              {props.onRemove && <Remove name={f.name} onClick={() => props.onRemove!(f.id)} />}
-            </div>
-          ))}
-        </div>
-      )}
-      {others.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {others.map((f) => (
-            <div key={f.id} className="group/att relative min-w-0">
-              <button
-                type="button"
-                title={f.missing ? MISSING : f.name}
-                disabled={f.missing}
-                onClick={() => void attachmentsApi.open(f.id).catch((e) => toast(errorText(e), "error"))}
-                className={`flex max-w-64 min-w-0 items-center gap-1.5 rounded-control border px-2 py-1 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${f.missing ? "border-dashed text-muted-foreground" : ""}`}
-              >
-                {f.missing ? <ImageOff size={13} className="shrink-0" /> : <FileText size={13} className="shrink-0 text-muted-foreground" />}
-                <span className="min-w-0 truncate">{f.name}</span>
-                {!f.missing && <span className="shrink-0 text-xs text-muted-foreground">{fileSize(f.bytes)}</span>}
-              </button>
-              {props.onRemove && <Remove name={f.name} onClick={() => props.onRemove!(f.id)} />}
-            </div>
-          ))}
-        </div>
-      )}
-      {viewing !== null && <Viewer images={images} index={Math.min(viewing, images.length - 1)} onClose={() => setViewing(null)} />}
+      {images.length > 0 && <div className="flex flex-wrap gap-1.5">{images.map(image)}</div>}
+      {others.length > 0 && <div className="flex flex-wrap gap-1.5">{others.map(other)}</div>}
+      {viewer}
     </div>
   );
 }

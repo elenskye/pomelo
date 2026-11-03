@@ -10,14 +10,14 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { moduleById } from "@/app/modules";
-import { Row, Section } from "@/settings/layout";
+import { Section } from "@/settings/layout";
 import { useSubPage } from "@/app/subpage";
 import { jobLabel, useJobs, jobPicks } from "@/modules/jobs/api";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
-import { Button, EmptyState, Field, IconButton, SearchInput, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
-import { useModels } from "../Schedules";
+import { Button, EmptyState, Field, IconButton, SearchInput, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { ModelRow } from "./ModelRow";
 import { RaterCards } from "./RaterCards";
 import { RaterInterview } from "./RaterInterview";
 import { Chip, PickRow, SelectBar, SelectButton, SortGroup, picked, useSelect } from "./select";
@@ -85,12 +85,11 @@ function useRaterOptions() {
   const toast = useToast();
   const options = useQuery({ queryKey: RATER_OPTIONS_KEY, queryFn: raterApi.options });
   const set = (next: RaterOptions) => void raterApi.setOptions(next).then((o) => qc.setQueryData(RATER_OPTIONS_KEY, o), (e) => toast(errorText(e), "error"));
-  return { options: options.data ?? { model: null, thinking: false, features: {} }, set };
+  return { options: options.data ?? { model: null, thinking: false, effort: null, features: {} }, set };
 }
 
 /** The settings page's sections: the default, then each function by where it is. */
 const SETTING_GROUPS: [string, RaterFeature[]][] = [["题库", ["suggest", "polish"]], ["卡片练习", ["pick", "follow", "comment"]], ["面试", ["prep"]], ["复盘", ["record", "summary"]]];
-const SAME = "";
 
 /** 设置: the default model and 思考; each function follows it (跟默认) or has its own. */
 function RaterSettings(props: { options: RaterOptions; set: (o: RaterOptions) => void }) {
@@ -101,18 +100,6 @@ function RaterSettings(props: { options: RaterOptions; set: (o: RaterOptions) =>
     <Section title="默认"><ModelRow label="模型" name="默认" choice={o} onChange={(c) => props.set({ ...o, ...c })} /></Section>
     {SETTING_GROUPS.map(([title, fs]) => <Section key={title} title={title}>{fs.map((f) => <ModelRow key={f} label={label(f)} choice={o.features[f] ?? null} fallback={o} onChange={(c) => setFeature(f, c)} />)}</Section>)}
   </div></div>;
-}
-
-/** One row: a model (or 跟默认, when `fallback` is given) and 思考. */
-function ModelRow(props: { label: string; name?: string; choice: RaterChoice | null; fallback?: RaterChoice; onChange: (c: RaterChoice | null) => void }) {
-  const shown = props.choice ?? props.fallback ?? { model: null, thinking: false };
-  const { models, keep } = useModels(shown.model, shown.thinking);
-  const own = models.filter((m) => m.value != null);
-  const name = props.name ?? props.label;
-  const options = props.fallback ? [{ value: SAME, label: "跟默认" }, ...own.map((m) => ({ ...m, value: m.value as string }))] : own.map((m) => ({ ...m, value: m.value as string }));
-  return <Row label={props.label} actions={<label className="flex items-center gap-2 text-sm"><Switch label={`${name} · 思考`} checked={shown.thinking} disabled={!!props.fallback && !props.choice} onChange={(thinking) => props.onChange({ model: keep(shown.model, thinking), thinking })} />思考</label>}>
-    <Dropdown<string> block ariaLabel={`${name} · 模型`} value={props.choice?.model ?? (props.fallback ? SAME : "")} placeholder="选择模型" options={options} onChange={(m) => props.onChange(m === SAME && props.fallback ? null : { model: m, thinking: shown.thinking })} />
-  </Row>;
 }
 
 /** The questions by category; 简历题 by material, 突击题 by job. */

@@ -578,7 +578,7 @@ pub async fn picky_rater_interviews(state: tauri::State<'_, AppState>) -> Result
 pub async fn picky_rater_prep(app: AppHandle, ask: PrepAsk) -> Result<Interviews, String> {
     let state = app.state::<AppState>();
     let (w, bank, opts) = workspace(&state)?;
-    let (model, thinking) = qbank::chosen_model(&w, &opts, "prep")?;
+    let (model, level) = qbank::chosen_model(&w, &opts, "prep")?;
     if !LANGS.contains(&ask.lang.as_str()) {
         return Err("面试语言只能是中文或 English".into());
     }
@@ -586,7 +586,7 @@ pub async fn picky_rater_prep(app: AppHandle, ask: PrepAsk) -> Result<Interviews
     let job = job.ok_or("岗位不存在，请重新选择")?;
     let used = resume_on_disk(&state, &w, &job, &ask.lang);
     let (system, user) = prep_prompt(&w, &bank, &ask, &job, used.as_ref(), &employer)?;
-    let reply = qbank::call(&state, &model, &system, &user, 6144, thinking).await?;
+    let reply = qbank::call(&state, &model, &system, &user, 6144, &level).await?;
     let (questions, follows, sheet, advice) = parse_prep(&reply.json.unwrap_or_else(|| mock_prep(&bank, &job)), &bank)?;
     let resume = used.map(|u| u.name).unwrap_or_else(|| "（没有简历）".into());
     state.with_picky_undo("准备面试", |c| {
@@ -630,7 +630,7 @@ pub async fn picky_rater_review_save(state: tauri::State<'_, AppState>, review: 
 pub async fn picky_rater_summarize(app: AppHandle, reviews: Vec<String>, prep: Option<String>) -> Result<Interviews, String> {
     let state = app.state::<AppState>();
     let (w, bank, opts) = workspace(&state)?;
-    let (model, thinking) = qbank::chosen_model(&w, &opts, "summary")?;
+    let (model, level) = qbank::chosen_model(&w, &opts, "summary")?;
     let all = state.picky.with_db(|c| read_all(c))?;
     let mut chosen: Vec<&Review> = reviews.iter().map(|id| all.reviews.iter().find(|r| &r.id == id).ok_or_else(|| "有复盘已经删除了".to_string())).collect::<Result<_, _>>()?;
     let first = chosen.first().ok_or("至少选一次复盘")?.job.clone();
@@ -648,7 +648,7 @@ pub async fn picky_rater_summarize(app: AppHandle, reviews: Vec<String>, prep: O
     };
     let job = seeker::output::job(&state, first.id).ok().filter(|j| j.created_at == first.created_at);
     let (system, user) = summary_prompt(&w, &bank, &chosen, prep, job.as_ref());
-    let reply = qbank::call(&state, &model, &system, &user, 4096, thinking).await?;
+    let reply = qbank::call(&state, &model, &system, &user, 4096, &level).await?;
     let analysis = Analysis { model: reply.model, prep: prep.map(|p| p.id.clone()), ..parse_summary(&reply.json.unwrap_or_else(|| mock_summary(&chosen)), &chosen, &bank)? };
     let summary = Summary { job: first, prep: prep.map(|p| p.id.clone()), reviews: chosen.iter().map(|r| r.id.clone()).collect(), analysis, ..Default::default() };
     state.with_picky_undo("总结复盘", |c| {

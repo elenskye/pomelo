@@ -269,7 +269,8 @@ pub struct Reader<'a> {
     pub progress: &'a (dyn Fn(usize, usize, String) + Sync),
     pub note: &'a (dyn Fn(i64, i64, &str, &str) + Sync),
     pub usage: std::sync::Mutex<(i64, i64)>,
-    /// The reply's 思考 switch: helper requests think too (with room for it).
+    /// The reply's 思考 switch: helper requests think too (with room for it), at the model's default 思考强度
+    /// (many of them: only the reply takes the level chosen).
     pub thinking: bool,
 }
 

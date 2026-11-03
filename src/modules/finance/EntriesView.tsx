@@ -1,7 +1,8 @@
-// 收支: a month's entries (filter by 支出 / 收入 and 分类; change a row's 分类 in place; 多选 for batch
-// 分类 / 币种 / 删除) and the 固定支出 list. Periods from 记小额 show in every month they cover.
+// 收支: a month's entries, or any days (filter by 币种, 支出 / 收入 and 分类; change a row's 分类 in place;
+// 多选 for batch 分类 / 币种 / 删除) and the 固定支出 list. 导入账单 opens its page over this one (FinancePage). Periods
+// from 记小额 (before v0.8) show in every month they cover; a refund counts against its 分类.
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ListChecks, Plus, Repeat, Rows3, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, FileDown, ListChecks, Plus, Repeat, Trash2 } from "lucide-react";
 import { localToday, weekday } from "@/shared/dates";
 import { Dropdown } from "@/shared/Dropdown";
 import { useConfirm, useToast, errorText } from "@/shared/feedback";
@@ -10,10 +11,10 @@ import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { useSortable } from "@/shared/sortable";
 import { Button, IconButton, Segmented } from "@/shared/ui";
-import { FIN_KEY, IN_KINDS, OUT_KINDS, useAccounts, useEntries, useFinMutations, useFixed, useTotals, type Entry, type Flow, type Total } from "./api";
+import { FIN_KEY, IN_KINDS, OUT_KINDS, useAccounts, useFinRange, useFinMutations, useFixed, type Entry, type Flow, type Total } from "./api";
 import { EntryPanel, FixedPanel } from "./EntryPanel";
 import { CURRENCIES, CURRENCY_NAME, money, monthTitle, ruleText, shiftMonth, thisMonth, type Currency } from "./money";
-import { SmallDialog } from "./SmallDialog";
+import { DateInput } from "@/shared/DateInput";
 import type { Hit } from "@/shared/open";
 import { usePageContext } from "@/app/pageContext";
 
@@ -25,7 +26,7 @@ const slash = (d: string) => d.split("-").join(" / ");
 /** "S$1,234 · ¥560" — each currency on its own, never added up (a period counts with this month's share). */
 function sums(totals: Total[], flow: Flow) {
   return CURRENCIES.map((c) => [c, totals.filter((t) => t.flow === flow && t.currency === c).reduce((s, t) => s + t.amount, 0)] as const)
-    .filter(([, n]) => n > 0)
+    .filter(([, n]) => n !== 0)
     .map(([c, n]) => money(n, c))
     .join(" · ");
 }
@@ -44,18 +45,24 @@ const actionTrigger = (label: string) => () => (
   </>
 );
 
-export function EntriesView(props: { focus?: Hit | null }) {
+export function EntriesView(props: { focus?: Hit | null; showMonth?: string | null; onImport: () => void }) {
   const [month, setMonth] = useState(thisMonth());
   const [tab, setTab] = useState<Tab>("list");
   const [flow, setFlow] = useState<"all" | Flow>("all");
   const [kindFilter, setKindFilter] = useState<number | "all" | null>("all");
-  const [small, setSmall] = useState(false);
+  const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null);
+  const [currencyFilter, setCurrencyFilter] = useState<Currency | "all">("all");
   const [managing, setManaging] = useState<Flow | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
-  const { data: entries = [] } = useEntries(month);
-  const { data: totals = [] } = useTotals();
+  const fromDay = dateRange?.from ?? `${month}-01`;
+  const nextMonth = shiftMonth(month, 1);
+  const lastDay = new Date(Number(nextMonth.slice(0, 4)), Number(nextMonth.slice(5)) - 1, 0).getDate();
+  const toDay = dateRange?.to ?? `${month}-${lastDay}`;
+  const rangeQuery = useFinRange(fromDay, toDay, flow, currencyFilter, kindFilter);
+  const entries = rangeQuery.data?.entries ?? [];
+  const totals = rangeQuery.data?.totals ?? [];
   const { data: fixed = [] } = useFixed();
   const { data: accounts = [] } = useAccounts();
   const { data: outKinds = [] } = useKinds(OUT_KINDS);
@@ -88,7 +95,7 @@ export function EntriesView(props: { focus?: Hit | null }) {
     page: tab === "list" ? "收支" : "固定支出",
     filter:
       tab === "list"
-        ? [`${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`, flow === "all" ? null : flow === "out" ? "支出" : "收入", kindFilter === "all" ? null : kindFilter === null ? "未分类" : (kindName.get(kindFilter) ?? null)].filter(Boolean).join(" · ")
+        ? [dateRange ? `${fromDay} 至 ${toDay}` : `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`, currencyFilter === "all" ? null : currencyFilter, flow === "all" ? null : flow === "out" ? "支出" : "收入", kindFilter === "all" ? null : kindFilter === null ? "未分类" : (kindName.get(kindFilter) ?? null)].filter(Boolean).join(" · ")
         : null,
     record: editing
       ? { kind: "entry", id: editing.id, label: `收支：${editing.day.slice(5).replace("-", "/")} ${kindName.get(editing.kindId ?? -1) ?? "未分类"}${editing.note ? ` · ${editing.note}` : ""}` }
@@ -106,7 +113,13 @@ export function EntriesView(props: { focus?: Hit | null }) {
   const goMonth = (next: string) => {
     stopSelecting();
     setMonth(next);
+    setDateRange(null);
   };
+
+  // rows just gone in from 导入账单
+  useEffect(() => {
+    if (props.showMonth) goMonth(props.showMonth);
+  }, [props.showMonth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 全局搜索: an entry (its month, 明细) or a 固定支出
   useEffect(() => {
@@ -117,6 +130,7 @@ export function EntriesView(props: { focus?: Hit | null }) {
       setTab("list");
       setFlow("all");
       setKindFilter("all");
+      setDateRange(null); setCurrencyFilter("all");
       if (h.day) setMonth(h.day.slice(0, 7));
       void panel.request(`e${h.id}`);
     } else {
@@ -167,7 +181,7 @@ export function EntriesView(props: { focus?: Hit | null }) {
     });
   };
   const setKind = (e: Entry, kindId: number | null) =>
-    m.updateEntry.mutate({ id: e.id, patch: { kindId } }, { onError: (err) => toast(errorText(err), "error") });
+    e.isRefund && e.refundOf ? toast("退款分类跟随原支出，请修改原支出的分类") : m.updateEntry.mutate({ id: e.id, patch: { kindId } }, { onError: (err) => toast(errorText(err), "error") });
 
   const kindOptions = [
     { value: "all" as const, label: "全部分类" },
@@ -179,7 +193,7 @@ export function EntriesView(props: { focus?: Hit | null }) {
     ...(flow !== "in" ? [{ label: "管理支出分类…", onSelect: () => setManaging("out") }] : []),
     ...(flow !== "out" ? [{ label: "管理收入分类…", onSelect: () => setManaging("in") }] : []),
   ];
-  const monthTotals = totals.filter((t) => t.month === month);
+  const monthTotals = totals;
   const out = sums(monthTotals, "out");
   const income = sums(monthTotals, "in");
   const allPicked = shown.length > 0 && chosen.length === shown.length;
@@ -189,7 +203,7 @@ export function EntriesView(props: { focus?: Hit | null }) {
       <div className="flex shrink-0 items-start justify-between gap-4 pb-3">
         <div className="min-w-0">
           <div className="flex items-center gap-1">
-            <h2 className="text-lg font-bold">{monthTitle(month)}</h2>
+            <h2 className="text-lg font-bold">{dateRange ? "自选日期" : monthTitle(month)}</h2>
             <IconButton label="上个月" onClick={() => goMonth(shiftMonth(month, -1))}>
               <ChevronLeft size={16} />
             </IconButton>
@@ -209,8 +223,8 @@ export function EntriesView(props: { focus?: Hit | null }) {
         <div className="flex shrink-0 gap-2">
           {tab === "list" ? (
             <>
-              <Button onClick={() => setSmall(true)}>
-                <Rows3 size={14} /> 记小额
+              <Button onClick={async () => { if (await panel.request(null)) props.onImport(); }}>
+                <FileDown size={14} /> 导入账单
               </Button>
               <Button variant="primary" onClick={() => void panel.request("new")}>
                 <Plus size={14} /> 记一笔
@@ -239,6 +253,10 @@ export function EntriesView(props: { focus?: Hit | null }) {
         {tab === "list" && (
           <>
             <div className="mx-1 h-5 w-px bg-border" />
+            <DateInput ariaLabel="筛选开始日期" value={fromDay} max={toDay} onChange={(from) => { stopSelecting(); setDateRange({ from, to: toDay }); }} />
+            <span className="text-muted-foreground">至</span>
+            <DateInput ariaLabel="筛选结束日期" value={toDay} min={fromDay} onChange={(to) => { stopSelecting(); setDateRange({ from: fromDay, to }); }} />
+            <Dropdown ariaLabel="筛选币种" value={currencyFilter} onChange={setCurrencyFilter} options={[{ value: "all" as const, label: "全部币种" }, ...CURRENCIES.map((c) => ({ value: c, label: CURRENCY_NAME[c] }))]} />
             <Segmented
               ariaLabel="支出还是收入"
               value={flow}
@@ -260,10 +278,11 @@ export function EntriesView(props: { focus?: Hit | null }) {
         )}
       </div>
 
+      {rangeQuery.error && <p role="alert" className="py-2 text-sm text-destructive">{errorText(rangeQuery.error)}</p>}
       <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1 pb-4">
         {tab === "list" ? (
           shown.length === 0 ? (
-            <p className="py-10 text-center text-muted-foreground">{entries.length === 0 ? "这个月还没有记录" : "没有符合的记录"}</p>
+            <p className="py-10 text-center text-muted-foreground">{entries.length === 0 ? "这段时间还没有记录" : "没有符合的记录"}</p>
           ) : (
             <table className="w-full overflow-hidden rounded-card border bg-card text-sm">
               <thead className="border-b text-xs text-muted-foreground">
@@ -306,7 +325,7 @@ export function EntriesView(props: { focus?: Hit | null }) {
                           <input type="checkbox" readOnly tabIndex={-1} aria-label="选中" checked={picked.has(e.id)} className={check} />
                         </td>
                       )}
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground tabular-nums">{when(e)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground tabular-nums">{dateRange ? e.day : when(e)}</td>
                       <td className="px-3 py-1.5">
                         {selecting ? (
                           (name ?? <span className="text-muted-foreground">{UNCATEGORIZED}</span>)
@@ -330,9 +349,10 @@ export function EntriesView(props: { focus?: Hit | null }) {
                       </td>
                       <td className="max-w-0 truncate px-3 py-2">
                         {e.fixedId !== null && <Repeat size={12} className="mr-1 inline text-muted-foreground" aria-label="固定支出" />}
+                        {e.isRefund && <span className="mr-1 text-muted-foreground">退款</span>}
                         {e.note}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${e.flow === "in" ? "text-[var(--status-done-fg)]" : ""}`}>{money(e.amount, e.currency, e.flow === "in")}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${e.flow === "in" ? "text-[var(--status-done-fg)]" : ""}`}>{money(e.isRefund ? -e.amount : e.amount, e.currency, e.flow === "in")}</td>
                     </tr>
                   );
                 })}
@@ -433,7 +453,6 @@ export function EntriesView(props: { focus?: Hit | null }) {
           onManageKinds={setManaging}
         />
       )}
-      {small && <SmallDialog defaultCurrency={defaultCurrency} onClose={() => setSmall(false)} />}
       {managing && (
         <KindManager
           module={managing === "out" ? OUT_KINDS : IN_KINDS}

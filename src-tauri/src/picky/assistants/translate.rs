@@ -138,6 +138,8 @@ pub struct Settings {
     /// local:<key> | cloud:<id>; None = 小拾现在选的.
     pub model: Option<String>,
     pub thinking: bool,
+    /// Its 思考强度 (None: the model's default).
+    pub effort: Option<String>,
     /// The user's own paragraph.
     pub prompt: String,
     /// Group key → choice key (one per group at most).
@@ -146,7 +148,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { source: AUTO.into(), target: ZH_EN.into(), model: None, thinking: false, prompt: String::new(), keywords: BTreeMap::new() }
+        Settings { source: AUTO.into(), target: ZH_EN.into(), model: None, thinking: false, effort: None, prompt: String::new(), keywords: BTreeMap::new() }
     }
 }
 
@@ -165,6 +167,7 @@ pub fn checked(mut s: Settings) -> Result<Settings, String> {
         return Err(format!("提示词最多 {PROMPT_CHARS} 字"));
     }
     s.keywords.retain(|g, c| GROUPS.iter().any(|x| x.key == g && x.choices.iter().any(|y| y.key == c)));
+    s.effort = s.effort.take().filter(|e| s.thinking && !e.trim().is_empty());
     Ok(s)
 }
 
@@ -401,7 +404,7 @@ pub async fn translate_with(route: &Route, settings: &Settings, input: &str, mut
         previous.clear();
         let max = route.with_thinking(context::estimate(&p.text) * 2 + 256, settings.thinking);
         let (mut cut, mut wrote, mut said) = (false, false, false);
-        provider::stream(route.target.clone(), vec![Msg::new("system", &sys), Msg::new("user", &p.text)], Options { max_tokens: Some(max), thinking: Some(settings.thinking), ..Default::default() }, |e| match e {
+        provider::stream(route.target.clone(), vec![Msg::new("system", &sys), Msg::new("user", &p.text)], Options { max_tokens: Some(max), thinking: Some(settings.thinking), effort: settings.effort.clone(), ..Default::default() }, |e| match e {
             Event::Reasoning(_) if !wrote && !said => {
                 said = true;
                 on(Update::Status("正在思考…".into()));

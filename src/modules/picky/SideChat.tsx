@@ -53,7 +53,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
     void pickyApi.seen(current).then(() => Promise.all([qc.invalidateQueries({ queryKey: LIBRARY_KEY }), qc.invalidateQueries({ queryKey: STATUS_KEY })]));
   }, [current, unseenHere]); // eslint-disable-line react-hooks/exhaustive-deps
   const open = (id: number | null) => setSessionId(id);
-  const { live, busyHere, run, shownWith } = useLiveReply({ current, status, onSent: open, onStart: () => transcript.current?.toBottom() });
+  const { live, busyHere, run, shownWith, followUp } = useLiveReply({ current, status, onSent: open, onStart: () => transcript.current?.toBottom() });
   const activeHere = activeIn(status, current);
   const messages = useQuery({
     queryKey: messagesKey(current),
@@ -96,7 +96,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
     const shownPage: Query | null = pill ? { module: props.context!.module, label: pill, state: "ok", result: "", records: [] } : null;
     const extras = { attachments: [], files: [], passages: got.passages, memories: got.memories };
     const key = draftKey;
-    const sent = await run("send", text, (on) => pickyApi.send(current, null, null, false, thinking.forSend, text, extras, ctx, ask.asked, knowledge.forSend, on), [], shownPage);
+    const sent = await run("send", text, (on) => pickyApi.send(current, null, null, false, thinking.forSend, thinking.effortForSend, text, extras, ctx, ask.asked, knowledge.forSend, on), [], shownPage);
     if (sent) {
       ask.clear(key);
       knowledge.clear(key);
@@ -188,6 +188,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
       ) : (
         <>
           <Transcript
+            onAskFollowUp={followUp}
             ref={transcript}
             compact
             sessionKey={`side-${current}`}
@@ -213,7 +214,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
               onAskSkill={ask.toggle}
               tools={
                 <>
-                  <ThinkingButton on={thinking.on} onToggle={thinking.toggle} className={toolClass} />
+                  <ThinkingButton on={thinking.on} effort={thinking.effort} onToggle={thinking.toggle} onEffort={thinking.setEffort} className={toolClass} />
                   {web?.enabled && (
                     <button
                       type="button"

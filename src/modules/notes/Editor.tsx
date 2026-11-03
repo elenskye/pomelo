@@ -1,6 +1,7 @@
 // Note text box (new note + editing in place): grows with the text; ⌘↩ saves, Esc cancels;
 // ⌘B / ⌘U / ⌘⇧H wrap the selection in ** / ++ / ==; ↩ continues a list, Tab / ⇧Tab indent it;
-// typing `#…` suggests existing tags. Never acts while an IME is composing.
+// typing `#…` suggests existing tags (the list scrolls into view). Never acts while an IME is composing.
+// `grow`: no height cap of its own (a box around it scrolls; the 速记小窗).
 // Looks like the card while typing: a plaintext-only editable box drawn one block per line, with
 // NoteBody's spacing (paragraphs 0.75em apart, list items 4px, a blank line 0.9em) and its marks
 // (`**` `==` `++` and list markers kept, dimmed). The text is the model: the browser types and
@@ -95,9 +96,11 @@ export const Editor = forwardRef<
     placeholder?: string;
     autoFocus?: boolean;
     minRows?: number;
+    grow?: boolean;
   }
 >(function Editor(props, handle) {
   const ref = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   // what the box shows, its selection, and its own undo / redo
   const doc = useRef<Snap>({ text: props.value, sel: [props.value.length, props.value.length] });
   const past = useRef<Snap[]>([]);
@@ -217,6 +220,10 @@ export const Editor = forwardRef<
           .sort((a, b) => Number(!a.startsWith(typing.text)) - Number(!b.startsWith(typing.text)))
           .slice(0, 8)
       : [];
+  const listed = suggestions.length > 0;
+  useEffect(() => {
+    if (listed) list.current?.scrollIntoView({ block: "nearest" });
+  }, [listed]);
   const pick = (tag: string) => {
     if (!typing) return;
     const next = doc.current.text[caret] === " " ? "" : " ";
@@ -374,11 +381,12 @@ export const Editor = forwardRef<
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{ minHeight: `${(props.minRows ?? 3) * 1.625}em` }}
-        className="block max-h-[60vh] w-full overflow-y-auto leading-relaxed break-words whitespace-pre-wrap outline-none"
+        className={`block w-full leading-relaxed break-words whitespace-pre-wrap outline-none ${props.grow ? "" : "max-h-[60vh] overflow-y-auto"}`}
       />
       {!value && props.placeholder && <div className="pointer-events-none absolute top-0 left-0 leading-relaxed text-muted-foreground">{props.placeholder}</div>}
       {suggestions.length > 0 && (
         <div
+          ref={list}
           role="listbox"
           aria-label="标签"
           onMouseDown={(e) => e.preventDefault()}

@@ -99,9 +99,42 @@ pub struct Prepared {
     pub source_url: Option<String>,
 }
 
-/// Reads and extracts a file the user chose (slow for a big PDF: call off the main thread).
+/// Reads and extracts a file the user chose (slow for a big PDF: call off the main thread). A scan, or a
+/// Word / PowerPoint file of pictures only, is one line saying so: a cloud model looks at it (读文件's look).
 pub fn prepare(path: &Path) -> Result<Prepared, String> {
-    read(path, false)
+    match read(path, false) {
+        Err(e) if e == SCANNED_PDF || e == NO_WORD_TEXT || e == NO_SLIDE_TEXT => pictures_only(path).ok_or(e),
+        r => r,
+    }
+}
+
+const NO_WORD_TEXT: &str = "这个 Word 文件里没有文字";
+const NO_SLIDE_TEXT: &str = "这个 PowerPoint 里没有文字";
+
+fn pictures_only(path: &Path) -> Option<Prepared> {
+    let name = path.file_name()?.to_string_lossy().to_string();
+    let ext = path.extension()?.to_string_lossy().to_lowercase();
+    let data = std::fs::read(path).ok()?;
+    let (media_type, page_count, content) = match ext.as_str() {
+        "pdf" => {
+            let n = super::pdf::pages(&data).ok()?.len() as i64;
+            ("application/pdf", Some(n), format!("（这份 PDF 没有文字，可能是扫描件，共 {n} 页：只有云端模型能按页看它的样子。）"))
+        }
+        "docx" | "pptx" => {
+            let n = super::office::embedded_images(&data, &ext).ok()?.len();
+            if n == 0 {
+                return None;
+            }
+            if ext == "docx" {
+                (DOCX, None, format!("（这个 Word 文件里没有文字，只有 {n} 张图片：只有云端模型能看。）"))
+            } else {
+                (PPTX, Some(super::office::pptx_slides(&data).ok()?.len() as i64), format!("（这个 PowerPoint 里没有文字，只有 {n} 张图片：只有云端模型能看。）"))
+            }
+        }
+        _ => return None,
+    };
+    let segments = vec![Segment { ordinal: 0, page_start: page_count.map(|_| 1), page_end: page_count, heading: None, content }];
+    Some(Prepared { name, ext, media_type, sha256: super::pdf::sha256_hex(&data), data, page_count, segments, row_count: None, source_url: None })
 }
 
 /// A PDF without a text layer (a scan): the knowledge base lists it by name only, like an image.
@@ -142,7 +175,7 @@ pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
     } else if media_type == DOCX || media_type == "application/msword" {
         let text = super::office::word_text(path)?;
         if text.trim().is_empty() {
-            return Err("这个 Word 文件里没有文字".into());
+            return Err(NO_WORD_TEXT.into());
         }
         (None, split_text(text.trim(), false))
     } else if media_type == PPTX {
@@ -155,7 +188,7 @@ pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
             .map(|(ordinal, (i, t))| Segment { ordinal: ordinal as i64, page_start: Some(i as i64 + 1), page_end: Some(i as i64 + 1), heading: None, content: t.clone() })
             .collect();
         if segments.is_empty() {
-            return Err("这个 PowerPoint 里没有文字".into());
+            return Err(NO_SLIDE_TEXT.into());
         }
         (Some(slides.len() as i64), segments)
     } else if super::office::is_table(&ext) {
@@ -790,6 +823,19 @@ pub mod tests {
         let pptx = temp_file(&dir, "汇报.pptx", &zipped(&[("ppt/slides/slide2.xml", &slide("第二页")), ("ppt/slides/slide1.xml", &slide("开场")), ("ppt/slides/slide10.xml", &slide(""))]));
         let p = prepare(&pptx).unwrap();
         assert_eq!((p.page_count, p.segments.len(), p.segments[1].label(), p.segments[1].content.as_str()), (Some(3), 2, "第 2 页".to_string(), "第二页"));
+        // no text: a scan, or pictures only, is one line saying so (a cloud model looks at it); nothing at all is refused
+        let scan = temp_file(&dir, "收据.pdf", &crate::picky::pdf::tests::sample_pdf(&["", ""]));
+        let p = prepare(&scan).unwrap();
+        assert_eq!((p.media_type, p.page_count, p.segments.len(), p.segments[0].label()), ("application/pdf", Some(2), 1, "第 1–2 页".to_string()));
+        assert!(p.segments[0].content.contains("可能是扫描件，共 2 页"), "{}", p.segments[0].content);
+        assert_eq!(read(&scan, false).err().as_deref(), Some(SCANNED_PDF)); // the 知识库 still lists it by name
+        let pic = r#"<p:sld xmlns:a="a" xmlns:p="p" xmlns:r="r"><a:blip r:embed="rId1"/></p:sld>"#;
+        let rels = r#"<Relationships xmlns="p"><Relationship Id="rId1" Type="t" Target="../media/image1.png"/></Relationships>"#;
+        let shots = temp_file(&dir, "截图.pptx", &zipped(&[("ppt/slides/slide1.xml", pic), ("ppt/slides/_rels/slide1.xml.rels", rels), ("ppt/media/image1.png", "png")]));
+        let p = prepare(&shots).unwrap();
+        assert_eq!((p.page_count, p.segments[0].content.as_str()), (Some(1), "（这个 PowerPoint 里没有文字，只有 1 张图片：只有云端模型能看。）"));
+        let empty = temp_file(&dir, "空.pptx", &zipped(&[("ppt/slides/slide1.xml", &slide(""))]));
+        assert_eq!(prepare(&empty).err().as_deref(), Some(NO_SLIDE_TEXT));
         // Excel: a minimal workbook
         let xlsx = temp_file(&dir, "城市.xlsx", &zipped(&[
             ("[Content_Types].xml", r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#),

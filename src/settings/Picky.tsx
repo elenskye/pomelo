@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react";
-import { Dropdown } from "@/shared/Dropdown";
+import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { Button, Field, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
@@ -17,14 +17,15 @@ import {
   useRefreshStatus,
   type CloudData,
   type CloudModel,
+  type Level,
   type PickyStatus,
   type Service,
   type ServiceKind,
   type ServiceStatus,
   type Think,
 } from "@/modules/picky/api";
-import { THINK_LABELS } from "@/modules/picky/Thinking";
-import { IssueNotice, ModelMenu, StatusDot } from "@/modules/picky/ModelMenu";
+import { THINK_LABELS, levelFor, levelsOf, thinkOf } from "@/modules/picky/Thinking";
+import { IssueNotice, ModelMenu, StatusDot, modelOptions } from "@/modules/picky/ModelMenu";
 import { searchApi } from "@/shared/searchApi";
 import { isStringArray, useSetting } from "@/shared/settings";
 import { useSortable } from "@/shared/sortable";
@@ -128,19 +129,22 @@ function KeyRow(props: { service: Service; saved: boolean }) {
   );
 }
 
-const EMPTY: CloudModel = { id: "", name: "", apiModel: "", service: "deepSeek", contextWindow: 131072, maxOutputTokens: 8192, thinking: "switch" };
+const EMPTY: CloudModel = { id: "", name: "", apiModel: "", service: "deepSeek", contextWindow: 131072, maxOutputTokens: 8192, thinking: "switch", efforts: [], defaultEffort: null };
 
 function CloudModelDialog(props: { model: CloudModel; onClose: () => void; onSaved?: (m: CloudModel) => void }) {
   const [m, setM] = useState(props.model);
   const [error, setError] = useState<string | null>(null);
+  const [leveled, setLeveled] = useState(props.model.efforts.length > 0);
+  const [levels, setLevels] = useState(props.model.efforts.join(", "));
   const refresh = useRefreshStatus();
   const num = (v: string) => Number(v.replace(/[^\d]/g, "")) || 0;
+  const words = leveled ? levels.split(/[\s,，、/]+/).filter(Boolean) : [];
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      await pickyApi.cloudModelSave(m);
+      const saved = await pickyApi.cloudModelSave({ ...m, efforts: words, defaultEffort: m.defaultEffort && words.includes(m.defaultEffort) ? m.defaultEffort : null });
       void refresh();
-      props.onSaved?.(m);
+      props.onSaved?.(saved);
       props.onClose();
     } catch (err) {
       setError(errorText(err));
@@ -180,6 +184,21 @@ function CloudModelDialog(props: { model: CloudModel; onClose: () => void; onSav
           />
         </div>
       </Field>
+      {m.thinking !== "never" && (
+        <Field label="思考强度">
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <Switch label="支持思考强度" checked={leveled} onChange={setLeveled} /> 支持
+            </label>
+            {leveled && (
+              <div className="flex items-center gap-2">
+                <TextInput aria-label="强度选项" className="min-w-0 flex-1 font-mono" placeholder="low, high, max" value={levels} onChange={(e) => setLevels(e.target.value)} />
+                <Dropdown<string | null> ariaLabel="默认强度" value={m.defaultEffort && words.includes(m.defaultEffort) ? m.defaultEffort : null} options={[{ value: null, label: "默认：不固定" }, ...words.map((w) => ({ value: w as string | null, label: `默认：${w}` }))]} onChange={(defaultEffort) => setM({ ...m, defaultEffort })} />
+              </div>
+            )}
+          </div>
+        </Field>
+      )}
     </Modal>
   );
 }
@@ -288,6 +307,7 @@ function CloudGroup(props: { service: Service; models: CloudModel[]; open: boole
                 <span className="shrink-0">{m.name}</span>
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   <span className="font-mono">{m.apiModel}</span> · 上下文 {k(m.contextWindow)} · 回复 {k(m.maxOutputTokens)} · {THINK_LABELS[m.thinking]}
+                  {m.efforts.length > 0 && ` · ${m.efforts.join(" / ")}${m.defaultEffort ? `（默认 ${m.defaultEffort}）` : ""}`}
                 </span>
                 <span className="flex opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
                   <IconButton label="编辑" onClick={() => props.onEdit(m)}>
@@ -320,7 +340,7 @@ function CloudDataRow() {
       (e) => toast(errorText(e), "error"),
     );
   return (
-    <Row label="发给云端" help="选云端模型时，小拾只查选中的模块，查到的内容会发给那家服务；没选中的只给本地模型。芝麻开门和模块坞里隐藏的模块，小拾都不读。">
+    <Row label="发给云端" help="选云端模型时，小拾只查选中的模块，查到的内容会发给那家服务；没选中的只给本地模型。钱来钱往的收支和资产分开选，导入账单的 AI 跟着收支。芝麻开门和模块坞里隐藏的模块，小拾都不读。">
       <div className="flex flex-wrap gap-1.5">
         {list.map((m) => (
           <button
@@ -365,6 +385,51 @@ function SearchIndexRow() {
         </span>
         {s.error && <span className="text-xs text-destructive">{s.error}</span>}
       </span>
+    </Row>
+  );
+}
+
+const ASSIST_MODEL = ["picky", "assistModel"];
+const ASSIST_LEVEL = ["picky", "assistLevel"];
+
+/** 面板帮手 (润色, 一句话填好, 贴 JD…): its model; whether it thinks and how hard follow what that model can do. */
+function AssistRow(props: { status: PickyStatus }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { status } = props;
+  const model = useQuery({ queryKey: ASSIST_MODEL, queryFn: pickyApi.assistModel }).data;
+  const stored = useQuery({ queryKey: ASSIST_LEVEL, queryFn: pickyApi.assistLevel }).data;
+  if (model === undefined || stored == null) return null;
+  const setModel = (m: string | null) => void pickyApi.assistModelSet(m).then((v) => qc.setQueryData(ASSIST_MODEL, v), (e) => toast(errorText(e), "error"));
+  const setLevel = (l: Level) => void pickyApi.assistLevelSet(l).then((v) => qc.setQueryData(ASSIST_LEVEL, v), (e) => toast(errorText(e), "error"));
+  const code = model ?? status.selection;
+  const level = levelFor(status, code, stored);
+  const thinking = level !== "off";
+  const { efforts, fixed } = levelsOf(status, code);
+  const options: DropdownOption<string | null>[] = [{ value: null, label: "小拾现在选的" }, ...modelOptions(status)];
+  if (model && !options.some((o) => o.value === model)) options.push({ value: model, label: "（已经不在了）", group: "" });
+  const label = "text-xs text-muted-foreground";
+  return (
+    <Row label="面板帮手" help="润色、一句话填好、贴 JD、拆子任务、补全书影信息、打包清单都用这里的模型和思考。是否思考和思考强度跟着选的模型变。">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-2.5">
+        <div className="flex items-center gap-3">
+          <span className={label}>模型选择</span>
+          <Dropdown<string | null> ariaLabel="面板帮手的模型" foldKey="models" value={model} options={options} onChange={setModel} />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={label}>是否思考</span>
+          <Switch label="面板帮手是否思考" checked={thinking} disabled={thinkOf(status, code) !== "switch"} onChange={(on) => setLevel(on ? "on" : "off")} />
+          {thinkOf(status, code) !== "switch" && <span className={label}>这个模型{THINK_LABELS[thinkOf(status, code)]}</span>}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={label}>思考强度</span>
+          {thinking && efforts.length > 0 ? (
+            <Dropdown<Level> ariaLabel="面板帮手的思考强度" value={level} options={[{ value: "on", label: `默认${fixed ? `（${fixed}）` : ""}` }, ...efforts.map((e) => ({ value: e, label: e }))]} onChange={setLevel} />
+          ) : (
+            <span className={label}>{thinking ? "这个模型没有强度" : "不思考"}</span>
+          )}
+        </div>
+      </div>
     </Row>
   );
 }
@@ -424,6 +489,7 @@ export function PickySection() {
         <KeyRow key={k.service} service={k.service} saved={k.saved} />
       ))}
       <CloudModels status={status} />
+      <AssistRow status={status} />
       {info && (
         <Row label="数据库" help="小拾的对话和设置单独存在这个文件里，和生活数据分开备份、分开恢复。">
           <Path value={info.dbPath} />

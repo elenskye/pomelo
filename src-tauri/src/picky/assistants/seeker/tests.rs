@@ -1428,3 +1428,19 @@ fn exports_are_named_by_company_and_the_next_version() {
     assert_eq!(output::export_name("cn", "", None, &cv), "seek-it-cn-v1.docx");
     assert_eq!(output::export_name("en", "resume", None, &cv), "seek-it-en-resume-v1.docx");
 }
+
+#[test]
+fn settings_from_before_the_settings_page_become_the_default_and_a_function_of_its_own() {
+    let read = |json: &str| serde_json::from_str::<catalog::Settings>(json).unwrap();
+    let s = read(r#"{"selectionModel":"local:qwen","reviewModel":"cloud:d","thinking":true,"cloudAllowed":true}"#);
+    assert_eq!((s.model.as_deref(), s.of("select").model.as_deref(), s.of("polish").model.as_deref()), (Some("cloud:d"), Some("local:qwen"), Some("cloud:d")));
+    assert!(s.of("select").thinking && s.of("material").thinking && s.cloud_allowed);
+    assert_eq!(read(&serde_json::to_string(&s).unwrap()), s, "saved and read again");
+    // the same model: nothing of its own; only 选材's: the others still have none
+    assert!(read(r#"{"selectionModel":"local:a","reviewModel":"local:a"}"#).features.is_empty());
+    let only = read(r#"{"selectionModel":"local:a"}"#);
+    assert_eq!((only.of("select").model.as_deref(), only.of("review").model), (Some("local:a"), None));
+    // a function's own level, the default's level
+    let s = read(r#"{"model":"cloud:d","thinking":true,"effort":"high","features":{"review":{"model":"cloud:h","thinking":true,"effort":"max"}}}"#);
+    assert_eq!((s.of("review").level().0.as_str(), s.of("select").level().0.as_str()), ("max", "high"));
+}

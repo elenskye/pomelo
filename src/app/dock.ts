@@ -2,7 +2,7 @@
 // categories (each with its modules in order), the pinned row and the hidden ones. Kept in settings
 // (`ui.dock` = { cats, pinned }; hidden stays `ui.module_hidden`, which search and 小拾 read), never undone.
 // A module missing from every category (new, or made since) joins its default one; made modules go to
-// 兴趣 unless made from a category's「＋」. Hiding 小拾 hides its 助手 too.
+// 兴趣 unless made from a category's「＋」. Hiding 小拾 hides its 助手 too; hiding 钱来钱往 hides Importer, its page.
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAllModules } from "@/modules/custom/api";
@@ -28,7 +28,7 @@ export const DEFAULT: Layout = {
     { id: INTEREST, name: "兴趣", tone: 2, mods: ["books", "films", "drawing"] },
     { id: "c4", name: "求职", tone: 3, mods: ["jobs", "seeker", "rater"] },
     { id: "c5", name: "创作", tone: 4, mods: ["site"] },
-    { id: "c6", name: "小拾", tone: 5, mods: ["picky", "translate", "pub2md"] },
+    { id: "c6", name: "小拾", tone: 5, mods: ["picky", "translate", "pub2md", "importer"] },
     { id: "c7", name: "工具", tone: 6, mods: ["vault"] },
   ],
   pinned: ["todo", "notes", "jobs", "seeker", "picky"],
@@ -86,7 +86,7 @@ export function useDock(): Dock {
   const defs = useMemo(() => new Map([...all, ...ASSISTANT_MODULES].map((m) => [m.id, m])), [all]);
   const known = useMemo(() => [...defs.keys()], [defs]);
   const layout = useMemo(() => normalize(saved ?? DEFAULT, known), [saved, known]);
-  const isHidden = (id: string) => hidden.includes(id) || (!!defs.get(id)?.assistant && hidden.includes("picky"));
+  const isHidden = (id: string) => hidden.includes(id) || (!!defs.get(id)?.assistant && hidden.includes("picky")) || (id === "importer" && hidden.includes("finance"));
   const save = (l: Layout) => {
     qc.setQueryData(QUERY, l);
     api.settingsSet(KEY, l).catch(() => {});

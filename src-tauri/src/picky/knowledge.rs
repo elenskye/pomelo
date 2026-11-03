@@ -996,6 +996,7 @@ pub async fn kb_tool(app: &AppHandle, scope: &Scope, sources: &mut super::cite::
     match args["view"].as_str().unwrap_or("search") {
         "files" => app.state::<AppState>().search.with_db(|c| files_view(c, scope, &args, budget)).unwrap_or_else(|e| browse_failed("文件", &e)),
         "outline" | "read" | "find" => browse(app, scope, sources, &args, budget).await,
+        "images" => images(app, scope, &args).await,
         "look" => browse_failed("看图", "只有云端模型能看图片（现在用的是本地模型，告诉用户换云端模型再问）"),
         _ => search_tool(app, scope, sources, arguments, budget).await,
     }
@@ -1052,7 +1053,7 @@ pub fn files_view(search: &Connection, scope: &Scope, args: &serde_json::Value, 
         } else if is_image(&l.path) {
             "图片，用 look 看".to_string()
         } else if is_scan(l.error.as_deref()) {
-            "扫描件，没有文字，只有文件名".to_string()
+            "扫描件，没有文字，用 look 按页看".to_string()
         } else {
             Path::new(&l.path).extension().map_or("文件".into(), |e| e.to_string_lossy().to_uppercase())
         };
@@ -1155,8 +1156,35 @@ async fn browse(app: &AppHandle, scope: &Scope, sources: &mut super::cite::Sourc
     }
 }
 
+/// `view=images`: what a Word, PowerPoint or PDF of the scope holds (read off the main thread).
+async fn images(app: &AppHandle, scope: &Scope, args: &serde_json::Value) -> super::data::Answer {
+    let st = app.state::<AppState>();
+    let file = args["file"].as_str().unwrap_or("").to_string();
+    let l = match st.search.with_db(|c| listed(c, scope)).and_then(|all| pick(&all, &file).cloned()) {
+        Ok(l) => l,
+        Err(e) => return browse_failed(&format!("图片「{}」", file.chars().take(30).collect::<String>()), &e),
+    };
+    let ext = l.path.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+    if l.source.kind != "folder" || !super::office::holds_images(&ext) {
+        return browse_failed(&format!("《{}》", l.shown), "能看图片的是 .docx、.pptx、.pdf");
+    }
+    let one = l.clone();
+    let listed = tauri::async_runtime::spawn_blocking(move || {
+        let data = std::fs::read(file_path(&one.source, &one.path)?).map_err(|e| format!("读不了：{e}"))?;
+        super::office::images_text(&one.shown, &data, &ext)
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+    match listed {
+        Ok(text) => super::data::Answer { module: None, label: format!("知识库 · 《{}》里的图片", l.shown), state: "ok", text, records: vec![] },
+        Err(e) => browse_failed(&format!("《{}》", l.shown), &e),
+    }
+}
+
 /// `view=look`: one image of the scope, shrunk for the model (sent after the tool results, chat.rs),
-/// numbered as a 知识库 source (its citation opens the image).
+/// numbered as a 知识库 source (its citation opens the image); an image inside a Word, PowerPoint or PDF too
+/// (its citation opens that file).
 pub async fn look(app: &AppHandle, scope: &Scope, sources: &mut super::cite::Sources, args: &serde_json::Value) -> (super::data::Answer, Option<super::provider::Image>) {
     let st = app.state::<AppState>();
     let file = args["file"].as_str().unwrap_or("").to_string();
@@ -1164,6 +1192,27 @@ pub async fn look(app: &AppHandle, scope: &Scope, sources: &mut super::cite::Sou
         Ok(l) => l,
         Err(e) => return (browse_failed(&format!("看图「{}」", file.chars().take(30).collect::<String>()), &e), None),
     };
+    let doc_ext = l.path.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+    if l.source.kind == "folder" && super::office::holds_images(&doc_ext) {
+        let (one, wanted) = (l.clone(), args.clone());
+        let tmp = std::env::temp_dir().join("pomelo-picky-images");
+        let shrunk = tauri::async_runtime::spawn_blocking(move || {
+            let data = std::fs::read(file_path(&one.source, &one.path)?).map_err(|e| format!("读不了：{e}"))?;
+            super::office::look_at(&data, &doc_ext, &wanted, &tmp)
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+        return match shrunk {
+            Ok((place, media_type, data)) => {
+                let kb = KbRef { source: l.source.id, path: l.path.clone(), library: l.library.clone() };
+                let n = sources.knowledge(&Passage { file_id: 0, artifact_id: 0, segment_ordinal: 0, label: format!("{} · {place}", l.shown), content: format!("（看的是图片：{place}）"), kb: Some(kb) });
+                let text = format!("[{n}] 《{}》{place}（知识库 · {}）附在下面那条消息里：看了再回答，用到时标 [{n}]。", l.shown, l.library);
+                (super::data::Answer { module: None, label: format!("知识库 · 看《{}》{place}", l.shown), state: "ok", text, records: vec![] }, Some(super::provider::Image { media_type, data }))
+            }
+            Err(e) => (browse_failed(&format!("《{}》", l.shown), &e), None),
+        };
+    }
     if l.source.kind != "folder" || !is_image(&l.path) {
         return (browse_failed(&format!("《{}》", l.shown), "这不是图片：文字用 outline / read 读"), None);
     }

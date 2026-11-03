@@ -3,7 +3,9 @@
 //! file. Three views: `outline` (each file's segments: 第 3 页 / a heading, how it starts), `read`
 //! (segments by number, 1-based as the outline shows them) and `find` (segments containing every word).
 //! What it reads is numbered as a source (cite.rs) for the reply to cite. `read_view` / `find_view` /
-//! `outline` are shared with 查知识库's whole-file reading (knowledge.rs `browse`).
+//! `outline` are shared with 查知识库's whole-file reading (knowledge.rs `browse`). Two more views (v0.8), run in chat.rs
+//! off the database's lock: `images` lists what a Word / PowerPoint / PDF holds, `look` sends one to a cloud model
+//! (office.rs; numbered as a source, at most `MAX_IMAGES` a reply with the rest).
 //! - Long material (`excerpts`): when the question's files don't fit and this skill is offered, the
 //!   question goes with their outline and the segments that share the most words with it (rarer words
 //!   count more; at most 8, each at least half the best score, cut to about 1500 characters; a file
@@ -304,19 +306,56 @@ pub(crate) fn find_view(what: &str, files: &[(&str, &[Segment])], args: &Value, 
     Answer { module: None, label: format!("{what} · {within}找「{}」· {total} 段", words.join(" ")), state: "ok", text: lines.join("\n"), records: vec![] }
 }
 
+/// The file `args.file` names (only one: it may go unsaid).
+pub fn pick_one<'a>(mats: &'a [Material], args: &Value) -> Result<&'a Material, String> {
+    let want = args["file"].as_str().unwrap_or("").trim();
+    let found: Vec<&Material> = if want.is_empty() { mats.iter().collect() } else { mats.iter().filter(|m| m.name == want || m.name.contains(want) || want.contains(m.name.as_str())).collect() };
+    match found.as_slice() {
+        [one] => Ok(one),
+        _ => Err(format!("file 写文件名（有：{}）", mats.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join("、"))),
+    }
+}
+
+/// A file's extension, lower case.
+pub fn ext_of(name: &str) -> String {
+    name.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default()
+}
+
+/// Which of the question's files hold images, for the system message (a cloud model can look at them).
+pub fn images_note(conn: &Connection, dir: &std::path::Path, mats: &[Material]) -> String {
+    let mut bits = vec![];
+    for m in mats {
+        let ext = ext_of(&m.name);
+        if ext == "pdf" {
+            bits.push(format!("《{}》（PDF，能按页看）", m.name));
+        } else if let Ok(path) = files::path_of(conn, dir, m.artifact) {
+            let n = crate::picky::office::media_count(&path, &ext);
+            if n > 0 {
+                bits.push(format!("《{}》（{n} 张图）", m.name));
+            }
+        }
+    }
+    if bits.is_empty() { String::new() } else { format!("- 这些文件里能看图片，问到图、图表、扫描件时用 pomelo_file 的 view=images 列出、view=look 看：{}", bits.join("、")) }
+}
+
+/// A citation's segment for an image (apart from the file's text segments).
+pub const IMAGE_SEGMENT: i64 = 1_000_000;
+
 /// The tool definition.
 pub fn tool() -> Value {
     serde_json::json!({
         "type": "function",
         "function": {
             "name": TOOL,
-            "description": "读这个问题带的文件（附件和项目资料）：view=outline 看目录（每段的编号和开头），view=read 按段号读全文（from、to），view=find 按字找段落（keyword，空格隔开的几个字都要有）。资料太长没有全部给你时用它补读。",
+            "description": "读这个问题带的文件（附件和项目资料）：view=outline 看目录（每段的编号和开头），view=read 按段号读全文（from、to），view=find 按字找段落（keyword，空格隔开的几个字都要有）。资料太长没有全部给你时用它补读。Word、PowerPoint、PDF 里的图片：view=images 列出，view=look 看一张（image 写图号；PDF 用 page 看那一页；一次一张，只有云端模型能看）。",
             "parameters": { "type": "object", "properties": {
-                "view": { "type": "string", "enum": ["outline", "read", "find"] },
+                "view": { "type": "string", "enum": ["outline", "read", "find", "images", "look"] },
                 "file": { "type": "string", "description": "文件名（只有一个文件时可以不写）" },
                 "from": { "type": "integer", "description": "read：从第几段（1 开始）" },
                 "to": { "type": "integer", "description": "read：到第几段（默认同 from）" },
-                "keyword": { "type": "string", "description": "find：要找的字" }
+                "keyword": { "type": "string", "description": "find：要找的字" },
+                "image": { "type": "integer", "description": "look：图号" },
+                "page": { "type": "integer", "description": "look：PDF 的第几页" }
             }, "required": ["view"] }
         }
     })

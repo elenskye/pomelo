@@ -360,7 +360,7 @@ pub fn read_with(access: &Access, sources: &Sources, arguments: &str, budget: i6
         return answer(label, "ok", format!("[{}] {}\n{}", s.n, s.title, s.content));
     }
     let (module, kind, id) = (s.module.clone().unwrap_or_default(), s.record_kind.clone().unwrap_or_default(), s.id.unwrap_or_default());
-    if !access.allows(&module) {
+    if !access.allows(super::data::cloud_key(&module, &kind)) {
         return answer(label, "blocked", "没读：这个模块现在不能读（隐藏了，或不发给现在用的云端模型）。".into());
     }
     // an item opens its trip / template
@@ -445,10 +445,11 @@ pub fn cited(text: &str, sources: &[Source]) -> Vec<i64> {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '[' {
+        // [n], or the full-width ［n］ some models write in Chinese
+        if let Some(end) = match chars[i] { '[' => Some(']'), '［' => Some('］'), _ => None } {
             let digits: String = chars[i + 1..].iter().take_while(|c| c.is_ascii_digit()).collect();
             let close = i + 1 + digits.len();
-            if !digits.is_empty() && chars.get(close) == Some(&']') && chars.get(close + 1) != Some(&'(') {
+            if !digits.is_empty() && chars.get(close) == Some(&end) && chars.get(close + 1) != Some(&'(') {
                 if let Ok(n) = digits.parse::<i64>() {
                     if sources.iter().any(|s| s.n == n) && !out.contains(&n) {
                         out.push(n);
@@ -509,6 +510,7 @@ mod tests {
             })
             .collect());
         assert_eq!(cited("租房要注意押金 [2]，看房记录见 [1][2]。[9] 不算，[链接](x) 和 [3](y) 也不算", &s.0), [2, 1]);
+        assert_eq!(cited("全角的也算：［1］，［3］(y) 不算", &s.0), [1]);
         assert_eq!(unnumbered("和「租房」有关：\n[1] 笔记「看房」\n[12] 书「x」\n[a] 不是"), "和「租房」有关：\n- 笔记「看房」\n- 书「x」\n[a] 不是");
     }
 

@@ -1,4 +1,5 @@
-// 钱来钱往: left nav (收支 · 资产 · 报表) + the chosen view. Each view owns its panel and dialogs.
+// 钱来钱往: left nav (收支 · 资产 · 报表) + the chosen view. Each view owns its panel and dialogs. 导入账单 (Importer,
+// `/finance/import`) lies over 收支, which stays underneath as it was.
 import { useState } from "react";
 import { ChartPie, Landmark, ReceiptText, type LucideIcon } from "lucide-react";
 import { moduleById } from "@/app/modules";
@@ -7,9 +8,10 @@ import { useOpenRequest, type Hit } from "@/shared/open";
 import { PageHeader } from "@/shared/ui";
 import { AssetsView } from "./AssetsView";
 import { EntriesView } from "./EntriesView";
+import { ImportPanel } from "./ImportPanel";
 import { ReportsView } from "./ReportsView";
 
-type View = "entries" | "assets" | "reports";
+type View = "entries" | "assets" | "reports" | "import";
 const VIEWS: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "entries", label: "收支", icon: ReceiptText },
   { id: "assets", label: "资产", icon: Landmark },
@@ -21,6 +23,7 @@ export default function FinancePage() {
   const [view, setView] = useSubPage<View>("finance");
   // 全局搜索: switch to the view that has it; the view opens the record
   const [focus, setFocus] = useState<Hit | null>(null);
+  const [posted, setPosted] = useState<string | null>(null);
   useOpenRequest((h) => {
     setView(h.kind === "account" || h.kind === "assets" ? "assets" : "entries");
     setFocus(h);
@@ -53,11 +56,12 @@ export default function FinancePage() {
           })}
         </nav>
         <section className="flex min-w-0 flex-1 flex-col">
-          {view === "entries" && <EntriesView focus={focus} />}
+          {(view === "entries" || view === "import") && <EntriesView focus={focus} showMonth={posted} onImport={() => setView("import")} />}
           {view === "assets" && <AssetsView focus={focus} />}
           {view === "reports" && <ReportsView />}
         </section>
       </div>
+      {view === "import" && <ImportPanel onClose={() => setView("entries")} onPosted={(day) => setPosted(day.slice(0, 7))} />}
     </div>
   );
 }

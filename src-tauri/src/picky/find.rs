@@ -85,12 +85,19 @@ pub fn search(conn: &Connection, q: &str, f: &Filter, limit: usize) -> Result<Ve
 
     // newest matching message per session
     let msg_sql = format!(
-        "SELECT m.session_id, s.title, m.id, m.content, m.created_at, r.model_name, s.archived_at IS NOT NULL
+        concat!(
+            "SELECT m.session_id, s.title, m.id, m.content, m.created_at, r.model_name, s.archived_at IS NOT NULL
          FROM messages m JOIN sessions s ON s.id = m.session_id LEFT JOIN runs r ON r.id = m.run_id
-         WHERE m.state <> 'streaming' AND s.id NOT IN (SELECT session_id FROM rater_records) AND {} {archived}
+         WHERE m.state <> 'streaming' AND s.id NOT IN ",
+            super::library::unlisted!(),
+            " AND {} {archived}
            AND (?{model_i} IS NULL OR r.model_name = ?{model_i}) AND (?{since_i} IS NULL OR m.created_at >= ?{since_i})
-         ORDER BY m.created_at DESC, m.id DESC",
-        cond("m.content")
+         ORDER BY m.created_at DESC, m.id DESC"
+        ),
+        cond("m.content"),
+        archived = archived,
+        model_i = model_i,
+        since_i = since_i
     );
     let mut st = conn.prepare(&msg_sql).map_err(err)?;
     let rows = st
@@ -108,12 +115,19 @@ pub fn search(conn: &Connection, q: &str, f: &Filter, limit: usize) -> Result<Ve
     }
 
     let title_sql = format!(
-        "SELECT s.id, s.title, s.updated_at, s.archived_at IS NOT NULL FROM sessions s
-         WHERE s.id NOT IN (SELECT session_id FROM rater_records) AND {} {archived}
+        concat!(
+            "SELECT s.id, s.title, s.updated_at, s.archived_at IS NOT NULL FROM sessions s
+         WHERE s.id NOT IN ",
+            super::library::unlisted!(),
+            " AND {} {archived}
            AND (?{model_i} IS NULL OR EXISTS (SELECT 1 FROM runs r WHERE r.session_id = s.id AND r.model_name = ?{model_i}))
            AND (?{since_i} IS NULL OR s.updated_at >= ?{since_i})
-         ORDER BY s.updated_at DESC, s.id DESC",
-        cond("s.title")
+         ORDER BY s.updated_at DESC, s.id DESC"
+        ),
+        cond("s.title"),
+        archived = archived,
+        model_i = model_i,
+        since_i = since_i
     );
     let mut st = conn.prepare(&title_sql).map_err(err)?;
     let titles = st

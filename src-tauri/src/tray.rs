@@ -117,6 +117,11 @@ fn build(app: &AppHandle, s: &Status) -> tauri::Result<Menu<Wry>> {
     }
     top.push(Box::new(sep()?));
     top.push(Box::new(item("open", "打开柚儿园", true)?));
+    top.push(Box::new(if crate::capture::shortcut_ok() {
+        MenuItem::with_id(app, "capture", "速记", true, Some("Alt+Space"))?
+    } else {
+        item("capture", "速记（⌥Space 被别的 App 占用）", true)?
+    }));
 
     // 切换聊天模型
     let mut models: Vec<Box<dyn IsMenuItem<Wry>>> = vec![Box::new(item("h-local", "本地模型", false)?)];
@@ -164,9 +169,17 @@ fn build(app: &AppHandle, s: &Status) -> tauri::Result<Menu<Wry>> {
 
 fn on_menu(app: &AppHandle, event: MenuEvent) {
     let id = event.id().as_ref();
+    // the app menu's items (menu.rs) come here too
+    if id.starts_with("app:") {
+        return;
+    }
     let result = match id {
         "open" => {
             show_main(app);
+            Ok(())
+        }
+        "capture" => {
+            crate::capture::show(app);
             Ok(())
         }
         "quit" => {

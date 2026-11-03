@@ -124,6 +124,8 @@ pub struct Turn {
     pub state: String,
     /// Replies: what they looked up in Pomelo.
     pub queries: Vec<super::data::Query>,
+    /// Replies: what they asked me (ASK).
+    pub asks: Vec<super::ask::Ask>,
 }
 
 /// Replies whose lookups follow-up questions still get, and how much of each result.
@@ -166,6 +168,8 @@ pub struct Request {
     pub yearly: Option<String>,
     /// The conversation's 思考 switch: the model is asked to think (when it can switch).
     pub thinking: bool,
+    /// The conversation's 思考强度 (None: the model's default).
+    pub effort: Option<String>,
     /// 改文件 (work.rs): the file the question asked to change; its reply proposes changes instead.
     pub edit: Option<super::work::Target>,
 }
@@ -243,10 +247,10 @@ pub fn request(conn: &Connection, session_id: i64, turns: &[Turn], prompt: &str)
         if t.role == "assistant" && !t.queries.is_empty() && history.last().is_some_and(|m: &Msg| m.role == "user") {
             looked.push((history.len() - 1, t.queries.clone()));
         }
-        history.push(Msg::new(&t.role, &t.content));
+        history.push(Msg::new(&t.role, &super::ask::in_history(&t.content, &t.asks)));
     }
-    let thinking = conn.query_row("SELECT thinking FROM sessions WHERE id = ?1", [session_id], |r| r.get(0)).map_err(super::super::modules::common::err)?;
-    Ok(Request { system, summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)), history, prompt: prompt.to_string(), looked, thinking, ..Default::default() })
+    let (thinking, effort) = conn.query_row("SELECT thinking, effort FROM sessions WHERE id = ?1", [session_id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(super::super::modules::common::err)?;
+    Ok(Request { system, summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)), history, prompt: prompt.to_string(), looked, thinking, effort, ..Default::default() })
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -467,7 +471,7 @@ async fn take_chunk(counter: &Counter, src: &[char], budget: i64) -> Result<Stri
 }
 
 /// Runs the chunks; returns the summary and (prompt, completion) tokens used. `thinking`: the
-/// conversation's switch (with room for the reasoning).
+/// conversation's switch (with room for the reasoning), at the model's default 思考强度.
 pub async fn summarize(target: &Target, counter: &Counter, window: i64, thinking: bool, plan: &Plan) -> Result<(String, (i64, i64)), String> {
     let output = (window / 8).clamp(256, 1536) + if thinking { think_room(window) } else { 0 };
     let system = counter.count(SUMMARY_INSTRUCTIONS).await;
@@ -578,7 +582,7 @@ pub async fn picky_context(app: AppHandle, session_id: i64, prompt: String) -> R
         let mut turns = vec![];
         for m in &shown {
             let queries = if m.role == "assistant" { super::data::queries_of_message(c, m.id)? } else { vec![] };
-            turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries });
+            turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries, asks: m.asks.clone() });
         }
         let summarizable = shown.iter().any(|m| m.role == "assistant" && m.state == "complete" && !m.content.trim().is_empty());
         Ok((request(c, session_id, &turns, prompt.trim())?, summarizable))

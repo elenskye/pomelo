@@ -104,7 +104,7 @@ pub fn allowed(modules: &[String], kinds: &[String], hidden: &[String], cloud_al
     for (i, s) in SOURCES.iter().enumerate() {
         let module = s.module.to_string();
         let ok = (s.dynamic() || !hidden.contains(&module))
-            && (s.dynamic() || cloud_allowed.is_none_or(|a| s.module == "picky" || a.contains(&module)))
+            && (s.dynamic() || cloud_allowed.is_none_or(|a| s.module == "picky" || a.iter().any(|k| k == crate::picky::data::cloud_key(s.module, s.kind))))
             && (modules.is_empty() || modules.iter().any(|m| s.owns(m) || s.module.strip_suffix('/') == Some(m.as_str())))
             && (kinds.is_empty() || kinds.iter().any(|k| k == s.kind));
         if ok {

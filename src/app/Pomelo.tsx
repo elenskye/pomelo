@@ -1,8 +1,8 @@
 // The pomelo in the top bar (requirements「界面外框 · 柚子」): the user's four faces (平常、在想、开心、出错)
 // and four more (眨眼、哇、困了、担心), with small animations (none with 减少动态效果).
 // Which face: a status first (小拾 writing → 在想; done → 开心 and a line; something failed → 出错 and a
-// line, until the pomelo is clicked), then the pointer over it (眨眼 or 哇), then the day's mood (the
-// 今日简报's; without one, by the hour; late at night 困了).
+// line, until the pomelo is clicked), then the pointer over it (眨眼 or 哇), then the mood (the 今日简报's
+// for an hour after it's done; otherwise a random one that isn't sad, picked each hour; late at night 困了).
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation } from "react-router";
 import { useBrief, usePickyStatus } from "@/modules/picky/api";
@@ -177,27 +177,34 @@ export function useJobWatch() {
 }
 
 const BRIEF_FACE: Record<string, Face> = { calm: "idle", busy: "thinking", good: "success", worry: "worried" };
-const BY_HOUR: Record<string, Face[]> = { am: ["idle", "wow", "wink"], pm: ["idle", "thinking"], eve: ["idle", "wink"] };
+/** The brief's face stays this long after it's done. */
+const BRIEF_MS = 3600_000;
+/** Picked each hour otherwise: none sad (and not 在想, which says 小拾 is writing). */
+const RANDOM: Face[] = ["idle", "wink", "wow", "success"];
 const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
-const partOfDay = (h: number) => (h >= 23 || h < 6 ? "night" : h < 12 ? "am" : h < 18 ? "pm" : "eve");
+const isNight = (h: number) => h >= 23 || h < 6;
 
-/** The day's mood: today's brief, else a pick for this part of the day (late at night: sleepy). */
+/** The mood: today's brief's for an hour after it's done, else a random one each hour (late at night: sleepy). */
 function useMood(): Face {
   const brief = useBrief(true).data;
-  const [part, setPart] = useState(() => partOfDay(new Date().getHours()));
-  const [byHour, setByHour] = useState<Face>(() => (part === "night" ? "sleepy" : pick(BY_HOUR[part])));
+  const [now, setNow] = useState(() => Date.now());
+  const hour = new Date(now).getHours();
+  const [random, setRandom] = useState<Face>(() => pick(RANDOM));
   useEffect(() => {
-    const t = setInterval(() => setPart(partOfDay(new Date().getHours())), 60_000);
+    const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
-  useEffect(() => setByHour(part === "night" ? "sleepy" : pick(BY_HOUR[part])), [part]);
-  if (part === "night") return "sleepy";
-  return (brief?.mood && BRIEF_FACE[brief.mood]) || byHour;
+  useEffect(() => setRandom(pick(RANDOM)), [hour]);
+  if (isNight(hour)) return "sleepy";
+  const at = brief?.mood && brief.moodAt ? Date.parse(brief.moodAt) : NaN;
+  return (now - at < BRIEF_MS && BRIEF_FACE[brief!.mood!]) || random;
 }
 
 /** 小拾 writing → thinking; when it stops → success for a moment (with a line when not on 小拾's page). */
 function useWriting(): { face: Face | null; line: string | null } {
-  const generating = !!usePickyStatus().data?.generating;
+  const status = usePickyStatus().data;
+  const generating = !!status?.generating;
+  const asking = !!status?.active.some((a) => a.asking);
   const onPicky = useLocation().pathname.startsWith("/picky");
   const [done, setDone] = useState<string | null>(null);
   const was = useRef(false);
@@ -212,6 +219,7 @@ function useWriting(): { face: Face | null; line: string | null } {
     }
     was.current = generating;
   }, [generating]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (asking) return { face: "wow", line: onPicky ? null : "小拾在等你回答" };
   if (generating) return { face: "thinking", line: null };
   if (done != null) return { face: "success", line: done || null };
   return { face: null, line: null };

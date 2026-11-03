@@ -9,7 +9,7 @@ use objc2::rc::{autoreleasepool, Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2::msg_send;
 use objc2_foundation::NSString;
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void, CStr};
 use std::path::{Path, PathBuf};
 
 #[link(name = "PDFKit", kind = "framework")]
@@ -134,23 +134,153 @@ pub fn render_pages(data: &[u8], dir: &Path, max_side: f64) -> Result<usize, Str
         let count: usize = msg_send![&*doc, pageCount];
         for i in 0..count {
             autoreleasepool(|_| -> Result<(), String> {
-                let page: Option<Retained<AnyObject>> = msg_send![&*doc, pageAtIndex: i];
-                let page = page.ok_or_else(|| format!("PDF 的第 {} 页读不出来", i + 1))?;
-                let rect: Rect = msg_send![&*page, boundsForBox: MEDIA_BOX];
-                let rotation: isize = msg_send![&*page, rotation];
-                let (mut w, mut h) = (rect.size.width.max(1.0), rect.size.height.max(1.0));
-                if rotation.rem_euclid(180) == 90 {
-                    std::mem::swap(&mut w, &mut h);
-                }
-                let scale = max_side / w.max(h);
-                let size = Size { width: (w * scale).round(), height: (h * scale).round() };
-                let image: Option<Retained<AnyObject>> = msg_send![&*page, thumbnailOfSize: size, forBox: MEDIA_BOX];
-                let jpeg = image.and_then(|im| jpeg_of(&im)).ok_or_else(|| format!("没能画出 PDF 的第 {} 页", i + 1))?;
+                let jpeg = jpeg_page(&doc, i, max_side)?;
                 std::fs::write(dir.join(page_name(i + 1)), jpeg).map_err(|e| format!("没能存下原页图：{e}"))
             })?;
         }
         Ok(count)
     })
+}
+
+
+unsafe fn jpeg_page(doc: &AnyObject, i: usize, max_side: f64) -> Result<Vec<u8>, String> {
+    let page: Option<Retained<AnyObject>> = msg_send![doc, pageAtIndex: i];
+    let page = page.ok_or_else(|| format!("PDF 的第 {} 页读不出来", i + 1))?;
+    let rect: Rect = msg_send![&*page, boundsForBox: MEDIA_BOX];
+    let rotation: isize = msg_send![&*page, rotation];
+    let (mut w, mut h) = (rect.size.width.max(1.0), rect.size.height.max(1.0));
+    if rotation.rem_euclid(180) == 90 {
+        std::mem::swap(&mut w, &mut h);
+    }
+    let scale = max_side / w.max(h);
+    let size = Size { width: (w * scale).round(), height: (h * scale).round() };
+    let image: Option<Retained<AnyObject>> = msg_send![&*page, thumbnailOfSize: size, forBox: MEDIA_BOX];
+    let jpeg = image.and_then(|im| jpeg_of(&im)).ok_or_else(|| format!("没能画出 PDF 的第 {} 页", i + 1))?;
+    Ok(jpeg)
+}
+
+// ---------- which pages hold images (Quartz's PDF objects: PDFKit doesn't say) ----------
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGDataProviderCreateWithData(info: *mut c_void, data: *const c_void, size: usize, release: *const c_void) -> *mut c_void;
+    fn CGDataProviderRelease(provider: *mut c_void);
+    fn CGPDFDocumentCreateWithProvider(provider: *mut c_void) -> *mut c_void;
+    fn CGPDFDocumentRelease(doc: *mut c_void);
+    fn CGPDFDocumentGetNumberOfPages(doc: *mut c_void) -> usize;
+    fn CGPDFDocumentGetPage(doc: *mut c_void, number: usize) -> *mut c_void;
+    fn CGPDFPageGetDictionary(page: *mut c_void) -> *mut c_void;
+    fn CGPDFDictionaryGetDictionary(dict: *mut c_void, key: *const c_char, out: *mut *mut c_void) -> bool;
+    fn CGPDFDictionaryGetName(dict: *mut c_void, key: *const c_char, out: *mut *const c_char) -> bool;
+    fn CGPDFDictionaryGetInteger(dict: *mut c_void, key: *const c_char, out: *mut std::ffi::c_long) -> bool;
+    fn CGPDFDictionaryApplyFunction(dict: *mut c_void, f: extern "C" fn(*const c_char, *mut c_void, *mut c_void), info: *mut c_void);
+    fn CGPDFObjectGetValue(object: *mut c_void, kind: i32, out: *mut c_void) -> bool;
+    fn CGPDFStreamGetDictionary(stream: *mut c_void) -> *mut c_void;
+}
+
+/// kCGPDFObjectTypeStream
+const PDF_STREAM: i32 = 9;
+/// Smaller ones are rules, bullets, masks.
+const MIN_IMAGE_SIDE: i64 = 32;
+/// Forms inside forms, this deep.
+const MAX_FORMS: u32 = 3;
+
+struct Counting {
+    images: usize,
+    depth: u32,
+}
+
+unsafe fn xobjects_of(resources: *mut c_void, count: &mut Counting) {
+    let mut xobjects = std::ptr::null_mut();
+    if CGPDFDictionaryGetDictionary(resources, c"XObject".as_ptr(), &mut xobjects) {
+        CGPDFDictionaryApplyFunction(xobjects, count_xobject, (count as *mut Counting).cast());
+    }
+}
+
+extern "C" fn count_xobject(_: *const c_char, object: *mut c_void, info: *mut c_void) {
+    unsafe {
+        let count = &mut *info.cast::<Counting>();
+        let mut stream = std::ptr::null_mut::<c_void>();
+        if !CGPDFObjectGetValue(object, PDF_STREAM, (&mut stream as *mut *mut c_void).cast()) {
+            return;
+        }
+        let dict = CGPDFStreamGetDictionary(stream);
+        let mut subtype = std::ptr::null();
+        if !CGPDFDictionaryGetName(dict, c"Subtype".as_ptr(), &mut subtype) {
+            return;
+        }
+        match CStr::from_ptr(subtype).to_bytes() {
+            b"Image" => {
+                let (mut w, mut h): (std::ffi::c_long, std::ffi::c_long) = (0, 0);
+                CGPDFDictionaryGetInteger(dict, c"Width".as_ptr(), &mut w);
+                CGPDFDictionaryGetInteger(dict, c"Height".as_ptr(), &mut h);
+                if w as i64 >= MIN_IMAGE_SIDE && h as i64 >= MIN_IMAGE_SIDE {
+                    count.images += 1;
+                }
+            }
+            b"Form" if count.depth < MAX_FORMS => {
+                let mut resources = std::ptr::null_mut();
+                if CGPDFDictionaryGetDictionary(dict, c"Resources".as_ptr(), &mut resources) {
+                    count.depth += 1;
+                    xobjects_of(resources, count);
+                    count.depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The pages (1-based) holding images, with how many (their own or their parent's resources).
+pub fn image_pages(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
+    // PDFKit says when it's broken or locked
+    autoreleasepool(|_| unsafe { open(data).map(|_| ()) })?;
+    unsafe {
+        let provider = CGDataProviderCreateWithData(std::ptr::null_mut(), data.as_ptr().cast(), data.len(), std::ptr::null());
+        if provider.is_null() {
+            return Err("PDF 文件已损坏，无法读取".into());
+        }
+        let doc = CGPDFDocumentCreateWithProvider(provider);
+        if doc.is_null() {
+            CGDataProviderRelease(provider);
+            return Err("PDF 文件已损坏，无法读取".into());
+        }
+        let mut out = vec![];
+        for n in 1..=CGPDFDocumentGetNumberOfPages(doc) {
+            let page = CGPDFDocumentGetPage(doc, n);
+            if page.is_null() {
+                continue;
+            }
+            let mut dict = CGPDFPageGetDictionary(page);
+            let mut resources = std::ptr::null_mut();
+            // resources may be inherited from the page tree
+            for _ in 0..16 {
+                if CGPDFDictionaryGetDictionary(dict, c"Resources".as_ptr(), &mut resources) {
+                    break;
+                }
+                let mut parent = std::ptr::null_mut();
+                if !CGPDFDictionaryGetDictionary(dict, c"Parent".as_ptr(), &mut parent) {
+                    break;
+                }
+                dict = parent;
+            }
+            let mut count = Counting { images: 0, depth: 0 };
+            if !resources.is_null() {
+                xobjects_of(resources, &mut count);
+            }
+            if count.images > 0 {
+                out.push((n, count.images));
+            }
+        }
+        CGPDFDocumentRelease(doc);
+        CGDataProviderRelease(provider);
+        Ok(out)
+    }
+}
+
+/// Render one page in memory for local OCR; no original or page image is retained.
+pub fn page_jpeg(data: &[u8], index: usize, max_side: f64) -> Result<Vec<u8>, String> {
+    autoreleasepool(|_| unsafe { jpeg_page(&*open(data)?, index, max_side) })
 }
 
 /// The file name of page `n`'s image (1-based).
@@ -276,6 +406,20 @@ pub mod tests {
         assert!(std::process::Command::new("/usr/bin/tiffutil").arg("-cat").arg(&a).arg(&b).arg("-out").arg(&two).output().unwrap().status.success());
         assert_eq!(pages(&images_to_pdf(&[two, png.clone()]).unwrap()).unwrap().len(), 3);
         assert_eq!(pages(&images_to_pdf(&[a]).unwrap()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn says_which_pages_hold_images() {
+        let dir = crate::db::tests::temp_dir("pdf-images");
+        let small = dir.join("small.png");
+        std::fs::write(&small, crate::picky::office::tests_png()).unwrap();
+        let big = dir.join("big.png");
+        assert!(std::process::Command::new("/usr/bin/sips").args(["-z", "64", "64"]).arg(&small).arg("--out").arg(&big).output().unwrap().status.success());
+        // a page with no image; pages that are one big image, one too small to count
+        assert_eq!(image_pages(&sample_pdf(&["only text", "more text"])).unwrap(), []);
+        let pdf = images_to_pdf(&[big.clone(), small, big]).unwrap();
+        assert_eq!(image_pages(&pdf).unwrap(), [(1, 1), (3, 1)]);
+        assert!(image_pages(b"not a pdf").is_err());
     }
 
     #[test]

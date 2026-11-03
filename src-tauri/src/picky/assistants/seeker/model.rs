@@ -410,7 +410,9 @@ pub fn mock_answer(kind: &str, draft: &Draft, points: &[String]) -> String {
 #[allow(clippy::too_many_arguments)]
 async fn ask(app: &tauri::AppHandle, state: &AppState, view: &Workspace, kind: &str, record_id: Option<&str>, points: &[String], request: &str, lang: &str) -> Result<(Option<String>, Suggestion), String> {
     let settings = view.catalog.settings.clone();
-    let model = if kind == "select" { settings.selection_model.as_deref() } else { settings.review_model.as_deref() }.ok_or("请为这项工作选择模型")?;
+    let choice = settings.of(kind);
+    let level = choice.level();
+    let model = choice.model.as_deref().ok_or("请先在 Seeker 的设置里给这项工作选模型")?;
     if !model.starts_with("local:") && !model.starts_with("cloud:") { return Err("请重新选择模型".into()); }
     if model.starts_with("cloud:") && !settings.cloud_allowed { return Err("Seeker 资料尚未允许发给云端，请在 Seeker 设置里打开，或选本地模型".into()); }
     let draft = view.draft(lang);
@@ -433,14 +435,14 @@ async fn ask(app: &tauri::AppHandle, state: &AppState, view: &Workspace, kind: &
     let (route, note, _) = schedule::route(&state.picky, Some(model)).await?;
     result.model = route.name.clone();
     result.note = [note, found].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
-    let output = route.with_thinking(4096, settings.thinking);
+    let output = route.with_thinking(4096, level.thinking());
     if context::estimate(&system) + context::estimate(&user) + output + 512 > route.window { return Err("资料超出所选模型的上下文，请减少启用的规则或素材，或选择更大上下文的模型".into()); }
     if matches!(&route.target, Target::Mock { .. }) {
         return Ok((None, result));
     }
     let mut answer = String::new();
     let mut finish = String::new();
-    let call = provider::stream(route.target, vec![Msg::new("system", &system), Msg::new("user", &user)], Options { max_tokens: Some(output), thinking: Some(settings.thinking), one_off: true, ..Default::default() }, |event| match event {
+    let call = provider::stream(route.target, vec![Msg::new("system", &system), Msg::new("user", &user)], Options { max_tokens: Some(output), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, ..Default::default() }, |event| match event {
         Event::Content(text) => answer.push_str(&text),
         Event::Finished(reason) => finish = reason,
         _ => (),

@@ -21,7 +21,7 @@ export type RaterAsk = { kind: string; materials: string[]; job: number | null; 
 /** New questions (revision 0, checked by Rust) to tick, or one question with its new answer. */
 export type RaterProposal = { kind: string; model: string; note: string; advice: string; questions: RaterQuestion[]; before: RaterQuestion | null; after: RaterQuestion | null };
 /** Rater's models (not undone): the default, and the functions with their own (Rust qbank.rs `Options`). */
-export type RaterChoice = { model: string | null; thinking: boolean };
+export type RaterChoice = { model: string | null; thinking: boolean; effort?: string | null };
 export type RaterOptions = RaterChoice & { features: Record<string, RaterChoice> };
 /** Rater's AI functions (设置 page rows; Rust qbank.rs `FEATURES`). */
 export const RATER_FEATURES = [["suggest", "补题"], ["polish", "润色答案"], ["pick", "卡片练习 · 按 JD 挑卡"], ["follow", "卡片练习 · 追问"], ["comment", "卡片练习 · 点评"], ["prep", "面试 · 准备"], ["record", "复盘 · 记录"], ["summary", "复盘 · 总结"]] as const;
@@ -29,7 +29,7 @@ export type RaterFeature = (typeof RATER_FEATURES)[number][0];
 /** Whether a function has a model (its own or the default). */
 export type RaterCan = (f: RaterFeature) => boolean;
 /** The model and 思考 a function uses. */
-export const raterChoice = (o: RaterOptions, f: RaterFeature): RaterChoice => o.features[f] ?? { model: o.model, thinking: o.thinking };
+export const raterChoice = (o: RaterOptions, f: RaterFeature): RaterChoice => o.features[f] ?? { model: o.model, thinking: o.thinking, effort: o.effort };
 export const RATER_POLISH = "润色";
 /** 卡片练习 (Rust rater/practice.rs). */
 export const RATER_MODES = ["自己挑", "按 JD", "随机"] as const;

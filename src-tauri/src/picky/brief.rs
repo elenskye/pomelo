@@ -2,13 +2,15 @@
 //! - A card at the top of 首页: a few sentences 小拾 writes the first time 首页 is shown each day
 //!   (the page asks for it), kept for the day; 「重写」 writes it again. On / off and its model are set
 //!   in 管理 → 定时 (preferences `brief.enabled`, default on; `brief.model`, None = the selection;
-//!   `brief.thinking`, default on: the model must be able to, as for 定时任务; `brief.prompt`, the prompt
+//!   `brief.thinking`, default on: the model must be able to, as for 定时任务; `brief.effort`, its 思考强度, None
+//!   = the model's default; `brief.prompt`, the prompt
 //!   shown there and freely rewritten, None = `DEFAULT_PROMPT`; settings, not undoable or exported).
 //! - Reads only: 今天的待办、快到期的（3 天内）和过期的；今天该提醒的日子（提前提醒的那几天和当天）；该跟进
 //!   的投递、在笔试面试的；最近两周的笔记里常在想什么. Rust reads them first (data.rs `brief_parts`, each part capped) and sends them in one request:
 //!   the prompt (+ the user's instructions for the tone), then the day and what was read (thinking as set, with room for it). It writes nothing but the brief.
 //! - Its last line (the built-in prompt asks for it) gives the day's mood (轻松 / 很忙 / 有好消息 / 有烦心事 → calm / busy / good / worry),
-//!   kept in `briefs.mood` (not in the text) for the pomelo's face in the top bar; none = by the hour.
+//!   kept in `briefs.mood` (not in the text) for the pomelo's face in the top bar, for an hour after the
+//!   brief is done (`mood_at`); then, and without one, a random face that isn't sad.
 //! - Model as 定时任务 (schedule.rs `route`): a stopped local model is started and stopped after (only
 //!   when it started it and nothing else is using it); another running local model is used; cloud
 //!   rules (modules not sent to cloud are left out and named under the card; hidden ones quietly).
@@ -33,6 +35,7 @@ pub const MARK: &str = "【今日简报】";
 const ENABLED: &str = "brief.enabled";
 const MODEL: &str = "brief.model";
 const THINKING: &str = "brief.thinking";
+const EFFORT: &str = "brief.effort";
 const PROMPT: &str = "brief.prompt";
 /// Tokens each part (待办, 日子, 投递, 笔记) may take.
 const PART_BUDGET: i64 = 1200;
@@ -45,6 +48,7 @@ pub struct Brief {
     /// local:<key> | cloud:<id>; None = the selection.
     pub model: Option<String>,
     pub thinking: bool,
+    pub effort: Option<String>,
     /// The prompt in use (`custom`: the user's own, else `DEFAULT_PROMPT`).
     pub prompt: String,
     pub custom: bool,
@@ -61,6 +65,8 @@ pub struct Brief {
     pub phase: Option<&'static str>,
     /// calm | busy | good | worry (the last good brief's).
     pub mood: Option<String>,
+    /// When the brief with that mood was done (UTC); None while rewriting or after a failure.
+    pub mood_at: Option<String>,
 }
 
 /// The mood line's words and keys.
@@ -92,33 +98,36 @@ fn set_phase(p: Option<&'static str>) {
     *PHASE.lock().unwrap_or_else(|e| e.into_inner()) = p;
 }
 
-/// (on, model, thinking)
-pub fn settings(conn: &Connection) -> (bool, Option<String>, bool) {
+/// (on, model, thinking, effort)
+pub fn settings(conn: &Connection) -> (bool, Option<String>, bool, Option<String>) {
     (
         pref_get::<bool>(conn, ENABLED).ok().flatten().unwrap_or(true),
         pref_get::<Option<String>>(conn, MODEL).ok().flatten().flatten(),
         pref_get::<bool>(conn, THINKING).ok().flatten().unwrap_or(true),
+        pref_get::<Option<String>>(conn, EFFORT).ok().flatten().flatten(),
     )
 }
 
-pub fn set_settings(conn: &Connection, enabled: bool, model: Option<&str>, thinking: bool) -> Result<(), String> {
+pub fn set_settings(conn: &Connection, enabled: bool, model: Option<&str>, thinking: bool, effort: Option<&str>) -> Result<(), String> {
     pref_set(conn, ENABLED, &enabled)?;
     pref_set(conn, MODEL, &model)?;
-    pref_set(conn, THINKING, &thinking)
+    pref_set(conn, THINKING, &thinking)?;
+    pref_set(conn, EFFORT, &effort)
 }
 
 /// Today's brief as the card shows it. A row left `writing` by a quit app reads as failed.
 pub fn get(conn: &Connection, day: &str) -> Result<Brief, String> {
-    let (enabled, model, thinking) = settings(conn);
+    let (enabled, model, thinking, effort) = settings(conn);
     let (prompt, custom) = prompt_of(conn);
-    type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>);
+    type Row = (String, String, Option<String>, Option<String>, Option<String>, Option<String>, String);
     let row: Option<Row> = conn
-        .query_row("SELECT content, state, error, model_name, left_out, mood FROM briefs WHERE day = ?1", [day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+        .query_row("SELECT content, state, error, model_name, left_out, mood, updated_at FROM briefs WHERE day = ?1", [day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
         .optional()
         .map_err(err)?;
-    let mut b = Brief { enabled, model, thinking, prompt, custom, day: day.into(), content: String::new(), state: "none".into(), error: None, model_name: None, left_out: vec![], phase: None, mood: None };
-    if let Some((content, state, error, model_name, left_out, mood)) = row {
+    let mut b = Brief { enabled, model, thinking, effort, prompt, custom, day: day.into(), content: String::new(), state: "none".into(), error: None, model_name: None, left_out: vec![], phase: None, mood: None, mood_at: None };
+    if let Some((content, state, error, model_name, left_out, mood, at)) = row {
         let stale = state == "writing" && !writing();
+        let mood_at = (state == "done" && mood.is_some()).then_some(at);
         b = Brief {
             content,
             state: if stale { "failed".into() } else { state },
@@ -126,6 +135,7 @@ pub fn get(conn: &Connection, day: &str) -> Result<Brief, String> {
             model_name,
             left_out: left_out.and_then(|l| serde_json::from_str(&l).ok()).unwrap_or_default(),
             mood,
+            mood_at,
             ..b
         };
     }
@@ -211,9 +221,9 @@ pub fn prompt(written: &str, parts: &[Part], today: &str, instructions: &str) ->
 const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// One answer, whole, within `ANSWER_LIMIT` (`max_tokens` already has room for thinking).
-pub(crate) async fn ask(target: &provider::Target, messages: Vec<Msg>, max_tokens: i64, thinking: bool) -> Result<(String, Option<(i64, i64)>), String> {
+pub(crate) async fn ask(target: &provider::Target, messages: Vec<Msg>, max_tokens: i64, thinking: bool, effort: Option<String>) -> Result<(String, Option<(i64, i64)>), String> {
     let (mut out, mut usage) = (String::new(), None);
-    let streamed = provider::stream(target.clone(), messages, Options { max_tokens: Some(max_tokens), thinking: Some(thinking), ..Default::default() }, |e| match e {
+    let streamed = provider::stream(target.clone(), messages, Options { max_tokens: Some(max_tokens), thinking: Some(thinking), effort, ..Default::default() }, |e| match e {
         Event::Content(t) => out.push_str(&t),
         Event::Usage { prompt, completion } => usage = Some((prompt, completion)),
         _ => {}
@@ -229,7 +239,7 @@ pub(crate) async fn ask(target: &provider::Target, messages: Vec<Msg>, max_token
 async fn write(app: &AppHandle, day: &str) -> Result<(), String> {
     let st = app.state::<AppState>();
     let p: &Picky = &st.picky;
-    let ((_, model, thinking), (written, _)) = p.with_db(|c| Ok((settings(c), prompt_of(c))))?;
+    let ((_, model, thinking, effort), (written, _)) = p.with_db(|c| Ok((settings(c), prompt_of(c))))?;
     let local = match &model {
         Some(m) => m.starts_with("local:"),
         None => p.selection() == super::Selection::Local,
@@ -244,7 +254,7 @@ async fn write(app: &AppHandle, day: &str) -> Result<(), String> {
         let (parts, left_out) = st.with_db(|c| data::brief_parts(c, &access, &today, PART_BUDGET))?;
         let instructions = p.with_db(|c| super::instructions::global(c)).unwrap_or_default();
         let max = if thinking { MAX_TOKENS + super::context::think_room(route.window) } else { MAX_TOKENS };
-        let (text, _) = ask(&route.target, prompt(&written, &parts, &today, &instructions), max, thinking).await?;
+        let (text, _) = ask(&route.target, prompt(&written, &parts, &today, &instructions), max, thinking, effort).await?;
         if split_mood(&text).0.is_empty() {
             return Err("模型没有写出内容。".to_string());
         }
@@ -301,15 +311,16 @@ pub fn picky_brief_write(app: AppHandle, force: bool) -> Result<Brief, String> {
     start(&app, force)
 }
 
-/// 管理 → 定时: on / off, the model (None = the selection) and 思考.
+/// 管理 → 定时: on / off, the model (None = the selection), 思考 and its 思考强度.
 #[tauri::command]
-pub fn picky_brief_set(state: State<AppState>, enabled: bool, model: Option<String>, thinking: Option<bool>) -> Result<Brief, String> {
+pub fn picky_brief_set(state: State<AppState>, enabled: bool, model: Option<String>, thinking: Option<bool>, effort: Option<String>) -> Result<Brief, String> {
     let model = model.filter(|m| !m.trim().is_empty());
     let thinking = thinking.unwrap_or(true);
+    let effort = effort.filter(|e| thinking && !e.trim().is_empty());
     schedule::check_model(&state.picky, &model, thinking)?;
     let day = state.with_db(|c| crate::modules::todo::today(c))?;
     state.picky.with_db(|c| {
-        set_settings(c, enabled, model.as_deref(), thinking)?;
+        set_settings(c, enabled, model.as_deref(), thinking, effort.as_deref())?;
         get(c, &day)
     })
 }
@@ -332,7 +343,7 @@ mod tests {
     #[test]
     fn one_a_day_rewrites_keep_the_old_text_and_settings_default_on() {
         let c = memory_db();
-        assert_eq!(settings(&c), (true, None, true));
+        assert_eq!(settings(&c), (true, None, true, None));
         let b = get(&c, "2026-10-15").unwrap();
         assert_eq!((b.state.as_str(), b.content.as_str()), ("none", ""));
         assert!(needs(&b, false));
@@ -354,9 +365,11 @@ mod tests {
         assert!(!needs(&b, false));
         // another day starts empty; off = never written
         assert_eq!(get(&c, "2026-10-16").unwrap().state, "none");
-        set_settings(&c, false, Some("cloud:deepseek-flash"), false).unwrap();
+        set_settings(&c, false, Some("cloud:deepseek-flash"), true, Some("high")).unwrap();
+        assert_eq!(get(&c, "2026-10-16").unwrap().effort.as_deref(), Some("high"));
+        set_settings(&c, false, Some("cloud:deepseek-flash"), false, None).unwrap();
         let b = get(&c, "2026-10-16").unwrap();
-        assert_eq!((b.enabled, b.model.as_deref(), b.thinking), (false, Some("cloud:deepseek-flash"), false));
+        assert_eq!((b.enabled, b.model.as_deref(), b.thinking, b.effort.as_deref()), (false, Some("cloud:deepseek-flash"), false, None));
         assert!(!needs(&b, true));
         // the prompt: the built-in one until rewritten; the built-in text or None goes back to it
         assert_eq!((b.prompt.as_str(), b.custom), (DEFAULT_PROMPT, false));
@@ -393,7 +406,7 @@ mod tests {
         assert!(msgs[1].content.contains("这次读到了：【一步一步】。") && msgs[1].content.contains("周一"));
         assert!(!prompt(DEFAULT_PROMPT, &[], today, "").iter().any(|m| m.content.contains("指令") || m.content.contains("读到了")));
         // the mock model answers it
-        let (text, _) = tauri::async_runtime::block_on(ask(&provider::Target::Mock { thinking: false }, msgs, MAX_TOKENS, true)).unwrap();
+        let (text, _) = tauri::async_runtime::block_on(ask(&provider::Target::Mock { thinking: false }, msgs, MAX_TOKENS, true, None)).unwrap();
         assert!(text.contains("模拟简报"));
         assert_eq!(split_mood(&text).1, Some("busy"));
     }
@@ -428,7 +441,7 @@ mod tests {
             }
         }
         let t = std::time::Instant::now();
-        let r = tauri::async_runtime::block_on(ask(&target, prompt(DEFAULT_PROMPT, &parts, &today, ""), MAX_TOKENS + 8192, true));
+        let r = tauri::async_runtime::block_on(ask(&target, prompt(DEFAULT_PROMPT, &parts, &today, ""), MAX_TOKENS + 8192, true, None));
         println!("==== 今日简报 ({:.1}s, left out {left:?})\n{r:?}", t.elapsed().as_secs_f64());
         if let Ok((text, _)) = r {
             println!("\n{text}");

@@ -6,6 +6,8 @@ import { SidePanel } from "@/shared/panel";
 import { DateInput } from "@/shared/DateInput";
 import { Field, fieldClass, Segmented, TextInput } from "@/shared/ui";
 import { useFinMutations, useFixed, type Entry, type Fixed, type Flow } from "./api";
+import { Dropdown } from "@/shared/Dropdown";
+import { useSources, useRefundCandidates } from "./importApi";
 import { AmountInput, CurrencyPicker, FLOW_OPTIONS, KindPicker } from "./fields";
 import { money, moneyInput, nextOnOrAfter, parseMoney, type Currency } from "./money";
 import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
@@ -72,6 +74,8 @@ export function EntryPanel(props: {
   const e = props.entry;
   const initial = useMemo(
     () => ({
+      isRefund: e?.isRefund ?? false,
+      refundOf: e?.refundOf ?? null,
       flow: e?.flow ?? ("out" as Flow),
       amount: moneyInput(e?.amount),
       currency: e?.currency ?? props.defaultCurrency,
@@ -90,6 +94,7 @@ export function EntryPanel(props: {
   const set = <K extends keyof typeof d>(k: K, v: (typeof d)[K]) => {
     filled.clear(k);
     setRaw(k, v);
+    if (k === "flow" && v === "in") { setRaw("isRefund", false); setRaw("refundOf", null); }
   };
   const fill = (f: QuickFillResult) => {
     const next = { ...d };
@@ -108,6 +113,8 @@ export function EntryPanel(props: {
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
   const { data: fixed = [] } = useFixed();
+  const sources = useSources(e?.id);
+  const candidates = useRefundCandidates(d.currency, d.day, d.isRefund);
   const from = e?.fixedId ? fixed.find((f) => f.id === e.fixedId) : undefined;
 
   const save = async (ev: FormEvent) => {
@@ -115,7 +122,7 @@ export function EntryPanel(props: {
     setError(null);
     const amount = parseMoney(d.amount);
     if (amount === null || amount <= 0) return setError("请填一个大于 0 的金额");
-    const patch = { flow: d.flow, amount, currency: d.currency, day: d.day, endDay: d.endDay || null, kindId: d.kindId, note: d.note.trim() || null };
+    const patch = { isRefund: d.isRefund, refundOf: d.isRefund ? d.refundOf : null, flow: d.flow, amount, currency: d.currency, day: d.day, endDay: d.endDay || null, kindId: d.kindId, note: d.note.trim() || null };
     try {
       if (e) {
         if (dirty) await m.updateEntry.mutateAsync({ id: e.id, patch });
@@ -151,7 +158,9 @@ export function EntryPanel(props: {
     >
       {quick && <QuickFill module="finance" onFill={fill} autoFocus />}
       <MoneyFields d={d} set={set} onManageKinds={() => props.onManageKinds(d.flow)} autoFocus={!quick} filled={filled} />
-      {initial.endDay ? (
+      {d.flow === "out" && !from && <Field label="退款"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={d.isRefund} onChange={(ev) => { set("isRefund", ev.target.checked); set("refundOf", null); if (ev.target.checked) set("endDay", ""); }} />冲减支出</label></Field>}
+      {d.isRefund && <Field label="原支出"><Dropdown ariaLabel="原支出" value={d.refundOf} options={[{ value: null as number | null, label: "未关联" }, ...(candidates.data ?? []).filter((x) => x.id !== e?.id).map((x) => ({ value: x.id as number | null, label: `${x.day} ${money(x.amount, x.currency)} ${x.note ?? ""}` }))]} onChange={(refundOf) => { set("refundOf", refundOf); if (refundOf) set("kindId", candidates.data?.find((x) => x.id === refundOf)?.kindId ?? null); }} />{candidates.error && <p className="text-sm text-destructive">{errorText(candidates.error)}</p>}</Field>}
+      {initial.endDay && !d.isRefund ? (
         <Field label="时间段">
           <div className="flex items-center gap-2">
             <DateInput ariaLabel="开始日期" value={d.day} onChange={(v) => set("day", v)} max={d.endDay} />
@@ -166,6 +175,8 @@ export function EntryPanel(props: {
           </div>
         </Field>
       )}
+      {sources.error && <p className="text-sm text-destructive">{errorText(sources.error)}</p>}
+      {sources.data && sources.data.length > 0 && <details><summary className="cursor-pointer text-sm">账单来源（{sources.data.length}）</summary>{sources.data.map((r) => <div key={r.id} className="mt-3 text-xs"><p className="font-bold">{r.fileName} · {r.source.sheet} · 第 {r.source.rowNumber} 行</p>{r.source.raw.map(([label, value], i) => <p key={i} className="mt-1 break-all"><span className="text-muted-foreground">{label}：</span>{value || "—"}</p>)}</div>)}</details>}
       <Field label="备注">
         <Polish module="finance" value={d.note} onChange={(v) => set("note", v)}>
           <TextInput value={d.note} onChange={(ev) => set("note", ev.target.value)} maxLength={1000} className={`pr-8 ${filled.cls("note")}`} />

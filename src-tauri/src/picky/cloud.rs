@@ -11,8 +11,11 @@
 //! - Mock mode keeps keys in memory.
 //! - Each model says whether it can think (`Think`; set by the user, default 能开关): only a 能开关 one
 //!   gets the service's thinking switch; the others are sent without it (provider.rs).
-//! - How hard a thinking model thinks (`Effort`, v0.6: 低 / 中 / 高) is asked per request; each
-//!   service gets its own words for it, and one with only a switch (Aliyun, local models) just thinks.
+//! - How hard a thinking model thinks (思考强度): the user lists the levels a model takes, in its API's own words
+//!   (`efforts`, none = it has none), and may fix one as its default (`default_effort`). provider.rs `stream` is the one
+//!   place a request gets its level: what it asked if this model has it, else the model's default, else none (the model's
+//!   own). So every call of 小拾 has the default without doing anything, and the few that let me choose (`Level`: Pub2MD,
+//!   Importer; a conversation's own) override it. A local model has only the switch.
 
 use super::store::{pref_get, pref_set};
 use crate::modules::common::err;
@@ -104,23 +107,59 @@ impl Think {
     }
 }
 
-/// How hard to think when thinking (低 / 中 / 高); None in a request = the model's own level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
+/// A choice of thinking where I can make one (Pub2MD's two models, Importer): "off", "on" (at the model's default) or one
+/// of its levels. A word this model doesn't have counts as "on".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Level(pub String);
+
+impl Default for Level {
+    fn default() -> Self {
+        Level::off()
+    }
 }
 
-impl Effort {
-    /// OpenAI's, Google's, OpenRouter's and Anthropic's word for it.
-    pub fn word(self) -> &'static str {
-        match self {
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High => "high",
+impl Level {
+    pub fn off() -> Level {
+        Level("off".into())
+    }
+    pub fn on() -> Level {
+        Level("on".into())
+    }
+    /// As it's kept where 思考 is a switch and a level (a conversation, a schedule, an assistant's choice).
+    pub fn of(thinking: bool, effort: Option<&str>) -> Level {
+        match effort {
+            _ if !thinking => Level::off(),
+            Some(word) => Level::word(word),
+            None => Level::on(),
         }
+    }
+    pub fn word(word: &str) -> Level {
+        Level(word.into())
+    }
+    pub fn thinking(&self) -> bool {
+        self.0 != "off"
+    }
+    /// The level it asks for, if any.
+    pub fn effort(&self) -> Option<String> {
+        (self.0 != "off" && self.0 != "on").then(|| self.0.clone())
+    }
+    pub fn name(&self) -> String {
+        match self.0.as_str() {
+            "off" => "不思考".into(),
+            "on" => "思考".into(),
+            w => format!("思考 · {w}"),
+        }
+    }
+}
+
+/// What thinking at this level takes on top of a reply (Anthropic and OpenAI count it in the reply cap).
+pub fn effort_room(word: Option<&str>) -> i64 {
+    match word {
+        None | Some("minimal" | "low") => 0,
+        Some("medium") => 8_192,
+        Some("high") => 16_384,
+        Some(_) => 32_768,
     }
 }
 
@@ -136,15 +175,32 @@ pub struct CloudModel {
     /// Saved before this existed: 能开关.
     #[serde(default)]
     pub thinking: Think,
+    /// The 思考强度 it takes, in its API's words (none: it has none).
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    /// The level a request gets when it doesn't choose (none: the model's own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
 }
 
 pub const BAD_MODEL: &str = "请检查模型名称、接口模型名和令牌上限。";
+pub const BAD_EFFORTS: &str = "思考强度写接口用的英文词（如 low、high、max），最多 12 个，不重复。";
 
 impl CloudModel {
+    /// The level a request gets: what it asked if this model has it, else the default.
+    pub fn effort(&self, asked: Option<&str>) -> Option<String> {
+        asked.filter(|a| self.efforts.iter().any(|e| e == a)).map(str::to_string).or_else(|| self.default_effort.clone())
+    }
     pub fn validated(&self) -> Result<CloudModel, String> {
         let mut v = self.clone();
         v.name = v.name.trim().to_string();
         v.api_model = v.api_model.trim().to_string();
+        v.efforts = if v.thinking == Think::Never { vec![] } else { v.efforts.iter().map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).collect() };
+        let words_ok = v.efforts.len() <= 12 && v.efforts.iter().collect::<HashSet<_>>().len() == v.efforts.len() && v.efforts.iter().all(|e| e.len() <= 20 && e.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'));
+        if !words_ok || v.efforts.iter().any(|e| e == "off" || e == "on") {
+            return Err(BAD_EFFORTS.into());
+        }
+        v.default_effort = v.default_effort.as_deref().map(|e| e.trim().to_lowercase()).filter(|e| v.efforts.contains(e));
         let id_ok = !v.id.is_empty() && v.id.len() <= 100 && v.id.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
         let name_ok = !v.name.is_empty() && v.name.chars().count() <= 128 && !v.name.chars().any(char::is_control);
         let api_ok = !v.api_model.is_empty() && v.api_model.len() <= 256 && v.api_model.bytes().all(|b| (33..=126).contains(&b));
@@ -158,7 +214,7 @@ impl CloudModel {
 }
 
 pub fn defaults() -> Vec<CloudModel> {
-    let m = |id: &str, name: &str| CloudModel { id: id.into(), name: name.into(), api_model: id.into(), service: Service::DeepSeek, context_window: 1_048_576, max_output_tokens: 8192, thinking: Think::Switch };
+    let m = |id: &str, name: &str| CloudModel { id: id.into(), name: name.into(), api_model: id.into(), service: Service::DeepSeek, context_window: 1_048_576, max_output_tokens: 8192, thinking: Think::Switch, efforts: ["low", "high", "max"].map(String::from).to_vec(), default_effort: None };
     vec![m("deepseek-flash", "DeepSeek Flash"), m("deepseek-v4-pro", "DeepSeek V4 Pro")]
 }
 
@@ -367,6 +423,40 @@ mod tests {
     use crate::picky::store::tests::memory_db;
 
     #[test]
+    fn efforts_are_the_apis_words_and_the_default_is_one_of_them() {
+        let base = CloudModel { id: "m".into(), name: "M".into(), api_model: "m".into(), service: Service::Anthropic, context_window: 200_000, max_output_tokens: 8192, thinking: Think::Switch, efforts: vec![" Low ".into(), "max".into(), " ".into()], default_effort: Some(" MAX ".into()) };
+        let v = base.validated().unwrap();
+        assert_eq!((v.efforts.clone(), v.default_effort.as_deref()), (vec!["low".to_string(), "max".to_string()], Some("max")));
+        // a default not in the list goes; a model that can't think has none
+        assert_eq!(CloudModel { default_effort: Some("xhigh".into()), ..base.clone() }.validated().unwrap().default_effort, None);
+        assert!(CloudModel { thinking: Think::Never, ..base.clone() }.validated().unwrap().efforts.is_empty());
+        for bad in [vec!["low".to_string(), "low".to_string()], vec!["很高".to_string()], vec!["off".to_string()], vec!["x".repeat(21)], (0..13).map(|i| format!("l{i}")).collect()] {
+            assert_eq!(CloudModel { efforts: bad, ..base.clone() }.validated().unwrap_err(), BAD_EFFORTS);
+        }
+        // saved before these existed
+        let old: CloudModel = serde_json::from_str(r#"{"id":"o","name":"O","apiModel":"o","service":"openAI","contextWindow":200000,"maxOutputTokens":8192,"thinking":"switch"}"#).unwrap();
+        assert!(old.efforts.is_empty() && old.default_effort.is_none());
+        assert_eq!(base.effort(Some("max")).as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn migration_32_lists_each_saved_models_levels() {
+        let mut c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure(&c).unwrap();
+        crate::db::migrate_with(&mut c, &crate::picky::store::MIGRATIONS[..31], None).unwrap();
+        let m = |id: &str, service: &str, thinking: &str| format!(r#"{{"id":"{id}","name":"{id}","apiModel":"{id}","service":"{service}","contextWindow":200000,"maxOutputTokens":8192,"thinking":"{thinking}"}}"#);
+        let saved = format!("[{},{},{},{},{}]", m("ds", "deepSeek", "switch"), m("h", "anthropic", "switch"), m("or", "openRouter", "always"), m("q", "aliyun", "switch"), m("n", "openAI", "never"));
+        c.execute("INSERT INTO preferences (key, value) VALUES ('cloud.models', ?1)", [saved]).unwrap();
+        crate::db::migrate_with(&mut c, crate::picky::store::MIGRATIONS, None).unwrap();
+        let list = models(&c).unwrap();
+        let levels = |id: &str| list.iter().find(|m| m.id == id).unwrap().efforts.join(",");
+        assert_eq!((levels("ds"), levels("h"), levels("or"), levels("q"), levels("n")), ("low,high,max".to_string(), "low,medium,high,xhigh,max".to_string(), "low,medium,high".to_string(), String::new(), String::new()));
+        assert_eq!(list[1].thinking, Think::Switch);
+        assert!(list.iter().all(|m| m.default_effort.is_none()));
+        c.query_row("SELECT effort FROM sessions LIMIT 0", [], |_| Ok(())).ok();
+    }
+
+    #[test]
     fn defaults_seed_once_and_deletions_stick() {
         let c = memory_db();
         assert_eq!(models(&c).unwrap().len(), 2);
@@ -391,7 +481,7 @@ mod tests {
     #[test]
     fn save_validates_and_assigns_ids() {
         let c = memory_db();
-        let base = CloudModel { id: String::new(), name: " GPT ".into(), api_model: "gpt-5".into(), service: Service::OpenAi, context_window: 200_000, max_output_tokens: 8192, thinking: Think::Switch };
+        let base = CloudModel { id: String::new(), name: " GPT ".into(), api_model: "gpt-5".into(), service: Service::OpenAi, context_window: 200_000, max_output_tokens: 8192, thinking: Think::Switch, efforts: vec![], default_effort: None };
         let saved = save_model(&c, base.clone()).unwrap();
         assert!(saved.id.starts_with("m-"));
         assert_eq!(saved.name, "GPT");
@@ -413,7 +503,9 @@ mod tests {
     fn service_codes_match_picky() {
         assert_eq!(serde_json::to_string(&Service::OpenAi).unwrap(), "\"openAI\"");
         assert_eq!((serde_json::to_string(&Service::Aliyun).unwrap(), Service::Aliyun.code(), Service::Aliyun.name()), ("\"aliyun\"".to_string(), "aliyun", "Aliyun"));
-        assert_eq!(serde_json::from_str::<Effort>("\"high\"").unwrap(), Effort::High);
+        assert_eq!(serde_json::to_string(&Level::word("high")).unwrap(), "\"high\"");
+        assert_eq!((serde_json::from_str::<Level>("\"high\"").unwrap().effort().as_deref(), Level::default().thinking(), Level::on().effort()), (Some("high"), false, None));
+        assert_eq!((Level::off().name().as_str(), Level::on().name().as_str(), Level::word("max").name().as_str()), ("不思考", "思考", "思考 · max"));
         let m: CloudModel = serde_json::from_str(r#"{"id":"x","name":"X","apiModel":"x","service":"openRouter","contextWindow":131072,"maxOutputTokens":8192}"#).unwrap();
         assert_eq!(m.service, Service::OpenRouter);
     }

@@ -21,7 +21,7 @@ use crate::picky::skills::qbank;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// A record the words fit (shown to pick from).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,7 +156,7 @@ pub fn pending_text(conn: &Connection, runs: &[i64], allows: impl Fn(&str) -> bo
     let mut lines = vec![];
     for &run in runs {
         let Some(card) = card_of(conn, run)?.filter(|c| c.state == "pending") else { continue };
-        for it in card.items.iter().filter(|it| allows(&it.module)) {
+        for it in card.items.iter().filter(|it| allows(super::cloud_key(&it.tool, &it.module))) {
             let what = match &it.options {
                 Some(o) => format!("找到 {} 条，等用户在卡片里选", o.len()),
                 None => it.fields.iter().map(field_text).collect::<Vec<_>>().join("；"),
@@ -367,10 +367,14 @@ pub fn cancel(conn: &Connection, run_id: i64) -> Result<Card, String> {
 // ---------- commands ----------
 
 #[tauri::command]
-pub fn picky_card_confirm(app: AppHandle, run_id: i64, picks: Vec<Pick>) -> Result<Card, String> {
+pub fn picky_card_confirm(app: AppHandle, window: tauri::Window, run_id: i64, picks: Vec<Pick>) -> Result<Card, String> {
     let st = app.state::<AppState>();
     let mut card = confirm(&st, run_id, &picks)?;
     let _ = st.with_db(|c| Ok(mark_gone(c, &mut card)));
+    // confirmed in the 速记小窗: the main window shows it
+    if window.label() == crate::capture::LABEL {
+        let _ = app.emit_to("main", "capture-saved", ());
+    }
     Ok(card)
 }
 

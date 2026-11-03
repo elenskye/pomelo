@@ -82,7 +82,7 @@ const sample = (): SeekerCatalog => ({
   ],
   revisions: [],
   groups: [],
-  settings: { selectionModel: null, reviewModel: null, thinking: false, cloudAllowed: false },
+  settings: { model: null, thinking: false, effort: null, features: {}, cloudAllowed: false },
 });
 /** knowledge/ of the mock Seeker folder: one folder per company; names as 招聘索引.md would give them. */
 const COMPANIES: { folder: string; auto: string; names: string[] }[] = [
@@ -159,7 +159,7 @@ const sampleBank = (): RaterBank => ({
 });
 /** 400 字 in 90 s: a CJK character one 字, a Latin word or number two (rater.rs `seconds`). */
 const seconds = (text: string) => Math.ceil((((text.match(/[\u3400-\u9fff\uf900-\ufaff]/g) ?? []).length + 2 * (text.match(/[A-Za-z0-9]+(?:['’.\-][A-Za-z0-9]+)*/g) ?? []).length) * 90) / 400);
-let raterOptions: RaterOptions = { model: null, thinking: false, features: {} };
+let raterOptions: RaterOptions = { model: null, thinking: false, effort: null, features: {} };
 /** The rules the program brings (Rust rater/qbank.rs `builtins`), shortened. */
 const BUILTINS: RaterBuiltin[] = [
   { category: "简历题", title: "工作流", points: ["面试官照着简历问，要有问必答：按每段经历各出几道。", "只用素材和经历档案里有的事实。"], whole: true },
@@ -169,7 +169,7 @@ const BUILTINS: RaterBuiltin[] = [
   { category: "复盘", title: "复盘记录", points: ["按面试里问的顺序一题一题记：问题、用户当时怎么答的、面试官当场的反应。", "一次只问一两件事；用户说得笼统时追问细节。", "都记齐了，把整张表念一遍给用户确认。"], whole: false },
   { category: "复盘", title: "复盘卡", points: ["summary：一两句总评，发生的事实和个人判断分开说。", "hits / misses：准备到了的和没准备到的，asked 写问的序号。", "questions：值得加进题库的题；rules：最多 2 条长期规则的提议。"], whole: false },
 ];
-const choice = (feature: string) => raterOptions.features[feature] ?? { model: raterOptions.model, thinking: raterOptions.thinking };
+const choice = (feature: string) => raterOptions.features[feature] ?? { model: raterOptions.model, thinking: raterOptions.thinking, effort: raterOptions.effort };
 const bankView = (): RaterBank => structuredClone({ ...seekerMock.rater, seconds: Object.fromEntries(seekerMock.rater.questions.map((q) => [q.id, seconds(q.answer)])), practice: tallies(seekerMock.practice) });
 
 // ---- 卡片练习 (Rust rater/practice.rs, loosely) ----
@@ -835,8 +835,8 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     const c = catalog();
     const record = a.kind === "material" ? structuredClone(c.records.find((r) => r.id === a.recordId) ?? null) : null;
     const lang: SeekerLang = record ? (record.lang === "en" ? "en" : "cn") : langOf(a);
-    const model = a.kind === "select" ? c.settings.selectionModel : c.settings.reviewModel;
-    if (!model) throw new Error("请为这项工作选择模型");
+    const model = (c.settings.features[a.kind as string] ?? c.settings).model;
+    if (!model) throw new Error("请先在 Seeker 的设置里给这项工作选模型");
     if (model.startsWith("cloud:") && !c.settings.cloudAllowed) throw new Error("Seeker 资料还没允许发给云端");
     if (!["select", "material"].includes(a.kind as string)) throw new Error("未知的建议类型");
     await wait(1500);
@@ -861,8 +861,9 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     const lang = langOf(a);
     const kind = a.kind as string;
     const points = (a.points as string[] | undefined) ?? [];
-    if (!c.settings.reviewModel) throw new Error("请为这项工作选择模型");
-    if (c.settings.reviewModel.startsWith("cloud:") && !c.settings.cloudAllowed) throw new Error("Seeker 资料还没允许发给云端");
+    const model = (c.settings.features[kind] ?? c.settings).model;
+    if (!model) throw new Error("请先在 Seeker 的设置里给这项工作选模型");
+    if (model.startsWith("cloud:") && !c.settings.cloudAllowed) throw new Error("Seeker 资料还没允许发给云端");
     if (kind === "polish" && !points.length) throw new Error("请先在简历里选中要润色的要点");
     const draft = desk(lang).draft;
     if (!draft) throw new Error("还没有简历草稿");

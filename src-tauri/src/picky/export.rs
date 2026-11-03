@@ -52,6 +52,8 @@ struct Node {
     sources: Vec<super::cite::Source>,
     page: Option<super::data::Query>,
     card: Option<super::act::Card>,
+    /// ASK: what the reply asked me.
+    asks: Vec<super::ask::Ask>,
     /// 改文件: the question's file, the reply's proposed changes.
     edit_file: Option<super::work::Target>,
     edit: Option<super::work::FileEdit>,
@@ -134,6 +136,7 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
                 sources: vec![],
                 page: None,
                 card: None,
+                asks: vec![],
                 edit_file: None,
                 edit: None,
             })
@@ -159,6 +162,7 @@ fn all_messages(conn: &Connection, id: i64) -> Result<Vec<Node>, String> {
             n.queries = super::data::lookups_of(conn, run)?;
             n.sources = super::cite::of_run(conn, run)?;
             n.card = super::act::card_of(conn, run)?;
+            n.asks = super::ask::of_run(conn, run)?;
             n.edit = super::work::edit_of(conn, run)?;
         }
     }
@@ -201,13 +205,14 @@ fn cited_block(text: &str, sources: &[super::cite::Source]) -> String {
 /// 确认卡片（已确认）：each item, and whether it got written.
 /// 改文件: each changed paragraph before → after, and whether it was written.
 fn edit_block(e: &super::work::FileEdit) -> String {
-    if e.kind == super::work::NEW_WORD {
+    if e.kind == super::work::NEW_WORD || e.kind == super::work::NEW_EXCEL {
         let state = match e.state.as_str() {
             "written" => format!("已保存：{}", e.path),
             "cancelled" => "已取消".into(),
             _ => "还没保存".into(),
         };
-        return format!("新建 Word「{}」（{state}）：\n\n{}", e.name, e.items.first().map(|i| i.after.as_str()).unwrap_or(""));
+        let what = if e.kind == super::work::NEW_WORD { "Word" } else { "Excel" };
+        return format!("新建 {what}「{}」（{state}）：\n\n{}", e.name, e.items.first().map(|i| i.after.as_str()).unwrap_or(""));
     }
     let state = match e.state.as_str() {
         "written" => "已写入",
@@ -219,7 +224,8 @@ fn edit_block(e: &super::work::FileEdit) -> String {
         .iter()
         .map(|i| {
             let mark = if e.state == "written" && !i.checked { "（没勾，没写）" } else { "" };
-            format!("- 第 {} 段{mark}：{} → {}", i.paragraph, i.before.replace('\n', " "), i.after.replace('\n', " "))
+            let place = i.label.clone().unwrap_or_else(|| format!("第 {} 段", i.paragraph));
+            format!("- {place}{mark}：{} → {}", i.before.replace('\n', " "), i.after.replace('\n', " "))
         })
         .collect();
     format!("改「{}」（{state}）：\n\n{}", e.name, items.join("\n"))
@@ -271,6 +277,9 @@ pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
         }
         if !m.content.is_empty() {
             lines.push(m.content.clone());
+        }
+        if !m.asks.is_empty() {
+            lines.push(super::ask::block(&m.asks));
         }
         if let Some(card) = &m.card {
             lines.push(card_block(card));
@@ -334,6 +343,10 @@ fn document(heading: &str, msgs: &[Node], all: bool, sums: &[SummaryRecord], lin
         }
         out += &m.content;
         out += "\n\n";
+        if !m.asks.is_empty() {
+            out += &super::ask::block(&m.asks);
+            out += "\n\n";
+        }
         if let Some(card) = &m.card {
             out += &card_block(card);
             out += "\n\n";

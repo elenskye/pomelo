@@ -16,6 +16,7 @@ use super::interview::{self, Asked, Interviews, Review, RESULTS};
 use super::qbank;
 use super::*;
 use crate::picky::assistants::seeker::{self, output::JobSnapshot, Workspace};
+use crate::picky::cloud::Level;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
@@ -64,7 +65,7 @@ fn put(c: &Connection, d: &Draft) -> Result<(), String> {
 
 /// A new record: its session (private, 思考 as Rater's, 知识库 on: every library) and a table with the job,
 /// date and round.
-pub fn start(c: &Connection, job: JobLink, date: &str, round: &str, thinking: bool) -> Result<Draft, String> {
+pub fn start(c: &Connection, job: JobLink, date: &str, round: &str, level: &Level) -> Result<Draft, String> {
     let (date, round) = (date.trim(), round.trim());
     if date.is_empty() {
         return Err("请填写面试日期".into());
@@ -73,7 +74,7 @@ pub fn start(c: &Connection, job: JobLink, date: &str, round: &str, thinking: bo
         return Err("请选第几轮".into());
     }
     let tx = Tx::begin(c)?;
-    tx.execute("INSERT INTO sessions (title, title_source, private, thinking, knowledge) VALUES (?1, 'user', 1, ?2, 1)", params![format!("复盘 · {} · {round}", job.label), thinking]).map_err(err)?;
+    tx.execute("INSERT INTO sessions (title, title_source, private, thinking, effort, knowledge) VALUES (?1, 'user', 1, ?2, ?3, 1)", params![format!("复盘 · {} · {round}", job.label), level.thinking(), level.effort()]).map_err(err)?;
     let session = tx.last_insert_rowid();
     let d = Draft { session, review: Review { job, date: date.into(), round: round.into(), result: RESULTS[1].into(), ..Default::default() }, ready: false, fills: 0, created_at: interview::now(&tx)? };
     tx.execute("INSERT INTO rater_records (session_id, body) VALUES (?1, ?2)", params![session, serde_json::to_string(&Draft { session: 0, ..d.clone() }).map_err(err)?]).map_err(err)?;
@@ -215,8 +216,8 @@ pub fn system_now(state: &AppState, session: i64) -> Result<String, String> {
 pub async fn route(app: &AppHandle, session: i64) -> Result<crate::picky::Route, String> {
     let state = app.state::<AppState>();
     let (w, opts) = state.picky.with_db(|c| Ok((seeker::read(c)?, qbank::options(c)?)))?;
-    let (model, thinking) = qbank::chosen_model(&w, &opts, "record")?;
-    state.picky.with_db(|c| c.execute("UPDATE sessions SET thinking = ?1 WHERE id = ?2 AND thinking <> ?1", params![thinking, session]).map(|_| ()).map_err(err))?;
+    let (model, level) = qbank::chosen_model(&w, &opts, "record")?;
+    state.picky.with_db(|c| c.execute("UPDATE sessions SET thinking = ?1, effort = ?3 WHERE id = ?2", params![level.thinking(), session, level.effort()]).map(|_| ()).map_err(err))?;
     Ok(crate::picky::schedule::route(&state.picky, Some(&model)).await?.0)
 }
 
@@ -255,8 +256,8 @@ pub async fn picky_rater_record(state: tauri::State<'_, AppState>, session: i64)
 pub async fn picky_rater_record_start(state: tauri::State<'_, AppState>, job: i64, date: String, round: String) -> Result<Draft, String> {
     let link = qbank::job_link(&seeker::output::job(&state, job)?);
     state.picky.with_db(|c| {
-        let (_, thinking) = qbank::chosen_model(&seeker::read(c)?, &qbank::options(c)?, "record")?;
-        start(c, link, &date, &round, thinking)
+        let (_, level) = qbank::chosen_model(&seeker::read(c)?, &qbank::options(c)?, "record")?;
+        start(c, link, &date, &round, &level)
     })
 }
 
@@ -299,12 +300,13 @@ mod tests {
     #[test]
     fn a_record_is_filled_by_the_model_and_saved_as_a_review_without_its_conversation() {
         let c = memory_db();
-        let d = start(&c, job(), "2026-10-20", "第 1 轮", true).unwrap();
+        let d = start(&c, job(), "2026-10-20", "第 1 轮", &Level::word("high")).unwrap();
         // its session is private, left out of 小拾's list
         let (private, thinking): (bool, bool) = c.query_row("SELECT private, thinking FROM sessions WHERE id = ?1", [d.session], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert!(private && thinking && is_record(&c, d.session).unwrap());
+        assert_eq!(c.query_row("SELECT effort FROM sessions WHERE id = ?1", [d.session], |r| r.get::<_, Option<String>>(0)).unwrap().as_deref(), Some("high"));
         assert!(crate::picky::library::library(&c).unwrap().recent.iter().all(|s| s.id != d.session));
-        assert_eq!(start(&c, job(), " ", "第 1 轮", false).unwrap_err(), "请填写面试日期");
+        assert_eq!(start(&c, job(), " ", "第 1 轮", &Level::off()).unwrap_err(), "请填写面试日期");
 
         // the model fills the whole table; a field it leaves out stays, an unknown result is 待定
         let (_, said) = fill(&c, d.session, &json!({ "form": " 视频 · 技术面 ", "result": "不知道", "items": [{ "question": "自我介绍", "answer": "我是林小柚。" }, { "question": " " }] }).to_string()).unwrap();
@@ -327,7 +329,7 @@ mod tests {
         assert!(interview::read_all(&c).unwrap().reviews.is_empty() && is_record(&c, d.session).unwrap());
 
         // 放弃 takes it away; a table without questions isn't saved
-        let e = start(&c, job(), "2026-10-27", "第 2 轮", false).unwrap();
+        let e = start(&c, job(), "2026-10-27", "第 2 轮", &Level::off()).unwrap();
         assert!(save(&c, e.session, &e.review).unwrap_err().contains("问了什么"));
         discard(&c, e.session).unwrap();
         assert!(get(&c, e.session).is_err());

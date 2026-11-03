@@ -44,10 +44,13 @@
 //! - Work (v0.4.5 阶段 9, work.rs): a question may carry a file to change (改文件; its new versions keep
 //!   it); its reply proposes changes paragraph by paragraph into a card instead of answering. Any reply
 //!   can be saved as Word.
+//! - Asking me (ASK, ask.rs): a cloud model's reply may stop at a card of questions and wait, its task suspended, until I
+//!   answer on the card; the answer goes on as a tool result. The conversation stays busy meanwhile.
 //! - Sending / generating / switching are not undoable. No branch changes in a conversation while
 //!   its reply or summary is written (they share its slot).
 
 use super::act;
+use super::ask;
 use super::assistants::rater::record;
 use super::knowledge;
 use super::work;
@@ -99,7 +102,7 @@ pub struct Session {
 }
 
 pub fn sessions(conn: &Connection) -> Result<Vec<Session>, String> {
-    let mut st = conn.prepare("SELECT id, title, updated_at FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records) ORDER BY updated_at DESC, id DESC").map_err(err)?;
+    let mut st = conn.prepare(concat!("SELECT id, title, updated_at FROM sessions WHERE id NOT IN ", super::library::unlisted!(), " ORDER BY updated_at DESC, id DESC")).map_err(err)?;
     let rows = st.query_map([], |r| Ok(Session { id: r.get(0)?, title: r.get(1)?, updated_at: r.get(2)? })).map_err(err)?;
     rows.collect::<Result<_, _>>().map_err(err)
 }
@@ -142,6 +145,8 @@ pub struct Message {
     pub edit_file: Option<work::Target>,
     /// Replies: the changes they proposed to it.
     pub edit: Option<work::FileEdit>,
+    /// Replies: what they asked me (ASK).
+    pub asks: Vec<ask::Ask>,
     #[serde(skip)]
     active_child: Option<i64>,
     #[serde(skip)]
@@ -185,6 +190,7 @@ fn message_row(r: &rusqlite::Row) -> rusqlite::Result<Message> {
         page: None,
         skills: vec![],
         edit_file: None,
+        asks: vec![],
         edit: None,
     })
 }
@@ -244,6 +250,7 @@ pub fn path(conn: &Connection, session_id: i64) -> Result<Vec<Message>, String> 
             m.sources = cite::of_run(conn, run)?;
             m.card = act::card_of(conn, run)?;
             m.edit = work::edit_of(conn, run)?;
+            m.asks = ask::of_run(conn, run)?;
         }
     }
     Ok(out)
@@ -289,10 +296,13 @@ pub struct NewSession {
     pub setting: SessionSetting,
     /// The draft's 「本会话关闭记忆」.
     pub memory_off: bool,
-    /// The draft's 思考 switch is off.
+    /// The draft's 思考 switch is off, and its 思考强度.
     pub thinking_off: bool,
+    pub effort: Option<String>,
     /// The draft's 知识库 switch and libraries.
     pub knowledge: knowledge::Draft,
+    /// Asked in the 速记小窗: the window's own conversation (library.rs `start_capture_chat`).
+    pub capture: bool,
 }
 
 /// `project`: where a new session (`session` None) goes; ignored for an existing one.
@@ -314,20 +324,24 @@ pub fn begin_run_in(conn: &Connection, session: Option<i64>, new: &NewSession, p
             };
             let setting = instructions::checked(&tx, &new.setting)?;
             tx.execute(
-                "INSERT INTO sessions (title, project_id, instructions, preset_id, memory_disabled, thinking) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![NEW_TITLE, project, setting.content, setting.preset_id, new.memory_off, !new.thinking_off],
+                "INSERT INTO sessions (title, project_id, instructions, preset_id, memory_disabled, thinking, effort) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![NEW_TITLE, project, setting.content, setting.preset_id, new.memory_off, !new.thinking_off, new.effort],
             )
             .map_err(err)?;
             let id = tx.last_insert_rowid();
             knowledge::save_draft(&tx, id, &new.knowledge)?;
+            if new.capture {
+                super::library::start_capture_chat(&tx, id)?;
+            }
             id
         }
     };
+    ask::cancel_in_session(&tx, session_id)?;
     let shown = path(&tx, session_id)?;
     let mut turns = vec![];
     for m in &shown {
         let queries = if m.role == "assistant" { data::queries_of_message(&tx, m.id)? } else { vec![] };
-        turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries });
+        turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries, asks: m.asks.clone() });
     }
     let mut request = context::request(&tx, session_id, &turns, prompt)?;
     let leaf = shown.last().map(|m| m.id);
@@ -483,8 +497,10 @@ pub fn begin_version(conn: &Connection, source: i64, edited: Option<&str>, model
     let mut turns = vec![];
     for m in chain {
         let queries = if m.role == "assistant" { data::queries_of_message(&tx, m.id)? } else { vec![] };
-        turns.push(Turn { id: m.id, role: m.role, content: m.content, state: m.state, queries });
+        let asks = if m.role == "assistant" { ask::of_message(&tx, m.id)? } else { vec![] };
+        turns.push(Turn { id: m.id, role: m.role, content: m.content, state: m.state, queries, asks });
     }
+    ask::cancel_in_session(&tx, src.session_id)?;
     let mut request = context::request(&tx, src.session_id, &turns, &prompt)?;
     let asked = question.as_ref().map_or(src.id, |q| q.id);
     let attachments: Vec<i64> = files::attachments_of(&tx, asked)?.into_iter().map(|f| f.id).collect();
@@ -591,6 +607,8 @@ pub enum StreamEvent {
     EarlierCard { card: act::Card },
     /// 改文件: the changes the reply proposes.
     Edit { edit: work::FileEdit },
+    /// ASK: a card of questions, then again once answered.
+    Ask { ask: ask::Ask },
     /// Waiting for the local model (it is answering something else) / its turn now.
     Queued { on: bool },
     #[serde(rename_all = "camelCase")]
@@ -627,6 +645,8 @@ pub struct Shared {
     reading: Mutex<Option<Reading>>,
     /// Waiting for the local model's turn (also in the status).
     queued: AtomicBool,
+    /// ASK: waiting for my answer (also in the status).
+    ask: ask::Gate,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -664,6 +684,8 @@ pub struct ActiveRun {
     pub reading: Option<Reading>,
     /// Waiting for the local model.
     pub queued: bool,
+    /// ASK: waiting for my answer.
+    pub asking: bool,
 }
 
 /// Model work being written: one slot per conversation (a reply or a summary).
@@ -695,11 +717,11 @@ impl Runs {
         self.lock()
             .iter()
             .map(|a| {
-                let (kind, reading, queued) = match &a.job {
-                    Job::Reply(s) => ("reply", s.reading.lock().unwrap_or_else(|e| e.into_inner()).clone(), s.queued.load(Ordering::SeqCst)),
-                    Job::Summary(_) => ("summary", None, false),
+                let (kind, reading, queued, asking) = match &a.job {
+                    Job::Reply(s) => ("reply", s.reading.lock().unwrap_or_else(|e| e.into_inner()).clone(), s.queued.load(Ordering::SeqCst), s.ask.waiting()),
+                    Job::Summary(_) => ("summary", None, false, false),
                 };
-                ActiveRun { run: a.run_id, session: a.session_id, kind, model: a.model.clone(), reading, queued }
+                ActiveRun { run: a.run_id, session: a.session_id, kind, model: a.model.clone(), reading, queued, asking }
             })
             .collect()
     }
@@ -714,6 +736,13 @@ impl Runs {
     /// Frees `run_id`'s slot if it still holds one.
     pub fn release(&self, run_id: i64) {
         self.lock().retain(|a| a.run_id != run_id);
+    }
+    /// ASK: my answer, to the reply waiting for it; that reply, if one was.
+    fn answer(&self, run_id: i64, ask_id: i64, text: String) -> Option<Arc<Shared>> {
+        match self.lock().iter().find(|a| a.run_id == run_id).map(|a| &a.job) {
+            Some(Job::Reply(s)) if s.ask.answer(ask_id, text) => Some(s.clone()),
+            _ => None,
+        }
     }
     fn take(&self, run_id: i64) -> Option<Active> {
         let mut g = self.lock();
@@ -753,6 +782,10 @@ fn finalize(app: &AppHandle, shared: &Shared, state: &'static str, error: Option
         Outcome { content: b.content.clone(), reasoning: b.reasoning.clone(), reasoning_ms: b.reasoning_ms, state, error, usage, window: b.window }
     };
     let saved = st.picky.with_db(|c| finish(c, shared.run_id, shared.reply_id, &outcome));
+    // quitting leaves its card open (answered later, it goes as a new message)
+    if state != "interrupted" {
+        let _ = st.picky.with_db(|c| ask::cancel_run(c, shared.run_id));
+    }
     let error = match (&saved, outcome.error.clone()) {
         (Err(e), None) => Some(format!("回复没能保存：{e}")),
         (_, e) => e,
@@ -985,8 +1018,9 @@ pub(crate) fn access_for(app: &AppHandle, route: &Route) -> Option<(data::Access
 pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: String, counter: &Counter, asked: &[String], read_only: bool, extra: Vec<serde_json::Value>, ctx: skills::Ctx) -> Option<Lookup> {
     let st = app.state::<AppState>();
     let mut offered = st.picky.with_db(|c| Ok(skills::offered(c, &st.picky, asked, ctx))).unwrap_or_default();
+    // 定时任务: no 题库; the file toolboxes stay (their cards wait in the conversation)
     if read_only {
-        offered.retain(|s| !s.writes);
+        offered.retain(|s| !s.writes || s.is_file_toolbox());
     }
     // 「Seeker 资料」: not when both Seeker and Rater are hidden; the 题库 SKILLs not when Rater is
     offered.retain(|s| s.key != skills::SEEKER || [data::SEEKER, data::RATER].iter().any(|m| !access.hidden.iter().any(|h| h == m)));
@@ -1116,6 +1150,7 @@ struct AppHost<'a> {
     /// What Word 工具箱 / 文本工具箱 may change.
     word_files: Vec<skills::toolbox::Editable>,
     text_files: Vec<skills::toolbox::Editable>,
+    excel_files: Vec<skills::toolbox::Editable>,
     /// 查知识库's look: images waiting to be sent, and how many this reply looked at.
     images: Vec<Image>,
     looked: usize,
@@ -1142,6 +1177,90 @@ impl AppHost<'_> {
     /// A write tool: checked, then into the reply's card (sent to the page), or with `replace` in a
     /// pending item's place (this reply's card or an earlier one's). A 新书影 gets its creator /
     /// country / 类型 from 书单 / 影单检索 first (when on).
+    /// ASK: the card goes to the page and this reply stops here until I answer (or 停止 ends its task).
+    async fn ask_me(&self, call: &ToolCall) -> data::Answer {
+        let not_asked = |text: String| data::Answer { module: None, label: "没问成".into(), state: "failed", text, records: vec![] };
+        let st = self.app.state::<AppState>();
+        let questions = match ask::parse(&call.arguments) {
+            Ok(q) => q,
+            Err(e) => return not_asked(e),
+        };
+        let card = match st.picky.with_db(|c| ask::save(c, self.shared.run_id, &questions)) {
+            Ok(a) => a,
+            Err(e) => return not_asked(e),
+        };
+        // what it wrote so far is safe while it waits
+        {
+            let b = self.shared.buf.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = st.picky.with_db(|c| checkpoint(c, self.shared.reply_id, &b.content, &b.reasoning));
+        }
+        let answer = self.shared.ask.open(card.id);
+        let _ = self.shared.channel.send(StreamEvent::Ask { ask: card });
+        st.picky.changed();
+        match answer.await {
+            Ok(text) => {
+                st.picky.changed();
+                data::Answer { module: None, label: "问了你".into(), state: "ok", text, records: vec![] }
+            }
+            Err(_) => not_asked("没等到回答。".into()),
+        }
+    }
+
+    /// 读文件's `images` and `look`: a file's stored copy read off the database's lock; what a cloud model looks
+    /// at goes after this round's results, numbered as a source.
+    async fn file_images(&mut self, args: &serde_json::Value) -> data::Answer {
+        let failed = |label: String, why: String| data::Answer { module: None, label: format!("读文件 · {label}"), state: "failed", text: format!("没成：{why}"), records: vec![] };
+        let look = args["view"] == "look";
+        if look && !matches!(self.target, Target::Cloud { .. }) {
+            return failed("看图".into(), "只有云端模型能看图片（现在用的是本地模型，告诉用户换云端模型再问）".into());
+        }
+        if look && self.looked >= MAX_IMAGES {
+            return failed("看图 · 太多了".into(), format!("这条回答已经看了 {MAX_IMAGES} 张图片，不能再看了。"));
+        }
+        let m = match skills::files::pick_one(&self.materials, args) {
+            Ok(m) => m.clone(),
+            Err(e) => return failed("没有这个文件".into(), e),
+        };
+        let st = self.app.state::<AppState>();
+        let dir = st.picky.files_dir().to_path_buf();
+        let path = match st.picky.with_db(|c| files::path_of(c, &dir, m.artifact)) {
+            Ok(p) => p,
+            Err(e) => return failed(format!("《{}》", m.name), e),
+        };
+        let ext = skills::files::ext_of(&m.name);
+        if !super::office::holds_images(&ext) {
+            return failed(format!("《{}》", m.name), "这种文件里的图片看不了（能看 .docx、.pptx、.pdf 的）".into());
+        }
+        let name = m.name.clone();
+        let wanted = args.clone();
+        let tmp = std::env::temp_dir().join("pomelo-picky-images");
+        let read = tauri::async_runtime::spawn_blocking(move || {
+            let data = std::fs::read(&path).map_err(|e| format!("读不了：{e}"))?;
+            if look {
+                let (place, media_type, data) = super::office::look_at(&data, &ext, &wanted, &tmp)?;
+                Ok((place, Some(provider::Image { media_type, data })))
+            } else {
+                Ok::<_, String>((super::office::images_text(&name, &data, &ext)?, None))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+        match read {
+            Ok((text, None)) => data::Answer { module: None, label: format!("读文件 · 《{}》里的图片", m.name), state: "ok", text, records: vec![] },
+            Ok((place, Some(image))) => {
+                let before = self.sources.0.len();
+                let number = args["image"].as_i64().or_else(|| args["page"].as_i64()).unwrap_or(0);
+                let n = self.sources.passage(m.artifact, skills::files::IMAGE_SEGMENT + number, &format!("{} · {place}", m.name), "附件和资料", &format!("（看的是图片：{place}）"));
+                publish(self.app, self.shared, &self.sources, before);
+                self.looked += 1;
+                self.images.push(image);
+                data::Answer { module: None, label: format!("读文件 · 看《{}》{place}", m.name), state: "ok", text: format!("[{n}] 《{}》{place} 附在下面那条消息里：看了再回答，用到时标 [{n}]。", m.name), records: vec![] }
+            }
+            Err(e) => failed(format!("《{}》", m.name), e),
+        }
+    }
+
     async fn propose(&self, call: &ToolCall) -> data::Answer {
         if let Some(refusal) = act::refused(&self.access, &call.name, &call.arguments) {
             return refusal;
@@ -1199,6 +1318,10 @@ impl Host for AppHost<'_> {
             }
             cite::READ => cite::read(self.app, &self.access, &self.sources, &call.arguments, &self.today, budget),
             super::office::TABLE_TOOL => table_lookup(self.app, &self.tables, &call.arguments, budget),
+            skills::files::TOOL if matches!(serde_json::from_str::<serde_json::Value>(&call.arguments).unwrap_or_default()["view"].as_str(), Some("images" | "look")) => {
+                let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+                self.file_images(&args).await
+            }
             skills::files::TOOL => {
                 let before = self.sources.0.len();
                 let (mats, sources) = (&self.materials, &mut self.sources);
@@ -1244,7 +1367,25 @@ impl Host for AppHost<'_> {
                 }
                 a
             }
+            // a big workbook is read outside the database's lock
+            skills::toolbox::EXCEL_TOOL => {
+                let (files, arguments) = (self.excel_files.clone(), call.arguments.clone());
+                let step = tauri::async_runtime::spawn_blocking(move || skills::toolbox::excel_plan(&files, &arguments, budget)).await;
+                let st = self.app.state::<AppState>();
+                let (a, changed) = match step {
+                    Ok(step) => st.picky.with_db(|c| Ok(skills::toolbox::excel_commit(c, self.shared.run_id, step))),
+                    Err(e) => Err(e.to_string()),
+                }
+                .unwrap_or_else(|e| (data::Answer { module: None, label: "Excel 工具箱 · 没成".into(), state: "failed", text: format!("没成：{e}"), records: vec![] }, false));
+                if changed {
+                    if let Ok(Some(edit)) = st.picky.with_db(|c| work::edit_of(c, self.shared.run_id)) {
+                        let _ = self.shared.channel.send(StreamEvent::Edit { edit });
+                    }
+                }
+                a
+            }
             name if act::is_act(name) => self.propose(call).await,
+            ask::TOOL => self.ask_me(call).await,
             name if skills::qbank::category(name).is_some() => {
                 let (a, run) = skills::qbank::run(self.app, &self.access, self.shared.run_id, &self.cards, name, &call.arguments).await;
                 self.send_card(run);
@@ -1277,8 +1418,8 @@ impl Host for AppHost<'_> {
         }
     }
     fn record(&self, position: usize, round: usize, call: &ToolCall, q: Query) {
-        if act::is_act(&call.name) {
-            return; // proposals show as the card, not as 「查了」
+        if act::is_act(&call.name) || call.name == ask::TOOL {
+            return; // proposals and questions show as their cards, not as 「查了」
         }
         let _ = self.app.state::<AppState>().picky.with_db(|c| data::save_query(c, self.shared.run_id, position, round, call, &q));
         let _ = self.shared.channel.send(StreamEvent::Query(q));
@@ -1322,14 +1463,14 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
             _ => (true, tools.to_vec()),
         };
         let names: Vec<&str> = offered.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
-        let opts = Options { max_tokens: Some(window - used - cost), thinking: Some(request.thinking), effort: None, search: false, tools: offered.clone(), no_calls: answer_now, one_off: false };
+        let opts = Options { max_tokens: Some(window - used - cost), thinking: Some(request.thinking), effort: request.effort.clone(), room_fixed: true, search: false, tools: offered.clone(), no_calls: answer_now, one_off: false, single_attempt: false };
         let (result, r) = host.stream(messages.clone(), opts).await;
         if let Err(e) = result {
             if round == 0 && provider::rejected(&e) && r.content.is_empty() && r.reasoning.is_empty() {
                 // the service doesn't take tools: say so, ask again without them
                 host.record(position, 0, &ToolCall::default(), Query::unsupported());
                 without_lookups(&mut messages, request);
-                return host.stream(messages, Options { max_tokens: Some(window - used), ..Default::default() }).await.0;
+                return host.stream(messages, Options { max_tokens: Some(window - used), thinking: Some(request.thinking), effort: request.effort.clone(), room_fixed: true, ..Default::default() }).await.0;
             }
             return Err(e);
         }
@@ -1344,6 +1485,7 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
         messages.push(Msg { role: "assistant".into(), content: r.content, tool_calls: calls.clone(), reasoning: Some(r.reasoning), reasoning_details: r.details, ..Default::default() });
         let room = window - used - cost - context::reserve(window);
         let mut spent = 0;
+        let mut only_asked = true;
         for (i, call) in calls.iter().enumerate() {
             let budget = (room - spent) / (calls.len() - i) as i64 - context::PER_MESSAGE;
             let answer = if budget < 64 {
@@ -1356,15 +1498,20 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
             let c = counter.count(&answer.text).await + context::PER_MESSAGE;
             used += c;
             spent += c;
+            only_asked &= call.name == ask::TOOL && answer.state == "ok";
             messages.push(Msg::tool(&call.id, &answer.text));
             host.record(position, round, call, Query::of(&answer));
             position += 1;
+        }
+        // a round spent asking me takes nothing from its lookups
+        if only_asked {
+            round -= 1;
         }
         // images looked at: a user message after the results (tool results carry text only)
         let images = host.take_images();
         if !images.is_empty() {
             let n = images.len() as i64;
-            messages.push(Msg { role: "user".into(), content: format!("（这是刚才用 pomelo_kb 看的 {n} 张图片）"), images, ..Default::default() });
+            messages.push(Msg { role: "user".into(), content: format!("（这是刚才看的 {n} 张图片）"), images, ..Default::default() });
             used += n * IMAGE_TOKENS + context::PER_MESSAGE;
             spent += n * IMAGE_TOKENS;
         }
@@ -1390,7 +1537,7 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
         let result = match access_for(&app, &route) {
             Some((access, today)) => {
                 let mut sink = YearSink { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now() };
-                super::yearly::compose(&mut sink, &route.target, (&route.model, &route.name), window, request.thinking, &access, &year, &today, &request.system, &request.prompt).await
+                super::yearly::compose(&mut sink, &route.target, (&route.model, &route.name), window, request.thinking, request.effort.as_deref(), &access, &year, &today, &request.system, &request.prompt).await
             }
             None => Err("读不到柚儿园的数据。".to_string()),
         };
@@ -1434,7 +1581,11 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
         };
         (lists(true), lists(false))
     };
-    let ctx = skills::Ctx { files: !materials.is_empty(), kb: kb.is_some(), text: !text_files.is_empty() };
+    let excel_files = {
+        let st = app.state::<AppState>();
+        st.picky.with_db(|c| Ok(st.search.with_db(|s| Ok(skills::toolbox::editable_excel(c, Some(s), &request.sources, kb.as_ref()))).unwrap_or_else(|_| skills::toolbox::editable_excel(c, None, &request.sources, None)))).unwrap_or_default()
+    };
+    let ctx = skills::Ctx { files: !materials.is_empty(), kb: kb.is_some(), text: !text_files.is_empty(), scheduled: request.read_only };
     // earlier lookups go with their questions only where this model may still see them
     let mut lookup = match access_for(&app, &route) {
         Some((access, today)) => {
@@ -1443,6 +1594,10 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
             let mut extra = if tables.is_empty() { vec![] } else { vec![super::office::table_tool()] };
             if rec.is_some() {
                 extra.push(record::tool());
+            }
+            // ASK: for me in a conversation (not a 定时任务, not the 复盘 record, which is a talk anyway), from a cloud model
+            if route.model.starts_with("cloud:") && !request.read_only && rec.is_none() {
+                extra.push(ask::tool());
             }
             lookup_plan(&app, access, today, &counter, &request.skills, request.read_only, extra, ctx).await
         }
@@ -1468,9 +1623,13 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
         }
     }
     if let Some(l) = &mut lookup {
-        let files = skills::toolbox::note(&l.tools, &word_files, &text_files);
-        if !files.is_empty() {
-            l.skilled = format!("{}\n{files}", l.skilled);
+        let st = app.state::<AppState>();
+        let dir = st.picky.files_dir().to_path_buf();
+        let images = if route.model.starts_with("cloud:") && l.reads_files { st.picky.with_db(|c| Ok(skills::files::images_note(c, &dir, &materials))).unwrap_or_default() } else { String::new() };
+        for files in [skills::toolbox::note(&l.tools, &word_files, &text_files), skills::toolbox::excel_note(&l.tools, &excel_files), images] {
+            if !files.is_empty() {
+                l.skilled = format!("{}\n{files}", l.skilled);
+            }
         }
         request.data = l.instructions();
         // the definitions and room for results come first; a question that only fits without them goes without
@@ -1490,12 +1649,12 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     publish(&app, &shared, &sources, 0);
     let result = match lookup {
         Some(l) if !read => {
-            let mut host = AppHost { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now(), access: l.access, today: l.today, sources, question: question.clone(), tables, materials, kb, word_files, text_files, images: vec![], looked: 0, cards, record: rec.map(|(s, _)| s) };
+            let mut host = AppHost { app: &app, shared: &shared, target: route.target.clone(), last: Instant::now(), access: l.access, today: l.today, sources, question: question.clone(), tables, materials, kb, word_files, text_files, excel_files, images: vec![], looked: 0, cards, record: rec.map(|(s, _)| s) };
             answer_with_lookups(&mut host, &l.tools, &l.forced, &question, l.cost, &counter, &request, messages, window, window - kept - max_tokens).await
         }
         _ => {
             without_lookups(&mut messages, &request);
-            let opts = Options { max_tokens: Some(max_tokens + kept), thinking: Some(request.thinking), ..Default::default() };
+            let opts = Options { max_tokens: Some(max_tokens + kept), thinking: Some(request.thinking), effort: request.effort.clone(), room_fixed: true, ..Default::default() };
             stream_round(&app, &shared, &route.target, messages, opts, &mut Instant::now()).await.0
         }
     };
@@ -1602,7 +1761,7 @@ fn session_of_message(app: &AppHandle, message_id: i64) -> Result<i64, String> {
 /// Streams the begun reply over `on_event` (reasoning / content deltas, then one `done`).
 pub(crate) fn start(app: &AppHandle, b: Begun, route: Route, on_event: Channel<StreamEvent>) -> Sent {
     let st = app.state::<AppState>();
-    let shared = Arc::new(Shared { run_id: b.run_id, reply_id: b.reply_id, buf: Mutex::default(), done: AtomicBool::new(false), channel: on_event, reading: Mutex::default(), queued: AtomicBool::new(false) });
+    let shared = Arc::new(Shared { run_id: b.run_id, reply_id: b.reply_id, buf: Mutex::default(), done: AtomicBool::new(false), channel: on_event, reading: Mutex::default(), queued: AtomicBool::new(false), ask: Default::default() });
     st.picky.runs.occupy(b.run_id, b.session_id, &route.model, Job::Reply(shared.clone()));
     let task = tauri::async_runtime::spawn(generate(app.clone(), shared, route, b.request));
     st.picky.runs.attach(b.run_id, task);
@@ -1612,6 +1771,28 @@ pub(crate) fn start(app: &AppHandle, b: Begun, route: Route, on_event: Channel<S
 
 /// Saves the question and an empty reply at the end of the shown path (a new session when
 /// `session_id` is None, in `project_id` with the draft's `instructions`), then streams the reply.
+/// ASK: my answer to a card. A reply waiting for it goes on; one that ended (the app quit) can't: `followUp` is what the
+/// page sends as a new message instead.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Answered {
+    follow_up: Option<String>,
+}
+
+#[tauri::command]
+pub fn picky_ask_answer(app: AppHandle, ask_id: i64, answers: Vec<ask::Answer>) -> Result<Answered, String> {
+    let st = app.state::<AppState>();
+    let (run, text) = st.picky.with_db(|c| ask::record_answer(c, ask_id, &answers))?;
+    let reply = st.picky.runs.answer(run, ask_id, text.clone());
+    if let Some(s) = &reply {
+        if let Ok(a) = st.picky.with_db(|c| ask::get(c, ask_id)) {
+            let _ = s.channel.send(StreamEvent::Ask { ask: a });
+        }
+    }
+    st.picky.changed();
+    Ok(Answered { follow_up: reply.is_none().then_some(text) })
+}
+
 /// Returns at once.
 #[tauri::command]
 pub async fn picky_send(
@@ -1621,6 +1802,7 @@ pub async fn picky_send(
     instructions: Option<SessionSetting>,
     memory_off: bool,
     thinking: Option<bool>,
+    effort: Option<String>,
     text: String,
     attachments: Vec<i64>,
     files: Vec<i64>,
@@ -1629,6 +1811,7 @@ pub async fn picky_send(
     page: Option<data::PageContext>,
     skills: Option<Vec<String>>,
     knowledge: Option<knowledge::Draft>,
+    capture: Option<bool>,
     on_event: Channel<StreamEvent>,
 ) -> Result<Sent, String> {
     let prompt = match text.trim() {
@@ -1637,7 +1820,7 @@ pub async fn picky_send(
         t => t,
     };
     let route = prepare(&app, session_id).await?;
-    let new = NewSession { project: project_id, setting: instructions.unwrap_or_default(), memory_off, thinking_off: thinking == Some(false), knowledge: knowledge.unwrap_or_default() };
+    let new = NewSession { project: project_id, setting: instructions.unwrap_or_default(), memory_off, thinking_off: thinking == Some(false), effort, knowledge: knowledge.unwrap_or_default(), capture: capture == Some(true) };
     // the page it was asked on (the 小窗): Rust fetches what it may, under this model's rules
     let page = page.and_then(|ctx| {
         let (access, today) = access_for(&app, &route)?;
@@ -1704,7 +1887,7 @@ pub(crate) mod tests {
     #[test]
     fn a_slot_per_conversation() {
         let runs = Runs::default();
-        let job = |run_id| Job::Reply(Arc::new(Shared { run_id, reply_id: run_id, buf: Mutex::default(), done: AtomicBool::new(false), channel: Channel::new(|_| Ok(())), reading: Mutex::default(), queued: AtomicBool::new(false) }));
+        let job = |run_id| Job::Reply(Arc::new(Shared { run_id, reply_id: run_id, buf: Mutex::default(), done: AtomicBool::new(false), channel: Channel::new(|_| Ok(())), reading: Mutex::default(), queued: AtomicBool::new(false), ask: Default::default() }));
         runs.occupy(1, 10, "cloud:claude", job(1));
         runs.occupy(2, 20, "local:qwen", job(2));
         assert!(runs.busy_in(10) && runs.busy_in(20) && !runs.busy_in(30));
@@ -1906,7 +2089,7 @@ pub(crate) mod tests {
         let c = memory_db();
         instructions::set_global(&c, "全局").unwrap();
         let preset = instructions::create_preset(&c, "老师", "像老师").unwrap();
-        let new = NewSession { project: None, setting: SessionSetting { content: " 简短 ".into(), preset_id: Some(preset) }, memory_off: false, thinking_off: false, knowledge: Default::default() };
+        let new = NewSession { project: None, setting: SessionSetting { content: " 简短 ".into(), preset_id: Some(preset) }, memory_off: false, thinking_off: false, effort: None, knowledge: Default::default(), capture: false };
         let b = begin_run_in(&c, None, &new, "q", "local:x", "X", &Extras::default()).unwrap();
         assert_eq!(b.request.system, "全局\n\n简短\n\n像老师");
         assert_eq!(instructions::session_setting(&c, b.session_id).unwrap(), SessionSetting { content: "简短".into(), preset_id: Some(preset) });
@@ -1992,6 +2175,10 @@ pub(crate) mod tests {
         /// 查知识库's look: images waiting for the next request; a real image to look at (else a stand-in).
         images: Vec<Image>,
         kb_image: Option<std::path::PathBuf>,
+        /// Offer ASK too (a cloud model's).
+        with_ask: bool,
+        /// What each coming round calls.
+        rounds: std::collections::VecDeque<ToolCall>,
         /// Refuse requests with tools (like a model without tool support).
         reject_tools: bool,
         /// Mock by default; the real-model harness points it at 8080.
@@ -2010,12 +2197,51 @@ pub(crate) mod tests {
         /// Word 工具箱 / 文本工具箱: what they may change, the reply whose card they fill (in `picky`).
         word_files: Vec<skills::toolbox::Editable>,
         text_files: Vec<skills::toolbox::Editable>,
+        excel_files: Vec<skills::toolbox::Editable>,
         run_id: i64,
+        /// 读文件's images / look: where `picky`'s stored copies are, and how many this reply looked at.
+        files_dir: Option<std::path::PathBuf>,
+        looked: usize,
     }
 
     impl TestHost {
+        /// 读文件's images / look as AppHost does them, on the stored copy.
+        fn file_images(&mut self, arguments: &str) -> data::Answer {
+            let failed = |label: String, why: String| data::Answer { module: None, label: format!("读文件 · {label}"), state: "failed", text: format!("没成：{why}"), records: vec![] };
+            let args: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
+            let look = args["view"] == "look";
+            if look && !matches!(self.target, Target::Cloud { .. }) {
+                return failed("看图".into(), "只有云端模型能看图片".into());
+            }
+            if look && self.looked >= MAX_IMAGES {
+                return failed("看图 · 太多了".into(), format!("这条回答已经看了 {MAX_IMAGES} 张图片，不能再看了。"));
+            }
+            let m = match skills::files::pick_one(&self.materials, &args) {
+                Ok(m) => m.clone(),
+                Err(e) => return failed("没有这个文件".into(), e),
+            };
+            let (Some(p), Some(dir)) = (&self.picky, &self.files_dir) else { return failed("没有文件".into(), "没有文件".into()) };
+            let data = std::fs::read(files::path_of(p, dir, m.artifact).unwrap()).unwrap();
+            let ext = skills::files::ext_of(&m.name);
+            if !look {
+                return match crate::picky::office::images_text(&m.name, &data, &ext) {
+                    Ok(text) => data::Answer { module: None, label: format!("读文件 · 《{}》里的图片", m.name), state: "ok", text, records: vec![] },
+                    Err(e) => failed(format!("《{}》", m.name), e),
+                };
+            }
+            match crate::picky::office::look_at(&data, &ext, &args, &std::env::temp_dir().join("pomelo-test-images")) {
+                Ok((place, media_type, b64)) => {
+                    let number = args["image"].as_i64().or_else(|| args["page"].as_i64()).unwrap_or(0);
+                    let n = self.sources.passage(m.artifact, skills::files::IMAGE_SEGMENT + number, &format!("{} · {place}", m.name), "附件和资料", &format!("（看的是图片：{place}）"));
+                    self.looked += 1;
+                    self.images.push(Image { media_type, data: b64 });
+                    data::Answer { module: None, label: format!("读文件 · 看《{}》{place}", m.name), state: "ok", text: format!("[{n}] 《{}》{place} 附在下面那条消息里：看了再回答，用到时标 [{n}]。", m.name), records: vec![] }
+                }
+                Err(e) => failed(format!("《{}》", m.name), e),
+            }
+        }
         fn new(pomelo: Connection, access: data::Access) -> Self {
-            TestHost { pomelo, access, requests: vec![], recorded: Default::default(), content: String::new(), greedy: false, script: vec![], images: vec![], kb_image: None, reject_tools: false, target: Target::Mock { thinking: false }, reasoning: String::new(), sources: Sources::default(), proposals: vec![], question: String::new(), asked: vec![], picky: None, materials: vec![], word_files: vec![], text_files: vec![], run_id: 0 }
+            TestHost { pomelo, access, requests: vec![], recorded: Default::default(), content: String::new(), greedy: false, with_ask: false, rounds: Default::default(), script: vec![], images: vec![], kb_image: None, reject_tools: false, target: Target::Mock { thinking: false }, reasoning: String::new(), sources: Sources::default(), proposals: vec![], question: String::new(), asked: vec![], picky: None, materials: vec![], word_files: vec![], text_files: vec![], excel_files: vec![], run_id: 0, files_dir: None, looked: 0 }
         }
     }
 
@@ -2025,6 +2251,12 @@ pub(crate) mod tests {
             let mut r = Round::default();
             if self.reject_tools && !opts.tools.is_empty() {
                 return (Err(provider::failure::REQUEST.into()), r);
+            }
+            if !opts.no_calls {
+                if let Some(call) = self.rounds.pop_front() {
+                    r.calls = vec![call];
+                    return (Ok(()), r);
+                }
             }
             if !self.script.is_empty() && !opts.no_calls {
                 r.calls = std::mem::take(&mut self.script);
@@ -2048,6 +2280,11 @@ pub(crate) mod tests {
         }
         async fn lookup(&mut self, call: &ToolCall, budget: i64) -> data::Answer {
             match call.name.as_str() {
+                // ASK: answered at once here (the Gate has its own test)
+                ask::TOOL => match ask::parse(&call.arguments) {
+                    Ok(q) => data::Answer { module: None, label: "问了你".into(), state: "ok", text: ask::answer_text(&q, &q.iter().map(|x| ask::Answer { picked: vec![x.options[0].clone()], other: String::new() }).collect::<Vec<_>>()).unwrap(), records: vec![] },
+                    Err(e) => data::Answer { module: None, label: "没问成".into(), state: "failed", text: e, records: vec![] },
+                },
                 cite::SEARCH => {
                     let req = match cite::request(&self.access, &call.arguments) {
                         Ok(r) => r,
@@ -2062,6 +2299,7 @@ pub(crate) mod tests {
                     let found = crate::search::query::found_by_words(&s, &req.text, mask, &exclude, 12).unwrap();
                     cite::results(&req.text, &crate::search::query::Answer { found, note: None }, &mut self.sources, budget)
                 }
+                skills::files::TOOL if matches!(serde_json::from_str::<serde_json::Value>(&call.arguments).unwrap_or_default()["view"].as_str(), Some("images" | "look")) => self.file_images(&call.arguments),
                 skills::files::TOOL => match &self.picky {
                     Some(p) => skills::files::run(p, &self.materials, &mut self.sources, &call.arguments, budget),
                     None => data::Answer { module: None, label: "读文件 · 没有文件".into(), state: "failed", text: "没有文件".into(), records: vec![] },
@@ -2087,6 +2325,10 @@ pub(crate) mod tests {
                         None => data::Answer { module: None, label: "工具箱 · 没有文件".into(), state: "failed", text: "没有文件".into(), records: vec![] },
                     }
                 }
+                skills::toolbox::EXCEL_TOOL => match &self.picky {
+                    Some(p) => skills::toolbox::run_excel(p, self.run_id, &self.excel_files, &call.arguments, budget).0,
+                    None => data::Answer { module: None, label: "工具箱 · 没有文件".into(), state: "failed", text: "没有文件".into(), records: vec![] },
+                },
                 cite::READ => cite::read_with(&self.access, &self.sources, &call.arguments, budget, |_, kind, id| {
                     data::record_text(&self.pomelo, data::tests::TODAY, &data::PageRef { kind: kind.into(), id }).map(|(_, t, _)| t)
                 }),
@@ -2151,8 +2393,9 @@ pub(crate) mod tests {
         std::env::var("POMELO_REAL_WEB").as_deref() == Ok("1")
     }
 
+    /// A window like a cloud model's (the tool definitions alone take most of a small one).
     fn ask(host: &mut TestHost, question: &str) -> Result<(), String> {
-        ask_in(host, question, context::MOCK_WINDOW)
+        ask_in(host, question, 131_072)
     }
 
     fn ask_in(host: &mut TestHost, question: &str, window: i64) -> Result<(), String> {
@@ -2189,6 +2432,10 @@ pub(crate) mod tests {
             let ctx = data::PageContext { module: parts[0].into(), page: Some("投递".into()), record: Some(data::PageRef { kind: parts.get(1).copied().unwrap_or("job").into(), id }), ..Default::default() };
             request.page = data::page_query(&host.pomelo, &host.access, data::tests::TODAY, &ctx);
             request.with_page(|q| access.may_send(q));
+        }
+        let mut tools = tools;
+        if host.with_ask {
+            tools.push(ask::tool());
         }
         let messages = request.messages_with(0, question);
         let est = |s: &str| context::estimate(s);
@@ -2418,6 +2665,7 @@ pub(crate) mod tests {
         let questionnaire = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/archive/Questionnaire-round7.docx")).unwrap();
         let notes = "# 周末计划\n\n周六上午去超市，买牛奶、鸡蛋、面包。\n\n周六下午 打扫房间 洗衣服 给妈妈打电话\n\n周日看一部电影。\n\n（这段是草稿，可以删掉）\n".as_bytes().to_vec();
         let crlf = "第一段：这周的工作很多。\r\n\r\n第二段：周三之前要交季度报告，需要和财务确认数字。\r\n\r\n第三段：周五团建。\r\n".as_bytes().to_vec();
+        let budget = crate::picky::excel::tests::sample_xlsx();
         let f = |n: &str, b: &Vec<u8>, kb: bool| (n.to_string(), b.clone(), kb);
         vec![
             TbCase { name: "translate", files: vec![f("SA62_Week4_Report.docx", &report, false)], ask: "把这份周报翻译成中文，格式不要变".into() },
@@ -2434,6 +2682,13 @@ pub(crate) mod tests {
             TbCase { name: "crlf", files: vec![f("周报.txt", &crlf, false)], ask: "第二段写得更口语一点".into() },
             TbCase { name: "followup", files: vec![f("求职信.docx", &letter, false)], ask: "求职信第二段写得更具体一点>>第三段也改一下，语气更自信".into() },
             TbCase { name: "advice", files: vec![f("简历.docx", &resume, false)], ask: "帮我看看这份简历有什么问题".into() },
+            // Excel 工具箱: 预算 表 is 十月预算 (merged title), a header, 房租 / 水电 / 网费 with a shared formula and a 合计
+            TbCase { name: "excel-cells", files: vec![f("十月预算.xlsx", &budget, false)], ask: "预算表里房租改成 3200，网费的日期改成 10 月 25 日".into() },
+            TbCase { name: "excel-rows", files: vec![f("十月预算.xlsx", &budget, false)], ask: "在网费后面加一行：物业费 150，日期 10 月 28 日，两倍那一格照上面的公式算；再把水电那一行删掉".into() },
+            TbCase { name: "excel-formula", files: vec![f("十月预算.xlsx", &budget, false)], ask: "合计下面加一行「平均」，用公式算房租、水电、网费三项金额的平均".into() },
+            TbCase { name: "excel-kb", files: vec![f("十月预算.xlsx", &budget, true)], ask: "知识库里的十月预算，把网费的比例填成 5%".into() },
+            TbCase { name: "excel-new", files: vec![], ask: "把东京三天的预算列成表存成 Excel：每天住宿、交通、吃饭各多少（日元），最后一行用公式算合计".into() },
+            TbCase { name: "excel-read", files: vec![f("十月预算.xlsx", &budget, false)], ask: "这份预算一共多少钱？最贵的是哪一项？".into() },
         ]
     }
 
@@ -2446,13 +2701,19 @@ pub(crate) mod tests {
         let here = dir.join(case.name);
         std::fs::create_dir_all(here.join("资料")).unwrap();
         let picky = memory_db();
-        let (mut ids, mut kb_word, mut kb_text) = (vec![], vec![], vec![]);
+        let (mut ids, mut kb_word, mut kb_text, mut kb_excel) = (vec![], vec![], vec![], vec![]);
         for (name, bytes, kb) in &case.files {
             let path = if *kb { here.join("资料").join(name) } else { here.join(name) };
             std::fs::write(&path, bytes).unwrap();
             if *kb {
                 let e = skills::toolbox::Editable { name: format!("资料/{name}"), path: path.display().to_string(), from: "知识库 · 测试".into() };
-                if name.ends_with(".docx") { kb_word.push(e) } else { kb_text.push(e) }
+                if name.ends_with(".docx") {
+                    kb_word.push(e)
+                } else if name.ends_with(".xlsx") {
+                    kb_excel.push(e)
+                } else {
+                    kb_text.push(e)
+                }
             } else {
                 let a = files::tests::add(&picky, &here.join("store"), name, bytes);
                 files::remember_source(&picky, a, &path).unwrap();
@@ -2464,6 +2725,8 @@ pub(crate) mod tests {
         word.extend(kb_word);
         let mut text = skills::toolbox::editable(&picky, None, &sources, None, None, false);
         text.extend(kb_text);
+        let mut excel = skills::toolbox::editable_excel(&picky, None, &sources, None);
+        excel.extend(kb_excel);
         // POMELO_TB_DUMP=1: how the files read (paragraphs as the model gets them), nothing asked
         if std::env::var("POMELO_TB_DUMP").as_deref() == Ok("1") {
             for (f, w) in word.iter().map(|f| (f, true)).chain(text.iter().map(|f| (f, false))) {
@@ -2479,7 +2742,8 @@ pub(crate) mod tests {
         h.materials = skills::files::materials(&sources);
         h.word_files = word;
         h.text_files = text.clone();
-        let mut keys = vec![skills::BOOKS, skills::FILMS, skills::WORD];
+        h.excel_files = excel;
+        let mut keys = vec![skills::BOOKS, skills::FILMS, skills::WORD, skills::EXCEL];
         if !text.is_empty() {
             keys.push(skills::TEXT);
         }
@@ -2490,7 +2754,7 @@ pub(crate) mod tests {
         let mut tools = data::tools(&h.access);
         tools.extend(skills::tools(&all));
         let thinking = std::env::var("POMELO_THINK").as_deref() == Ok("1");
-        let skilled = format!("{}\n{}", skills::instructions(&all, &[]), skills::toolbox::note(&tools, &h.word_files, &h.text_files));
+        let skilled = format!("{}\n{}\n{}", skills::instructions(&all, &[]), skills::toolbox::note(&tools, &h.word_files, &h.text_files), skills::toolbox::excel_note(&tools, &h.excel_files));
         let data_text = [data::instructions(data::tests::TODAY, &h.access, skills::verifies(&all)), act::instructions(&h.pomelo, &h.access, data::tests::TODAY).unwrap(), skilled].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n");
         h.picky = Some(picky);
         let mut before = Request::default();
@@ -2519,6 +2783,26 @@ pub(crate) mod tests {
             let p = h.picky.as_ref().unwrap();
             match work::edit_of(p, h.run_id).unwrap() {
                 None => println!("--- no card"),
+                Some(card) if card.kind == work::NEW_EXCEL => {
+                    println!("--- card: 新建 {}\n{}", card.name, card.items.first().map(|i| i.after.as_str()).unwrap_or(""));
+                    let saved = work::create_word(p, h.run_id, &here.display().to_string(), "").unwrap();
+                    let b = crate::picky::excel::Book::open(&std::fs::read(&saved.path).unwrap()).unwrap();
+                    println!("    saved {}\n    {}\n{}", saved.path, b.outline(), b.read_rows(b.first_sheet(), 1, 40, "", 4000).unwrap().1);
+                }
+                Some(card) if card.kind == work::EXCEL => {
+                    println!("--- card: {} ({} items)", card.name, card.items.len());
+                    for it in &card.items {
+                        println!("    {}: {} ⟶ {}", it.label.as_deref().unwrap_or(""), short(&it.before, 100), short(&it.after, 140));
+                    }
+                    let positions: Vec<i64> = card.items.iter().map(|i| i.position).collect();
+                    match work::write(p, h.run_id, &positions) {
+                        Err(e) => println!("    ✗ write failed: {e}"),
+                        Ok(_) => {
+                            let b = crate::picky::excel::Book::open(&std::fs::read(&card.path).unwrap()).unwrap();
+                            println!("    written:\n    {}\n{}", b.outline(), b.read_rows(b.first_sheet(), 1, 40, "", 4000).unwrap().1);
+                        }
+                    }
+                }
                 Some(card) if card.kind == work::NEW_WORD => {
                     println!("--- card: 新建 {}", card.name);
                     let saved = work::create_word(p, h.run_id, &here.display().to_string(), "").unwrap();
@@ -2568,6 +2852,11 @@ pub(crate) mod tests {
         let key = std::fs::read_to_string(f).expect("the key file").trim().to_string();
         let mut m = crate::picky::cloud::defaults().remove(0);
         use crate::picky::cloud::Service;
+        // its 思考强度: POMELO_CLOUD_EFFORTS=low,high,max [POMELO_CLOUD_DEFAULT_EFFORT=max]
+        if let Ok(list) = std::env::var("POMELO_CLOUD_EFFORTS") {
+            m.efforts = list.split(',').map(str::to_string).collect();
+        }
+        m.default_effort = std::env::var("POMELO_CLOUD_DEFAULT_EFFORT").ok();
         let service = match std::env::var("POMELO_CLOUD_SERVICE").as_deref() {
             Ok("openrouter") => Some(Service::OpenRouter),
             Ok("openai") => Some(Service::OpenAi),
@@ -2621,6 +2910,222 @@ pub(crate) mod tests {
             println!("  [{round}] {} {} → {} ({})", call.name, call.arguments, a.label, a.state);
         }
         println!("--- answer\n{}", h.content);
+    }
+
+    /// A picture of a few lines of English (a one-page PDF drawn by sips), as PNG bytes.
+    fn picture(dir: &std::path::Path, name: &str, lines: &[&str]) -> Vec<u8> {
+        let stream: String = lines.iter().enumerate().map(|(i, l)| format!("BT /F1 16 Tf 24 {} Td ({l}) Tj ET\n", 270 - i as i64 * 26)).collect();
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [4 0 R] /Count 1 >>".into(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 520 300] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>".into(),
+            format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len()),
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = vec![];
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+        for o in offsets {
+            out.extend(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+        let (pdf, png) = (dir.join(format!("{name}.pdf")), dir.join(format!("{name}.png")));
+        std::fs::write(&pdf, out).unwrap();
+        assert!(std::process::Command::new("/usr/bin/sips").args(["-s", "format", "png"]).arg(&pdf).arg("--out").arg(&png).output().unwrap().status.success());
+        std::fs::read(&png).unwrap()
+    }
+
+    /// A zip with some parts changed and some added (a .docx / .pptx).
+    fn rezip(data: &[u8], change: impl Fn(&str, Vec<u8>) -> Vec<u8>, extra: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::{Read as _, Write as _};
+        let mut zin = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for i in 0..zin.len() {
+            let mut part = zin.by_index(i).unwrap();
+            let name = part.name().unwrap().to_string();
+            let mut bytes = vec![];
+            part.read_to_end(&mut bytes).unwrap();
+            w.start_file(name.as_str(), opts).unwrap();
+            w.write_all(&change(&name, bytes)).unwrap();
+        }
+        for (name, bytes) in extra {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(bytes).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    /// An inline picture as Word writes one (`rid`: its relationship).
+    fn drawing(rid: &str, id: u32) -> String {
+        format!(r#"<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="4953000" cy="2857500"/><wp:docPr id="{id}" name="Picture {id}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{id}" name="image{id}.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4953000" cy="2857500"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#)
+    }
+
+    /// 读文件's images with a real cloud model: made-up pictures inside a Word file (two charts), a PowerPoint
+    /// file (a slide's picture) and a scanned PDF (no text at all). It should list, look, and say what they show.
+    ///   POMELO_CLOUD_KEY_FILE=… [POMELO_IMG_CASE=docx,pptx,pdf] [POMELO_THINK=1] cargo test real_file_images -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_file_images() {
+        let out = std::env::var("POMELO_IMG_OUT").ok(); // only write the made-up files there (to try them in the app)
+        let cloud = cloud_target();
+        if cloud.is_none() && out.is_none() {
+            return;
+        }
+        let dir = crate::db::tests::temp_dir("real-file-images");
+        let sales = picture(&dir, "sales", &["Q3 sales by region (million CNY)", "North  4.2", "South  3.1", "West   2.7", "Total 10.0, up 18% from Q2"]);
+        let staff = picture(&dir, "staff", &["Headcount by team, end of Q3", "Product 12", "Engineering 31", "Sales 9"]);
+        let roadmap = picture(&dir, "roadmap", &["Roadmap 2027", "Jan: public beta", "Apr: payments", "Sep: launch in Japan"]);
+        picture(&dir, "receipt", &["Receipt No. 58213   2026-10-28", "Coffee beans  2 x 68.00", "Milk          1 x 12.50", "Total CNY 148.50   Paid by card"]);
+        // Word: our own document with two pictures, each after the paragraph that introduces it
+        let md = "# 季度报告\n\n下面是第三季度各区域的销售额。\n\n[图一]\n\n各团队的人数见下图。\n\n[图二]\n\n下一季度的计划另附。";
+        let base = crate::picky::word::markdown_to_docx(md, &[]).unwrap();
+        let docx = rezip(
+            &base,
+            |name, bytes| {
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                match name {
+                    "word/document.xml" => {
+                        let mut t = text;
+                        for (mark, rid, id) in [("[图一]", "rIdPic1", 101), ("[图二]", "rIdPic2", 102)] {
+                            let at = t.find(mark).unwrap();
+                            let end = at + t[at..].find("</w:r>").unwrap() + "</w:r>".len();
+                            t.insert_str(end, &drawing(rid, id));
+                            t = t.replacen(mark, "", 1);
+                        }
+                        t.into_bytes()
+                    }
+                    "word/_rels/document.xml.rels" => text.replace("</Relationships>", r#"<Relationship Id="rIdPic1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rIdPic2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image2.png"/></Relationships>"#).into_bytes(),
+                    "[Content_Types].xml" if !text.contains(r#"Extension="png""#) => text.replacen("<Default ", r#"<Default Extension="png" ContentType="image/png"/><Default "#, 1).into_bytes(),
+                    _ => bytes,
+                }
+            },
+            &[("word/media/image1.png", &sales), ("word/media/image2.png", &staff)],
+        );
+        // PowerPoint: slide 1 words only, slide 2 a title and a picture
+        let sld = |body: &str| format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree>{body}</p:spTree></p:cSld></p:sld>"#);
+        let title = |t: &str| format!(r#"<p:sp><p:txBody><a:p><a:r><a:t>{t}</a:t></a:r></a:p></p:txBody></p:sp>"#);
+        let s1 = sld(&title("柚子科技 · 2026 年度回顾"));
+        let s2 = sld(&format!(r#"{}<p:pic><p:blipFill><a:blip r:embed="rId2"/></p:blipFill></p:pic>"#, title("明年的路线图")));
+        let rels2 = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>"#;
+        let pptx = {
+            use std::io::Write as _;
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = zip::write::SimpleFileOptions::default();
+            for (name, bytes) in [("ppt/slides/slide1.xml", s1.as_bytes()), ("ppt/slides/slide2.xml", s2.as_bytes()), ("ppt/slides/_rels/slide2.xml.rels", rels2.as_bytes()), ("ppt/media/image1.png", &roadmap[..])] {
+                w.start_file(name, opts).unwrap();
+                w.write_all(bytes).unwrap();
+            }
+            w.finish().unwrap().into_inner()
+        };
+        // a scanned PDF: the receipt as an image, no text
+        let png = dir.join("receipt.png");
+        let scan = dir.join("收据扫描.pdf");
+        assert!(std::process::Command::new("/usr/bin/sips").args(["-s", "format", "pdf"]).arg(&png).arg("--out").arg(&scan).output().unwrap().status.success());
+        let scan = std::fs::read(&scan).unwrap();
+        let cases: Vec<(&str, &str, Vec<u8>, &str)> = vec![
+            ("docx", "季度报告.docx", docx, "报告里两张图分别讲了什么？各区域的销售额和各团队的人数是多少？"),
+            ("pptx", "年度回顾.pptx", pptx, "幻灯片里路线图那页，明年各个月份计划做什么？"),
+            ("pdf", "收据扫描.pdf", scan, "这张收据一共多少钱？买了什么？"),
+        ];
+        if let Some(out) = out {
+            let out = std::path::Path::new(&out);
+            for (_, name, bytes, _) in &cases {
+                std::fs::write(out.join(name), bytes).unwrap();
+            }
+            std::fs::write(out.join("十月预算.xlsx"), crate::picky::excel::tests::sample_xlsx()).unwrap();
+            return;
+        }
+        let (target, window) = cloud.unwrap();
+        let pick = std::env::var("POMELO_IMG_CASE").unwrap_or_else(|_| "all".into());
+        let thinking = std::env::var("POMELO_THINK").as_deref() == Ok("1");
+        for (case, name, bytes, q) in cases.into_iter().filter(|c| pick == "all" || pick.split(',').any(|p| p == c.0)) {
+            let here = dir.join(case);
+            let picky = memory_db();
+            let a = files::tests::add(&picky, &here, name, &bytes);
+            let sources = reading::sources(&picky, &[], &[a], &[], &[]).unwrap();
+            let mut h = TestHost::new(crate::db::tests::memory_db(), data::Access::default());
+            h.target = target.clone();
+            h.materials = skills::files::materials(&sources);
+            let note = skills::files::images_note(&picky, &here.join("files"), &h.materials);
+            h.picky = Some(picky);
+            h.files_dir = Some(here.join("files"));
+            let all = vec![skills::skill(skills::FILES).unwrap()];
+            let tools = skills::tools(&all);
+            let prompt = reading::prompt(q, &sources);
+            let request = Request { data: format!("{}\n{note}", skills::instructions(&all, &[])), prompt: prompt.clone(), thinking, ..Request::default() };
+            let messages = request.messages_with(0, &prompt);
+            let cost = context::estimate(&serde_json::to_string(&tools).unwrap()) + TOOLS_OVERHEAD;
+            let used = context::PROMPT_OVERHEAD + messages.iter().map(|m| context::estimate(&m.content) + context::PER_MESSAGE).sum::<i64>();
+            let counter = Counter::for_target(&h.target);
+            let t = std::time::Instant::now();
+            let r = tauri::async_runtime::block_on(answer_with_lookups(&mut h, &tools, &[], q, cost, &counter, &request, messages, window, used));
+            println!("\n==================== [{case}] {q}  ({:.1}s, {} requests, {r:?})\nnote: {note}", t.elapsed().as_secs_f64(), h.requests.len());
+            for (_, round, call, a) in h.recorded.borrow().iter() {
+                println!("  [{round}] {} {} → {} ({})", call.name, call.arguments, a.label, a.state);
+            }
+            println!("--- answer (cites {:?})\n{}", cite::cited(&h.content, &h.sources.0), h.content.trim());
+        }
+    }
+
+    /// A 定时任务 with a real model, as `lookup_plan` gives it one: read-only data, 联网搜索 without 联网 pressed
+    /// (simulated pages unless POMELO_REAL_WEB=1), Word / Excel 工具箱 that only propose. Prints what it called, the
+    /// answer and the card it left (a new workbook is saved in a temp folder and read back).
+    ///   POMELO_CLOUD_KEY_FILE=… [POMELO_ASK=<the task's prompt>] [POMELO_THINK=1] cargo test real_schedule -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_schedule() {
+        let Some((target, window)) = cloud_target() else { return };
+        let q = std::env::var("POMELO_ASK").unwrap_or_else(|_| "联网查一下这周有什么值得关注的科技新闻，挑 5 条整理成表（日期、标题、一句话摘要、来源），存成 Excel。".into());
+        let access = data::Access { cloud: true, cloud_allowed: data::MODULES.iter().filter(|m| m.key != "finance").map(|m| m.key.to_string()).collect(), ..data::Access::default() };
+        let mut h = TestHost::new(made_up_db(), access);
+        h.target = target;
+        let picky = memory_db();
+        h.run_id = begin_run(&picky, None, None, &q, "cloud:test", "Test").unwrap().run_id;
+        h.picky = Some(picky);
+        let all: Vec<&skills::Skill> = [skills::BOOKS, skills::FILMS, skills::WEB, skills::WORD, skills::EXCEL].iter().filter_map(|k| skills::skill(k)).collect();
+        let mut tools = data::tools(&h.access);
+        tools.retain(|t| !t["function"]["name"].as_str().is_some_and(act::is_act));
+        tools.extend(skills::tools(&all));
+        let skilled = [skills::instructions(&all, &[]), skills::toolbox::note(&tools, &[], &[]), skills::toolbox::excel_note(&tools, &[])].join("\n");
+        let data_text = [data::instructions(data::tests::TODAY, &h.access, skills::verifies(&all)), skilled].join("\n\n");
+        let rule = crate::picky::schedule::Rule { every: "week".into(), day: Some(1), month: None, at: "09:00".into() };
+        let thinking = std::env::var("POMELO_THINK").as_deref() == Ok("1");
+        let request = Request { system: crate::picky::schedule::note("科技周报", &rule, &format!("{} 09:00", data::tests::TODAY)), data: data_text, prompt: q.clone(), thinking, ..Request::default() };
+        h.question = q.clone();
+        let messages = request.messages_with(0, &q);
+        let cost = context::estimate(&serde_json::to_string(&tools).unwrap()) + TOOLS_OVERHEAD;
+        let used = context::PROMPT_OVERHEAD + messages.iter().map(|m| context::estimate(&m.content) + context::PER_MESSAGE).sum::<i64>();
+        let counter = Counter::for_target(&h.target);
+        let t = std::time::Instant::now();
+        let r = tauri::async_runtime::block_on(answer_with_lookups(&mut h, &tools, &[], &q, cost, &counter, &request, messages, window, used));
+        println!("\n==================== {q}  ({:.1}s, {} requests, {r:?})", t.elapsed().as_secs_f64(), h.requests.len());
+        for (_, round, call, a) in h.recorded.borrow().iter() {
+            println!("  [{round}] {} {} → {} ({})", call.name, short(&call.arguments, 200), a.label, a.state);
+        }
+        println!("--- answer ({} chars reasoning, cites {:?})\n{}", h.reasoning.chars().count(), cite::cited(&h.content, &h.sources.0), h.content.trim());
+        assert!(h.proposals.is_empty(), "a 定时任务 proposes no records");
+        let p = h.picky.as_ref().unwrap();
+        match work::edit_of(p, h.run_id).unwrap() {
+            None => println!("--- no card"),
+            Some(card) => {
+                println!("--- card: {} {} ({})\n{}", card.kind, card.name, card.state, card.items.first().map(|i| i.after.as_str()).unwrap_or(""));
+                if card.kind == work::NEW_EXCEL || card.kind == work::NEW_WORD {
+                    let dir = crate::db::tests::temp_dir("real-schedule");
+                    let saved = work::create_word(p, h.run_id, &dir.display().to_string(), "").unwrap();
+                    println!("    saved {}", saved.path);
+                    if card.kind == work::NEW_EXCEL {
+                        let b = crate::picky::excel::Book::open(&std::fs::read(&saved.path).unwrap()).unwrap();
+                        println!("    {}\n{}", b.outline(), b.read_rows(b.first_sheet(), 1, 40, "", 4000).unwrap().1);
+                    }
+                }
+            }
+        }
     }
 
     /// Word 工具箱 / 文本工具箱 with a real model on made-up files in a temp folder (each case a
@@ -2714,7 +3219,7 @@ pub(crate) mod tests {
         let mut h = TestHost::new(crate::db::tests::memory_db(), cloud);
         ask(&mut h, "午饭 35").unwrap();
         assert!(h.proposals.is_empty());
-        assert!(h.content.starts_with("钱来钱往不发给云端，这次不能记"), "{}", h.content);
+        assert!(h.content.starts_with("钱来钱往 · 收支不发给云端，这次不能记"), "{}", h.content);
     }
 
     /// 联网 / 「/书单检索」: the asked-for skill alone first (a call required), its pages numbered; on its
@@ -2797,6 +3302,33 @@ pub(crate) mod tests {
         assert!(sent[n - 1].content.contains("1 张图片"));
         // the window counts it
         assert!(h.requests[1].1.max_tokens.unwrap() <= h.requests[0].1.max_tokens.unwrap() - IMAGE_TOKENS);
+    }
+
+    #[test]
+    fn asking_me_goes_on_with_my_answer_and_takes_no_lookup_round() {
+        let mut h = TestHost::new(crate::db::tests::memory_db(), data::Access::default());
+        h.with_ask = true;
+        ask(&mut h, "问我测试").unwrap();
+        // the card's round, then the answer with what I said (first option of each, TestHost)
+        assert_eq!(h.requests.len(), 2);
+        let tool = h.requests[1].0.last().unwrap();
+        assert_eq!(tool.role, "tool");
+        assert!(tool.content.starts_with(ask::ANSWER_HEAD) && tool.content.contains("→ 简单做") && tool.content.contains("→ 是"));
+        assert!(h.content.contains("收到了你的回答") && h.content.contains("简单做"));
+        // not offered: no question, an ordinary answer
+        let mut plain = TestHost::new(crate::db::tests::memory_db(), data::Access::default());
+        ask(&mut plain, "问我测试").unwrap();
+        assert_eq!(plain.requests.len(), 1);
+        // asks take no lookup round; a broken one does (it can't loop for ever)
+        let mut h = TestHost::new(crate::db::tests::memory_db(), data::Access::default());
+        h.with_ask = true;
+        let good = ToolCall { id: "a".into(), name: ask::TOOL.into(), arguments: r#"{"questions":[{"question":"对吗？","kind":"judge"}]}"#.into() };
+        let bad = ToolCall { id: "b".into(), name: ask::TOOL.into(), arguments: "不是 JSON".into() };
+        h.rounds = std::iter::repeat_n(good, 6).chain(std::iter::repeat_n(bad, 20)).collect();
+        ask_in(&mut h, "随便", context::MOCK_WINDOW * 2).unwrap();
+        // six asks, then the usual rounds, then it must answer
+        assert!(h.requests.iter().take(6 + data::MAX_ROUNDS).all(|(_, o)| !o.no_calls && o.tools.iter().any(|t| t["function"]["name"] == ask::TOOL)));
+        assert!(h.requests.len() <= 6 + data::MAX_ROUNDS + 2 && h.requests.last().unwrap().1.no_calls);
     }
 
     #[test]

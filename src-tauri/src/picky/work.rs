@@ -12,6 +12,8 @@
 //!   changed since — and nothing else in the file moves. Markdown / text keep their line endings and
 //!   encoding (UTF-8 with or without BOM, UTF-16). A card can instead hold a new Word document (Word
 //!   工具箱 create: its name and Markdown), saved where the user picks when they confirm.
+//! - Excel 工具箱 (excel.rs, skills/toolbox.rs): a card of changes to a workbook's cells and rows (`excel`: each
+//!   item's `label` says where, its `payload` is the change) or a new workbook (`new-excel`), written the same way.
 //! - Older questions picked their file (message_edit_files); a new version of one still has it.
 //! - Writing a file isn't undoable (it is outside Pomelo's data); proposing, writing and cancelling
 //!   aren't either (like sending).
@@ -225,8 +227,10 @@ pub fn target_of(conn: &Connection, message_id: i64) -> Result<Option<Target>, S
 #[serde(rename_all = "camelCase")]
 pub struct EditItem {
     pub position: i64,
-    /// 1-based.
+    /// 1-based (Excel: a key for its place, excel.rs).
     pub paragraph: i64,
+    /// Where it is when not a paragraph (Excel: 表「预算」B3).
+    pub label: Option<String>,
     pub before: String,
     pub after: String,
     pub checked: bool,
@@ -239,7 +243,7 @@ pub struct FileEdit {
     pub run_id: i64,
     pub path: String,
     pub name: String,
-    /// markdown | text | word
+    /// markdown | text | word | excel | new-word | new-excel
     pub kind: String,
     pub total: i64,
     /// pending | written | cancelled
@@ -248,25 +252,37 @@ pub struct FileEdit {
     pub items: Vec<EditItem>,
 }
 
-/// A card's kind for a new Word document.
+/// A card's kind for a new Word document, for changes to a workbook and for a new one.
 pub const NEW_WORD: &str = "new-word";
+pub const EXCEL: &str = "excel";
+pub const NEW_EXCEL: &str = "new-excel";
 
-/// One proposed change to `t` (paragraph `i`, 0-based) into the reply's card: the card gets the file's
-/// state when first proposed; a reply changes one file; the same paragraph again replaces its change.
-pub fn propose_change(conn: &Connection, run_id: i64, t: &Target, doc: &Doc, i: usize, before: &str, after: &str) -> Result<(), String> {
+fn is_new(kind: &str) -> bool {
+    kind == NEW_WORD || kind == NEW_EXCEL
+}
+
+/// The reply's card for changes to `t`, made when first proposed with the file's state; a reply changes one file.
+fn card_for(conn: &Connection, run_id: i64, t: &Target, kind: &str, sha256: &str, total: i64) -> Result<(), String> {
     match edit_of(conn, run_id)? {
-        Some(e) if e.kind == NEW_WORD => return Err("这条回答已经提议新建一个 Word 了：一条回答只做一件".into()),
+        Some(e) if is_new(&e.kind) => return Err(format!("这条回答已经提议新建一个 {} 了：一条回答只做一件", if e.kind == NEW_WORD { "Word" } else { "Excel" })),
         Some(e) if e.path != t.path => return Err(format!("一条回答只改一个文件（已经在改《{}》）", e.name)),
         Some(_) => {
             let sha: String = conn.query_row("SELECT sha256 FROM file_edits WHERE run_id = ?1", [run_id], |r| r.get(0)).map_err(err)?;
-            if sha != doc.sha256 {
+            if sha != sha256 {
                 return Err(format!("《{}》在这之间被改过了：重新读一遍再改", t.name));
             }
         }
         None => {
-            conn.execute("INSERT INTO file_edits (run_id, path, name, kind, sha256, total) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![run_id, t.path, t.name, doc.kind, doc.sha256, doc.items.len() as i64]).map_err(err)?;
+            conn.execute("INSERT INTO file_edits (run_id, path, name, kind, sha256, total) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![run_id, t.path, t.name, kind, sha256, total]).map_err(err)?;
         }
     }
+    Ok(())
+}
+
+/// One proposed change to `t` (paragraph `i`, 0-based) into the reply's card: the card gets the file's
+/// state when first proposed; a reply changes one file; the same paragraph again replaces its change.
+pub fn propose_change(conn: &Connection, run_id: i64, t: &Target, doc: &Doc, i: usize, before: &str, after: &str) -> Result<(), String> {
+    card_for(conn, run_id, t, doc.kind, &doc.sha256, doc.items.len() as i64)?;
     let n = i as i64 + 1;
     if conn.execute("UPDATE file_edit_items SET before = ?3, after = ?4 WHERE run_id = ?1 AND paragraph = ?2", params![run_id, n, before, after]).map_err(err)? == 0 {
         conn.execute(
@@ -278,30 +294,62 @@ pub fn propose_change(conn: &Connection, run_id: i64, t: &Target, doc: &Doc, i: 
     Ok(())
 }
 
-/// A new Word document into the reply's card (its name and Markdown; a second one replaces it). Returns
+/// One checked change to a workbook into the reply's card (`Planned.key` the same: it replaces the earlier one).
+pub fn propose_excel(conn: &Connection, run_id: i64, t: &Target, sha256: &str, sheets: i64, p: &super::excel::Planned) -> Result<(), String> {
+    card_for(conn, run_id, t, EXCEL, sha256, sheets)?;
+    let payload = serde_json::to_string(&p.op).map_err(err)?;
+    if conn.execute("UPDATE file_edit_items SET label = ?3, before = ?4, after = ?5, payload = ?6 WHERE run_id = ?1 AND paragraph = ?2", params![run_id, p.key, p.label, p.before, p.after, payload]).map_err(err)? == 0 {
+        conn.execute(
+            "INSERT INTO file_edit_items (run_id, position, paragraph, label, before, after, payload) VALUES (?1, (SELECT coalesce(max(position) + 1, 0) FROM file_edit_items WHERE run_id = ?1), ?2, ?3, ?4, ?5, ?6)",
+            params![run_id, p.key, p.label, p.before, p.after, payload],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
+}
+
+/// A new file into the reply's card (a second one replaces it): its name, what the card shows, its data. Returns
 /// the folder it would go to (the last one used, else 文稿).
-pub fn propose_new_word(conn: &Connection, run_id: i64, name: &str, content: &str) -> Result<String, String> {
+fn propose_new(conn: &Connection, run_id: i64, file: &str, kind: &str, content: &str, payload: Option<&str>) -> Result<String, String> {
     if let Some(e) = edit_of(conn, run_id)? {
-        if e.kind != NEW_WORD {
+        if !is_new(&e.kind) {
             return Err(format!("这条回答已经在改《{}》了：一条回答只做一件", e.name));
         }
         conn.execute("DELETE FROM file_edits WHERE run_id = ?1", [run_id]).map_err(err)?;
     }
     let folder = default_folder(conn);
-    conn.execute("INSERT INTO file_edits (run_id, path, name, kind, sha256, total) VALUES (?1, ?2, ?3, ?4, '', 0)", params![run_id, folder, format!("{name}.docx"), NEW_WORD]).map_err(err)?;
-    conn.execute("INSERT INTO file_edit_items (run_id, position, paragraph, before, after) VALUES (?1, 0, 0, '', ?2)", params![run_id, content]).map_err(err)?;
+    conn.execute("INSERT INTO file_edits (run_id, path, name, kind, sha256, total) VALUES (?1, ?2, ?3, ?4, '', 0)", params![run_id, folder, file, kind]).map_err(err)?;
+    conn.execute("INSERT INTO file_edit_items (run_id, position, paragraph, before, after, payload) VALUES (?1, 0, 0, '', ?2, ?3)", params![run_id, content, payload]).map_err(err)?;
     Ok(std::env::var("HOME").ok().and_then(|h| folder.strip_prefix(&h).map(|r| format!("~{r}"))).unwrap_or(folder))
 }
 
-/// Saves a proposed new Word document in `folder` as `name` (never over a file); the card then says where.
+/// A new Word document into the reply's card (its name and Markdown).
+pub fn propose_new_word(conn: &Connection, run_id: i64, name: &str, content: &str) -> Result<String, String> {
+    propose_new(conn, run_id, &format!("{name}.docx"), NEW_WORD, content, None)
+}
+
+/// A new workbook into the reply's card (the card shows its first rows).
+pub fn propose_new_excel(conn: &Connection, run_id: i64, name: &str, sheets: &[super::excel::NewSheet]) -> Result<String, String> {
+    super::excel::new_xlsx(sheets)?; // what can't be written says so now
+    propose_new(conn, run_id, &format!("{name}.xlsx"), NEW_EXCEL, &super::excel::preview(sheets), Some(&serde_json::to_string(sheets).map_err(err)?))
+}
+
+/// Saves a proposed new document in `folder` as `name` (never over a file); the card then says where.
 pub fn create_word(conn: &Connection, run_id: i64, folder: &str, name: &str) -> Result<FileEdit, String> {
-    let e = edit_of(conn, run_id)?.filter(|e| e.kind == NEW_WORD).ok_or("找不到这份文档")?;
+    let e = edit_of(conn, run_id)?.filter(|e| is_new(&e.kind)).ok_or("找不到这份文档")?;
     if e.state != "pending" {
         return Err("这份文档已经处理过了".into());
     }
-    let content = e.items.first().map(|i| i.after.clone()).unwrap_or_default();
-    let name = if name.trim().is_empty() { e.name.trim_end_matches(".docx").to_string() } else { name.to_string() };
-    let path = new_docx(conn, run_id, &content, folder, &name)?;
+    let path = if e.kind == NEW_EXCEL {
+        let payload: String = conn.query_row("SELECT payload FROM file_edit_items WHERE run_id = ?1", [run_id], |r| r.get(0)).map_err(err)?;
+        let sheets: Vec<super::excel::NewSheet> = serde_json::from_str(&payload).map_err(err)?;
+        let name = if name.trim().is_empty() { e.name.trim_end_matches(".xlsx").to_string() } else { name.to_string() };
+        write_new(conn, folder, name.trim().trim_end_matches(".xlsx"), "xlsx", &super::excel::new_xlsx(&sheets)?)?
+    } else {
+        let content = e.items.first().map(|i| i.after.clone()).unwrap_or_default();
+        let name = if name.trim().is_empty() { e.name.trim_end_matches(".docx").to_string() } else { name.to_string() };
+        new_docx(conn, run_id, &content, folder, &name)?
+    };
     let file = Path::new(&path).file_name().map_or_else(|| path.clone(), |n| n.to_string_lossy().to_string());
     conn.execute(&format!("UPDATE file_edits SET path = ?2, name = ?3, state = 'written', decided_at = {NOW} WHERE run_id = ?1"), params![run_id, path, file]).map_err(err)?;
     edit_of(conn, run_id)?.ok_or_else(|| "找不到这份文档".into())
@@ -317,8 +365,8 @@ pub fn edit_of(conn: &Connection, run_id: i64) -> Result<Option<FileEdit>, Strin
     else {
         return Ok(None);
     };
-    let mut st = conn.prepare("SELECT position, paragraph, before, after, checked FROM file_edit_items WHERE run_id = ?1 ORDER BY paragraph, position").map_err(err)?;
-    let rows = st.query_map([run_id], |r| Ok(EditItem { position: r.get(0)?, paragraph: r.get(1)?, before: r.get(2)?, after: r.get(3)?, checked: r.get(4)? })).map_err(err)?;
+    let mut st = conn.prepare("SELECT position, paragraph, label, before, after, checked FROM file_edit_items WHERE run_id = ?1 ORDER BY paragraph, position").map_err(err)?;
+    let rows = st.query_map([run_id], |r| Ok(EditItem { position: r.get(0)?, paragraph: r.get(1)?, label: r.get(2)?, before: r.get(3)?, after: r.get(4)?, checked: r.get(5)? })).map_err(err)?;
     e.items = rows.collect::<Result<_, _>>().map_err(err)?;
     Ok(Some(e))
 }
@@ -326,7 +374,7 @@ pub fn edit_of(conn: &Connection, run_id: i64) -> Result<Option<FileEdit>, Strin
 /// Writes the ticked changes into the file (atomically: a new file in the same folder, then renamed
 /// over it, with the old one's permissions). Refused when the file changed since it was read.
 pub fn write(conn: &Connection, run_id: i64, positions: &[i64]) -> Result<FileEdit, String> {
-    let e = edit_of(conn, run_id)?.filter(|e| e.kind != NEW_WORD).ok_or("找不到这些改动")?;
+    let e = edit_of(conn, run_id)?.filter(|e| !is_new(&e.kind)).ok_or("找不到这些改动")?;
     if e.state != "pending" {
         return Err("这些改动已经处理过了".into());
     }
@@ -334,13 +382,25 @@ pub fn write(conn: &Connection, run_id: i64, positions: &[i64]) -> Result<FileEd
         return Err("至少勾上一段".into());
     }
     let path = PathBuf::from(&e.path);
-    let doc = read(&path)?;
     let sha: String = conn.query_row("SELECT sha256 FROM file_edits WHERE run_id = ?1", [run_id], |r| r.get(0)).map_err(err)?;
-    if doc.sha256 != sha {
-        return Err(format!("「{}」在这之间被改过了，没写进去：让小拾重新改一次", e.name));
-    }
-    let picked: Vec<(usize, String)> = e.items.iter().filter(|i| positions.contains(&i.position)).map(|i| (i.paragraph as usize - 1, i.after.clone())).collect();
-    let bytes = apply(&doc, &picked)?;
+    let changed = || format!("「{}」在这之间被改过了，没写进去：让小拾重新改一次", e.name);
+    let bytes = if e.kind == EXCEL {
+        let raw = std::fs::read(&path).map_err(|_| "读不了这个文件，可能已经移走或删除了".to_string())?;
+        if super::pdf::sha256_hex(&raw) != sha {
+            return Err(changed());
+        }
+        let mut st = conn.prepare("SELECT position, payload FROM file_edit_items WHERE run_id = ?1 ORDER BY position").map_err(err)?;
+        let rows: Vec<(i64, String)> = st.query_map([run_id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+        let ops: Vec<super::excel::Op> = rows.iter().filter(|(p, _)| positions.contains(p)).map(|(_, j)| serde_json::from_str(j).map_err(err)).collect::<Result<_, _>>()?;
+        super::excel::apply(&raw, &ops)?
+    } else {
+        let doc = read(&path)?;
+        if doc.sha256 != sha {
+            return Err(changed());
+        }
+        let picked: Vec<(usize, String)> = e.items.iter().filter(|i| positions.contains(&i.position)).map(|i| (i.paragraph as usize - 1, i.after.clone())).collect();
+        apply(&doc, &picked)?
+    };
     // the card names a 知识库 file 「文件夹/路径」: the temporary file goes by the real name
     let file = path.file_name().map_or_else(|| "file".into(), |n| n.to_string_lossy().to_string());
     let tmp = path.with_file_name(format!(".{file}.pomelo-{}", std::process::id()));
@@ -441,15 +501,24 @@ fn new_docx(conn: &Connection, run: i64, content: &str, folder: &str, name: &str
         })
         .collect();
     let bytes = word::markdown_to_docx(content, &lines)?;
-    let base = clean_name(name.trim().trim_end_matches(".docx"));
+    write_new(conn, folder, name.trim().trim_end_matches(".docx"), "docx", &bytes)
+}
+
+/// A new file in `folder` (「 (2)」… rather than over a file); the folder is remembered. The path written.
+fn write_new(conn: &Connection, folder: &str, name: &str, ext: &str, bytes: &[u8]) -> Result<String, String> {
+    let dir = Path::new(folder);
+    if !dir.is_dir() {
+        return Err("找不到这个文件夹".into());
+    }
+    let base = clean_name(name);
     let mut k = 1;
     loop {
-        let file = if k == 1 { format!("{base}.docx") } else { format!("{base} ({k}).docx") };
+        let file = if k == 1 { format!("{base}.{ext}") } else { format!("{base} ({k}).{ext}") };
         let path = dir.join(&file);
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut f) => {
                 use std::io::Write;
-                f.write_all(&bytes).map_err(|e| format!("没能保存：{e}"))?;
+                f.write_all(bytes).map_err(|e| format!("没能保存：{e}"))?;
                 pref_set(conn, FOLDER, &folder.to_string())?;
                 return Ok(path.display().to_string());
             }

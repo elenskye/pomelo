@@ -38,7 +38,7 @@ export type ServiceStatus = {
 
 /** What a model can do about thinking: 不能思考 / 能开关 / 只能思考. */
 export type Think = "never" | "switch" | "always";
-export type CloudModel = { id: string; name: string; apiModel: string; service: Service; contextWindow: number; maxOutputTokens: number; thinking: Think };
+export type CloudModel = { id: string; name: string; apiModel: string; service: Service; contextWindow: number; maxOutputTokens: number; thinking: Think; efforts: string[]; defaultEffort?: string | null };
 
 export type PickyStatus = {
   mode: Mode;
@@ -69,15 +69,19 @@ export type PickyStatus = {
 };
 
 /** A reply or summary being written: model "local:<key>" | "cloud:<id>"; queued = waiting for the local model. */
-export type ActiveRun = { run: number; session: number; kind: "reply" | "summary"; model: string; reading: ReadingProgress | null; queued: boolean };
+export type ActiveRun = { run: number; session: number; kind: "reply" | "summary"; model: string; reading: ReadingProgress | null; queued: boolean; asking?: boolean };
+/** ASK (Rust picky/ask.rs): a reply's questions to me, as a card. */
+export type AskQuestion = { question: string; kind: "single" | "multi" | "judge"; options: string[] };
+export type AskAnswer = { picked: string[]; other: string };
+export type Ask = { id: number; runId: number; questions: AskQuestion[]; answers: AskAnswer[] | null; state: "waiting" | "answered" | "cancelled" };
 
 export type PickyInfo = { mode: Mode; dbPath: string; filesDir: string; schemaVersion: number | null; error: string | null };
 
 export type Session = { id: number; title: string; updatedAt: string };
 
-/** `scheduled`: written by a 定时任务; `unseen`: not opened since; `private`: 私密 (年度总结 and 小拾's search leave it out); `thinking`: its 思考 switch;
+/** `scheduled`: written by a 定时任务; `unseen`: not opened since; `private`: 私密 (年度总结 and 小拾's search leave it out); `thinking`, `effort`: its 思考 switch and 思考强度 (none: the model's default);
  *  `knowledge`: its 知识库 switch, `libraries` the ones it chose (none: its project's, then all). */
-export type SessionRow = { id: number; title: string; projectId: number | null; pinned: boolean; archived: boolean; updatedAt: string; scheduled: boolean; unseen: boolean; private: boolean; thinking: boolean; knowledge: boolean; libraries: number[] };
+export type SessionRow = { id: number; title: string; projectId: number | null; pinned: boolean; archived: boolean; updatedAt: string; scheduled: boolean; unseen: boolean; private: boolean; thinking: boolean; effort?: string | null; knowledge: boolean; libraries: number[] };
 /** `libraries`: the 知识库 its conversations search (none: all). */
 export type ProjectRow = { id: number; name: string; instructions: string; sessions: SessionRow[]; files: number; includeGlobalMemories: boolean; libraries: number[] };
 /** The conversation list, each part in display order. */
@@ -119,6 +123,8 @@ export type ChatMessage = {
   editFile?: EditTarget | null;
   /** Replies: the changes they proposed to it (work.rs). */
   edit?: FileEdit | null;
+  /** Replies: what they asked me. */
+  asks?: Ask[];
   /** Page only: a reply reading material right now. */
   reading?: ReadingProgress | null;
   /** Being written, waiting for the local model. */
@@ -212,13 +218,14 @@ export type KbDraft = { on: boolean; libraries: number[] };
 export type KbFailed = { path: string; error: string };
 /** 改文件 (work.rs): the file a question asked to change, and the reply's proposed changes to it. */
 export type EditTarget = { path: string; name: string };
-export type EditItem = { position: number; paragraph: number; before: string; after: string; checked: boolean };
-/** kind new-word (Word 工具箱 create): name, path = the folder it goes to (then the file), the Markdown in items[0].after. */
-export type FileEdit = { runId: number; path: string; name: string; kind: "markdown" | "text" | "word" | "new-word"; total: number; state: "pending" | "written" | "cancelled"; error: string | null; items: EditItem[] };
+export type EditItem = { position: number; paragraph: number; label?: string | null; before: string; after: string; checked: boolean };
+/** kind new-word / new-excel (the 工具箱 create): name, path = the folder it goes to (then the file), the Markdown in items[0].after. excel: each item's label says where. */
+export type FileEdit = { runId: number; path: string; name: string; kind: "markdown" | "text" | "word" | "excel" | "new-word" | "new-excel"; total: number; state: "pending" | "written" | "cancelled"; error: string | null; items: EditItem[] };
 /** 翻译 (assistants/translate.rs): its settings (`model` null = 小拾现在选的; `keywords`: group → choice). */
-export type TranslateSettings = { source: string; target: string; model: string | null; thinking: boolean; prompt: string; keywords: Record<string, string> };
+export type TranslateSettings = { source: string; target: string; model: string | null; thinking: boolean; effort?: string | null; prompt: string; keywords: Record<string, string> };
 /** Pub2MD (assistants/pub2md/): how hard a model thinks. */
-export type Level = "off" | "low" | "medium" | "high";
+/** "off", "on" (at the model's default) or one of the model's levels. */
+export type Level = string;
 export type Pub2mdPart = "front" | "abstract" | "body" | "conclusion" | "acknowledgments" | "references" | "appendix";
 export type Pub2mdFormat = "docx" | "pdf" | "latex" | "html";
 /** A document picked but not sent yet (images together are one). */
@@ -313,6 +320,7 @@ export type StreamEvent =
   /** An earlier reply's pending card after the model changed one of its items (`replace`). */
   | { kind: "earlierCard"; card: Card }
   | { kind: "edit"; edit: FileEdit }
+  | { kind: "ask"; ask: Ask }
   | { kind: "queued"; on: boolean }
   | { kind: "done"; state: string; error: string | null; reasoningMs: number | null };
 
@@ -363,12 +371,13 @@ export const pickyApi = {
   /** Returns at once; the reply arrives on `onEvent` (deltas, then one `done`). */
   /** `projectId`: where a new conversation (sessionId null) goes. */
   /** `instructions`: a draft's own choice (saved with the new conversation). */
-  /** `memoryOff`: a draft's 「本会话关闭记忆」; `thinking`: its 思考 switch (both saved with the new conversation). */
+  /** `memoryOff`: a draft's 「本会话关闭记忆」; `thinking`, `effort`: its 思考 switch and 思考强度 (saved with the new conversation). */
   /** `page`: the page it is asked on (the 小窗). */
   /** `skills`: what the question asks for (「/书单检索」, 联网; keys). */
   /** `knowledge`: a draft's 知识库 switch and libraries (saved with the new conversation). */
-  send: (sessionId: number | null, projectId: number | null, instructions: SessionSetting | null, memoryOff: boolean, thinking: boolean | null, text: string, extras: Extras, page: PageContextPayload | null, skills: string[], knowledge: KbDraft | null, onEvent: (e: StreamEvent) => void) =>
-    invoke<Sent>("picky_send", { sessionId, projectId, instructions, memoryOff, thinking, text, ...extras, page, skills, knowledge, onEvent: channel(onEvent) }),
+  /** `capture`: asked in the 速记小窗 (a new conversation is the window's own, out of the list). */
+  send: (sessionId: number | null, projectId: number | null, instructions: SessionSetting | null, memoryOff: boolean, thinking: boolean | null, effort: string | null, text: string, extras: Extras, page: PageContextPayload | null, skills: string[], knowledge: KbDraft | null, onEvent: (e: StreamEvent) => void, capture = false) =>
+    invoke<Sent>("picky_send", { sessionId, projectId, instructions, memoryOff, thinking, effort, text, ...extras, page, skills, knowledge, capture, onEvent: channel(onEvent) }),
   /** A new version of a question (edited) and its reply (its files come along). */
   edit: (messageId: number, text: string, passages: Passage[], memories: UsedMemory[], onEvent: (e: StreamEvent) => void) =>
     invoke<Sent>("picky_edit", { messageId, text, passages, memories, onEvent: channel(onEvent) }),
@@ -394,7 +403,11 @@ export const pickyApi = {
   /** force false: only when there's none today (首页 on showing); true: 重写 / 重试. Returns at once. */
   briefWrite: (force: boolean) => invoke<Brief>("picky_brief_write", { force }),
   yearCard: () => invoke<YearLetter | null>("picky_year_card"),
-  briefSet: (enabled: boolean, model: string | null, thinking: boolean) => invoke<Brief>("picky_brief_set", { enabled, model, thinking }),
+  briefSet: (enabled: boolean, model: string | null, thinking: boolean, effort: string | null) => invoke<Brief>("picky_brief_set", { enabled, model, thinking, effort }),
+  assistModel: () => invoke<string | null>("picky_assist_model"),
+  assistModelSet: (model: string | null) => invoke<string | null>("picky_assist_model_set", { model }),
+  assistLevel: () => invoke<Level>("picky_assist_level"),
+  assistLevelSet: (level: Level) => invoke<Level>("picky_assist_level_set", { level }),
   /** null = back to the built-in prompt. */
   briefPrompt: (prompt: string | null) => invoke<Brief>("picky_brief_prompt", { prompt }),
   rename: (id: number, title: string) => invoke<void>("picky_rename", { id, title }),
@@ -533,7 +546,10 @@ export const pickyApi = {
   dataCloudSet: (module: string, allowed: boolean) => invoke<void>("picky_data_cloud_set", { module, allowed }),
   memoryEnabledSet: (on: boolean) => invoke<void>("picky_memory_enabled_set", { on }),
   conversationMemory: (sessionId: number, off: boolean) => invoke<void>("picky_conversation_memory", { sessionId, off }),
+  /** `followUp`: the reply it belonged to ended (the app quit): send this as a new message. */
+  askAnswer: (askId: number, answers: AskAnswer[]) => invoke<{ followUp: string | null }>("picky_ask_answer", { askId, answers }),
   conversationThinking: (sessionId: number, on: boolean) => invoke<void>("picky_conversation_thinking", { sessionId, on }),
+  conversationEffort: (sessionId: number, effort: string | null) => invoke<void>("picky_conversation_effort", { sessionId, effort }),
   /** Which memories the next reply may use (a conversation, or a draft with its own switch). */
   memoryPlan: (sessionId: number | null, projectId: number | null, draftOff: boolean, nextOff: boolean) =>
     invoke<MemoryPlan>("picky_memory_plan", { sessionId, projectId, draftOff, nextOff }),
@@ -604,7 +620,7 @@ export const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.ev
 /** 定时任务 (rules in Rust schedule.rs). every: day | week | month; day: 周几 1–7 / 几号 1–31; at: "HH:MM";
  * model: local:<key> | cloud:<id> | null (= 小拾现在选的). next: "YYYY-MM-DD HH:MM" (null when off). */
 export type ScheduleRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
-export type ScheduleInput = ScheduleRule & { name: string; prompt: string; model: string | null; thinking: boolean };
+export type ScheduleInput = ScheduleRule & { name: string; prompt: string; model: string | null; thinking: boolean; effort: string | null };
 /** `flow`: a workflow (年度总结), drawn instead of its prompt. */
 export type Schedule = ScheduleInput & { id: number; enabled: boolean; builtin: string | null; flow: SkillFlowNode[] | null; next: string | null; lastSession: number | null; lastAt: string | null; running: boolean };
 export const SCHEDULES_KEY = ["picky", "schedules"];
@@ -621,6 +637,7 @@ export function ruleText(r: ScheduleRule): string {
 
 /** 今日简报 (rules in Rust brief.rs). state: none | writing | done | failed; content stays while rewriting / after a failure. */
 export type Brief = {
+  effort: string | null;
   enabled: boolean;
   model: string | null;
   thinking: boolean;
@@ -634,8 +651,9 @@ export type Brief = {
   modelName: string | null;
   leftOut: string[];
   phase: "starting" | "writing" | null;
-  /** calm | busy | good | worry: the pomelo's face for the day. */
+  /** calm | busy | good | worry: the pomelo's face for an hour after `moodAt` (the brief done, UTC). */
   mood: string | null;
+  moodAt: string | null;
 };
 export const BRIEF_KEY = ["picky", "brief"];
 export const useBrief = (enabled = true) =>

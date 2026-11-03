@@ -24,7 +24,7 @@ pub mod script;
 pub mod search;
 pub mod source;
 
-use crate::picky::cloud::Effort;
+pub use crate::picky::cloud::Level;
 use crate::picky::store::{pref_get, pref_set};
 use crate::AppState;
 use rusqlite::Connection;
@@ -39,39 +39,6 @@ use tauri_plugin_opener::OpenerExt;
 const KEY: &str = "assistant.pub2md";
 const RECENT: usize = 10;
 pub const MAX_PARALLEL: u8 = 8;
-
-/// How hard a model thinks: 关 / 低 / 中 / 高.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Level {
-    #[default]
-    Off,
-    Low,
-    Medium,
-    High,
-}
-
-impl Level {
-    pub fn thinking(self) -> bool {
-        self != Level::Off
-    }
-    pub fn effort(self) -> Option<Effort> {
-        match self {
-            Level::Off => None,
-            Level::Low => Some(Effort::Low),
-            Level::Medium => Some(Effort::Medium),
-            Level::High => Some(Effort::High),
-        }
-    }
-    pub fn name(self) -> &'static str {
-        match self {
-            Level::Off => "不思考",
-            Level::Low => "思考 · 低",
-            Level::Medium => "思考 · 中",
-            Level::High => "思考 · 高",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -233,9 +200,9 @@ impl Default for Settings {
             md: false,
             english_only: false,
             worker: None,
-            worker_level: Level::Off,
+            worker_level: Level::off(),
             supervisor: None,
-            supervisor_level: Level::High,
+            supervisor_level: Level::word("high"),
             backup: BACKUP.into(),
             parallel: 4,
             folder: None,
@@ -800,15 +767,15 @@ mod tests {
     #[test]
     fn settings_and_recent() {
         let s = checked(Settings { parallel: 20, ..Default::default() }).unwrap();
-        assert_eq!((s.parallel, s.supervisor_level, s.worker_level), (MAX_PARALLEL, Level::High, Level::Off));
+        assert_eq!((s.parallel, s.supervisor_level, s.worker_level), (MAX_PARALLEL, Level::word("high"), Level::off()));
         assert!(checked(Settings { worker: Some("x".into()), ..Default::default() }).is_err());
         assert!(checked(Settings { folder: Some("/no/such/folder".into()), ..Default::default() }).is_err());
-        assert_eq!((Level::Medium.effort(), Level::Off.thinking()), (Some(Effort::Medium), false));
+        assert_eq!((Level::word("medium").effort().as_deref(), Level::off().thinking()), (Some("medium"), false));
         // 领域: several, in the page's order; a save from before (one, as a string) still reads
         let s = checked(Settings { domains: vec!["cs".into(), "general".into(), "public".into(), "cs".into(), "nope".into()], ..Default::default() }).unwrap();
         assert_eq!((s.domains.clone(), domain_names(&s.domains), domain_names(&[])), (vec!["public".to_string(), "cs".to_string()], "公共管理、计算机".to_string(), "通用".to_string()));
         let old: Settings = serde_json::from_str(r#"{"style":"academic","domain":"cs"}"#).unwrap();
-        assert_eq!((old.domains, old.style.as_str(), old.supervisor_level), (vec!["cs".to_string()], "academic", Level::High));
+        assert_eq!((old.domains, old.style.as_str(), old.supervisor_level), (vec!["cs".to_string()], "academic", Level::word("high")));
         let saved: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
         assert_eq!(saved.domains, s.domains);
         let job: job::Job = serde_json::from_str(r#"{"name":"旧的","domain":"math"}"#).unwrap();

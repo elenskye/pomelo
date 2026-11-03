@@ -92,11 +92,14 @@ pub struct ScheduleRec {
     /// From format 13 (before: on).
     #[serde(default = "yes")]
     pub thinking: bool,
+    /// From format 36.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 impl ScheduleRec {
     fn input(&self) -> schedule::ScheduleInput {
-        schedule::ScheduleInput { name: self.name.clone(), prompt: self.prompt.clone(), every: self.every.clone(), day: self.day, month: self.month, at: self.at.clone(), model: self.model.clone(), thinking: self.thinking }
+        schedule::ScheduleInput { name: self.name.clone(), prompt: self.prompt.clone(), every: self.every.clone(), day: self.day, month: self.month, at: self.at.clone(), model: self.model.clone(), thinking: self.thinking, effort: self.effort.clone() }
     }
 }
 
@@ -169,7 +172,7 @@ pub fn export(conn: &Connection) -> Result<PickyRecord, String> {
         schedules: Some(
             schedule::list(conn, "2000-01-01 00:00")?
                 .into_iter()
-                .map(|s| ScheduleRec { name: s.name, prompt: s.prompt, every: s.rule.every, day: s.rule.day, month: s.rule.month, at: s.rule.at, model: s.model, enabled: s.enabled, builtin: s.builtin, thinking: s.thinking })
+                .map(|s| ScheduleRec { name: s.name, prompt: s.prompt, every: s.rule.every, day: s.rule.day, month: s.rule.month, at: s.rule.at, model: s.model, enabled: s.enabled, builtin: s.builtin, thinking: s.thinking, effort: s.effort })
                 .collect(),
         ),
     })
@@ -336,7 +339,7 @@ mod tests {
         templates::create(&a, &templates::TemplateInput { title: "解释".into(), category: "".into(), body: "x".into() }).unwrap();
         memory::create(&a, &memory::MemoryInput { content: "住在新加坡".into(), enabled: true, local_only: true, ..Default::default() }, "manual", None).unwrap();
         memory::create(&a, &memory::MemoryInput { content: "用 APA".into(), project_id: Some(p1), shared_project_ids: vec![p2], enabled: false, ..Default::default() }, "command", Some(1)).unwrap();
-        let mine = schedule::ScheduleInput { name: "早报".into(), prompt: "今天要做什么".into(), every: "day".into(), day: None, month: None, at: "08:30".into(), model: Some("local:qwen".into()), thinking: false };
+        let mine = schedule::ScheduleInput { name: "早报".into(), prompt: "今天要做什么".into(), every: "day".into(), day: None, month: None, at: "08:30".into(), model: Some("local:qwen".into()), thinking: true, effort: Some("high".into()) };
         let early = schedule::create(&a, &mine).unwrap();
         schedule::set_enabled(&a, early, false).unwrap();
         let monthly = schedule::list(&a, "2026-10-14 10:00").unwrap()[1].id;

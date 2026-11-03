@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
-import { LIBRARY_KEY, STATUS_KEY, pickyApi, type ActiveRun, type KbDraft, type ChatMessage, type MessageFile, type Note, type Passage, type PickyStatus, type Query, type ReadingProgress, type Sent, type Source, type StreamEvent, type Card, type FileEdit, type UsedMemory } from "./api";
+import { LIBRARY_KEY, STATUS_KEY, pickyApi, type ActiveRun, type Ask, type KbDraft, type ChatMessage, type MessageFile, type Note, type Passage, type PickyStatus, type Query, type ReadingProgress, type Sent, type Source, type StreamEvent, type Card, type FileEdit, type UsedMemory } from "./api";
 
 export const messagesKey = (id: number | null) => ["picky", "messages", id];
 
@@ -41,6 +41,8 @@ type Live = {
   card: Card | null;
   /** 改文件: the changes it proposed. */
   edit: FileEdit | null;
+  /** ASK: what it asked me. */
+  asks: Ask[];
 };
 
 /** What the status says is being written in `session` (a reply or a summary). */
@@ -120,6 +122,8 @@ export function useLiveReply(opts: { current: number | null; status: PickyStatus
       if (l.sessionId != null) qc.setQueryData<ChatMessage[]>(messagesKey(l.sessionId), (list) => list?.map((m) => (m.card?.runId === e.card.runId ? { ...m, card: e.card } : m)));
     } else if (e.kind === "edit") {
       l.edit = e.edit;
+    } else if (e.kind === "ask") {
+      l.asks = [...l.asks.filter((a) => a.id !== e.ask.id), e.ask];
     } else {
       l.done = true;
       l.queued = false;
@@ -137,7 +141,7 @@ export function useLiveReply(opts: { current: number | null; status: PickyStatus
   /** Starts a reply (send / edit / regenerate) and lays it over the path as it streams. */
   const run = async (kind: Live["kind"], prompt: string, call: (on: (e: StreamEvent) => void) => Promise<Sent>, files: MessageFile[] = [], page: Query | null = null): Promise<Sent | null> => {
     if (livesRef.current.some((l) => l.sessionId === current) || activeIn(status, current)) return null;
-    const l: Live = { kind, prompt, sessionId: current, messageId: null, runId: null, content: "", reasoning: "", reasoningStart: null, reasoningMs: null, done: false, queued: false, files, page, reading: null, notes: [], queries: [], sources: [], card: null, edit: null };
+    const l: Live = { kind, prompt, sessionId: current, messageId: null, runId: null, asks: [], content: "", reasoning: "", reasoningStart: null, reasoningMs: null, done: false, queued: false, files, page, reading: null, notes: [], queries: [], sources: [], card: null, edit: null };
     livesRef.current = [...livesRef.current, l];
     repaint();
     opts.onStart?.();
@@ -177,6 +181,7 @@ export function useLiveReply(opts: { current: number | null; status: PickyStatus
         sources: live.sources.length ? live.sources : m.sources,
         card: live.card ?? m.card,
         edit: live.edit ?? m.edit,
+        asks: live.asks.length ? live.asks : m.asks,
       });
       if (live.messageId != null && saved.some((m) => m.id === live.messageId)) shown = saved.map((m) => (m.id === live.messageId ? overlay(m) : m));
       else if (live.kind === "send") {
@@ -197,7 +202,9 @@ export function useLiveReply(opts: { current: number | null; status: PickyStatus
   /** Conversations writing now (this page's and the status's): the dots in the list. */
   const writing = [...new Set([...lives.flatMap((l) => (l.sessionId != null && !l.done ? [l.sessionId] : [])), ...(status?.active ?? []).map((a) => a.session)])];
 
-  return { live, busyHere, run, shownWith, writing };
+  /** ASK answered after its reply ended: the answer goes on as a new message. */
+  const followUp = (text: string) => void run("send", text, (on) => pickyApi.send(current, null, null, false, null, null, text, { attachments: [], files: [], passages: [], memories: [] }, null, [], null, on));
+  return { live, busyHere, run, shownWith, writing, followUp };
 }
 
 type PrepFail = { title: string; withoutLabel: string; message: string; without: () => void; retry: () => void };

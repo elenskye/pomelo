@@ -48,11 +48,13 @@ export type Entry = {
   endDay: string | null;
   kindId: number | null;
   fixedId: number | null;
+  isRefund: boolean;
+  refundOf: number | null;
   note: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type EntryPatch = Partial<Pick<Entry, "flow" | "amount" | "currency" | "day" | "endDay" | "kindId" | "note">>;
+export type EntryPatch = Partial<Pick<Entry, "flow" | "amount" | "currency" | "day" | "endDay" | "kindId" | "note" | "isRefund" | "refundOf">>;
 
 export type Fixed = {
   id: number;
@@ -89,12 +91,10 @@ const api = {
   saveHoldings: (v: { accountId: number; day: string; rows: HoldingInput[] }) => invoke<void>("fin_holdings_save", v),
   entries: (month: string) => invoke<Entry[]>("fin_entries", { month }),
   createEntry: (patch: EntryPatch) => invoke<Entry>("fin_entry_create", { patch }),
-  createEntries: (patches: EntryPatch[]) => invoke<number>("fin_entries_create", { patches }),
   updateEntry: (v: { id: number; patch: EntryPatch }) => invoke<Entry>("fin_entry_update", v),
   deleteEntry: (id: number) => invoke<void>("fin_entry_delete", { id }),
   updateEntries: (v: { ids: number[]; patch: EntryPatch }) => invoke<number>("fin_entries_update", v),
   deleteEntries: (ids: number[]) => invoke<number>("fin_entries_delete", { ids }),
-  lastPeriodEnd: () => invoke<string | null>("fin_period_last"),
   fixed: () => invoke<Fixed[]>("fin_fixed"),
   createFixed: (patch: FixedPatch) => invoke<Fixed>("fin_fixed_create", { patch }),
   updateFixed: (v: { id: number; patch: FixedPatch }) => invoke<Fixed>("fin_fixed_update", v),
@@ -113,7 +113,6 @@ export const useEntries = (month: string) => useQuery({ queryKey: [...FIN_KEY, "
 export const useFixed = () => useQuery({ queryKey: [...FIN_KEY, "fixed"], queryFn: api.fixed });
 export const useBudgets = () => useQuery({ queryKey: [...FIN_KEY, "budgets"], queryFn: api.budgets });
 export const useTotals = () => useQuery({ queryKey: [...FIN_KEY, "totals"], queryFn: api.totals });
-export const useLastPeriodEnd = () => useQuery({ queryKey: [...FIN_KEY, "period-last"], queryFn: api.lastPeriodEnd });
 
 export function useFinMutations() {
   const qc = useQueryClient();
@@ -132,7 +131,6 @@ export function useFinMutations() {
     saveBalances: useMutation({ mutationFn: api.saveBalances, onSuccess }),
     saveHoldings: useMutation({ mutationFn: api.saveHoldings, onSuccess }),
     createEntry: useMutation({ mutationFn: api.createEntry, onSuccess }),
-    createEntries: useMutation({ mutationFn: api.createEntries, onSuccess }),
     updateEntry: useMutation({ mutationFn: api.updateEntry, onSuccess }),
     deleteEntry: useMutation({ mutationFn: api.deleteEntry, onSuccess, onError }),
     updateEntries: useMutation({ mutationFn: api.updateEntries, onSuccess, onError }),
@@ -144,3 +142,5 @@ export function useFinMutations() {
     saveBudgets: useMutation({ mutationFn: api.saveBudgets, onSuccess }),
   };
 }
+
+export const useFinRange = (from: string, to: string, flow: "all" | Flow, currency: "all" | Currency, kind: number | "all" | null) => useQuery({ queryKey: [...FIN_KEY, "range", from, to, flow, currency, kind], queryFn: () => invoke<{ entries: Entry[]; totals: Total[] }>("fin_range", { from, to, flow: flow === "all" ? null : flow, currency: currency === "all" ? null : currency, kind: kind === null ? "none" : String(kind) }) });

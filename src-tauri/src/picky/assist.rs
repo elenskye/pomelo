@@ -9,6 +9,7 @@
 //! - Same model as 小拾; a stopped local model is started first (the last one picked, else the first in
 //!   the list). A module a cloud model may not get (钱来钱往 by default) is refused.
 
+use super::cloud::Level;
 use super::data::{self, Access};
 use super::provider::{self, Event, Msg, Options};
 use super::store::{pref_get, pref_set};
@@ -28,12 +29,18 @@ const START_WAIT: Duration = Duration::from_secs(180);
 
 // ---------- the model ----------
 
-/// Where a help goes: the selected model, started if it is a stopped local one.
+/// Where a help goes: the model chosen for the helpers (设置 → 小拾 → 面板帮手), else the selected one (also when the
+/// chosen cloud model was deleted since); a stopped local one is started.
 async fn route(p: &Picky) -> Result<Route, String> {
-    if p.selection() == Selection::Local {
-        ready_local(p, None).await?;
+    let chosen = p.with_db(|c| Ok(model_choice(c))).unwrap_or(None).filter(|m| match m.strip_prefix("cloud:") {
+        Some(id) => p.with_db(|c| super::cloud::model(c, id)).ok().flatten().is_some(),
+        None => true,
+    });
+    let choice = chosen.as_deref().map_or_else(|| p.selection(), Selection::parse);
+    if choice == Selection::Local {
+        ready_local(p, chosen.as_deref().and_then(|m| m.strip_prefix("local:"))).await?;
     }
-    p.target()
+    p.route_with(&choice, true)
 }
 
 /// A local model ready for work: the running one (or the one starting), else `want` (if listed),
@@ -74,18 +81,37 @@ pub(crate) fn check(p: &Picky, route: &Route, module: &str) -> Result<(), String
     }
     let allowed = p.with_db(|c| Ok(data::cloud_allowed(c, &[])))?;
     let access = Access { cloud: true, cloud_allowed: allowed, ..Default::default() };
-    if access.may_send(&data::Query { module: Some(m.key.into()), label: String::new(), state: "ok".into(), result: String::new(), records: vec![] }) {
+    // 钱来钱往's panels are 收支's
+    let key = data::cloud_key(m.key, "entry");
+    if access.may_send(&data::Query { module: Some(key.into()), label: String::new(), state: "ok".into(), result: String::new(), records: vec![] }) {
         Ok(())
     } else {
-        Err(format!("选了云端模型：{}不发给云端。换成本地模型再用。", m.label))
+        Err(format!("选了云端模型：{}不发给云端。换成本地模型再用。", data::part_label(key).unwrap_or(m.label)))
     }
 }
 
-/// One answer, whole; thinking when the model can (with room for it).
-async fn ask(route: &Route, system: &str, user: &str, max_tokens: i64) -> Result<String, String> {
+/// How the helpers think (设置 → 小拾 → 面板帮手; preference `assist.level`, a setting: not undoable). Default: at the model's default.
+const LEVEL: &str = "assist.level";
+/// The helpers' own model (`local:<key>` / `cloud:<id>`; none: 小拾's selection).
+const MODEL: &str = "assist.model";
+
+pub fn model_choice(c: &rusqlite::Connection) -> Option<String> {
+    pref_get::<String>(c, MODEL).ok().flatten().filter(|m| !m.is_empty())
+}
+
+pub fn level(c: &rusqlite::Connection) -> Level {
+    pref_get::<Level>(c, LEVEL).ok().flatten().unwrap_or_else(Level::on)
+}
+
+fn level_now(p: &Picky) -> Level {
+    p.with_db(|c| Ok(level(c))).unwrap_or_else(|_: String| Level::on())
+}
+
+/// One answer, whole, at `level` (with room for it).
+async fn ask(route: &Route, level: &Level, system: &str, user: &str, max_tokens: i64) -> Result<String, String> {
     let mut out = String::new();
     let messages = vec![Msg::new("system", &format!("{MARK}{system}")), Msg::new("user", user)];
-    provider::stream(route.target.clone(), messages, Options { max_tokens: Some(route.with_thinking(max_tokens, true)), thinking: Some(true), ..Default::default() }, |e| {
+    provider::stream(route.target.clone(), messages, Options { max_tokens: Some(route.with_thinking(max_tokens, level.thinking())), thinking: Some(level.thinking()), effort: level.effort(), ..Default::default() }, |e| {
         if let Event::Content(t) = e {
             out.push_str(&t);
         }
@@ -150,7 +176,7 @@ async fn polish(app: &AppHandle, module: &str, text: &str, request: &str) -> Res
         r => r,
     };
     let user = format!("这次的要求：{request}\n\n原文：\n{text}");
-    let out = clean_text(&ask(&route, POLISH, &user, (super::context::estimate(text) * 2 + 256).clamp(256, 8192)).await?);
+    let out = clean_text(&ask(&route, &level_now(p), POLISH, &user, (super::context::estimate(text) * 2 + 256).clamp(256, 8192)).await?);
     if out.is_empty() {
         return Err("模型没有给出改好的文字，再试一次吧".into());
     }
@@ -183,17 +209,17 @@ async fn site_english(app: &AppHandle, title: &str, summary: &str, body: &str) -
     let p = &app.state::<AppState>().picky;
     let route = route(p).await?;
     check(p, &route, "site")?;
-    site_english_with(&route, title, summary, body).await
+    site_english_with(&route, &level_now(p), title, summary, body).await
 }
 
-pub(crate) async fn site_english_with(route: &Route, title: &str, summary: &str, body: &str) -> Result<SiteEnglish, String> {
+pub(crate) async fn site_english_with(route: &Route, level: &Level, title: &str, summary: &str, body: &str) -> Result<SiteEnglish, String> {
     let body: String = body.trim().chars().take(3000).collect();
     let mut user = format!("标题：{}\n", title.trim());
     if !summary.trim().is_empty() {
         user += &format!("摘要：{}\n", summary.trim());
     }
     user += &format!("正文：\n{body}");
-    parse_site_english(&ask(route, SITE_EN, &user, 600).await?)
+    parse_site_english(&ask(route, level, SITE_EN, &user, 600).await?)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -243,7 +269,7 @@ async fn fill_work(app: &AppHandle, module: &str, title: &str) -> Result<WorkFil
         let route = route(p).await?;
         check(p, &route, module)?;
         let system = work_prompt(module, &names.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>());
-        parse_work(&ask(&route, &system, &format!("名称：{}", common::clean(Some(title.chars().take(200).collect())).unwrap_or_default()), 512).await?, &names)
+        parse_work(&ask(&route, &level_now(p), &system, &format!("名称：{}", common::clean(Some(title.chars().take(200).collect())).unwrap_or_default()), 512).await?, &names)
     }
     .await;
     match (looked, by_model) {
@@ -278,7 +304,7 @@ async fn fill_job(app: &AppHandle, jd: &str) -> Result<JobFill, String> {
     let route = route(p).await?;
     check(p, &route, "jobs")?;
     let jd: String = jd.chars().take(8000).collect();
-    parse_job(&ask(&route, JOB, &jd, 512).await?)
+    parse_job(&ask(&route, &level_now(p), JOB, &jd, 512).await?)
 }
 
 pub const SPLIT: &str = "把用户的任务拆成 3～8 个具体、一次能做完的子任务，按先后顺序，避开已经有的子任务。只输出一个 JSON 数组，每项是一个子任务标题（20 字以内，不要编号），比如 [\"查资料\", \"写提纲\"]。";
@@ -344,7 +370,7 @@ async fn split_task(app: &AppHandle, task_id: i64) -> Result<Vec<String>, String
         }
         Ok((user, have))
     })?;
-    parse_list(&ask(&route, SPLIT, &user, 1024).await?, 8, &have)
+    parse_list(&ask(&route, &level_now(p), SPLIT, &user, 1024).await?, 8, &have)
 }
 
 /// 念念不忘 让小拾拆成待办: the things to do a note mentions (those already made into tasks left out).
@@ -361,7 +387,7 @@ async fn split_note(app: &AppHandle, note_id: i64) -> Result<Vec<String>, String
         }
         Ok((user, have))
     })?;
-    parse_list(&ask(&route, NOTE_SPLIT, &user, 1024).await?, 12, &have)
+    parse_list(&ask(&route, &level_now(p), NOTE_SPLIT, &user, 1024).await?, 12, &have)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -427,7 +453,7 @@ async fn trip_missing(app: &AppHandle, trip_id: i64) -> Result<Vec<ItemIdea>, St
         Ok((user, names, have))
     })?;
     let system = trip_prompt(&names.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>());
-    parse_items(&ask(&route, &system, &user, 1024).await?, &names, &have)
+    parse_items(&ask(&route, &level_now(p), &system, &user, 1024).await?, &names, &have)
 }
 
 // ---------- 一句话填好 ----------
@@ -767,7 +793,7 @@ async fn quick_fill(app: &AppHandle, module: &str, sentence: &str) -> Result<Qui
         let (fields, read) = quick_fields(c, module, &today)?;
         Ok((format!("{QUICK}\n{}\n{fields}", calendar(&today)), read, today))
     })?;
-    let reply = ask(&route, &system, &sentence.chars().take(300).collect::<String>(), 512).await?;
+    let reply = ask(&route, &level_now(p), &system, &sentence.chars().take(300).collect::<String>(), 512).await?;
     let v = json_in(&reply).filter(Value::is_object).ok_or("没看懂这句话，换个说法试试")?;
     let mut f = read(&v, sentence);
     fix_dates(module, &mut f, sentence, &today);
@@ -882,6 +908,37 @@ fn mock_quick(system: &str, sentence: &str) -> String {
 
 // ---------- commands ----------
 
+/// 设置 → 小拾 → 面板帮手: its model (None: 小拾's selection), whether and how hard it thinks.
+#[tauri::command]
+pub fn picky_assist_model(state: tauri::State<AppState>) -> Result<Option<String>, String> {
+    state.picky.with_db(|c| Ok(model_choice(c)))
+}
+
+#[tauri::command]
+pub fn picky_assist_model_set(state: tauri::State<AppState>, model: Option<String>) -> Result<Option<String>, String> {
+    let model = model.filter(|m| !m.is_empty());
+    if let Some(id) = model.as_deref().and_then(|m| m.strip_prefix("cloud:")) {
+        state.picky.with_db(|c| super::cloud::model(c, id))?.ok_or("这个云端模型已经被删除了")?;
+    }
+    state.picky.with_db(|c| {
+        pref_set(c, MODEL, &model.clone().unwrap_or_default())?;
+        Ok(model_choice(c))
+    })
+}
+
+#[tauri::command]
+pub fn picky_assist_level(state: tauri::State<AppState>) -> Result<Level, String> {
+    state.picky.with_db(|c| Ok(level(c)))
+}
+
+#[tauri::command]
+pub fn picky_assist_level_set(state: tauri::State<AppState>, level: Level) -> Result<Level, String> {
+    state.picky.with_db(|c| {
+        pref_set(c, LEVEL, &level)?;
+        Ok(self::level(c))
+    })
+}
+
 #[tauri::command]
 pub async fn picky_polish(app: AppHandle, module: String, text: String, request: String) -> Result<String, String> {
     polish(&app, &module, &text, &request).await
@@ -993,7 +1050,7 @@ mod tests {
         let route = Route { target: crate::picky::provider::Target::Local { model }, model: "local:x".into(), name: "X".into(), window: 32768, think: crate::picky::cloud::Think::Switch };
         let run = |label: &str, system: &str, user: &str| {
             let t = std::time::Instant::now();
-            let out = tauri::async_runtime::block_on(ask(&route, system, user, 1024)).unwrap();
+            let out = tauri::async_runtime::block_on(ask(&route, &Level::on(), system, user, 1024)).unwrap();
             println!("\n===== {label} ({:.1}s)\n{out}", t.elapsed().as_secs_f64());
             out
         };
@@ -1029,9 +1086,19 @@ mod tests {
         assert!(p.runtime.ready_model().is_none());
         let r = tauri::async_runtime::block_on(route(&p)).unwrap();
         assert_eq!(r.model, "local:ministral14b"); // the one picked last
+        // 面板帮手's own model wins over the selection; one deleted since goes back to the selection
+        p.with_db(|c| pref_set(c, MODEL, &"cloud:deepseek-flash".to_string())).unwrap();
+        p.keys.save(super::super::cloud::Service::DeepSeek.code(), "x", "x").unwrap();
+        assert_eq!(tauri::async_runtime::block_on(route(&p)).unwrap().model, "cloud:deepseek-flash");
+        p.with_db(|c| pref_set(c, MODEL, &"cloud:gone".to_string())).unwrap();
+        assert_eq!(tauri::async_runtime::block_on(route(&p)).unwrap().model, "local:ministral14b");
+        p.with_db(|c| pref_set(c, MODEL, &String::new())).unwrap();
+        assert_eq!(p.with_db(|c| Ok(model_choice(c))).unwrap(), None);
         assert!(check(&p, &r, "finance").is_ok()); // local: everything
         let cloud = Route { model: "cloud:deepseek-flash".into(), ..r };
-        assert_eq!(check(&p, &cloud, "finance").unwrap_err(), "选了云端模型：钱来钱往不发给云端。换成本地模型再用。");
+        assert!(check(&p, &cloud, "finance").is_ok()); // 收支 goes by default
+        p.with_db(|c| data::set_cloud(c, data::FIN_FLOW, false, &[])).unwrap();
+        assert_eq!(check(&p, &cloud, "finance").unwrap_err(), "选了云端模型：钱来钱往 · 收支不发给云端。换成本地模型再用。");
         assert!(check(&p, &cloud, "jobs").is_ok());
         assert!(check(&p, &cloud, "vault").is_err());
     }
@@ -1164,7 +1231,7 @@ mod tests {
             let (fields, read) = quick_fields(&c, module, TODAY).unwrap();
             let system = format!("{QUICK}\n{}\n{fields}", calendar(TODAY));
             let t = std::time::Instant::now();
-            let reply = tauri::async_runtime::block_on(ask(&route, &system, sentence, 512)).unwrap();
+            let reply = tauri::async_runtime::block_on(ask(&route, &Level::on(), &system, sentence, 512)).unwrap();
             let got = json_in(&reply).filter(Value::is_object).map(|v| {
                 let mut f = read(&v, sentence);
                 fix_dates(module, &mut f, sentence, TODAY);

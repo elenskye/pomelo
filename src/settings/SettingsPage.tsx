@@ -1,15 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 import { FolderOpen, Settings } from "lucide-react";
+import { useTabs } from "@/app/tabs";
 import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";
 import { AttachmentsRow } from "./Attachments";
 import { BackupsSection } from "./Backups";
+import { useHealth } from "./Health";
 import { PickySection } from "./Picky";
 import { Path, Row, Section } from "./layout";
 import { SiteSection } from "./Site";
 import { StartupSection } from "./Startup";
 import { ExportRow, ImportRow } from "./Transfer";
 import { VaultSection } from "./Vault";
+
+function HealthRow() {
+  const tabs = useTabs();
+  const groups = useHealth().data;
+  if (!groups) return null;
+  const n = groups.reduce((sum, g) => sum + g.total, 0);
+  return (
+    <Row label="体检" help="没分类的收支、找不到的附件、可能重复的书影、过期很久的待办这些，列在一页里，点了打开那条记录。隐藏的模块不查。" actions={<Button onClick={() => tabs.open("/settings/health")}>打开</Button>}>
+      {n ? `${n} 条要看看` : <span className="text-muted-foreground">都没问题</span>}
+    </Row>
+  );
+}
 
 export default function SettingsPage() {
   const { data: info } = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
@@ -37,6 +51,7 @@ export default function SettingsPage() {
             {info.schemaVersion ?? "—"}
           </Row>
           <AttachmentsRow />
+          <HealthRow />
         </Section>
         <StartupSection />
         <SiteSection />

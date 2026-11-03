@@ -391,7 +391,7 @@ async fn steps(app: &AppHandle, report: &Report, folder: &Path, job: &mut Job, s
         return Err("没有识别出文字".into());
     }
     let blocks = Arc::new(blocks);
-    let models = Models { worker, sup, wl: settings.worker_level, sl: settings.supervisor_level, parallel: settings.parallel as usize, backup };
+    let models = Models { worker, sup, wl: settings.worker_level.clone(), sl: settings.supervisor_level.clone(), parallel: settings.parallel as usize, backup };
     // the term list starts now, beside the cut and 整理
     let mut set = JoinSet::new();
     if needs_terms(job) && job.terms.is_none() {
@@ -703,24 +703,28 @@ pub async fn render(folder: &Path, job: &Job) -> Result<usize, String> {
 /// A reply's room plus its thinking. A model told to think 中 or 高 (the Supervisor's default) may think
 /// far longer than chat's room before it answers, and a cut-off JSON answer is lost; the service caps
 /// it at the model's own limit, and only what's used is paid.
-fn reply_room(route: &Route, need: i64, level: Level) -> i64 {
-    let think = match level {
-        // a model that always thinks (GLM-5.3) thinks at 关 too
-        Level::Off if route.think == crate::picky::cloud::Think::Always => 8_192,
-        Level::Off => 0,
-        Level::Low => 8_192,
-        Level::Medium => 16_384,
-        Level::High => 32_768,
+fn reply_room(route: &Route, need: i64, level: &Level) -> i64 {
+    let word = match &route.target {
+        Target::Cloud { model, .. } => model.effort(level.effort().as_deref()),
+        _ => level.effort(),
+    };
+    let think = match word.as_deref() {
+        // an always-thinking model on 不思考: its own level
+        None if !level.thinking() => if route.think == crate::picky::cloud::Think::Always { 8_192 } else { 0 },
+        None | Some("minimal" | "low") => 8_192,
+        Some("medium") => 16_384,
+        Some("high") => 32_768,
+        Some(_) => 65_536,
     };
     if route.think.thinks(level.thinking()) { need + think } else { need }
 }
 
-async fn ask(route: &Route, level: Level, system: String, user: String, images: Vec<Image>, max: i64) -> Result<(String, bool), String> {
+async fn ask(route: &Route, level: &Level, system: String, user: String, images: Vec<Image>, max: i64) -> Result<(String, bool), String> {
     let mut msg = Msg::new("user", &user);
     msg.images = images;
     let (mut out, mut cut) = (String::new(), false);
     // each chunk's request is its own: no cache to write
-    let opts = Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, ..Default::default() };
+    let opts = Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, room_fixed: true, ..Default::default() };
     provider::stream(route.target.clone(), vec![Msg::new("system", &system), msg], opts, |e| match e {
         Event::Content(t) => out.push_str(&t),
         Event::Finished(r) => cut = r == "length",
@@ -735,11 +739,11 @@ async fn ask(route: &Route, level: Level, system: String, user: String, images: 
 /// A Supervisor request. When Alibaba's content check turns it down (Qwen through OpenRouter or Aliyun, on
 /// news of wars, history with racism in it), the backup model answers it once instead, at the Worker's
 /// level. The flag: the backup answered.
-async fn ask_sup(m: &Models, level: Level, system: String, user: String, images: Vec<Image>, need: i64) -> Result<(String, bool, bool), String> {
+async fn ask_sup(m: &Models, level: &Level, system: String, user: String, images: Vec<Image>, need: i64) -> Result<(String, bool, bool), String> {
     match ask(&m.sup, level, system.clone(), user.clone(), images.clone(), reply_room(&m.sup, need, level)).await {
         Err(e) if e == provider::failure::INSPECTED && m.backup_for(&m.sup).is_some() => {
             let b = m.backup_for(&m.sup).unwrap();
-            ask(b, m.wl, system, user, images, reply_room(b, need, m.wl)).await.map(|(t, cut)| (t, cut, true))
+            ask(b, &m.wl, system, user, images, reply_room(b, need, &m.wl)).await.map(|(t, cut)| (t, cut, true))
         }
         r => r.map(|(t, cut)| (t, cut, false)),
     }
@@ -752,7 +756,7 @@ fn by_backup(what: &str, m: &Models) -> String {
 
 /// The draft, reviewed by the Supervisor when the text (or its outline) fits its window.
 pub async fn plan(report: &Report, folder: &Path, job: &mut Job, blocks: &[Block], m: &Models) -> Result<(), String> {
-    let (worker, sup, level) = (&m.worker, &m.sup, m.sl);
+    let (worker, sup, level) = (&m.worker, &m.sup, &m.sl);
     let parts = mmd::parts(blocks);
     let budget = Budget::for_window(worker.window, TARGET);
     let draft = chunk::draft(blocks, &parts, budget);
@@ -976,13 +980,13 @@ fn terms_task(job: &Job, text: &str, m: &Models, lookup: Lookup) -> impl std::fu
     let user = prompts::terms_message(&job.name, &body, cut);
     let m = m.clone();
     async move {
-        let level = terms_level(m.sl);
-        let mut asked = search::ask(&m.sup, level, &system, &user, reply_room(&m.sup, 8000, level), &lookup).await;
+        let level = terms_level(&m.sl);
+        let mut asked = search::ask(&m.sup, &level, &system, &user, reply_room(&m.sup, 8000, &level), &lookup).await;
         // blocked by Alibaba's content check: the backup model, without looking up
         let backup = if matches!(&asked, Err(e) if e == provider::failure::INSPECTED) { m.backup_for(&m.sup).cloned() } else { None };
         if let Some(b) = &backup {
-            let level = terms_level(m.wl);
-            asked = search::ask(b, level, &system, &user, reply_room(b, 8000, level), &Lookup::Off).await.map(|(t, _)| (t, by_backup("定术语表", &m)));
+            let level = terms_level(&m.wl);
+            asked = search::ask(b, &level, &system, &user, reply_room(b, 8000, &level), &Lookup::Off).await.map(|(t, _)| (t, by_backup("定术语表", &m)));
         }
         let r = asked.and_then(|(reply, how)| {
             let (terms, whole) = terms_in(&reply).ok_or("术语表的回答读不懂")?;
@@ -993,8 +997,8 @@ fn terms_task(job: &Job, text: &str, m: &Models, lookup: Lookup) -> impl std::fu
 }
 
 /// Picking terms and their usual renderings needs knowledge more than long thought: at most 低.
-fn terms_level(level: Level) -> Level {
-    if level.thinking() { Level::Low } else { Level::Off }
+fn terms_level(level: &Level) -> Level {
+    if level.thinking() { Level::word("low") } else { Level::off() }
 }
 
 /// The term list in a reply, and whether the reply was whole (a cut-off one gives its complete entries).
@@ -1195,7 +1199,7 @@ enum Decision {
 async fn ask_fix(ctx: &Ctx, k: usize, n: usize, part: Part, cuts: Option<&[usize]>, source: &str, output: &str, said: &str, images: Vec<Image>, notes: &mut Vec<String>) -> Decision {
     let m = &ctx.models;
     ctx.count(true);
-    let asked = ask_sup(m, m.sl, prompts::fix_system(cuts.is_none(), ctx.md), prompts::fix_message(k, n, part, cuts, source, output, said), images, 1200).await;
+    let asked = ask_sup(m, &m.sl, prompts::fix_system(cuts.is_none(), ctx.md), prompts::fix_message(k, n, part, cuts, source, output, said), images, 1200).await;
     if let Ok((_, _, true)) = asked {
         ctx.count(true);
         notes.push(by_backup("排查", m));
@@ -1264,7 +1268,8 @@ async fn clean_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, before: String, 
     let mut o = Outcome::new(c.start, Stage::Clean, prior_fixes);
     let (mut hint, mut think, mut tries, mut backup, mut roomier): (Option<String>, bool, usize, Option<&Route>, bool) = (None, false, 0, None, false);
     o.res = loop {
-        let (route, level) = if let Some(b) = backup { (b, m.wl) } else if o.by_supervisor { (&m.sup, m.sl) } else if think { (&m.worker, Level::High) } else { (&m.worker, m.wl) };
+        let strong = Level::word("high");
+        let (route, level) = if let Some(b) = backup { (b, &m.wl) } else if o.by_supervisor { (&m.sup, &m.sl) } else if think { (&m.worker, &strong) } else { (&m.worker, &m.wl) };
         let images = page_images(&ctx, route, chunk::image_pages(&blocks, &c));
         let system = prompts::worker_system(ctx.md, ctx.english, c.part, !images.is_empty());
         let user = prompts::worker_message(&WorkerAsk { note: &c.note, hint: hint.as_deref(), part: c.part, pages, k, n, before: &before, source: &marked });
@@ -1383,7 +1388,8 @@ async fn translate_one(ctx: Arc<Ctx>, c: Chunk, k: usize, n: usize, source: Stri
     let title_only = c.part == Part::Front && ctx.title_only;
     let (mut hint, mut think, mut tries, mut backup, mut roomier): (Option<String>, bool, usize, Option<&Route>, bool) = (None, false, 0, None, false);
     o.res = loop {
-        let (route, level) = if let Some(b) = backup { (b, m.wl) } else if o.by_supervisor { (&m.sup, m.sl) } else if think { (&m.worker, Level::High) } else { (&m.worker, m.wl) };
+        let strong = Level::word("high");
+        let (route, level) = if let Some(b) = backup { (b, &m.wl) } else if o.by_supervisor { (&m.sup, &m.sl) } else if think { (&m.worker, &strong) } else { (&m.worker, &m.wl) };
         let (system, user) = match &draft {
             Some(d) => {
                 let mut user = prompts::script_message(&source, d);
@@ -1488,7 +1494,7 @@ async fn review_one(ctx: Arc<Ctx>, c: Chunk, stage: Stage, source: String, outpu
     let images = if translating { vec![] } else { page_images(&ctx, &m.sup, pages) };
     o.requests += 1;
     ctx.count(true);
-    let asked = ask_sup(m, m.sl, prompts::review_system(translating, ctx.md), prompts::review_message(&source, &output), images, context::estimate(&output) / 2 + 2000).await;
+    let asked = ask_sup(m, &m.sl, prompts::review_system(translating, ctx.md), prompts::review_message(&source, &output), images, context::estimate(&output) / 2 + 2000).await;
     if let Ok((_, _, true)) = asked {
         o.requests += 1;
         ctx.count(true);
@@ -1592,7 +1598,7 @@ async fn read_through(report: &Report, folder: &Path, job: &mut Job, m: &Models)
         read_n += 1;
         job.supervisor_requests += 1;
         report.counts(job);
-        let asked = ask_sup(m, m.sl, prompts::read_system(), prompts::read_message(&terms, &text, &left, &kept), vec![], 4000).await;
+        let asked = ask_sup(m, &m.sl, prompts::read_system(), prompts::read_message(&terms, &text, &left, &kept), vec![], 4000).await;
         if let Ok((_, _, true)) = asked {
             job.supervisor_requests += 1;
             job.read_notes.push(by_backup("通读", m));
@@ -2064,7 +2070,7 @@ pub(crate) mod tests {
     }
 
     fn models(parallel: usize) -> Models {
-        Models { worker: mock(32_768), sup: mock(32_768), wl: Level::Off, sl: Level::High, parallel, backup: None }
+        Models { worker: mock(32_768), sup: mock(32_768), wl: Level::off(), sl: Level::word("high"), parallel, backup: None }
     }
 
     fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
@@ -2101,7 +2107,7 @@ pub(crate) mod tests {
         let dir = crate::db::tests::temp_dir("pub2md-inspected");
         let text = PAPER.replacen("Attention Is All You Need", "Attention Is All You Need 审核测试", 1);
         let (mut job, blocks) = job_for(&dir, &text, Steps::Translate);
-        let mut m = Models { worker: mock(32_768), sup: thinker("cloud:qwen"), wl: Level::Off, sl: Level::High, parallel: 4, backup: Some(backup.clone()) };
+        let mut m = Models { worker: mock(32_768), sup: thinker("cloud:qwen"), wl: Level::off(), sl: Level::word("high"), parallel: 4, backup: Some(backup.clone()) };
         tauri::async_runtime::block_on(plan(&Report::none(), &dir, &mut job, &blocks, &m)).unwrap();
         assert!(job.planned && job.events.iter().any(|e| e.ends_with("审定切块被阿里云的内容审核拦下，改用备用模型 DeepSeek Flash")) && (job.worker_requests, job.supervisor_requests) == (0, 2), "{:?}", job.events);
         assert!(matches!(tauri::async_runtime::block_on(terms_task(&job, &text, &m, Lookup::Off)), Finished::Terms(Ok((t, how)), true) if !t.is_empty() && how.starts_with("定术语表被阿里云")));
@@ -2113,7 +2119,7 @@ pub(crate) mod tests {
         // the Worker turned down: the backup does the chunk
         let dir = crate::db::tests::temp_dir("pub2md-inspected-worker");
         let (mut job, blocks) = job_for(&dir, &text, Steps::Clean);
-        let m = Models { worker: thinker("cloud:qwen-flash"), sup: mock(32_768), wl: Level::High, sl: Level::Off, parallel: 4, backup: Some(backup) };
+        let m = Models { worker: thinker("cloud:qwen-flash"), sup: mock(32_768), wl: Level::word("high"), sl: Level::off(), parallel: 4, backup: Some(backup) };
         run_mock(&dir, &mut job, &blocks, m).unwrap();
         let first = &job.chunks[0];
         assert!(job.chunks.iter().all(|c| c.state == State::Done) && !first.by_supervisor && first.notes == ["整理被阿里云的内容审核拦下，这一块改用备用模型 DeepSeek Flash"], "{:?}", first.notes);
@@ -2170,7 +2176,7 @@ pub(crate) mod tests {
     fn clean_with_the_mock_models() {
         let dir = crate::db::tests::temp_dir("pub2md-flow");
         let (mut job, blocks) = job_for(&dir, PAPER, Steps::Clean);
-        tauri::async_runtime::block_on(plan(&Report::none(), &dir, &mut job, &blocks, &Models { worker: mock(4_000), sup: mock(32_768), wl: Level::Off, sl: Level::High, parallel: 4, backup: None })).unwrap();
+        tauri::async_runtime::block_on(plan(&Report::none(), &dir, &mut job, &blocks, &Models { worker: mock(4_000), sup: mock(32_768), wl: Level::off(), sl: Level::word("high"), parallel: 4, backup: None })).unwrap();
         assert!(job.planned && job.chunks.len() >= 2 && job.supervisor_requests == 1, "{:?}", job.chunks.len());
         assert!(job.chunks.iter().all(|c| c.chunk.note.starts_with("模拟交代")));
         let names = run_mock(&dir, &mut job, &blocks, models(4)).unwrap();
@@ -2196,13 +2202,13 @@ pub(crate) mod tests {
         let cut = "{\"terms\":[\n{\"source\":\"DJT\",\"target\":\"DJT\",\"note\":\"车牌 {\\\"DJT\\\"}\"},\n{\"source\":\"Times\",\"target\":\"《纽约时报》\"},\n{\"source\":\"divisive\",\"target\":\"分裂";
         let (terms, whole) = terms_in(cut).unwrap();
         assert_eq!((terms.iter().map(|t| t.target.as_str()).collect::<Vec<_>>(), whole), (vec!["DJT", "《纽约时报》"], false));
-        assert_eq!((terms[0].note.as_str(), terms_in("读不懂"), terms_level(Level::High), terms_level(Level::Off)), ("车牌 {\"DJT\"}", None, Level::Low, Level::Off));
+        assert_eq!((terms[0].note.as_str(), terms_in("读不懂"), terms_level(&Level::word("high")), terms_level(&Level::off())), ("车牌 {\"DJT\"}", None, Level::word("low"), Level::off()));
         // reply room: thinking gets its share
         use crate::picky::cloud::Think;
         let r = |think: Think| Route { think, ..mock(32_768) };
-        assert_eq!([reply_room(&r(Think::Switch), 1000, Level::Off), reply_room(&r(Think::Switch), 1000, Level::Medium), reply_room(&r(Think::Never), 1000, Level::High)], [1000, 17_384, 1000]);
+        assert_eq!([reply_room(&r(Think::Switch), 1000, &Level::off()), reply_room(&r(Think::Switch), 1000, &Level::word("medium")), reply_room(&r(Think::Never), 1000, &Level::word("high")), reply_room(&r(Think::Switch), 1000, &Level::word("max"))], [1000, 17_384, 1000, 66_536]);
         // GLM-5.3 thinks at 关 too
-        assert_eq!(reply_room(&r(Think::Always), 1000, Level::Off), 9_192);
+        assert_eq!(reply_room(&r(Think::Always), 1000, &Level::off()), 9_192);
     }
 
     #[test]
@@ -2479,7 +2485,7 @@ pub(crate) mod tests {
             job = load_job(&folder).unwrap();
             event(&mut job, "继续");
         }
-        let (wl, sl) = (level_var("POMELO_WORKER_LEVEL", Level::Off), level_var("POMELO_SUP_LEVEL", Level::High));
+        let (wl, sl) = (level_var("POMELO_WORKER_LEVEL", Level::off()), level_var("POMELO_SUP_LEVEL", Level::word("high")));
         job.models = format!("Worker：{}（{}）　Supervisor：{}（{}）{}", api(&worker.target), wl.name(), api(&sup.target), sl.name(), backup.as_ref().map_or(String::new(), |b| format!("　备用：{}", api(&b.target))));
         let parallel = std::env::var("POMELO_PARALLEL").ok().and_then(|p| p.parse().ok()).unwrap_or(4);
         let say = Report(Arc::new(|c| {
@@ -2544,13 +2550,7 @@ pub(crate) mod tests {
     }
 
     fn level_var(var: &str, or: Level) -> Level {
-        match std::env::var(var).as_deref() {
-            Ok("off") => Level::Off,
-            Ok("low") => Level::Low,
-            Ok("medium") => Level::Medium,
-            Ok("high") => Level::High,
-            _ => or,
-        }
+        std::env::var(var).map_or(or, |v| Level(v))
     }
 
     /// The Worker's route, the Supervisor's (POMELO_SUP_KEY_FILE / _SERVICE / _MODEL, else the Worker's)
@@ -2592,7 +2592,7 @@ pub(crate) mod tests {
     fn real_pub2md_probe() {
         let (Some((target, window)), Ok(file)) = (crate::picky::chat::tests::cloud_target(), std::env::var("POMELO_PUB2MD_MMD")) else { return };
         let (_, sup, _) = real_routes(target, window);
-        let level = level_var("POMELO_SUP_LEVEL", Level::High);
+        let level = level_var("POMELO_SUP_LEVEL", Level::word("high"));
         let text = std::fs::read_to_string(&file).unwrap();
         let blocks = mmd::blocks(&text).0;
         let job = Job { name: "probe".into(), steps: Steps::Translate, ..Default::default() };
@@ -2601,11 +2601,11 @@ pub(crate) mod tests {
         let probe = std::env::var("POMELO_PROBE").unwrap_or_default();
         if probe == "search" {
             // the term list as the job asks it, looking up with the Supervisor's own search
-            let level = terms_level(level);
+            let level = terms_level(&level);
             let system = prompts::terms_system(from, to, &wishes(&job), true);
             let user = prompts::terms_message(&job.name, &fit(&text, 20_000).0, false);
             let started = Instant::now();
-            let r = tauri::async_runtime::block_on(search::ask(&sup, level, &system, &user, reply_room(&sup, 8000, level), &Lookup::Native));
+            let r = tauri::async_runtime::block_on(search::ask(&sup, &level, &system, &user, reply_room(&sup, 8000, &level), &Lookup::Native));
             eprintln!("[probe] 术语表（联网）：用时 {} 秒，{}", started.elapsed().as_secs(), r.as_ref().map_or_else(|e| format!("出错：{e}"), |(t, how)| format!("{how}，回答 {} 字，读出 {} 条", t.chars().count(), terms_in(t).map_or(0, |(t, _)| t.len()))));
             if let Ok((t, _)) = r {
                 eprintln!("[probe] 回答：\n{t}\n[probe] ——");
@@ -2617,14 +2617,14 @@ pub(crate) mod tests {
             let budget = Budget::for_window(window, TARGET);
             let draft = chunk::draft(&blocks, &parts, budget);
             let outline = chunk::outline(&blocks, &parts, &draft, true);
-            asks.push(("审定切块", prompts::plan_system(budget.target, budget.max), prompts::plan_message("probe", mmd::blocks(&text).1, &outline, true), reply_room(&sup, 1500 + 150 * draft.len() as i64, level), vec![], level));
+            asks.push(("审定切块", prompts::plan_system(budget.target, budget.max), prompts::plan_message("probe", mmd::blocks(&text).1, &outline, true), reply_room(&sup, 1500 + 150 * draft.len() as i64, &level), vec![], level.clone()));
         }
         if probe == "read" {
             // POMELO_PUB2MD_MMD is the translation here, its chunks marked ⟦第 k 块⟧
-            asks.push(("通读", prompts::read_system(), prompts::read_message("", &text, &check::leftovers(&text), &[]), reply_room(&sup, 4000, level), vec![], level));
+            asks.push(("通读", prompts::read_system(), prompts::read_message("", &text, &check::leftovers(&text), &[]), reply_room(&sup, 4000, &level), vec![], level.clone()));
         }
         if probe.is_empty() || probe == "terms" {
-            asks.push(("术语表", prompts::terms_system(from, to, &wishes(&job), false), prompts::terms_message(&job.name, &fit(&text, 20_000).0, false), reply_room(&sup, 8000, terms_level(level)), vec![], terms_level(level)));
+            asks.push(("术语表", prompts::terms_system(from, to, &wishes(&job), false), prompts::terms_message(&job.name, &fit(&text, 20_000).0, false), reply_room(&sup, 8000, &terms_level(&level)), vec![], terms_level(&level)));
         }
         if probe.is_empty() || probe == "fix" {
             let c = Chunk { start: 0, end: blocks.len(), ..Default::default() };
@@ -2632,7 +2632,7 @@ pub(crate) mod tests {
             let output: String = blocks.iter().filter(|b| !b.text.contains("\\begin{tabular}")).map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n\n");
             let issues = check::said(&check::check(&plain, &output, false));
             let images: Vec<Image> = std::env::var("POMELO_PROBE_PAGES").map(|d| (1..=IMAGES_A_CHUNK).filter_map(|n| std::fs::read(PathBuf::from(&d).join(pdf::page_name(n))).ok()).map(|d| Image { media_type: "image/jpeg".into(), data: office::base64(&d) }).collect()).unwrap_or_default();
-            asks.push(("排查", prompts::fix_system(false, false), prompts::fix_message(1, 1, Part::Body, Some(&[]), &plain, &output, &issues), reply_room(&sup, 1200, level), images, level));
+            asks.push(("排查", prompts::fix_system(false, false), prompts::fix_message(1, 1, Part::Body, Some(&[]), &plain, &output, &issues), reply_room(&sup, 1200, &level), images, level.clone()));
         }
         tauri::async_runtime::block_on(async {
             for (what, system, user, max, images, level) in asks {

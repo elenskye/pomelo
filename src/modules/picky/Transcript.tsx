@@ -31,6 +31,7 @@ import { Button } from "@/shared/ui";
 import { pickyApi, type Card, type CardField, type ChatMessage, type Note, type Query, type QueryRecord, type ReadingProgress, type Source } from "./api";
 import { MessageFiles, openFile } from "./Files";
 import { openKnowledge } from "./Knowledge";
+import { AskCard, AskedLines } from "./AskCard";
 import { EditCard, EditFileTag, WordDialog } from "./Work";
 import { UsedMemories } from "./Memory";
 import { DiffView } from "./Assist";
@@ -444,6 +445,7 @@ type ItemProps = {
   onOpenFile: (id: number) => void;
   onOpenSource: (s: Source) => void;
   onOpenRecord: (r: QueryRecord) => void;
+  onAskFollowUp?: (text: string) => void;
   onStop?: () => void;
 };
 
@@ -492,10 +494,14 @@ function Item(p: ItemProps) {
         </div>
       </>
     );
-  const thinkingLive = streaming && !m.content;
+  const asks = m.asks ?? [];
+  const waiting = asks.filter((a) => a.state === "waiting");
+  const writingNow = streaming && !waiting.length;
+  const thinkingLive = writingNow && !m.content;
   return (
     <div className="group" data-msg={m.id}>
       {(m.queries?.length ?? 0) > 0 && <Queries queries={m.queries} />}
+      <AskedLines asks={asks} />
       {(m.notes?.length ?? 0) > 0 && <Notes notes={m.notes} />}
       {m.reading && <Reading r={m.reading} onStop={p.onStop} />}
       {m.reasoning && (
@@ -507,11 +513,12 @@ function Item(p: ItemProps) {
           <MarkdownView className="reasoning mt-1 border-l-2 pl-3" source={m.reasoning} streaming={thinkingLive} />
         </details>
       )}
-      {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={streaming} links={streaming ? undefined : links} cites={streaming ? undefined : m.sources} />}
+      {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={writingNow} links={streaming ? undefined : links} cites={streaming ? undefined : m.sources} />}
+      {waiting.map((a) => <AskCard key={a.id} ask={a} onFollowUp={p.onAskFollowUp} />)}
       {m.card && <ProposalCard card={m.card} streaming={streaming} onOpen={p.onOpenRecord} />}
       {m.edit && <EditCard edit={m.edit} streaming={streaming} onChanged={() => void qc.invalidateQueries({ queryKey: ["picky", "messages"] })} />}
       {!streaming && <SourceList sources={citedIn(m.content, m.sources ?? [])} onOpen={p.onOpenSource} />}
-      {streaming && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">{m.queued ? (m.model?.startsWith("cloud:") ? "云端模型忙，等一下再试…" : "排队中（本地模型正在回答别的）") : "正在生成…"}</p>}
+      {writingNow && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">{m.queued ? (m.model?.startsWith("cloud:") ? "云端模型忙，等一下再试…" : "排队中（本地模型正在回答别的）") : "正在生成…"}</p>}
       {!streaming && <UsedMemories memories={m.memories ?? []} />}
       <Notice m={m} retry={p.last && !p.busy && RETRYABLE.has(m.state) ? p.onRegenerate : undefined} />
       {!streaming && (
@@ -658,6 +665,8 @@ export function Transcript(props: {
   empty: ReactNode;
   onEdit: (m: ChatMessage, text: string) => void;
   onRegenerate: (m: ChatMessage) => void;
+  /** ASK answered after its reply ended: send this as a new message. */
+  onAskFollowUp?: (text: string) => void;
   onSwitch: (m: ChatMessage, delta: -1 | 1) => void;
   onOpenFile: (id: number) => void;
   /** Stops the reply being written (from its reading progress). */
@@ -934,6 +943,7 @@ export function Transcript(props: {
                 onOpenFile={props.onOpenFile}
                 onOpenSource={openSource}
                 onOpenRecord={openHit}
+                onAskFollowUp={props.onAskFollowUp}
                 onStop={props.onStop}
               />
             ))}

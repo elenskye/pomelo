@@ -91,7 +91,11 @@ fn cards_keep_their_items_and_the_rules_refuse() {
 
     let cloud = Access { cloud: true, cloud_allowed: vec!["todo".into(), "books".into()], ..Access::default() };
     let r = refused(&cloud, EDIT_ENTRY, "{}").unwrap();
-    assert!(r.state == "blocked" && r.text.contains("「钱来钱往不发给云端，这次不能记」"));
+    assert!(r.state == "blocked" && r.text.contains("「钱来钱往 · 收支不发给云端，这次不能记」"));
+    // 钱来钱往 by part: 收支 may go, 资产 not → 记一笔 yes, 更新余额 no
+    let flow = Access { cloud: true, cloud_allowed: vec![crate::picky::data::FIN_FLOW.into()], ..Access::default() };
+    assert!(refused(&flow, ADD_ENTRY, "{}").is_none());
+    assert!(refused(&flow, SET_BALANCE, "{}").unwrap().text.contains("「钱来钱往 · 资产不发给云端，这次不能记」"));
     assert!(refused(&cloud, ADD_TASK, "{}").is_none());
     assert!(refused(&cloud, ADD_WORK, r#"{"kind": "book"}"#).is_none());
     assert!(refused(&cloud, ADD_WORK, r#"{"kind": "film"}"#).is_some()); // not allowed in this setting
@@ -126,7 +130,7 @@ fn a_pending_item_is_replaced_in_its_place() {
     add(&p, 1, &book("Moses Maimonides")).unwrap();
     add(&p, 1, &note).unwrap();
     // the earlier reply's card, with each item's 编号; a module this model may not see is left out
-    let listed = card::pending_text(&p, &[1], |m| m != "finance").unwrap();
+    let listed = card::pending_text(&p, &[1], |m| !m.starts_with("finance")).unwrap();
     assert!(listed.contains("- 编号 1-1 · 新书 · 巴比伦塔：作者 Moses Maimonides") && !listed.contains("午饭") && listed.contains("replace"), "{listed}");
     assert_eq!(card::pending_text(&p, &[2], |_| true).unwrap(), "");
     // 编号: only of this conversation's cards (`runs`) or this reply's; a bare number is this reply's

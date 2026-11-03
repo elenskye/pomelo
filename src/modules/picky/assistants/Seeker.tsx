@@ -7,7 +7,7 @@ import { InlineMd } from "@/shared/InlineMd";
 import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, EmptyState, Field, RefreshButton, SearchInput, Segmented, TextArea, TextInput } from "@/shared/ui";
-import { useModels } from "../Schedules";
+import { ModelRow } from "./ModelRow";
 import { SeekerApplications, SeekerDossiers, SeekerImportDialog, SeekerMaterials, SeekerRules, choosable } from "./SeekerLibrary";
 import { SeekerHistory } from "./SeekerHistory";
 import { SeekerExportDialog } from "./SeekerOutput";
@@ -17,7 +17,7 @@ import { SeekerJobPicker, SeekerKnowledgeSettings } from "./SeekerJob";
 import { useSeekerFiles } from "./SeekerFiles";
 import { flushSeekerDraft, queueSeekerDraft, useSeekerDraft } from "./seekerDraft";
 import { SeekerJobLine, dropSeekerJob, seekerJobKey, startSeekerJob, useSeekerJobs } from "./seekerJobs";
-import { ON_DRAFT, SEEKER_FILES_KEY, SEEKER_JOB_RESUMES_KEY, groupName, SEEKER_KEY, SEEKER_KNOWLEDGE_KEY, deskOf, draftLang, pageLang, seekerApi, type SeekerCatalog, type SeekerEdit, type SeekerEntry, type SeekerForm, type SeekerHeader, type SeekerImport, type SeekerLang, type SeekerReviewed, type SeekerSelection, type SeekerWorkspace, type SourceChange } from "./seekerApi";
+import { ON_DRAFT, SEEKER_FILES_KEY, SEEKER_JOB_RESUMES_KEY, groupName, SEEKER_KEY, SEEKER_KNOWLEDGE_KEY, deskOf, draftLang, pageLang, seekerApi, seekerModel, type SeekerCatalog, type SeekerEdit, type SeekerEntry, type SeekerForm, type SeekerHeader, type SeekerImport, type SeekerLang, type SeekerReviewed, type SeekerSelection, type SeekerWorkspace, type SourceChange } from "./seekerApi";
 import { useSubPage } from "@/app/subpage";
 import { moduleById } from "@/app/modules";
 import { Row, Section } from "@/settings/layout";
@@ -29,7 +29,9 @@ const TABS = (moduleById("seeker").subs ?? []) as { value: Tab; label: string }[
 /** The sub-pages that follow 中文 / English (档案 and 网申 are both languages'). */
 const BY_LANG: Tab[] = ["resume", "library", "rules", "history", "settings"];
 const entryText = (e: SeekerEntry) => [e.time, e.name, e.role, e.location, e.note, ...e.points.map((p) => p.text)].filter(Boolean).join("\n");
-const EMPTY: SeekerCatalog = { records: [], revisions: [], groups: [], settings: { selectionModel: null, reviewModel: null, thinking: false, cloudAllowed: false } };
+const EMPTY: SeekerCatalog = { records: [], revisions: [], groups: [], settings: { model: null, thinking: false, effort: null, features: {}, cloudAllowed: false } };
+/** 设置: each AI function by where it is (Rust model.rs `FUNCTIONS`); each follows the default or has its own. */
+const SEEKER_FEATURES: [string, [string, string][]][] = [["简历", [["select", "按 JD 推荐素材"], ["review", "审查整份简历"], ["polish", "润色要点"], ["summary", "按 JD 改写 Summary"]]], ["素材", [["material", "润色一条素材"]]]];
 /** What a 审查 / 润色要点 / Summary left, for its line. */
 function reviewed(kind: string, r: SeekerReviewed): string {
   const skipped = r.skipped ? `（${r.skipped} 条对不上，略过了）` : "";
@@ -73,8 +75,7 @@ export function SeekerPage() {
   const draft = (local.draft && draftLang(local.draft) === lang ? local.draft : null) ?? desk?.draft ?? null;
   const catalog = data?.catalog ?? EMPTY;
   const settings = catalog.settings;
-  const selectModels = useModels(settings.selectionModel, settings.thinking).models.filter((m) => m.value != null);
-  const reviewModels = useModels(settings.reviewModel, settings.thinking).models.filter((m) => m.value != null);
+  const hasModel = (kind: string) => seekerModel(settings, kind).model != null;
   const flush = () => flushSeekerDraft(qc);
   /** ↻: what the page shows from the folder (cv/, material/, knowledge/: files, companies, a job's résumés),
    * read again; the draft is saved first. */
@@ -157,19 +158,16 @@ export function SeekerPage() {
     <SeekerJobPicker lang={lang} draft={draft} busy={busy} write={write} />
     <Field label="目标 JD"><TextArea aria-label="目标 JD" rows={6} value={draft?.jd ?? ""} disabled={!draft || busy} onChange={(e) => draft && queueSeekerDraft({ ...draft, jd: e.target.value }, qc)} /></Field>
     <fieldset disabled={busy} className="flex flex-col gap-4 border-t pt-4">
-      <Field label="选材模型"><Dropdown block value={settings.selectionModel} options={selectModels} placeholder="选择模型" ariaLabel="选材模型" onChange={(value) => setting({ selectionModel: value })} /></Field>
-      <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !settings.selectionModel || !materials.length || running("select")} onClick={() => void run("select")}><Sparkles size={14} />按 JD 推荐素材</Button>{line("select", "正在推荐素材…", "推荐没成")}</div>
+      <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !hasModel("select") || !materials.length || running("select")} onClick={() => void run("select")}><Sparkles size={14} />按 JD 推荐素材</Button>{line("select", "正在推荐素材…", "推荐没成")}</div>
     </fieldset>
     <fieldset disabled={busy} className="flex flex-col gap-4 border-t pt-4">
-      <Field label="审查与润色模型"><Dropdown block value={settings.reviewModel} options={reviewModels} placeholder="选择模型" ariaLabel="审查与润色模型" onChange={(value) => setting({ reviewModel: value })} /></Field>
       <Field label="本次要求"><TextArea aria-label="本次要求" rows={3} value={request} onChange={(e) => setRequest(e.target.value)} /></Field>
       <div className="flex flex-col gap-2">
-        <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !settings.reviewModel || running("review")} onClick={() => void run("review")}>审查整份简历</Button>{line("review", "正在审查…", "审查没成")}</div>
-        <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !settings.reviewModel || !chosen.length || running("polish")} onClick={() => void run("polish")}>{chosen.length ? `润色所选要点（${chosen.length}）` : "润色要点"}</Button>{line("polish", "正在润色…", "润色没成")}</div>
-        {lang === "en" && <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !settings.reviewModel || !draft.sections.some((s) => s.category === SUMMARY && s.entries.length) || running("summary")} onClick={() => void run("summary")}>按 JD 改写 Summary</Button>{line("summary", "正在改写 Summary…", "改写没成")}</div>}
+        <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !hasModel("review") || running("review")} onClick={() => void run("review")}>审查整份简历</Button>{line("review", "正在审查…", "审查没成")}</div>
+        <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !hasModel("polish") || !chosen.length || running("polish")} onClick={() => void run("polish")}>{chosen.length ? `润色所选要点（${chosen.length}）` : "润色要点"}</Button>{line("polish", "正在润色…", "润色没成")}</div>
+        {lang === "en" && <div className="flex flex-col gap-1"><Button className="justify-center" disabled={!draft || !hasModel("summary") || !draft.sections.some((s) => s.category === SUMMARY && s.entries.length) || running("summary")} onClick={() => void run("summary")}>按 JD 改写 Summary</Button>{line("summary", "正在改写 Summary…", "改写没成")}</div>}
       </div>
     </fieldset>
-    <label className="flex items-center gap-2 border-t pt-4 text-sm"><Switch label="思考" checked={settings.thinking} disabled={busy} onChange={(thinking) => setting({ thinking })} />思考</label>
   </div>;
   const notes = desk?.draft?.notes ?? [];
   const edits = notes.filter((n) => n.edit != null);
@@ -196,7 +194,11 @@ export function SeekerPage() {
     : <div className="-m-1 flex-1 overflow-y-auto p-1"><div className="mx-auto max-w-3xl py-5">
       <Section title="Seeker 文件夹"><Row label="位置" actions={<><Button disabled={busy} onClick={() => void openDialog({ directory: true, multiple: false, title: "选择 Seeker 文件夹" }).then((path) => { if (typeof path === "string") void write(() => seekerApi.folder(path)).then(() => { void qc.invalidateQueries({ queryKey: SEEKER_KNOWLEDGE_KEY }); void qc.invalidateQueries({ queryKey: SEEKER_FILES_KEY }); }); }).catch((e) => toast(errorText(e), "error"))}>{data.folder ? "换一个" : "选择"}</Button>{data.folder && <>{files.data?.transfer && <Button disabled={busy} onClick={() => void importPreview()}>从 transfer/ 导入</Button>}<Button variant="ghost" disabled={busy} onClick={() => void write(() => seekerApi.folder("")).then(() => { void qc.invalidateQueries({ queryKey: SEEKER_KNOWLEDGE_KEY }); void qc.invalidateQueries({ queryKey: SEEKER_FILES_KEY }); })}>清除</Button></>}</>}>{data.folder ? <span className="break-all font-mono text-xs">{data.folder}</span> : <span className="text-muted-foreground">未选择</span>}</Row></Section>
       <SeekerKnowledgeSettings folder={data.folder} busy={busy} />
-      <Section title="模型"><Row label="允许发给云端"><Switch label="允许发给云端" checked={settings.cloudAllowed} onChange={(on) => void write(() => seekerApi.settings({ ...settings, cloudAllowed: on }))} /></Row></Section>
+      <Section title="模型">
+        <Row label="允许发给云端"><Switch label="允许发给云端" checked={settings.cloudAllowed} onChange={(on) => setting({ cloudAllowed: on })} /></Row>
+        <ModelRow label="默认" choice={settings} onChange={(c) => setting({ ...c })} />
+      </Section>
+      {SEEKER_FEATURES.map(([title, rows]) => <Section key={title} title={title}>{rows.map(([kind, label]) => <ModelRow key={kind} label={label} choice={settings.features[kind] ?? null} fallback={settings} onChange={(c) => { const features = { ...settings.features }; if (c) features[kind] = c; else delete features[kind]; setting({ features }); }} />)}</Section>)}
     </div></div>}
     {drawer && tab === "resume" && <div className="absolute inset-0 z-20 flex justify-end bg-black/20 xl:hidden" onClick={() => setDrawer(null)}><aside className="flex h-full w-80 max-w-full flex-col gap-2 overflow-auto border-l bg-card p-4" onClick={(e) => e.stopPropagation()}><Button className="self-end" variant="ghost" aria-label="关闭面板" onClick={() => setDrawer(null)}><X size={16} /></Button>{drawer === "materials" ? materialPanel : assistantPanel}</aside></div>}
     {exporting && <SeekerExportDialog lang={lang} folder={data.folder} job={draft?.job} flush={flush} saved={(next) => qc.setQueryData(SEEKER_KEY, next)} close={() => setExporting(false)} />}

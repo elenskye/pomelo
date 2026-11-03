@@ -4,9 +4,12 @@
 
 mod autostart;
 mod backup;
+mod capture;
 mod db;
 mod dock;
+mod health;
 mod home;
+mod menu;
 mod modules;
 mod paths;
 mod picky;
@@ -24,7 +27,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Mutex;
-use tauri::{Manager, RunEvent, State, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 
 pub struct AppState {
@@ -156,6 +159,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(autostart::plugin())
+        .plugin(capture::plugin())
+        .menu(|app| menu::build(app, &menu::first_index()))
+        .on_menu_event(|app, e| menu::on_event(app, &e))
         .setup(|app| {
             let base = app.path().data_dir()?; // ~/Library/Application Support
             let overridden = std::env::var_os(paths::DATA_DIR_ENV);
@@ -171,6 +177,7 @@ pub fn run() {
             if let Err(e) = picky::assistants::seeker::output::adopt_job_resumes(&app.state::<AppState>()) {
                 eprintln!("[seeker] 简历一栏没搬过去：{e}");
             }
+            capture::register(&handle);
             tray::init(&handle)?;
             // the login item opens Pomelo in the menu bar only (hidden before the window is first drawn)
             if autostart::launched_hidden() {
@@ -209,18 +216,41 @@ pub fn run() {
                 responder.respond(resp.unwrap_or_else(|_| tauri::http::Response::new(Vec::new())));
             });
         })
-        // closing the window keeps Pomelo running in the menu bar; ⌘Q / the menu bar quits
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
+        // closing the window keeps Pomelo running in the menu bar; ⌘Q / the menu bar quits.
+        // 速记小窗: closing or losing the focus goes through its page (it writes the draft first)
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+                api.prevent_close();
+                let _ = window.hide();
             }
+            WindowEvent::CloseRequested { api, .. } if window.label() == capture::LABEL => {
+                api.prevent_close();
+                capture::request_close(window.app_handle());
+            }
+            WindowEvent::Focused(false) if window.label() == capture::LABEL => {
+                let _ = window.emit_to(capture::LABEL, "capture-blur", ());
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
             reveal_data_dir,
+            menu::app_menu_index,
+            capture::capture_load,
+            capture::capture_draft,
+            capture::capture_files,
+            capture::capture_pin,
+            capture::capture_note,
+            capture::capture_todo,
+            capture::capture_undo,
+            capture::capture_chat,
+            capture::capture_chat_thinking,
+            capture::capture_chat_effort,
+            capture::capture_chat_clear,
+            capture::capture_chat_keep,
+            capture::capture_fit,
+            capture::capture_open,
+            capture::capture_hide,
             copy_text,
             picky::picky_info,
             picky::picky_status,
@@ -395,6 +425,10 @@ pub fn run() {
             picky::templates::picky_template_pin,
             picky::templates::picky_template_delete,
             picky::data::picky_data_cloud,
+            picky::assist::picky_assist_model,
+            picky::assist::picky_assist_model_set,
+            picky::assist::picky_assist_level,
+            picky::assist::picky_assist_level_set,
             picky::assist::picky_polish,
             picky::assist::picky_site_english,
             picky::assist::picky_fill_work,
@@ -417,6 +451,8 @@ pub fn run() {
             picky::library::picky_archive,
             picky::library::picky_private,
             picky::library::picky_conversation_thinking,
+            picky::library::picky_conversation_effort,
+            picky::chat::picky_ask_answer,
             picky::yearly::picky_year_card,
             picky::library::picky_move,
             picky::library::picky_delete,
@@ -480,14 +516,34 @@ pub fn run() {
             modules::finance::fin_balances_save,
             modules::finance::fin_holdings,
             modules::finance::fin_holdings_save,
+            modules::finance::fin_range,
+            picky::assistants::importer::picky_importer,
+            picky::assistants::importer::picky_importer_save,
+            picky::assistants::importer::picky_importer_extract,
+            picky::assistants::importer::picky_importer_match,
+            picky::assistants::importer::picky_importer_tidy,
+            modules::finance::import::fin_import_link_pending,
+            modules::finance::import::fin_import_set_category,
+            modules::finance::import::fin_import_resolve,
+            modules::finance::import::fin_import_unlink,
+            modules::finance::import::fin_import_preview,
+            modules::finance::import::fin_import_add,
+            modules::finance::import::fin_import_ignore,
+            modules::finance::import::fin_import_rename,
+            modules::finance::import::fin_import_delete,
+            modules::finance::import::fin_imports_reorder,
+            modules::finance::import::fin_imports,
+            modules::finance::import::fin_import_batch,
+            modules::finance::import::fin_import_save,
+            modules::finance::import::fin_import_commit,
+            modules::finance::import::fin_entry_sources,
+            modules::finance::import::fin_refund_candidates,
             modules::finance::fin_entries,
             modules::finance::fin_entry_create,
-            modules::finance::fin_entries_create,
             modules::finance::fin_entry_update,
             modules::finance::fin_entry_delete,
             modules::finance::fin_entries_update,
             modules::finance::fin_entries_delete,
-            modules::finance::fin_period_last,
             modules::finance::fin_fixed,
             modules::finance::fin_fixed_create,
             modules::finance::fin_fixed_update,
@@ -579,6 +635,7 @@ pub fn run() {
             picky::act::card::picky_card_confirm,
             picky::act::card::picky_card_cancel,
             search::query::search_index_status,
+            health::health_check,
             home::home_overview,
             dock::dock_live,
             site::site_overview,
@@ -688,6 +745,7 @@ pub fn run() {
             // Dock icon clicked while the window is hidden
             RunEvent::Reopen { .. } => tray::show_main(app),
             RunEvent::Exit => {
+                capture::unregister(app);
                 picky::chat::shutdown(app);
                 app.state::<AppState>().picky.runtime.stop_ours_on_exit();
                 app.state::<site::Site>().on_exit();

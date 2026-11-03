@@ -5,13 +5,13 @@
 // goes on in Rust when the page is left: the page polls while it runs. ⌘↩ in 原文 translates.
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Copy, Lightbulb } from "lucide-react";
+import { ArrowLeftRight, Copy } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, Segmented, TextArea } from "@/shared/ui";
-import { pickyApi, usePickyStatus, type TranslateSettings, type TranslateView } from "../api";
+import { pickyApi, type TranslateSettings, type TranslateView } from "../api";
 import { useModels } from "../Schedules";
-import { thinkOf } from "../Thinking";
+import { ThinkingButton, fromLevel } from "../Thinking";
 import { useSubPage } from "@/app/subpage";
 
 export const TRANSLATE_KEY = ["picky", "translate"];
@@ -103,14 +103,10 @@ function TranslateTab(props: {
 }) {
   const { data, settings: s } = props;
   const toast = useToast();
-  const status = usePickyStatus().data;
   const { models, keep } = useModels(s.model, s.thinking);
   const [copied, setCopied] = useState(false);
   const langs = data.lists.languages.map((l) => ({ value: l.code, label: l.name }));
   const canSwap = s.source !== AUTO && s.target !== ZH_EN;
-  const ability = thinkOf(status, s.model ?? status?.selection ?? null);
-  const fixed = ability !== "switch";
-  const thinking = ability === "always" || (ability === "switch" && s.thinking);
   const copy = () =>
     void pickyApi.copy(data.output).then(
       () => {
@@ -137,16 +133,16 @@ function TranslateTab(props: {
         <Dropdown<string> ariaLabel="目标语言" value={s.target} options={[{ value: ZH_EN, label: "中英互译" }, ...langs]} onChange={(v) => props.onSettings({ ...s, target: v })} menuMaxHeight={320} />
         <span className="mx-1 h-4 border-l" />
         <Dropdown<string | null> ariaLabel="模型" value={s.model} options={models} foldKey="models" onChange={(v) => props.onSettings({ ...s, model: v })} menuMaxHeight={360} />
-        <button
-          type="button"
-          aria-pressed={thinking}
-          aria-disabled={fixed}
-          title={ability === "always" ? "这个模型只能思考" : ability === "never" ? "这个模型不能思考" : undefined}
-          onClick={() => !fixed && props.onSettings({ ...s, thinking: !s.thinking, model: keep(s.model, !s.thinking) })}
-          className={`flex items-center gap-1 rounded-control px-2 py-1 text-sm text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${thinking ? "bg-accent text-accent-foreground" : ""} ${fixed ? "cursor-default opacity-50" : ""}`}
-        >
-          <Lightbulb size={14} strokeWidth={1.5} /> 思考
-        </button>
+        <ThinkingButton
+          model={s.model}
+          on={s.thinking}
+          effort={s.effort ?? null}
+          onLevel={(l) => {
+            const v = fromLevel(l);
+            props.onSettings({ ...s, ...v, model: keep(s.model, v.thinking) });
+          }}
+          className="flex items-center gap-1 rounded-control px-2 py-1 text-sm text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        />
         <div className="flex-1" />
         {data.running ? (
           <Button onClick={props.onStop}>停止</Button>

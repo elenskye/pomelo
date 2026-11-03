@@ -6,7 +6,7 @@
 // (in this currency) get --chart-3…6, everything else is 其他. --chart-1 / --chart-2 are 收入 / 支出.
 import { useState, type FormEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Target } from "lucide-react";
-import { BarList, ColumnChart, Donut, Meter } from "@/shared/charts";
+import { BarList, ColumnChart, Donut, Meter, MultiLineChart } from "@/shared/charts";
 import { errorText, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { Modal } from "@/shared/Modal";
@@ -133,7 +133,9 @@ export function ReportsView() {
   ];
   const share = (
     <Card title={mode === "month" ? "分类占比" : "年度分类"}>
-      {spent === 0 ? (
+      {ranked.some(([, value]) => value < 0) ? (
+        <ul className="space-y-2 py-2 text-sm">{ranked.map(([id, value]) => <li key={String(id)} className="flex justify-between gap-4"><span>{id === null ? UNCATEGORIZED : kindName.get(id) ?? UNCATEGORIZED}</span><span className="tabular-nums">{fmt(value)}</span></li>)}</ul>
+      ) : spent === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">没有支出</p>
       ) : (
         <div className="flex items-start gap-6">
@@ -214,7 +216,7 @@ export function ReportsView() {
             {mode === "year" && (
               <Card title="每月趋势">
                 <div className="pt-6">
-                  <ColumnChart
+                  {months.some((month) => sum("out", totals.filter((t) => t.currency === currency && t.month === month)) < 0) ? <MultiLineChart labels={months.map((x) => `${Number(x.slice(5))}月`)} series={[{ key: "out", name: "支出", color: "var(--chart-2)", values: months.map((x) => sum("out", totals.filter((t) => t.currency === currency && t.month === x))) }, { key: "in", name: "收入", color: "var(--chart-1)", values: months.map((x) => sum("in", totals.filter((t) => t.currency === currency && t.month === x))) }]} format={fmt} axisFormat={(n) => moneyShort(n, currency)} title={(i) => monthTitle(months[i])} /> : <ColumnChart
                     labels={months.map((x) => `${Number(x.slice(5))}月`)}
                     series={[
                       { name: "支出", color: "var(--chart-2)" },
@@ -224,7 +226,7 @@ export function ReportsView() {
                     format={fmt}
                     axisFormat={(n) => moneyShort(n, currency)}
                     title={(i) => monthTitle(months[i])}
-                  />
+                  />}
                 </div>
               </Card>
             )}
@@ -254,7 +256,7 @@ export function ReportsView() {
                               {over > 0 ? <span className="ml-2 text-destructive">超出 {fmt(over)}</span> : <span className="ml-2 text-muted-foreground">还剩 {fmt(-over)}</span>}
                             </span>
                           </div>
-                          <Meter value={used} max={b.amount} />
+                          <Meter value={Math.max(0, used)} max={b.amount} />
                         </li>
                       );
                     })}

@@ -41,6 +41,8 @@ export const api = {
   backupRestore: (fileName: string) => invoke<{ safety: BackupInfo }>("backup_restore", { fileName }),
   revealBackupsDir: () => invoke<void>("reveal_backups_dir"),
   revealDataDir: () => invoke<void>("reveal_data_dir"),
+  /** The 索引签's names from the top, for the menu bar's ⌘1–⌘9 (Rust menu.rs). */
+  appMenuIndex: (names: string[]) => invoke<void>("app_menu_index", { names }),
   /** URL (any scheme), local path, or bare address (→ https); rules in Rust. */
   openLink: (link: string) => invoke<void>("open_link", { link }),
   /** Day-change chores in Rust: finished check-ins completed, due 固定支出 posted. */

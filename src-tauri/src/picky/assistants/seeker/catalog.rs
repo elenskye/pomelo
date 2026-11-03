@@ -25,6 +25,7 @@
 //! page's own order.
 use super::*;
 use crate::modules::common::Tx;
+use crate::picky::assistants::Choice;
 
 pub const KINDS: [&str; 7] = ["material", "profile", "fact", "rule", "example", "application", "application_line"];
 /// The 规则 page's group of examples (kind `example`) in `seeker_groups` and on the page.
@@ -86,12 +87,14 @@ impl Record {
 /// Kinds that are both languages' whatever their `lang` says.
 pub const SHARED: [&str; 3] = ["fact", "application", "application_line"];
 
+/// The default model and 思考 and the functions that have their own (`features`, by `model.rs` `FUNCTIONS` kind).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", from = "StoredSettings")]
 pub struct Settings {
-    pub selection_model: Option<String>,
-    pub review_model: Option<String>,
+    pub model: Option<String>,
     pub thinking: bool,
+    pub effort: Option<String>,
+    pub features: std::collections::BTreeMap<String, Choice>,
     pub cloud_allowed: bool,
     /// The language the page shows (`en`; else Chinese); 投石问路's 「做简历」 uses it.
     pub lang: String,
@@ -99,6 +102,40 @@ pub struct Settings {
     /// command, never by `picky_seeker_settings`.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub company_names: std::collections::BTreeMap<String, String>,
+}
+
+impl Settings {
+    /// The model and 思考 a function uses.
+    pub fn of(&self, kind: &str) -> Choice {
+        self.features.get(kind).cloned().unwrap_or(Choice { model: self.model.clone(), thinking: self.thinking, effort: self.effort.clone() })
+    }
+}
+
+/// Settings as kept, also from before the settings page (format < 36): 选材模型 and 审查与润色模型 become
+/// 按 JD 推荐素材's own model (when it differs) and the default.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct StoredSettings {
+    model: Option<String>,
+    thinking: bool,
+    effort: Option<String>,
+    features: std::collections::BTreeMap<String, Choice>,
+    cloud_allowed: bool,
+    lang: String,
+    company_names: std::collections::BTreeMap<String, String>,
+    selection_model: Option<String>,
+    review_model: Option<String>,
+}
+
+impl From<StoredSettings> for Settings {
+    fn from(s: StoredSettings) -> Settings {
+        let model = s.model.or(s.review_model);
+        let mut features = s.features;
+        if let Some(own) = s.selection_model.filter(|m| Some(m) != model.as_ref()) {
+            features.entry("select".into()).or_insert(Choice { model: Some(own), thinking: s.thinking, effort: None });
+        }
+        Settings { model, thinking: s.thinking, effort: s.effort, features, cloud_allowed: s.cloud_allowed, lang: s.lang, company_names: s.company_names }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

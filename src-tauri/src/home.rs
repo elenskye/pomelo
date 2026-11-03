@@ -246,7 +246,7 @@ const SOURCES: &[Source] = &[
         module: "finance",
         kind: "entry",
         done: false,
-        sql: "SELECT e.id, coalesce(e.note, k.name, '未分类'), k.name, NULL, e.day, e.amount, e.currency, e.flow, e.created_at
+        sql: "SELECT e.id, coalesce(e.note, k.name, '未分类'), k.name, NULL, e.day, CASE WHEN e.is_refund = 1 THEN -e.amount ELSE e.amount END, e.currency, e.flow, e.created_at
               FROM fin_entries e LEFT JOIN kinds k ON k.id = e.kind_id",
     },
 ];

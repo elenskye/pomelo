@@ -8,11 +8,15 @@
 //! - Dropping into a list changes membership: 置顶 pins (keeps the project), a project moves in and
 //!   unpins, 最近 leaves the project and unpins, 归档 archives; out of 归档 restores. Sending in an
 //!   archived session restores it too (chat.rs).
-//! - 思考 (`thinking`, on for new ones): the conversation's switch, set from the composer (undoable).
+//! - 思考 (`thinking`, on for new ones): the conversation's switch, set from the composer (undoable); `effort`: its 思考强度
+//!   (none: the model's default; a level the model doesn't have counts as none, see cloud.rs).
 //!   知识库 (`knowledge`, off for new ones) and the libraries it chose (knowledge.rs) likewise; a
 //!   project's libraries are saved with its settings.
 //! - 私密 (`private`): stays in its list with a lock; 年度总结 and 小拾's pomelo_search / pomelo_read
 //!   leave it out (⌘K and 对话搜索 don't).
+//! - Unlisted (`unlisted!`): Rater's records (rater/record.rs) and the 速记小窗's conversation (capture.rs,
+//!   preference `capture.chat`: one at a time, private, deleted when the window starts another, listed
+//!   once 「在 Pomelo 里继续对话」) stay out of the lists, 对话搜索, ⌘K and the 模块坞 count.
 //! - None of this touches `updated_at` (= last activity). Everything here is undoable
 //!   (`with_picky_undo`).
 //! - Projects: name (60 chars; empty = 未命名项目) and background instructions (sent with its
@@ -20,7 +24,7 @@
 
 use super::chat::{self, auto_title, NEW_TITLE};
 use super::knowledge;
-use super::store::NOW;
+use super::store::{pref_get, pref_set, NOW};
 use crate::modules::common::{err, Tx};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -74,8 +78,9 @@ pub struct SessionRow {
     pub unseen: bool,
     /// 私密: 年度总结 and 小拾's search leave it out.
     pub private: bool,
-    /// Its 思考 switch (the composer's button).
+    /// Its 思考 switch (the composer's button) and 思考强度.
     pub thinking: bool,
+    pub effort: Option<String>,
     /// Its 知识库 switch, and the libraries it chose (none: its project's, then all).
     pub knowledge: bool,
     pub libraries: Vec<i64>,
@@ -139,11 +144,11 @@ impl Library {
 
 fn sessions(conn: &Connection) -> Result<Vec<SessionRow>, String> {
     let mut st = conn
-        .prepare("SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records) ORDER BY updated_at DESC, id DESC")
+        .prepare(concat!("SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge, effort FROM sessions WHERE id NOT IN ", unlisted!(), " ORDER BY updated_at DESC, id DESC"))
         .map_err(err)?;
     let rows = st
         .query_map([], |r| {
-            Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)?, scheduled: r.get(7)?, unseen: r.get(8)?, private: r.get(9)?, thinking: r.get(10)?, knowledge: r.get(11)?, libraries: vec![] })
+            Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)?, scheduled: r.get(7)?, unseen: r.get(8)?, private: r.get(9)?, thinking: r.get(10)?, knowledge: r.get(11)?, effort: r.get(12)?, libraries: vec![] })
         })
         .map_err(err)?;
     rows.collect::<Result<_, _>>().map_err(err)
@@ -203,9 +208,9 @@ pub fn library(conn: &Connection) -> Result<Library, String> {
 
 fn row(conn: &Connection, id: i64) -> Result<SessionRow, String> {
     conn.query_row(
-        "SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge FROM sessions WHERE id = ?1",
+        "SELECT id, title, project_id, pinned_at IS NOT NULL, archived_at IS NOT NULL, updated_at, sort_order, scheduled, unseen, private, thinking, knowledge, effort FROM sessions WHERE id = ?1",
         [id],
-        |r| Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)?, scheduled: r.get(7)?, unseen: r.get(8)?, private: r.get(9)?, thinking: r.get(10)?, knowledge: r.get(11)?, libraries: vec![] }),
+        |r| Ok(SessionRow { id: r.get(0)?, title: r.get(1)?, project_id: r.get(2)?, pinned: r.get(3)?, archived: r.get(4)?, updated_at: r.get(5)?, sort_order: r.get(6)?, scheduled: r.get(7)?, unseen: r.get(8)?, private: r.get(9)?, thinking: r.get(10)?, knowledge: r.get(11)?, effort: r.get(12)?, libraries: vec![] }),
     )
     .optional()
     .map_err(err)?
@@ -273,6 +278,54 @@ pub fn set_archived(conn: &Connection, ids: &[i64], archived: bool) -> Result<()
     tx.commit()
 }
 
+/// Sessions kept out of the lists and searches (see the top), as SQL: `id NOT IN unlisted!()`.
+macro_rules! unlisted {
+    () => {
+        "(SELECT session_id FROM rater_records UNION ALL SELECT CAST(value AS INTEGER) FROM preferences WHERE key = 'capture.chat')"
+    };
+}
+pub(crate) use unlisted;
+
+/// The 速记小窗's conversation (its preference; must match `unlisted!`).
+pub const CAPTURE_CHAT: &str = "capture.chat";
+
+/// The 速记小窗's conversation, if it's still there.
+pub fn capture_chat(conn: &Connection) -> Result<Option<i64>, String> {
+    let Some(id) = pref_get::<i64>(conn, CAPTURE_CHAT).ok().flatten() else { return Ok(None) };
+    conn.query_row("SELECT id FROM sessions WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(err)
+}
+
+/// A new conversation from the 速记小窗 (chat.rs): private and unlisted; the one before is deleted.
+pub fn start_capture_chat(conn: &Connection, id: i64) -> Result<(), String> {
+    if let Some(old) = capture_chat(conn)?.filter(|o| *o != id) {
+        conn.execute("DELETE FROM sessions WHERE id = ?1", [old]).map_err(err)?;
+    }
+    conn.execute("UPDATE sessions SET private = 1 WHERE id = ?1", [id]).map_err(err)?;
+    pref_set(conn, CAPTURE_CHAT, &id)
+}
+
+/// 新对话 in the 速记小窗: its conversation goes (not undoable: it was never listed).
+pub fn drop_capture_chat(conn: &Connection) -> Result<(), String> {
+    let tx = Tx::begin(conn)?;
+    if let Some(id) = capture_chat(&tx)? {
+        tx.execute("DELETE FROM sessions WHERE id = ?1", [id]).map_err(err)?;
+    }
+    tx.execute("DELETE FROM preferences WHERE key = ?1", [CAPTURE_CHAT]).map_err(err)?;
+    tx.commit()
+}
+
+/// 「在 Pomelo 里继续对话」: the conversation becomes an ordinary one (in 最近, not private); its id.
+pub fn keep_capture_chat(conn: &Connection) -> Result<Option<i64>, String> {
+    let tx = Tx::begin(conn)?;
+    let id = capture_chat(&tx)?;
+    if let Some(id) = id {
+        tx.execute("UPDATE sessions SET private = 0 WHERE id = ?1", [id]).map_err(err)?;
+    }
+    tx.execute("DELETE FROM preferences WHERE key = ?1", [CAPTURE_CHAT]).map_err(err)?;
+    tx.commit()?;
+    Ok(id)
+}
+
 /// 私密 conversations (left out of 年度总结 and 小拾's search).
 pub fn private_ids(conn: &Connection) -> Result<HashSet<i64>, String> {
     let mut st = conn.prepare("SELECT id FROM sessions WHERE private").map_err(err)?;
@@ -288,6 +341,12 @@ pub fn set_private(conn: &Connection, ids: &[i64], private: bool) -> Result<(), 
         tx.execute("UPDATE sessions SET private = ?1 WHERE id = ?2 AND private <> ?1", params![private, id]).map_err(err)?;
     }
     tx.commit()
+}
+
+/// A conversation's 思考强度 (None: the model's default).
+pub fn set_effort(conn: &Connection, id: i64, effort: Option<&str>) -> Result<(), String> {
+    row(conn, id)?;
+    conn.execute("UPDATE sessions SET effort = ?1 WHERE id = ?2 AND effort IS NOT ?1", params![effort, id]).map(|_| ()).map_err(err)
 }
 
 /// A conversation's 思考 switch (its replies ask the model to think when it can).
@@ -459,6 +518,11 @@ pub fn picky_archive(state: State<AppState>, ids: Vec<i64>, archived: bool) -> R
 }
 
 #[tauri::command]
+pub fn picky_conversation_effort(state: State<AppState>, session_id: i64, effort: Option<String>) -> Result<(), String> {
+    state.with_picky_undo("改本会话的思考强度", |c| set_effort(c, session_id, effort.as_deref()))
+}
+
+#[tauri::command]
 pub fn picky_conversation_thinking(state: State<AppState>, session_id: i64, on: bool) -> Result<(), String> {
     state.with_picky_undo(if on { "本会话开启思考" } else { "本会话关闭思考" }, |c| set_thinking(c, session_id, on))
 }
@@ -540,6 +604,35 @@ mod tests {
     }
 
     #[test]
+    fn the_capture_chat_stays_unlisted_until_kept() {
+        let c = memory_db();
+        let listed = |c: &Connection| ids(&library(c).unwrap().recent);
+        let a = new_session(&c, "平常的");
+        let begin = |q: &str| chat::begin_run_in(&c, None, &chat::NewSession { capture: true, ..Default::default() }, q, "local:x", "X", &Default::default()).unwrap().session_id;
+        let one = begin("速记里问的");
+        assert_eq!((capture_chat(&c).unwrap(), listed(&c)), (Some(one), vec![a]));
+        assert!(private_ids(&c).unwrap().contains(&one));
+        let n = |sql: &str| c.query_row(&format!("SELECT count(*) FROM sessions WHERE id NOT IN {}", sql), [], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(n(unlisted!()), 1);
+        // a second one takes its place; the first is gone
+        let two = begin("又问一个");
+        assert_eq!(capture_chat(&c).unwrap(), Some(two));
+        assert!(row(&c, one).is_err());
+        // kept: an ordinary conversation (not private) in 最近
+        assert_eq!(keep_capture_chat(&c).unwrap(), Some(two));
+        assert_eq!(capture_chat(&c).unwrap(), None);
+        let mut both = listed(&c);
+        both.sort();
+        assert_eq!(both, vec![a, two]);
+        assert!(private_ids(&c).unwrap().is_empty());
+        // 新对话: deleted
+        let three = begin("第三个");
+        drop_capture_chat(&c).unwrap();
+        assert!(row(&c, three).is_err());
+        assert_eq!((capture_chat(&c).unwrap(), keep_capture_chat(&c).unwrap()), (None, None));
+    }
+
+    #[test]
     fn lists_group_and_follow_activity_until_arranged() {
         let c = memory_db();
         let (a, b, d) = (new_session(&c, "a"), new_session(&c, "b"), new_session(&c, "d"));
@@ -579,6 +672,13 @@ mod tests {
         assert!(!library(&c).unwrap().recent[0].thinking);
         assert!(!crate::picky::context::request(&c, b, &[], "q").unwrap().thinking);
         assert!(crate::picky::context::request(&c, a, &[], "q").unwrap().thinking);
+        // its 思考强度: the request has it, none = the model's default
+        assert_eq!(crate::picky::context::request(&c, a, &[], "q").unwrap().effort, None);
+        set_effort(&c, a, Some("max")).unwrap();
+        assert_eq!(crate::picky::context::request(&c, a, &[], "q").unwrap().effort.as_deref(), Some("max"));
+        assert_eq!(row(&c, a).unwrap().effort.as_deref(), Some("max"));
+        set_effort(&c, a, None).unwrap();
+        assert_eq!(crate::picky::context::request(&c, a, &[], "q").unwrap().effort, None);
     }
 
     #[test]

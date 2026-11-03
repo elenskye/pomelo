@@ -680,10 +680,10 @@ pub async fn picky_rater_rounds_delete(state: tauri::State<'_, AppState>, ids: V
 pub async fn picky_rater_pick(app: AppHandle, job: i64) -> Result<Pick, String> {
     let state = app.state::<AppState>();
     let (w, bank, opts) = workspace(&state)?;
-    let (model, thinking) = qbank::chosen_model(&w, &opts, "pick")?;
+    let (model, level) = qbank::chosen_model(&w, &opts, "pick")?;
     let job = seeker::output::job(&state, job)?;
     let (system, user) = pick_prompt(&w, &bank, &job)?;
-    let reply = qbank::call(&state, &model, &system, &user, 1024, thinking).await?;
+    let reply = qbank::call(&state, &model, &system, &user, 1024, &level).await?;
     let (questions, advice) = parse_pick(&reply.json.unwrap_or_else(|| mock_pick(&bank, &job)), &bank)?;
     Ok(Pick { questions, advice, model: reply.model, note: reply.note })
 }
@@ -695,11 +695,11 @@ pub async fn picky_rater_follow(app: AppHandle, id: String, card: usize, typed: 
     let (w, bank, opts) = workspace(&state)?;
     let round = state.picky.with_db(|c| get(c, &id))?;
     can_follow(&round, card)?;
-    let (model, thinking) = qbank::chosen_model(&w, &opts, "follow")?;
+    let (model, level) = qbank::chosen_model(&w, &opts, "follow")?;
     let root = bank.questions.iter().find(|q| q.id == round.cards[card].question);
     let job = job_of(&state, round.job.as_ref().or(root.and_then(|q| q.job.as_ref())));
     let (system, user) = follow_prompt(&w, &bank, &round, card, &typed, job.as_ref());
-    let reply = qbank::call(&state, &model, &system, &user, 1536, thinking).await?;
+    let reply = qbank::call(&state, &model, &system, &user, 1536, &level).await?;
     let (question, answer) = parse_follow(&reply.json.unwrap_or_else(|| mock_follow(&round, card)))?;
     state.with_picky_undo("追问", |c| {
         add_follow(c, &id, card, &typed, &question, &answer)?;
@@ -724,10 +724,10 @@ pub async fn picky_rater_comment(app: AppHandle, id: String) -> Result<Round, St
     if !round.wants_comment() {
         return Err("这一轮没打字也没追问，不用小拾点评".into());
     }
-    let (model, thinking) = qbank::chosen_model(&w, &opts, "comment")?;
+    let (model, level) = qbank::chosen_model(&w, &opts, "comment")?;
     let job = job_of(&state, round.job.as_ref());
     let (system, user) = comment_prompt(&w, &bank, &round, job.as_ref());
-    let reply = qbank::call(&state, &model, &system, &user, 2048, thinking).await?;
+    let reply = qbank::call(&state, &model, &system, &user, 2048, &level).await?;
     let feedback = Feedback { model: reply.model, ..parse_comment(&reply.json.unwrap_or_else(|| mock_comment(&round)), &round)? };
     state.with_picky_undo("练习反馈", |c| set_feedback(c, &id, feedback))
 }

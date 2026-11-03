@@ -367,7 +367,7 @@ function RecordChat(props: { session: number; close: () => void; saved: (out: Ra
     const got = await prep.prepareFor(text, [], false);
     if ("error" in got) { prep.failCard(got, () => composer.current?.send()); return false; }
     const extras = { attachments: [], files: [], passages: got.passages, memories: got.memories };
-    const sent = await run("send", text, (on) => pickyApi.send(current, null, null, false, null, text, extras, null, ask.asked, null, on), [], null);
+    const sent = await run("send", text, (on) => pickyApi.send(current, null, null, false, null, null, text, extras, null, ask.asked, null, on), [], null);
     if (sent) ask.clear(draftKey);
     return !!sent;
   };

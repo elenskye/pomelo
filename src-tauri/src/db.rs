@@ -43,6 +43,11 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 28, name: "drawing_status", sql: include_str!("../migrations/0028_drawing_status.sql") },
     Migration { version: 29, name: "task_from_note", sql: include_str!("../migrations/0029_task_from_note.sql") },
     Migration { version: 30, name: "custom_year_kinds", sql: include_str!("../migrations/0030_custom_year_kinds.sql") },
+    Migration { version: 31, name: "finance_import", sql: include_str!("../migrations/0031_finance_import.sql") },
+    Migration { version: 32, name: "finance_dbs", sql: include_str!("../migrations/0032_finance_dbs.sql") },
+    Migration { version: 33, name: "finance_screenshots", sql: include_str!("../migrations/0033_finance_screenshots.sql") },
+    Migration { version: 34, name: "finance_ai", sql: include_str!("../migrations/0034_finance_ai.sql") },
+    Migration { version: 35, name: "finance_import_order", sql: include_str!("../migrations/0035_finance_import_order.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {

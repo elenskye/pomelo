@@ -10,6 +10,9 @@
 //!   text, with the address kept.
 //! - Images (PNG / JPEG / GIF / WebP / HEIC): no text; sent to cloud models only (local ones are told
 //!   they can't see it). Shrunk to `MAX_SIDE` px on the long side first (macOS `sips`); HEIC → JPEG.
+//! - Images inside documents (v0.8): a Word / PowerPoint file's own images (from its zip, placed by the text near
+//!   them or their slide; vector ones can't be sent); a PDF is looked at page by page, drawn whole (`image_pages` says
+//!   which hold images). Listed by `images_text`, sent by `look_at`; skills/files.rs and knowledge.rs offer them.
 
 use super::files::Segment;
 use std::io::Read;
@@ -344,13 +347,15 @@ pub fn image_for_model(path: &Path, media: &str, tmp_dir: &Path) -> Result<(Stri
     let (w, h) = size_of(path).unwrap_or((0, 0));
     let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let heic = media == "image/heic";
+    // kinds a document may hold that models don't take
+    let converted = media == "image/tiff" || media == "image/bmp";
     let shrink = w.max(h) > MAX_SIDE;
-    if !heic && !shrink && bytes <= 4 * 1024 * 1024 {
+    if !heic && !converted && !shrink && bytes <= 4 * 1024 * 1024 {
         let data = std::fs::read(path).map_err(|e| format!("读不了图片：{e}"))?;
         return Ok((media.to_string(), base64(&data)));
     }
     std::fs::create_dir_all(tmp_dir).map_err(|e| format!("没能准备图片：{e}"))?;
-    let jpeg = heic || bytes > 4 * 1024 * 1024 || media == "image/gif" || media == "image/webp";
+    let jpeg = heic || converted || bytes > 4 * 1024 * 1024 || media == "image/gif" || media == "image/webp";
     let out = tmp_dir.join(format!("send-{}.{}", std::process::id(), if jpeg { "jpg" } else { "png" }));
     let mut cmd = Command::new("/usr/bin/sips");
     if shrink {
@@ -365,6 +370,216 @@ pub fn image_for_model(path: &Path, media: &str, tmp_dir: &Path) -> Result<(Stri
     let _ = std::fs::remove_file(&out);
     let data = data.ok_or("没能缩小这张图片")?;
     Ok((if jpeg { "image/jpeg" } else { media }.to_string(), base64(&data)))
+}
+
+// ---------- images inside documents ----------
+
+/// An image a Word or PowerPoint file holds, or a PDF page with images.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Embedded {
+    /// Where it is, for the model and the citation.
+    pub place: String,
+    /// Its part of the zip (Word, PowerPoint).
+    pub part: String,
+    /// Its page (1-based; PDF).
+    pub page: Option<usize>,
+    /// None: a kind that can't be sent (EMF, WMF, SVG…).
+    pub media: Option<&'static str>,
+}
+
+/// Word, PowerPoint or PDF: the kinds whose images can be looked at.
+pub fn holds_images(ext: &str) -> bool {
+    matches!(ext, "docx" | "pptx" | "pdf")
+}
+
+fn embedded_media(part: &str) -> Option<&'static str> {
+    let ext = part.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "tif" | "tiff" => Some("image/tiff"),
+        "bmp" => Some("image/bmp"),
+        e => image_type(e),
+    }
+}
+
+fn zip_text(data: &[u8], name: &str) -> Option<String> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).ok()?;
+    let mut text = String::new();
+    zip.by_name(name).ok()?.take(50 * 1024 * 1024).read_to_string(&mut text).ok()?;
+    Some(text)
+}
+
+/// A part's relationships: id → its path in the zip (`dir`: the folder of the part they belong to).
+fn relations(data: &[u8], rels: &str, dir: &str) -> std::collections::HashMap<String, String> {
+    use quick_xml::events::Event;
+    let mut out = std::collections::HashMap::new();
+    let Some(xml) = zip_text(data, rels) else { return out };
+    let mut r = quick_xml::Reader::from_str(xml.as_str());
+    loop {
+        match r.read_event() {
+            Ok(Event::Empty(e) | Event::Start(e)) if e.local_name().as_ref() == "Relationship" => {
+                if let (Some(id), Some(target)) = (super::word::attr(&e, "Id"), super::word::attr(&e, "Target")) {
+                    let mut path: Vec<&str> = if target.starts_with('/') { vec![] } else { dir.split('/').collect() };
+                    for piece in target.trim_start_matches('/').split('/') {
+                        match piece {
+                            ".." => {
+                                path.pop();
+                            }
+                            "." => {}
+                            p => path.push(p),
+                        }
+                    }
+                    out.insert(id, path.join("/"));
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return out,
+            _ => {}
+        }
+    }
+}
+
+fn short(text: &str) -> String {
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > 24 { format!("{}…", flat.chars().take(24).collect::<String>()) } else { flat }
+}
+
+/// The images of a Word document in reading order, each placed by the text near it.
+fn word_images(data: &[u8]) -> Result<Vec<Embedded>, String> {
+    use quick_xml::events::Event;
+    let bad = || "读不了这个 Word 文件，可能已损坏或加了密码".to_string();
+    let xml = zip_text(data, "word/document.xml").ok_or_else(bad)?;
+    let rels = relations(data, "word/_rels/document.xml.rels", "word");
+    let mut r = quick_xml::Reader::from_str(xml.as_str());
+    let (mut para, mut last, mut in_text) = (String::new(), String::new(), false);
+    let mut out: Vec<Embedded> = vec![];
+    let mut add = |id: Option<String>, near: &str| {
+        let Some(part) = id.and_then(|i| rels.get(&i).cloned()) else { return };
+        if !out.iter().any(|e| e.part == part) {
+            let media = embedded_media(&part);
+            out.push(Embedded { place: if near.is_empty() { "在文档开头".into() } else { format!("在「{}」那里", short(near)) }, part, page: None, media });
+        }
+    };
+    loop {
+        match r.read_event() {
+            Ok(Event::Start(e)) if e.local_name().as_ref() == "t" => in_text = true,
+            Ok(Event::End(e)) if e.local_name().as_ref() == "t" => in_text = false,
+            Ok(Event::Text(t)) if in_text => para.push_str(&t.into_inner()),
+            Ok(Event::End(e)) if e.local_name().as_ref() == "p" => {
+                if !para.trim().is_empty() {
+                    last = std::mem::take(&mut para);
+                }
+                para.clear();
+            }
+            Ok(Event::Empty(e) | Event::Start(e)) if e.local_name().as_ref() == "blip" => add(super::word::attr(&e, "embed"), if para.trim().is_empty() { &last } else { &para }),
+            Ok(Event::Empty(e) | Event::Start(e)) if e.local_name().as_ref() == "imagedata" => add(super::word::attr(&e, "id"), if para.trim().is_empty() { &last } else { &para }),
+            Ok(Event::Eof) | Err(_) => return Ok(out),
+            _ => {}
+        }
+    }
+}
+
+/// The images of a PowerPoint file, slide by slide.
+fn slide_images(data: &[u8]) -> Result<Vec<Embedded>, String> {
+    use quick_xml::events::Event;
+    let zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|_| "读不了这个 PowerPoint 文件，可能已损坏或加了密码".to_string())?;
+    let mut slides: Vec<u32> = (0..zip.len()).filter_map(|i| zip.name_for_index(i)?.ok()?.strip_prefix("ppt/slides/slide")?.strip_suffix(".xml")?.parse().ok()).collect();
+    slides.sort();
+    let mut out = vec![];
+    for n in slides {
+        let Some(xml) = zip_text(data, &format!("ppt/slides/slide{n}.xml")) else { continue };
+        let rels = relations(data, &format!("ppt/slides/_rels/slide{n}.xml.rels"), "ppt/slides");
+        let mut seen: Vec<String> = vec![];
+        let mut r = quick_xml::Reader::from_str(xml.as_str());
+        loop {
+            match r.read_event() {
+                Ok(Event::Empty(e) | Event::Start(e)) if e.local_name().as_ref() == "blip" => {
+                    if let Some(part) = super::word::attr(&e, "embed").and_then(|i| rels.get(&i).cloned()) {
+                        if !seen.contains(&part) {
+                            seen.push(part.clone());
+                            let media = embedded_media(&part);
+                            out.push(Embedded { place: format!("第 {n} 页"), part, page: None, media });
+                        }
+                    }
+                }
+                Ok(Event::Eof) | Err(_) => break,
+                _ => {}
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What a document holds: its images, a PDF's pages with images.
+pub fn embedded_images(data: &[u8], ext: &str) -> Result<Vec<Embedded>, String> {
+    match ext {
+        "docx" => word_images(data),
+        "pptx" => slide_images(data),
+        "pdf" => Ok(super::pdf::image_pages(data)?.into_iter().map(|(page, n)| Embedded { place: if n > 1 { format!("第 {page} 页（{n} 张图）") } else { format!("第 {page} 页") }, part: String::new(), page: Some(page), media: Some("image/jpeg") }).collect()),
+        _ => Err("这种文件里的图片看不了（能看 .docx、.pptx、.pdf 的）".into()),
+    }
+}
+
+/// The list the model reads (`view=images`).
+pub fn images_text(name: &str, data: &[u8], ext: &str) -> Result<String, String> {
+    let list = embedded_images(data, ext)?;
+    if ext == "pdf" {
+        let pages = super::pdf::pages(data)?;
+        let blank: Vec<String> = pages.iter().enumerate().filter(|(_, t)| t.trim().is_empty()).map(|(i, _)| (i + 1).to_string()).collect();
+        let mut lines = vec![format!("《{name}》共 {} 页，view=look 用 page 看某一页的样子（包括它的图和图表）。", pages.len())];
+        lines.push(if list.is_empty() { "没有页面嵌着图片。".to_string() } else { format!("有图片的页：{}", list.iter().map(|e| e.place.as_str()).collect::<Vec<_>>().join("、")) });
+        if !blank.is_empty() {
+            lines.push(format!("没有文字的页（可能是扫描件）：第 {} 页", blank.join("、")));
+        }
+        return Ok(lines.join("\n"));
+    }
+    if list.is_empty() {
+        return Ok(format!("《{name}》里没有图片。"));
+    }
+    let lines: Vec<String> = list.iter().enumerate().map(|(i, e)| format!("图 {}：{}{}", i + 1, e.place, if e.media.is_none() { "（这种矢量图看不了）" } else { "" })).collect();
+    Ok(format!("《{name}》里有 {} 张图片，view=look 用 image 写图号：\n{}", list.len(), lines.join("\n")))
+}
+
+/// One image of a document as sent (`view=look`: `image`, its number; a PDF's `page`): (where it is, media type, base64).
+pub fn look_at(data: &[u8], ext: &str, args: &serde_json::Value, tmp_dir: &Path) -> Result<(String, String, String), String> {
+    let num = |k: &str| args[k].as_u64().or_else(|| args[k].as_str().and_then(|s| s.trim().parse().ok())).map(|n| n as usize);
+    if ext == "pdf" {
+        let page = num("page").or_else(|| num("image")).ok_or("page 写要看第几页")?;
+        let count = super::pdf::pages(data)?.len();
+        if page == 0 || page > count {
+            return Err(format!("只有 {count} 页"));
+        }
+        let jpeg = super::pdf::page_jpeg(data, page - 1, MAX_SIDE as f64)?;
+        return Ok((format!("第 {page} 页"), "image/jpeg".into(), base64(&jpeg)));
+    }
+    let list = embedded_images(data, ext)?;
+    if list.is_empty() {
+        return Err("这个文件里没有图片".into());
+    }
+    let n = num("image").ok_or("image 写图号（view=images 列出的）")?;
+    let e = n.checked_sub(1).and_then(|i| list.get(i)).ok_or_else(|| format!("只有 {} 张图片", list.len()))?;
+    let media = e.media.ok_or("这张是矢量图，看不了")?;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
+    let mut bytes = vec![];
+    zip.by_name(&e.part).map_err(|_| "这张图片在文件里找不到".to_string())?.take(200 * 1024 * 1024).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(tmp_dir).map_err(|e| format!("没能准备图片：{e}"))?;
+    let ext_of = e.part.rsplit_once('.').map_or("png", |(_, x)| x);
+    let file = tmp_dir.join(format!("embedded-{}-{n}.{ext_of}", std::process::id()));
+    std::fs::write(&file, &bytes).map_err(|e| format!("没能准备图片：{e}"))?;
+    let sent = image_for_model(&file, media, tmp_dir);
+    let _ = std::fs::remove_file(&file);
+    let (media_type, b64) = sent?;
+    Ok((format!("第 {n} 张图（{}）", e.place), media_type, b64))
+}
+
+/// How many images a Word or PowerPoint file holds, by its media folder (quick, for the system message).
+pub fn media_count(path: &Path, ext: &str) -> usize {
+    let folder = match ext {
+        "docx" => "word/media/",
+        "pptx" => "ppt/media/",
+        _ => return 0,
+    };
+    let Ok(file) = std::fs::File::open(path) else { return 0 };
+    let Ok(zip) = zip::ZipArchive::new(file) else { return 0 };
+    zip.file_names().filter(|n| n.as_ref().is_ok_and(|n| n.starts_with(folder))).count()
 }
 
 pub fn base64(data: &[u8]) -> String {
@@ -444,6 +659,61 @@ mod tests {
         assert_eq!(title, "租房笔记");
         assert!(text.contains("押一付三") && !text.contains("菜单"), "{text}");
         assert!(web_article("<html><body></body></html>", "https://example.com").is_err());
+    }
+
+    fn zipped(parts: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, data) in parts {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(data).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    const RELS: &str = r#"<Relationships xmlns="p"><Relationship Id="rId1" Type="t" Target="media/image1.png"/><Relationship Id="rId2" Type="t" Target="/word/media/chart.emf"/><Relationship Id="rId3" Type="t" Target="../media/image1.png"/></Relationships>"#;
+
+    #[test]
+    fn images_inside_word_and_powerpoint() {
+        let png = tests_png();
+        let doc = r#"<w:document xmlns:w="w" xmlns:a="a" xmlns:r="r"><w:body><w:p><w:r><w:t>第一段说明这张图的文字</w:t></w:r></w:p><w:p><w:r><w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p><w:p><w:r><w:t>第二段</w:t></w:r><w:r><w:drawing><a:blip r:embed="rId2"/></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let docx = zipped(&[("word/document.xml", doc.as_bytes()), ("word/_rels/document.xml.rels", RELS.as_bytes()), ("word/media/image1.png", &png), ("word/media/chart.emf", b"emf")]);
+        let list = embedded_images(&docx, "docx").unwrap();
+        assert_eq!(list.iter().map(|e| (e.place.as_str(), e.part.as_str(), e.media)).collect::<Vec<_>>(), [("在「第一段说明这张图的文字」那里", "word/media/image1.png", Some("image/png")), ("在「第二段」那里", "word/media/chart.emf", None)]);
+        let text = images_text("报告.docx", &docx, "docx").unwrap();
+        assert!(text.contains("有 2 张图片") && text.contains("图 2：在「第二段」那里（这种矢量图看不了）"), "{text}");
+        let dir = crate::db::tests::temp_dir("office-embedded");
+        let (place, media, data) = look_at(&docx, "docx", &json!({ "image": 1 }), &dir).unwrap();
+        assert_eq!((place.as_str(), media.as_str(), data.is_empty()), ("第 1 张图（在「第一段说明这张图的文字」那里）", "image/png", false));
+        assert!(look_at(&docx, "docx", &json!({ "image": 2 }), &dir).unwrap_err().contains("矢量图"));
+        assert!(look_at(&docx, "docx", &json!({ "image": 9 }), &dir).unwrap_err().contains("只有 2 张"));
+        assert!(look_at(&docx, "docx", &json!({}), &dir).unwrap_err().contains("图号"));
+        // PowerPoint: by slide, in slide order
+        let slide = r#"<p:sld xmlns:p="p" xmlns:a="a" xmlns:r="r"><a:blip r:embed="rId3"/><a:blip r:embed="rId3"/></p:sld>"#;
+        let pptx = zipped(&[("ppt/slides/slide2.xml", slide.as_bytes()), ("ppt/slides/_rels/slide2.xml.rels", RELS.as_bytes()), ("ppt/slides/slide1.xml", b"<p:sld xmlns:p=\"p\"/>"), ("ppt/media/image1.png", &png)]);
+        let list = embedded_images(&pptx, "pptx").unwrap();
+        assert_eq!(list.iter().map(|e| (e.place.as_str(), e.part.as_str())).collect::<Vec<_>>(), [("第 2 页", "ppt/media/image1.png")]);
+        assert_eq!(look_at(&pptx, "pptx", &json!({ "image": 1 }), &dir).unwrap().0, "第 1 张图（第 2 页）");
+        let f = dir.join("a.pptx");
+        std::fs::write(&f, &pptx).unwrap();
+        assert_eq!(media_count(&f, "pptx"), 1);
+        // none, and a kind that holds none
+        let plain = zipped(&[("word/document.xml", b"<w:document xmlns:w=\"w\"/>")]);
+        assert!(images_text("空.docx", &plain, "docx").unwrap().contains("没有图片"));
+        assert!(embedded_images(&plain, "xlsx").is_err());
+    }
+
+    #[test]
+    fn a_pdf_is_looked_at_page_by_page() {
+        let pdf = crate::picky::pdf::tests::sample_pdf(&["Page one", ""]);
+        let text = images_text("扫描.pdf", &pdf, "pdf").unwrap();
+        assert!(text.contains("共 2 页") && text.contains("没有页面嵌着图片") && text.contains("没有文字的页（可能是扫描件）：第 2 页"), "{text}");
+        let dir = crate::db::tests::temp_dir("office-pdf");
+        let (place, media, data) = look_at(&pdf, "pdf", &json!({ "page": 1 }), &dir).unwrap();
+        assert_eq!((place.as_str(), media.as_str()), ("第 1 页", "image/jpeg"));
+        assert!(data.starts_with("/9j/")); // JPEG
+        assert!(look_at(&pdf, "pdf", &json!({ "page": 3 }), &dir).unwrap_err().contains("只有 2 页"));
     }
 
     #[test]

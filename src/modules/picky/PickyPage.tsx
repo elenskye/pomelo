@@ -145,7 +145,7 @@ export default function PickyPage() {
     setDraftProject(null);
     if (id != null) pickyApi.uiSet(LAST, id).catch(() => {});
   };
-  const { live, busyHere, run, shownWith, writing } = useLiveReply({ current, status, onSent: open, onStart: () => transcript.current?.toBottom() });
+  const { live, busyHere, run, shownWith, writing, followUp } = useLiveReply({ current, status, onSent: open, onStart: () => transcript.current?.toBottom() });
   const activeHere = activeIn(status, current);
   const messages = useQuery({
     queryKey: MESSAGES(current),
@@ -353,7 +353,7 @@ export default function PickyPage() {
     const sent = await run(
       "send",
       text || EMPTY_QUESTION,
-      (on) => pickyApi.send(current, current == null ? draftProject : null, current == null ? draftSetting : null, draftOff, thinking.forSend, text, extras, null, ask.asked, knowledge.forSend, on),
+      (on) => pickyApi.send(current, current == null ? draftProject : null, current == null ? draftSetting : null, draftOff, thinking.forSend, thinking.effortForSend, text, extras, null, ask.asked, knowledge.forSend, on),
       shownFiles,
     );
     if (!sent) return false;
@@ -450,6 +450,7 @@ export default function PickyPage() {
                 sessionKey={String(current)}
                 messages={shown}
                 busy={busy}
+                onAskFollowUp={followUp}
                 empty={
                   <div className="flex flex-col items-center gap-6">
                     <p>小拾在这儿，想聊点什么？</p>
@@ -561,7 +562,7 @@ export default function PickyPage() {
                     }
                     tools={
                       <>
-                        <ThinkingButton on={thinking.on} onToggle={thinking.toggle} className={toolClass} />
+                        <ThinkingButton on={thinking.on} effort={thinking.effort} onToggle={thinking.toggle} onEffort={thinking.setEffort} className={toolClass} />
                         {web?.enabled && (
                           <button
                             type="button"

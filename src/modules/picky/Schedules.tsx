@@ -1,5 +1,5 @@
 // 定时 (its own dialog beside 管理 and 插件库 at the bottom of the conversation list; rules in Rust schedule.rs): the list on the left (今日简报 first, then the tasks:
-// name, when, off / running), the chosen one on the right: 名称, 什么时候, 模型 and 思考, 提示词 (a workflow —
+// name, when, off / running), the chosen one on the right: 名称, 什么时候, 模型 and 思考 (LevelPicker: what that model has), 提示词 (a workflow —
 // 年度总结 — draws its flow instead, as the 插件库 does), saved with 保存 (one undoable step); 打开 switch, 立即运行, 删除, and
 // 下次 / 上次 (opens the conversation it wrote last). 今日简报 (brief.rs) has 打开, 模型 and 思考, its 提示词 (保存 /
 // 恢复默认; a setting, not undoable), 重写今天的. With 思考 on only models that can think are
@@ -14,11 +14,11 @@ import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/sh
 import { BRIEF_KEY, LIBRARY_KEY, SCHEDULES_KEY, pickyApi, ruleText, useBrief, usePickyStatus, useSchedules, type Schedule, type ScheduleInput } from "./api";
 import { modelOptions } from "./ModelMenu";
 import { FlowChart } from "./Plugins";
-import { thinkFits, thinkOf } from "./Thinking";
+import { LevelPicker, fromLevel, levelOf, thinkFits, thinkOf } from "./Thinking";
 
 type Confirm = ReturnType<typeof useConfirm>[0];
 
-const BLANK: ScheduleInput = { name: "", prompt: "", every: "day", day: null, month: null, at: "09:00", model: null, thinking: true };
+const BLANK: ScheduleInput = { name: "", prompt: "", every: "day", day: null, month: null, at: "09:00", model: null, thinking: true, effort: null };
 const DAYS = (day: number | null) => [...Array.from({ length: 28 }, (_, i) => ({ value: i + 1, label: `${i + 1} 号` })), ...(day && day > 28 && day < 31 ? [{ value: day, label: `${day} 号` }] : []), { value: 31, label: "最后一天" }];
 
 /** The model menu: 小拾现在选的, then the local and cloud models that fit 思考 (one gone stays, marked). */
@@ -140,8 +140,8 @@ function BriefEditor() {
   if (!b) return null;
   const text = draft ?? b.prompt;
   const dirty = draft != null && draft !== b.prompt;
-  const put = (enabled: boolean, model: string | null, thinking = b.thinking) =>
-    void pickyApi.briefSet(enabled, model, thinking).then(
+  const put = (enabled: boolean, model: string | null, thinking = b.thinking, effort = b.effort) =>
+    void pickyApi.briefSet(enabled, model, thinking, effort).then(
       (v) => qc.setQueryData(BRIEF_KEY, v),
       (e) => toast(errorText(e), "error"),
     );
@@ -175,9 +175,15 @@ function BriefEditor() {
         <span className="text-xs text-muted-foreground">模型</span>
         <div className="flex items-center gap-4">
           <Dropdown<string | null> ariaLabel="模型" value={b.model} options={models} foldKey="models" onChange={(m) => put(b.enabled, m)} />
-          <span className="flex items-center gap-2 text-sm">
-            思考 <Switch label="思考" checked={b.thinking} onChange={(on) => put(b.enabled, keep(b.model, on), on)} />
-          </span>
+          <LevelPicker
+            label="思考"
+            model={b.model}
+            value={levelOf(b.thinking, b.effort)}
+            onChange={(l) => {
+              const { thinking, effort } = fromLevel(l);
+              put(b.enabled, keep(b.model, thinking), thinking, effort);
+            }}
+          />
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1.5">
@@ -203,7 +209,7 @@ function ScheduleEditor(props: { schedule: Schedule | null; confirm: Confirm; on
   const qc = useQueryClient();
   const toast = useToast();
   const s = props.schedule;
-  const initial: ScheduleInput = s ? { name: s.name, prompt: s.prompt, every: s.every, day: s.day, month: s.month ?? null, at: s.at, model: s.model, thinking: s.thinking } : BLANK;
+  const initial: ScheduleInput = s ? { name: s.name, prompt: s.prompt, every: s.every, day: s.day, month: s.month ?? null, at: s.at, model: s.model, thinking: s.thinking, effort: s.effort } : BLANK;
   const [form, setForm] = useState<ScheduleInput>(initial);
   const set = (p: Partial<ScheduleInput>) => setForm((f) => ({ ...f, ...p }));
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
@@ -294,9 +300,15 @@ function ScheduleEditor(props: { schedule: Schedule | null; confirm: Confirm; on
           <span className="text-xs text-muted-foreground">模型</span>
           <div className="flex items-center gap-4">
             <Dropdown<string | null> ariaLabel="模型" value={form.model} options={models} foldKey="models" onChange={(model) => set({ model })} />
-            <span className="flex items-center gap-2 text-sm">
-              思考 <Switch label="思考" checked={form.thinking} onChange={(thinking) => set({ thinking, model: keep(form.model, thinking) })} />
-            </span>
+            <LevelPicker
+              label="思考"
+              model={form.model}
+              value={levelOf(form.thinking, form.effort)}
+              onChange={(l) => {
+                const v = fromLevel(l);
+                set({ ...v, model: keep(form.model, v.thinking) });
+              }}
+            />
           </div>
         </div>
         {s?.flow ? (

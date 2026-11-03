@@ -9,7 +9,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useNavigationType } from "react-router";
 import { api } from "@/shared/ipc";
-import { splitPath } from "./modules";
+import { moduleById, splitPath } from "./modules";
 
 const SAVED = "ui.tabs";
 const MAX_STEPS = 50;
@@ -201,8 +201,9 @@ export function TabsProvider(props: { children: ReactNode }) {
         setSt({ tabs, active: tabs.length - 1 });
         show("/dock");
       },
-      open: (to, state) => {
+      open: (path, state) => {
         const s = stRef.current;
+        const to = moduleById(splitPath(path).module).to ?? path;
         const mod = splitPath(to).module;
         const other = s.tabs.findIndex((x, k) => k !== s.active && splitPath(current(x)).module === mod);
         const i = other >= 0 ? other : s.active;

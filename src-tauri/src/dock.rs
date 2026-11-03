@@ -53,6 +53,10 @@ pub fn live(conn: &Connection, today: &str) -> Result<Live, String> {
     if entries > 0 {
         put("finance", format!("本月 {entries} 笔"));
     }
+    let open = count(conn, "SELECT count(*) FROM fin_import_rows WHERE state IN ('pending', 'ready')", [])?;
+    if open > 0 {
+        put("importer", format!("待核对 {open}"));
+    }
     let trip: Option<(String, String)> = conn
         .query_row("SELECT name, depart_on FROM trips WHERE depart_on >= ?1 ORDER BY depart_on, id LIMIT 1", [today], |r| Ok((r.get(0)?, r.get(1)?)))
         .ok();
@@ -112,7 +116,7 @@ pub fn live(conn: &Connection, today: &str) -> Result<Live, String> {
 /// picky.db's part: conversations and the 助手 (`generating` / `pub2md_busy` come from memory).
 pub fn picky_live(conn: &Connection, generating: bool, pub2md_busy: usize) -> Result<Live, String> {
     let mut out = Live::new();
-    let sessions = count(conn, "SELECT count(*) FROM sessions WHERE id NOT IN (SELECT session_id FROM rater_records)", [])?;
+    let sessions = count(conn, concat!("SELECT count(*) FROM sessions WHERE id NOT IN ", crate::picky::library::unlisted!()), [])?;
     if generating {
         out.insert("picky".into(), "正在写…".into());
     } else if sessions > 0 {
@@ -177,7 +181,14 @@ mod tests {
         assert_eq!(l.get("films").map(String::as_str), Some("想看 1 部"));
         assert_eq!(l.get("packing").map(String::as_str), Some("东京 11 / 08"));
         assert_eq!(l.get("notes").map(String::as_str), Some("共 1 条"));
-        assert!(!l.contains_key("todo") && !l.contains_key("jobs"));
+        assert!(!l.contains_key("todo") && !l.contains_key("jobs") && !l.contains_key("importer"));
+        // rows waiting in 导入账单
+        c.execute_batch(
+            "INSERT INTO fin_imports (id, name, source) VALUES (1, 'a.xlsx', 'alipay');
+             INSERT INTO fin_import_rows (batch_id, source_json, draft_json, state) VALUES (1, '{}', '{}', 'pending'), (1, '{}', '{}', 'ready'), (1, '{}', '{}', 'posted');",
+        )
+        .unwrap();
+        assert_eq!(live(&c, TODAY).unwrap().get("importer").map(String::as_str), Some("待核对 2"));
     }
 
     #[test]

@@ -22,6 +22,7 @@ const PickyPage = lazy(() => import("@/modules/picky/PickyPage"));
 const AssistantModule = lazy(() => import("@/modules/picky/assistants"));
 import DockPage from "@/app/DockPage";
 import TodoPage from "@/modules/todo/TodoPage";
+import HealthPage from "@/settings/Health";
 import SettingsPage from "@/settings/SettingsPage";
 import { ToastProvider } from "@/shared/feedback";
 import "./index.css";
@@ -62,8 +63,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="pub2md/:sub?" element={<Suspense fallback={null}><AssistantModule which="pub2md" /></Suspense>} />
             <Route path="seeker/:sub?" element={<Suspense fallback={null}><AssistantModule which="seeker" /></Suspense>} />
             <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
+            <Route path="importer" element={<Navigate to="/finance/import" replace />} />
             <Route path="dock" element={<DockPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/health" element={<HealthPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

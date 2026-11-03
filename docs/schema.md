@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 共 42 张表，当前版本 30；小拾的数据在单独的 `picky.db`（版本 31），搜索索引在 `search.db`（版本 2）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
+`pomelo.db` 共 44 张表，当前版本 35；小拾的数据在单独的 `picky.db`（版本 35），搜索索引在 `search.db`（版本 2）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
 
 ## 通用约定
 
@@ -25,7 +25,7 @@
 
 **kinds**（能自己增删改的类型）：`module`、`name`（同模块不重名，最多 20 字）、`sort_order`。记录里只存 `kind_id`，删类型后记录变「未分类」。各模块：`books`（虚构、非虚构、漫画、其他）、`films`（电影、剧集、动漫）、`drawing`（正课、DLC 跟画、LIVE 辅导）、`packing`（重要物品、随身、护理、兴趣）、`fin_out` 支出分类、`fin_in` 收入分类、`job_channel` 投递渠道；每个循序渐进模块一组（`progress/编号`，一开始是空的）。
 
-**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和小拾也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页等；更早的 `ui.module_order` 侧栏顺序、`ui.sidebar_collapsed` 不再用）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）。不进撤销。
+**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和小拾也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页等；更早的 `ui.module_order` 侧栏顺序、`ui.sidebar_collapsed` 不再用）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）。不进撤销。以前的 `finance.import_model` 不再用（模型改记在 Importer 的设置里）。
 
 ## 附件
 
@@ -91,12 +91,16 @@
 | **fin_balances** 余额 | `account_id`、`day`、`amount`（同账户每天一条；券商账户的余额就是总值） |
 | **fin_rates** 汇率 | `day`、`currency`、`rate`（1 单位合多少人民币） |
 | **fin_holdings** 持仓 | `account_id`（只能券商）、`day`、`name`、`quantity`（> 0）、`price` 单价（按元存）、`sort_order`；保存时替换那一天的全部持仓 |
-| **fin_entries** 收支 | `flow`（`out` / `in`）、`amount`（> 0）、`currency`、`day`（时间段的第一天）、`end_day`（最后一天，一天的不填）、`kind_id`、`fixed_id` 由哪个固定支出记的（删固定支出后留着）、`note` |
+| **fin_entries** 收支 | `flow`（`out` / `in`）、`amount`（> 0）、`currency`、`day`（时间段的第一天）、`end_day`（最后一天，一天的不填）、`kind_id`、`fixed_id` 由哪个固定支出记的（删固定支出后留着）、`note`、`is_refund` 退款（只能是一天的支出，金额从支出里减）、`refund_of` 退的是哪笔支出（删了变空） |
+| **fin_imports** 导入的账单 | `name` 文件名（选原图用它认原件）、`title` 我改的名字（空 = 用文件名）、`sort_order` 列表里的顺序（新的最小）、`source` 模型认出的来源（`alipay` / `wechat` / `dbs` / `wise` / `icbc`，别的版式记 `screenshot`）；不存原件 |
+| **fin_import_rows** 账单里的一行 | `batch_id`、`source_json` 读到的原文（工作表、行号、交易号、时间、各列、疑点，模型第一次给的草稿，以前本地提取的还有截图上的位置；以后不改）、`draft_json` 核对的草稿（日期、金额、币种、算作 `out` / `in` / `refund` / `neutral`、分类名、备注、退的哪笔）、`state`（`pending` 待核对 / `ready` 核对过 / `posted` 入账 / `neutral` 不计收支 / `duplicate` 重复 / `ignored` 忽略）、`entry_id` 入账成哪笔（删了变空，状态留着，再导入不会又冒出来）、`resolution`（`new` 不是重复 / `linked` 关联到已有的）、`ai_json` Importer 做过什么（模型名、疑点算不算解决和它的依据或要我核对的、查重结论和理由、它点名的那笔、分类是不是我批量改的、出错原因） |
 | **fin_fixed** 固定支出 | `name`（不重名）、`flow`、`amount`、`currency`、`kind_id`、`rule`（`monthly:15` / `yearly:03-01`）、`next_day` 下次哪天记、`stopped`、`note`、`sort_order` |
 | **fin_budgets** 预算 | `kind_id` 支出分类、`currency`、`amount` 每月（同分类每币种一条） |
 
 - **总资产**：缺某币种的汇率时那天不算总数，并提示缺什么。
-- **时间段**（记小额）按天平摊，跨月的按天数分到各月（四舍五入到分，加起来正好等于金额）。
+- **时间段**（v0.8 以前的记小额）按天平摊，跨月的按天数分到各月（四舍五入到分，加起来正好等于金额）。页面上不能再新记。
+- **退款**算在到账那天，按原支出的分类从支出里减（合计、报表、预算、首页、小拾都这样算）；关联了原支出的分类跟着原支出改，退的总数不能超过原支出。
+- **账单的一行入账**：支出、收入、退款记成一笔收支；不计收支的（自己账户之间、钱包充值、还信用卡）只留在账单里；关联到已有记录的不再记，几个来源共用一笔。
 - 固定支出到日子记的那一笔，备注写它的名称。
 
 ## 投石问路
@@ -159,6 +163,10 @@
 
 没有自己的表，每次打开由 `home.rs` 现算（各块怎么算见它开头），隐藏的模块不算。
 
+## 体检
+
+没有自己的表，每次打开由 `health.rs` 现算（各项的规则见它开头和 `requirements.md`），隐藏的模块不算。
+
 ## 小拾（picky.db）
 
 - 单独一个数据库，和 `pomelo.db` 放在同一个文件夹，有自己的升级脚本（`migrations/picky/`）和版本号；`pomelo.db` 不因小拾改结构。文件副本在旁边的 `picky-files/`。
@@ -167,7 +175,7 @@
 
 **Seeker**（助手；正文都是 JSON，字段见 `picky/assistants/seeker.rs` 和 `seeker/` 各文件）：
 
-- **seeker_settings**（只有一行）：记住的文件夹（只记位置，导入预览时才读）、`options`（选材模型、审查润色模型、思考、允许发云端、页面显示的语言 `lang`、knowledge/ 公司的自定义名称 `companyNames`：文件夹 → 名称）、`template` 和 `template_en`（以前自己选的模板，现在用内置模板，这两列不再用）。不进撤销。
+- **seeker_settings**（只有一行）：记住的文件夹（只记位置，导入预览时才读）、`options`（默认的模型、思考和强度，单独选了的功能 `features`，允许发云端、页面显示的语言 `lang`、knowledge/ 公司的自定义名称 `companyNames`：文件夹 → 名称）、`template` 和 `template_en`（以前自己选的模板，现在用内置模板，这两列不再用）。不进撤销。
 - **seeker_draft**（每种语言一行，键 `lang` 是 `cn` 或 `en`）：当前草稿 `body`（语言、英文的 Resume / CV `form`、姓名、页首字段、章节 → 经历 → 要点、JD、为哪个岗位做的 `job`（编号和创建时间，可没有）；经历记着来自哪条素材的哪一版、选了哪些要点；Summary 是分类「摘要」的一节，一段经历，正文在说明里；`notes` 批注：每条记来源（审查 / 润色要点 / Summary）、对着的块（要点、经历、章节，空是整篇）、建议和可没有的改稿，那一块删了保存时跟着去掉，页面存草稿时保留库里的批注，只有审查、润色、采用、✓ 改它）和「修改差异」比较的 `baseline`。所有块的编号不空、不重复。
 - **seeker_records**：`sort` 是自己拖的顺序（一组里拖动只在这几条原来的位置之间换），资料，一条一小块：素材（`material`：分类、名称、角色、时间、地点、概览、技术栈 `stack`、要点；英文还有「摘要」「证书」两类）、基本信息（`profile`：字段）、已确认事实（`fact`：分组、事项、口径）和经历档案（`fact`，分组「经历档案」：Markdown 正文，`material`、`materialEn` 是它挂的中文、英文素材）、规则（`rule`：用途、标题、分点 `points`，每点一句，按顺序；以前的正文 `text` 和个人约定 `decision` 读的时候转成分点；用途「写作规则」页面上叫通用规则，「整体审查」叫选材和审查，「共用准则」30 起没有了）、豁免情况（`example`：名称、Markdown 正文）、网申（分组 `category` 必填；`application` 卡片：名称、Markdown 正文；`application_line` 一行：事项、内容）；`lang` 是语言（素材、基本信息：`cn` 或 `en`；规则、豁免情况还能是空 = 中英共用；事实、档案、网申总是两边共用；以前的都算中文）；`enabled` 是「用于选材 / 发给模型」；`source` 是从 `transfer/` 导入的来源（`路径#标题:第几个`，唯一），`revision` 每次保存加一，保存时要和打开时的一样。**seeker_record_history**：每次改或删之前的样子。
 - **seeker_exports**：每次成功导出的记录：文件名、位置、语言、时间和用了哪些素材（编号），不存简历的副本，不再改、不进撤销。**seeker_groups**：每一页的组：`kind` 是哪一页（`material` 素材，按语言；`rule` 规则，Seeker 和 Rater 的规则页共用，豁免情况是「豁免情况」这一组；`fact` 档案；`application` 网申，两种共用），`label` 是程序自带的组（素材的教育、技能、项目、工作、证书、摘要；规则的各用途）显示成什么名字（空 = 原名；只改显示，程序还按原名认），`sort` 是上移下移排的先后（空 = 排在有顺序的后面）。**seeker_job_resumes**：岗位用过的简历（按文件路径：Pomelo 导出的或 `cv/` 里别的；岗位按编号和创建时间认，记下当时的岗位和导出时的 JD），每个岗位只有一份「本次使用」；文件不在了只是不显示。偏好 `seeker.jobResumesAdopted` 记着 `jobs.resume` 搬过来了没有。
@@ -182,21 +190,26 @@
 | 键 | 内容 |
 |---|---|
 | `model.selection` · `model.last_local` | 现在选的模型（`local` 或 `cloud:<id>`）、上次选的本地模型 |
-| `cloud.models` | 常用云端模型（名称、服务、接口模型名、上下文、回复上限、思考能力 `never` / `switch` / `always`，没写的算能开关），顺序就是模型菜单的顺序；第一次打开时放两个 DeepSeek 默认项，删了不再加回来 |
-| `data.cloud` | 各模块能不能发给云端（只存改过的） |
+| `cloud.models` | 常用云端模型（名称、服务、接口模型名、上下文、回复上限、思考能力 `never` / `switch` / `always`，没写的算能开关；思考强度 `efforts`：接口用的词，空 = 不支持；`defaultEffort`：固定的默认，没有就不写），顺序就是模型菜单的顺序；第一次打开时放两个 DeepSeek 默认项，删了不再加回来 |
+| `data.cloud` | 各模块能不能发给云端（只存改过的）；钱来钱往分 `finance/flow` 收支、`finance/assets` 资产，以前的 `finance` 当资产的 |
+| `capture.chat` | 速记小窗里正在聊的对话（`sessions` 的编号；私密，不进列表和搜索，同时只有一个） |
 | `memory.enabled` | 使用记忆的总开关（默认开） |
 | `skills` · `skills.contact` | 每个技能的「启用」「小拾自己决定用」（只存改过的）；书单 / 影单检索的联系邮箱 |
-| `brief.enabled` · `brief.model` · `brief.thinking` · `brief.prompt` | 今日简报的开关（默认开）、模型（空 = 跟着小拾）、思考（默认开）、提示词（空 = 程序自带的；和自带的一样时存成空；不进撤销、不导出） |
-| `assistant.pub2md` | Pub2MD 的设置（做哪几步、格式、另存为、语言、文体、领域、自己写的要求、两个模型和思考、精修、联网查术语、不翻的部分、存到哪）和最近 10 份（名字、文件夹、状态、输出的文件、源文件的指纹、提取日期和图片在 Mathpix 的链接） |
-| `assistant.translate` | Translator 的上一次：设置（源语言、目标语言、模型、思考、自己写的提示词、关键词）和原文、译文、怎么结束的、用的模型 |
-| `rater.options` | Rater 的模型和思考：默认的，和单独选了的功能（`features`：补题、润色答案、按 JD 挑卡、追问、点评、准备、复盘的记录和总结） |
+| `assist.model` · `assist.level` | 面板帮手的模型（`local:<key>` / `cloud:<id>`，空 = 小拾现在选的）和思考（`off` / `on` 模型的默认（默认）/ 模型的某个强度） |
+| `brief.enabled` · `brief.model` · `brief.thinking` · `brief.effort` · `brief.prompt` | 今日简报的开关（默认开）、模型（空 = 跟着小拾）、思考（默认开）、思考强度（空 = 模型的默认）、提示词（空 = 程序自带的；和自带的一样时存成空；不进撤销、不导出） |
+| `assistant.importer` | Importer 的设置：上次用的模型（`cloud:<id>`）、思考 `level`（`off` / `on` 模型的默认 / 模型的某个强度）、提示词清单（`points`：`{ text 要点, on 这次生效 }`）；在导入账单页改，不进撤销和导出 |
+| `assistant.pub2md` | Pub2MD 的设置（两个模型的 `workerLevel` / `supervisorLevel`：`off` / `on` / 模型的某个强度；做哪几步、格式、另存为、语言、文体、领域、自己写的要求、两个模型和思考、精修、联网查术语、不翻的部分、存到哪）和最近 10 份（名字、文件夹、状态、输出的文件、源文件的指纹、提取日期和图片在 Mathpix 的链接） |
+| `assistant.translate` | Translator 的上一次：设置（源语言、目标语言、模型、思考和强度、自己写的提示词、关键词）和原文、译文、怎么结束的、用的模型 |
+| `rater.options` | Rater 的模型、思考和强度：默认的，和单独选了的功能（`features`：补题、润色答案、按 JD 挑卡、追问、点评、准备、复盘的记录和总结） |
 | `rater.word_folder` | 速查卡「另存 Word」上次存的文件夹 |
 | `work.folder` | 「保存为 Word」上次存到的文件夹（不在了就是「文稿」） |
 | `ui.*` | 上次打开的对话、列表收起、收起的项目、归档展开、开着的助手 |
 
 ### 对话和项目
 
-**sessions**：`title`、`title_source`（`auto` 取第一个问题的第一行、最多 40 字 / `user` 改过名；改成空回到自动）、`active_root_id` 显示的路径从哪条消息开始、`project_id`、`pinned_at`、`archived_at`、`sort_order`、`instructions` 对话指令、`preset_id` 用途预设（删预设时清空）、`memory_disabled` 关闭记忆、`thinking` 思考开关、`knowledge` 知识库开关、`private` 私密、`scheduled` 是定时任务写的（任务删了也还是）· `schedule_id` 哪个任务 · `unseen` 还没打开过（不进撤销）。`updated_at` 是最后一次发消息的时间，整理操作都不碰它。删对话一起删它的消息和调用记录。
+**run_asks**：一条回答问我的卡片（问我 / ASK）：`run_id`、`questions`（JSON：`{ question, kind: single / multi / judge, options }`）、`answers`（JSON：`{ picked, other }`，答了才有）、`state`（`waiting` 等回答 / `answered` / `cancelled` 没回答）、`created_at`、`answered_at`。
+
+**sessions**：`effort` 思考强度（空 = 模型的默认）、`title`、`title_source`（`auto` 取第一个问题的第一行、最多 40 字 / `user` 改过名；改成空回到自动）、`active_root_id` 显示的路径从哪条消息开始、`project_id`、`pinned_at`、`archived_at`、`sort_order`、`instructions` 对话指令、`preset_id` 用途预设（删预设时清空）、`memory_disabled` 关闭记忆、`thinking` 思考开关、`knowledge` 知识库开关、`private` 私密、`scheduled` 是定时任务写的（任务删了也还是）· `schedule_id` 哪个任务 · `unseen` 还没打开过（不进撤销）。`updated_at` 是最后一次发消息的时间，整理操作都不碰它。删对话一起删它的消息和调用记录。
 
 **manual_lists**：拖过顺序的列表（`pinned`、`scheduled`、`recent`、`archived`、`project:<id>`）；没拖过的按最后发消息的时间排。
 
@@ -236,11 +249,11 @@
 
 **kb_libraries**：`name`（必填，最多 30 字，不重名）、`sort_order`。**kb_sources**：`library_id`、`kind`（`folder` / `web`）、`path` 文件夹的完整路径、`artifact_id` 网页的正文副本（附件库里不列）、`cloud` 能不能发给云端（默认能）、`sort_order`；同一个库里文件夹、网页都不重复，文件夹不能一个套一个，不能放 Pomelo 的数据文件夹。**session_libraries** / **project_libraries**：对话、项目选了哪些库。这些都能 ⌘Z；删库连同它的文件夹、网页和选了它的记录一起删，原来的文件不动。
 
-**message_edit_files**：以前用「改文件…」选的文件（不再新加），`path` 完整路径、`name`；改问题、重新生成时照抄。**file_edits**（一条回复的卡片：改一个文件，或新建一个 Word）：`run_id`、`path`（新建的：要存到的文件夹，存好后是文件）、`name`、`kind`（`markdown` / `text` / `word` / `new-word`，新建的内容在唯一一行的 `after`）、`sha256` 读的时候文件的指纹、`total` 一共几段、`state`（`pending` / `written` / `cancelled`）、`error`、`decided_at`。**file_edit_items**：每段一行：`paragraph` 第几段（1 开始）、`before`、`after`（空的是删掉这一段；Word 的是带格式标记的文字，空一行是在这段后面加的新段落）、`checked`。删对话时一起删，都不进撤销。
+**message_edit_files**：以前用「改文件…」选的文件（不再新加），`path` 完整路径、`name`；改问题、重新生成时照抄。**file_edits**（一条回复的卡片：改一个文件，或新建一个 Word、Excel）：`run_id`、`path`（新建的：要存到的文件夹，存好后是文件）、`name`、`kind`（`markdown` / `text` / `word` / `excel` / `new-word` / `new-excel`，新建的内容在唯一一行）、`sha256` 读的时候文件的指纹、`total` 一共几段、`state`（`pending` / `written` / `cancelled`）、`error`、`decided_at`。**file_edit_items**：每段一行：`paragraph` 第几段（1 开始）、`before`、`after`（空的是删掉这一段；Word 的是带格式标记的文字，空一行是在这段后面加的新段落）、`checked`；Excel 的卡片每处一行：`paragraph` 是这个位置的编号（同一处再提议就换掉），`label` 写着哪张表哪一格或哪几行，`before` · `after` 是给我看的，`payload` 是这处改动（JSON：改格子、加行、删行，行号按读到的；新建的是每张表的行，`after` 是前面几行的 Markdown 表格）。删对话时一起删，都不进撤销。
 
 ### 定时、简报、年度总结
 
-**schedules**：`name`（必填，最多 30 字）、`prompt` 提示词（必填，最多 2000 字；年度总结的面板里不显示）、`every`（`day` / `week` / `month` / `year`）、`day`（每周 1～7；每月、每年 1～31，没有那天就是最后一天）、`month`（每年 1～12）、`at`（`HH:MM`，本地时间）、`model`（`local:<key>` / `cloud:<id>`，空 = 跟着小拾）、`thinking`（默认开）、`enabled`、`builtin`（`weekly` / `monthly` / `yearly`；删了不再加回来）、`sort_order`、`since` 从什么时候起算（新建、改时间、重新打开时设成那一刻）。能 ⌘Z。**schedule_state**：`last_slot` 上次跑到哪个时间（`YYYY-MM-DD HH:MM`），不进撤销。
+**schedules**：`name`（必填，最多 30 字）、`prompt` 提示词（必填，最多 2000 字；年度总结的面板里不显示）、`every`（`day` / `week` / `month` / `year`）、`day`（每周 1～7；每月、每年 1～31，没有那天就是最后一天）、`month`（每年 1～12）、`at`（`HH:MM`，本地时间）、`model`（`local:<key>` / `cloud:<id>`，空 = 跟着小拾）、`thinking`（默认开）、`effort` 思考强度（空 = 模型的默认）、`enabled`、`builtin`（`weekly` / `monthly` / `yearly`；删了不再加回来）、`sort_order`、`since` 从什么时候起算（新建、改时间、重新打开时设成那一刻）。能 ⌘Z。**schedule_state**：`last_slot` 上次跑到哪个时间（`YYYY-MM-DD HH:MM`），不进撤销。
 
 **briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块、`mood` 当天的心情（`calm` / `busy` / `good` / `worry`，从简报最后一行「心情：…」取出来，正文里不留；没有就空）。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
 
@@ -258,7 +271,7 @@
 
 ## 数据文件（导出 / 导入）
 
-JSON，当前格式版本 31（19 开始带 Seeker，20 加了草稿的岗位和岗位的公司资料，21 资料多了技术栈、档案挂钩和个人约定，22 加了英文：英文草稿、英文模板、资料的语言，23 加了 Rater 的题库，24 加了卡片练习，25 加了面试的准备和复盘，26 岗位用的简历按文件路径记（旧文件按导出对上），27 去掉确认版本、导出不带简历正文、加分组显示的名字（旧文件里的确认版本不导入，导出的正文只取语言和素材），28 Seeker 设置加公司的自定义名称（旧文件没有，就用找到的名字），29 规则改成分点、没有个人约定（旧文件的规则正文按行和句子拆成分点，个人约定变成一点的规则），30 去掉「共用准则」组、分组记先后、网申分一行和卡片（旧文件里共用准则的规则和它的名字不导入），31 草稿带批注（旧文件没有），32 面试带总结（旧文件没有，导入后它的准备和复盘照样替换）；更早的文件里资料都算中文，SEEKER.md 来的规则算中英共用）；旧版本的文件都能导入（转换写在 `transfer.rs` 和各模块里）。
+JSON，当前格式版本 36（36：定时任务带思考强度，Seeker 的设置改成默认 + 每个功能各自的模型；旧文件都能读，各版本读旧形状的规则在 `transfer.rs` 和各模块的 `serde` 默认值里，有测试）。
 
 | 部分 | 内容 |
 |---|---|
@@ -280,18 +293,10 @@ JSON，当前格式版本 31（19 开始带 Seeker，20 加了草稿的岗位和
 | 1～7 | 设置、书影、类型表、绘画、出门走走 |
 | 8～11 | 一步一步：分组、目标、任务；任务类型和完成记录；日期简化；打卡时间段 |
 | 12 · 13 · 14 · 15 | 钱来钱往 · 投石问路 · 念念不忘 · 芝麻开门 |
-| 16 | 目标去掉「已放弃」（改成暂停） |
-| 17 | 书影完成时间只记年 |
-| 18 | 钱来钱往：余额、汇率、持仓按天；持仓数量 × 单价；收支时间段；收支和固定支出去掉账户 |
-| 19 | 投石问路：每条投递的时间线；去掉截止日期、投递日期、薪资、求职信（写进备注）、和待办的关联 |
-| 20 · 21 · 22 | 标签置顶和图标 · 重读重看 · 只能置顶第一级标签 |
-| 23 · 24 | 芝麻开门：手动排序 · 分类（名称加密）、归档 |
-| 25 | 附件：附件文件和谁挂了哪个文件 |
-| 26 | 来日方长：日子和送过的礼物 |
-| 27 | 五花八门 · 循序渐进：建出来的模块、清单的字段和条目、进度的课程和课节 |
-| 28 | 随意画画去掉「待标记」（原来的变成未开始） |
-| 29 | 笔记转待办：任务记下从哪条笔记来 |
-| 30 | 五花八门的「日期」字段改成「年份」（原来的日期只留年）；循序渐进的课节加类型 |
+| 16～24 | 去掉「已放弃」、书影只记年、余额和持仓按天、投递时间线、标签置顶和图标、重读重看、芝麻开门的排序和分类 |
+| 25～30 | 附件 · 来日方长 · 五花八门和循序渐进 · 随意画画去掉待标记 · 笔记转待办 · 五花八门的年份字段和课节类型 |
+| 31～34 | 导入账单：收支加退款、账单和每一行（31，收入分类没有「工资」就加上）；来源加 DBS、每行记关联决定（32）；来源加 Wise、工行、截图，状态加「忽略」（33）；每行记小拾做过什么（34）。以前的收支不变 |
+| 35 | 导入账单的列表能排序、改名（以前的按导入时间新的在上） |
 
 **picky.db**
 
@@ -308,17 +313,13 @@ JSON，当前格式版本 31（19 开始带 Seeker，20 加了草稿的岗位和
 | 17 | 知识库：库、文件夹和网页、对话和项目选的库、对话的开关；段落和出处记着来自哪个文件 |
 | 18 | 改文件：问题要改的文件、回复提的改动 |
 | 19 | 附件记下原文件在哪（`artifacts.source_path`，Word 工具箱、文本工具箱用） |
-| 20 | Seeker：设置、草稿、资料和历史、确认版本、导出和岗位关联 |
-| 21 | 今日简报的心情（`briefs.mood`） |
-| 22 | Seeker：岗位手动选的公司资料（`seeker_job_companies`） |
-| 23 | Seeker 英文简历：草稿改成每种语言一行（原来的算中文）、英文模板一列、SEEKER.md 来的规则改成中英共用 |
-| 24 | Rater 的题库：题目和题目的历史 |
-| 25 | Rater 的卡片练习：一轮一行（`rater_rounds`） |
-| 26 | Rater 的面试：准备和复盘（`rater_interviews`） |
-| 27 | 自己拖的顺序：`seeker_records.sort`、`rater_questions.sort`（原来的顺序照旧，新加的排最后） |
-| 28 | 岗位用的简历按文件路径记（`seeker_job_resumes` 换掉 `seeker_job_exports`，原来的关联带上导出的路径） |
-| 29 | 不留简历副本：去掉确认版本（`seeker_versions` 和里面的版本），导出记录只留文件名、位置、语言、时间和用了哪些素材；`seeker_groups` 分组显示的名字 |
-| 30 | 去掉「共用准则」组（里面的规则删掉、进历史，它显示的名字也删掉；三点写进程序的工作原则）；`seeker_groups` 能记每一页的组和先后（`sort`）；网申多一种「一行」（`application_line`，不用改表） |
-| 31 | Rater 的复盘 · 记录：没记完的复盘和它的对话（`rater_records`）；面试的总结是 `rater_interviews` 的新 `kind`（不用改表），规则多了「卡片练习」「复盘」两组（原来「面试」组的规则不动） |
+| 20～23 | Seeker：设置、草稿、资料和历史、导出和岗位关联；今日简报的心情；岗位的公司资料；英文简历 |
+| 24～26 | Rater：题库、卡片练习（`rater_rounds`）、面试（`rater_interviews`） |
+| 27～30 | 自己拖的顺序（`sort`）；岗位用的简历按文件路径记；不留简历副本（去掉确认版本）；`seeker_groups` 记组名和先后，去掉「共用准则」组 |
+| 31 | Rater 的复盘 · 记录（`rater_records`）；总结是 `rater_interviews` 的新 `kind` |
+| 32 | 思考强度：`sessions.effort` 对话选的强度（空 = 模型的默认）；以前存的云端模型按各家文档填上 `efforts` |
+| 33 | 问我（ASK）：`run_asks` 一条回答问我的卡片 |
+| 34 | 定时任务的思考强度：`schedules.effort`（空 = 模型的默认） |
+| 35 | Excel 工具箱：`file_edit_items.label`（在哪一格、哪几行）、`payload`（这处改动） |
 
 **search.db**：1 是搜索索引；2 加知识库（`kb_docs`、`kb_chunks`）。

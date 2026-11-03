@@ -10,7 +10,9 @@
 //! The OpenAI / Anthropic / Google calls aren't streamed (one answer: the JSON term list).
 
 use super::Level;
-use crate::picky::cloud::{CloudModel, Service, Think};
+#[cfg(test)]
+use crate::picky::cloud::Think;
+use crate::picky::cloud::{CloudModel, Service};
 use crate::picky::provider::{self, Event, Msg, Options, Target, ToolCall};
 use crate::picky::{skills, Picky, Route};
 use serde_json::{json, Value};
@@ -65,8 +67,8 @@ fn client() -> Result<reqwest::Client, String> {
 }
 
 /// One request (with `lookup`); the reply and how it searched (for the log).
-pub async fn ask(route: &Route, level: Level, system: &str, user: &str, max: i64, lookup: &Lookup) -> Result<(String, String), String> {
-    let plain = || Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, ..Default::default() };
+pub async fn ask(route: &Route, level: &Level, system: &str, user: &str, max: i64, lookup: &Lookup) -> Result<(String, String), String> {
+    let plain = || Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, room_fixed: true, ..Default::default() };
     match (lookup, &route.target) {
         (Lookup::Off, _) => Ok((stream_text(route, system, user, plain()).await?, "没联网查".into())),
         (Lookup::Tavily(key), _) => {
@@ -170,13 +172,13 @@ async fn deepseek_fetch(key: &str, url: &str) -> Result<String, String> {
 }
 
 /// The model asks for searches, Rust runs them, until it answers (at most 6 rounds).
-async fn tool_loop(route: &Route, level: Level, system: &str, user: &str, max: i64, runner: &Runner) -> Result<(String, usize), String> {
+async fn tool_loop(route: &Route, level: &Level, system: &str, user: &str, max: i64, runner: &Runner) -> Result<(String, usize), String> {
     let tools = runner.tools();
     let mut msgs = vec![Msg::new("system", system), Msg::new("user", user)];
     let mut searches = 0;
     for round in 0..6 {
         let (mut text, mut calls, mut reasoning, mut details) = (String::new(), vec![], String::new(), vec![]);
-        let opts = Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), tools: tools.clone(), no_calls: round == 5, ..Default::default() };
+        let opts = Options { max_tokens: Some(max), thinking: Some(level.thinking()), effort: level.effort(), room_fixed: true, tools: tools.clone(), no_calls: round == 5, ..Default::default() };
         provider::stream(route.target.clone(), msgs.clone(), opts, |e| match e {
             Event::Content(t) => text.push_str(&t),
             Event::Reasoning(r) => reasoning.push_str(&r),
@@ -200,7 +202,12 @@ async fn tool_loop(route: &Route, level: Level, system: &str, user: &str, max: i
 
 // ---------- the services' own search ----------
 
-fn thinks(model: &CloudModel, level: Level) -> bool {
+/// These go straight to the service, not through provider.rs: the same rule for the level (cloud.rs).
+fn effort_for(model: &CloudModel, level: &Level) -> Option<String> {
+    model.effort(level.effort().as_deref()).filter(|_| thinks(model, level))
+}
+
+fn thinks(model: &CloudModel, level: &Level) -> bool {
     model.thinking.thinks(level.thinking())
 }
 
@@ -215,10 +222,10 @@ async fn post(req: reqwest::RequestBuilder, body: &Value) -> Result<(u16, Value)
 }
 
 /// OpenAI: the Responses API with `web_search`.
-async fn openai(model: &CloudModel, key: &str, system: &str, user: &str, level: Level, max: i64, _who: &str) -> Result<(String, usize), String> {
+async fn openai(model: &CloudModel, key: &str, system: &str, user: &str, level: &Level, max: i64, _who: &str) -> Result<(String, usize), String> {
     let mut body = json!({ "model": model.api_model, "instructions": system, "input": user, "tools": [{ "type": "web_search" }], "max_output_tokens": max, "store": false });
-    if let Some(e) = level.effort().filter(|_| thinks(model, level) && model.thinking != Think::Never) {
-        body["reasoning"] = json!({ "effort": e.word() });
+    if let Some(e) = effort_for(model, level) {
+        body["reasoning"] = json!({ "effort": e });
     }
     let url = format!("{}/responses", Service::OpenAi.base_url());
     let (mut status, mut v) = post(client()?.post(&url).bearer_auth(key), &body).await?;
@@ -270,12 +277,12 @@ fn claude_tools(set: usize) -> Value {
     json!(tools)
 }
 
-fn claude_body(model: &CloudModel, system: &str, messages: &[Value], level: Level, max: i64, set: usize) -> Value {
+fn claude_body(model: &CloudModel, system: &str, messages: &[Value], level: &Level, max: i64, set: usize) -> Value {
     let mut body = json!({ "model": model.api_model, "max_tokens": max, "system": system, "messages": messages, "tools": claude_tools(set), "cache_control": { "type": "ephemeral" } });
     if thinks(model, level) {
         body["thinking"] = json!({ "type": "adaptive" });
-        if let Some(e) = level.effort() {
-            body["output_config"] = json!({ "effort": e.word() });
+        if let Some(e) = effort_for(model, level) {
+            body["output_config"] = json!({ "effort": e });
         }
     }
     if provider::FALLBACK_MODELS.contains(&model.api_model.as_str()) {
@@ -309,7 +316,7 @@ fn claude_reply(responses: &[Value]) -> (String, i64, i64) {
 
 /// Anthropic: the Messages API with the `web_search` and `web_fetch` server tools; a paused turn is sent
 /// back as it is (and its code container) until it ends.
-async fn anthropic(model: &CloudModel, key: &str, system: &str, user: &str, level: Level, max: i64, _who: &str) -> Result<(String, i64, i64), String> {
+async fn anthropic(model: &CloudModel, key: &str, system: &str, user: &str, level: &Level, max: i64, _who: &str) -> Result<(String, i64, i64), String> {
     let url = format!("{}/messages", Service::Anthropic.base_url());
     let fallback = provider::FALLBACK_MODELS.contains(&model.api_model.as_str());
     let req = || {
@@ -360,7 +367,7 @@ async fn anthropic(model: &CloudModel, key: &str, system: &str, user: &str, leve
 }
 
 /// Google: generateContent with `google_search`.
-async fn google(model: &CloudModel, key: &str, system: &str, user: &str, level: Level, max: i64) -> Result<(String, usize), String> {
+async fn google(model: &CloudModel, key: &str, system: &str, user: &str, level: &Level, max: i64) -> Result<(String, usize), String> {
     let base = Service::Google.base_url().trim_end_matches("/openai");
     let url = format!("{base}/models/{}:generateContent", model.api_model);
     let mut body = json!({
@@ -369,8 +376,8 @@ async fn google(model: &CloudModel, key: &str, system: &str, user: &str, level: 
         "tools": [{ "google_search": {} }],
         "generationConfig": { "maxOutputTokens": max },
     });
-    if let Some(e) = level.effort().filter(|_| thinks(model, level)) {
-        body["generationConfig"]["thinkingConfig"] = json!({ "thinkingLevel": e.word() });
+    if let Some(e) = effort_for(model, level) {
+        body["generationConfig"]["thinkingConfig"] = json!({ "thinkingLevel": e });
     }
     let (mut status, mut v) = post(client()?.post(&url).header("x-goog-api-key", key), &body).await?;
     if status == 400 && body["generationConfig"].get("thinkingConfig").is_some() {
@@ -391,7 +398,7 @@ mod tests {
     use super::*;
 
     fn cloud(service: Service) -> Route {
-        let model = CloudModel { id: "x".into(), name: "X".into(), api_model: "x".into(), service, context_window: 131_072, max_output_tokens: 8192, thinking: Think::Switch };
+        let model = CloudModel { id: "x".into(), name: "X".into(), api_model: "x".into(), service, context_window: 131_072, max_output_tokens: 8192, thinking: Think::Switch, efforts: vec![], default_effort: None };
         Route { target: Target::Cloud { model, key: "k".into() }, model: "cloud:x".into(), name: "X".into(), window: 131_072, think: Think::Switch }
     }
 
@@ -417,12 +424,12 @@ mod tests {
         assert_eq!(newest[1], json!({ "type": "web_fetch_20260318", "name": "web_fetch", "max_uses": 4, "max_content_tokens": 8000, "response_inclusion": "excluded" }));
         assert!(claude_tools(1)[1]["type"] == "web_fetch_20260209" && claude_tools(1)[1].get("response_inclusion").is_none());
         assert_eq!(claude_tools(3).as_array().unwrap().len(), 1);
-        let sonnet = CloudModel { id: "s".into(), name: "Sonnet".into(), api_model: "claude-sonnet-5-5".into(), service: Service::Anthropic, context_window: 1_048_576, max_output_tokens: 131_072, thinking: Think::Switch };
+        let sonnet = CloudModel { id: "s".into(), name: "Sonnet".into(), api_model: "claude-sonnet-5-5".into(), service: Service::Anthropic, context_window: 1_048_576, max_output_tokens: 131_072, thinking: Think::Switch, efforts: vec!["low".into()], default_effort: None };
         let msgs = [json!({ "role": "user", "content": "全文" })];
-        let b = claude_body(&sonnet, "定术语表", &msgs, Level::Low, 8000, 0);
+        let b = claude_body(&sonnet, "定术语表", &msgs, &Level::word("low"), 8000, 0);
         assert!(b["fallbacks"] == "default" && b["thinking"]["type"] == "adaptive" && b["output_config"]["effort"] == "low" && b["cache_control"]["type"] == "ephemeral");
         let old = CloudModel { api_model: "claude-sonnet-4-5".into(), ..sonnet };
-        let b = claude_body(&old, "定术语表", &msgs, Level::Off, 8000, 2);
+        let b = claude_body(&old, "定术语表", &msgs, &Level::off(), 8000, 2);
         assert!(b.get("fallbacks").is_none() && b.get("thinking").is_none() && b["tools"][0]["type"] == "web_search_20250305");
         // what Claude said on the way is left out; the searches and pages are the usage's
         let paused = json!({ "content": [{ "type": "text", "text": "我先查一下。" }, { "type": "server_tool_use", "name": "web_search" }, { "type": "web_search_tool_result", "content": [] }], "usage": { "server_tool_use": { "web_search_requests": 2 } } });

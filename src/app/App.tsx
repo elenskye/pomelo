@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { Outlet, useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, TriangleAlert } from "lucide-react";
@@ -6,15 +7,17 @@ import { errorText, useToast } from "@/shared/feedback";
 import { api, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
 import { IDLE_MS, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "@/modules/vault/api";
-import { usePickyStatus } from "@/modules/picky/api";
+import { LIBRARY_KEY, usePickyStatus } from "@/modules/picky/api";
 import { Bloom } from "./Bloom";
+import { useDock } from "./dock";
 import { DragChip } from "./drag";
 import { useHiddenModules } from "./hidden";
 import { IndexTabs } from "./IndexTabs";
+import { moduleLabel } from "./modules";
 import { usePublishedContext, type PageContext } from "./pageContext";
 import { reportProblem, useJobWatch } from "./Pomelo";
 import { SearchBox } from "./Search";
-import { TabsProvider } from "./tabs";
+import { TabsProvider, useTabs } from "./tabs";
 import { TopBar } from "./TopBar";
 import "./frame.css";
 
@@ -47,6 +50,70 @@ function useChatKey(enabled: boolean, toggle: () => void) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [enabled, toggle]);
+}
+
+/** The menu bar's 页签 menu (Rust menu.rs: ⌘T ⌘W ⌃Tab ⌃⇧Tab ⌘1–⌘9, 设置… ⌘,) and ⌘⇧[ ⌘⇧] (Safari's other keys
+ * for the previous / next 页签). The menu's ⌘1–⌘9 follow the 索引签: 首页, 模块坞, then the pinned modules. */
+function useTabKeys(enabled: boolean) {
+  const tabs = useTabs();
+  const dock = useDock();
+  const now = useRef({ tabs, pinned: dock.pinned });
+  now.current = { tabs, pinned: dock.pinned };
+  const names = ["首页", "模块坞", ...dock.pinned.map(moduleLabel)].slice(0, 9).join("\n");
+  useEffect(() => {
+    if (enabled) api.appMenuIndex(names.split("\n")).catch(() => {});
+  }, [enabled, names]);
+  useEffect(() => {
+    if (!enabled) return;
+    const act = (action: string) => {
+      if (document.querySelector("dialog[open]")) return;
+      const { tabs: t, pinned } = now.current;
+      const n = t.tabs.length;
+      if (action === "new-tab") t.newTab();
+      else if (action === "close-tab") t.close(t.active);
+      else if (action === "next-tab") t.select((t.active + 1) % n);
+      else if (action === "prev-tab") t.select((t.active + n - 1) % n);
+      else if (action === "settings") t.open("/settings");
+      else if (action.startsWith("go:")) {
+        const i = Number(action.slice(3));
+        const to = i === 0 ? "/" : i === 1 ? "/dock" : pinned[i - 2] ? `/${pinned[i - 2]}` : null;
+        if (to !== null) t.open(to);
+      }
+    };
+    const off = listen<string>("app-menu", (e) => act(e.payload));
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey || (e.code !== "BracketLeft" && e.code !== "BracketRight")) return;
+      e.preventDefault();
+      act(e.code === "BracketLeft" ? "prev-tab" : "next-tab");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      void off.then((f) => f());
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [enabled]);
+}
+
+/** The 速记小窗 (Rust capture.rs): what it saved shows here at once; a conversation kept there and a record a
+ *  reply links open here (in 小拾 / the module, as from 全局搜索). */
+function useCapture(enabled: boolean) {
+  const qc = useQueryClient();
+  const tabs = useTabs();
+  const open = useRef(tabs.open);
+  open.current = tabs.open;
+  useEffect(() => {
+    if (!enabled) return;
+    const off = [
+      listen("capture-saved", () => void qc.invalidateQueries()),
+      listen<number>("capture-chat", (e) =>
+        void qc.invalidateQueries({ queryKey: LIBRARY_KEY }).then(() =>
+          open.current("/picky", { open: { module: "picky", kind: "session", id: e.payload, title: "", detail: null, parent: null, day: null, amount: null, currency: null, flow: null } }),
+        ),
+      ),
+      listen<{ path: string; hit: unknown }>("capture-open", (e) => open.current(e.payload.path, { open: e.payload.hit })),
+    ];
+    return () => off.forEach((p) => void p.then((f) => f()));
+  }, [enabled, qc]);
 }
 
 /** Where the page is when it says nothing itself: its route (芝麻开门: nothing at all). */
@@ -214,6 +281,12 @@ function Shell() {
   const [bloom, setBloom] = useState<HTMLElement | null>(null);
   /** A question from the 柚子瓣 for the 小窗. */
   const [ask, setAsk] = useState<{ text: string; n: number } | null>(null);
+  const askChat = (text: string) => {
+    setChatOpen(true);
+    setAsk((a) => ({ text, n: (a?.n ?? 0) + 1 }));
+  };
+  useTabKeys(ok);
+  useCapture(ok);
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (
@@ -249,10 +322,7 @@ function Shell() {
             onClose={() => setBloom(null)}
             onAsk={
               ok && !hidden.includes("picky") && !path.startsWith("/picky")
-                ? (text) => {
-                    setChatOpen(true);
-                    setAsk((a) => ({ text, n: (a?.n ?? 0) + 1 }));
-                  }
+                ? askChat
                 : null
             }
           />

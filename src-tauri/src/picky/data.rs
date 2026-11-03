@@ -6,7 +6,10 @@
 //!   window ("还有 N 条没列出"); the records shown are kept so the answer can link them.
 //! - Never read: 芝麻开门 (no tool exists) and modules hidden in the 模块坞 (no tool offered; a call
 //!   anyway is refused). For a cloud model, modules not allowed to go to the cloud (设置 → 小拾,
-//!   `data.cloud`; default 钱来钱往 local only) are refused with the sentence the answer starts with.
+//!   `data.cloud`) are refused with the sentence the answer starts with. 钱来钱往 goes in two parts, each
+//!   with its own switch (v0.8): 收支 (entries, 固定支出, 预算, monthly totals; allowed by default, 导入账单
+//!   is 收支's) and 资产 (accounts, balances, holdings; local only by default, it keeps the old 钱来钱往
+//!   switch). A view, page, record or card goes by its part (`cloud_key`).
 //! - 五花八门 / 循序渐进: one tool each (`pomelo_lists`, `pomelo_progress`) for every module made from
 //!   it; each made module is hidden / allowed for the cloud on its own (key "list/3"), like a module.
 //! - Tool definitions carry no user data (no names, categories, amounts).
@@ -57,6 +60,27 @@ pub const MODULES: &[Module] = &[
 /// Modules 小拾 only helps in (assist.rs), never reads: no tool, only a 「发给云端」 switch.
 pub const HELP_ONLY: &[Module] = &[Module { key: "site", label: "呦呦漫游", tool: "", cloud: true }];
 
+/// 钱来钱往's two parts for the cloud (keys in `data.cloud` and `cloud_allowed`, never "finance").
+pub const FIN_FLOW: &str = "finance/flow";
+pub const FIN_ASSETS: &str = "finance/assets";
+/// (key, label, allowed by default)
+const FIN_PARTS: [(&str, &str, bool); 2] = [(FIN_FLOW, "钱来钱往 · 收支", true), (FIN_ASSETS, "钱来钱往 · 资产", false)];
+
+/// The cloud key of a record kind or view of `module`: 钱来钱往's part (account / assets → 资产, the
+/// rest → 收支), else the module.
+pub fn cloud_key<'a>(module: &'a str, kind: &str) -> &'a str {
+    match (module, kind) {
+        ("finance", "account" | "assets") => FIN_ASSETS,
+        ("finance", _) => FIN_FLOW,
+        _ => module,
+    }
+}
+
+/// 「钱来钱往 · 资产」 for a part's key.
+pub fn part_label(key: &str) -> Option<&'static str> {
+    FIN_PARTS.iter().find(|p| p.0 == key).map(|p| p.1)
+}
+
 /// The `module` of what a skill (skills/) brought from the web.
 pub const WEB: &str = "web";
 /// Seeker and Rater (assistants, read by the 「Seeker 资料」 skill): each hidden on its own, both for a
@@ -87,13 +111,20 @@ pub struct CloudSetting {
 /// their default.
 pub fn cloud_settings(conn: &Connection, made: &[Made]) -> Result<Vec<CloudSetting>, String> {
     let saved: HashMap<String, bool> = pref_get(conn, CLOUD_KEY).ok().flatten().unwrap_or_default();
-    let fixed = MODULES.iter().chain(HELP_ONLY).map(|m| CloudSetting { module: m.key.into(), label: m.label.into(), allowed: saved.get(m.key).copied().unwrap_or(m.cloud) });
+    let fixed = MODULES.iter().chain(HELP_ONLY).flat_map(|m| match m.key {
+        // 资产 keeps what the one 钱来钱往 switch was
+        "finance" => FIN_PARTS
+            .iter()
+            .map(|(key, label, on)| CloudSetting { module: key.to_string(), label: label.to_string(), allowed: saved.get(*key).or(if *key == FIN_ASSETS { saved.get(m.key) } else { None }).copied().unwrap_or(*on) })
+            .collect::<Vec<_>>(),
+        _ => vec![CloudSetting { module: m.key.into(), label: m.label.into(), allowed: saved.get(m.key).copied().unwrap_or(m.cloud) }],
+    });
     let made = made.iter().map(|m| CloudSetting { module: m.key.clone(), label: m.name.clone(), allowed: saved.get(&m.key).copied().unwrap_or(true) });
     Ok(fixed.chain(made).collect())
 }
 
 pub fn set_cloud(conn: &Connection, key: &str, allowed: bool, made: &[Made]) -> Result<(), String> {
-    if module(key).is_none() && !made.iter().any(|m| m.key == key) {
+    if (module(key).is_none() || key == "finance") && part_label(key).is_none() && !made.iter().any(|m| m.key == key) {
         return Err(format!("没有这个模块：{key}"));
     }
     let mut saved: HashMap<String, bool> = pref_get(conn, CLOUD_KEY).ok().flatten().unwrap_or_default();
@@ -149,10 +180,14 @@ pub fn cloud_allowed(picky: &Connection, customs: &[String]) -> Vec<String> {
 }
 
 impl Access {
+    fn sends(&self, key: &str) -> bool {
+        self.cloud_allowed.iter().any(|a| a == key)
+    }
+    /// 钱来钱往 as a whole: blocked for the cloud only when neither part may go.
     fn check(&self, m: &Module) -> Result<(), Blocked> {
         if self.hidden.iter().any(|h| h == m.key) {
             Err(Blocked::Hidden)
-        } else if self.cloud && !self.cloud_allowed.iter().any(|a| a == m.key) {
+        } else if self.cloud && !(if m.key == "finance" { self.sends(FIN_FLOW) || self.sends(FIN_ASSETS) } else { self.sends(m.key) }) {
             Err(Blocked::Cloud)
         } else {
             Ok(())
@@ -176,6 +211,11 @@ impl Access {
         if key == SEEKER || key == RATER {
             return !self.hidden.iter().any(|h| h == key) && (!self.cloud || self.cloud_allowed.iter().any(|a| a == SEEKER));
         }
+        // a part by its key; "finance" alone (a lookup from before the split): both parts
+        if key == "finance" || part_label(key).is_some() {
+            let parts: &[&str] = if key == "finance" { &[FIN_FLOW, FIN_ASSETS] } else { &[key] };
+            return !self.hidden.iter().any(|h| h == "finance") && (!self.cloud || parts.iter().all(|p| self.sends(p)));
+        }
         match (custom::parse_key(key), Template::parse(key)) {
             (Some(_), _) => self.check_made(key).is_ok(),
             // a result about several made modules: all of them must be readable
@@ -198,7 +238,14 @@ impl Access {
     }
     /// Labels of the modules this cloud model may not get (made ones by name).
     fn refused(&self) -> Vec<String> {
-        let fixed = self.offered().into_iter().filter(|m| matches!(self.check(m), Err(Blocked::Cloud))).map(|m| m.label.to_string());
+        let fixed = self.offered().into_iter().flat_map(|m| match m.key {
+            "finance" if self.cloud => {
+                let parts: Vec<String> = FIN_PARTS.iter().filter(|p| !self.sends(p.0)).map(|p| p.1.to_string()).collect();
+                if parts.len() == FIN_PARTS.len() { vec![m.label.to_string()] } else { parts }
+            }
+            _ if matches!(self.check(m), Err(Blocked::Cloud)) => vec![m.label.to_string()],
+            _ => vec![],
+        });
         let made = self.made.iter().filter(|m| matches!(self.check_made(&m.key), Err(Blocked::Cloud))).map(|m| m.name.clone());
         fixed.chain(made).collect()
     }
@@ -222,6 +269,7 @@ pub fn instructions(today: &str, access: &Access, verify: bool) -> String {
     let mut s = format!(
         "【查数据】你可以调用工具查用户在「柚儿园」（Pomelo，用户自己的生活记录 App）里的数据，只能读。今天是 {today}（周{wd}）；本周是 {monday} 至 {sunday}，上周是 {last_mon} 至 {last_sun}，本月从 {month}-01 开始。\n\
          - 问题和这些数据有关时先查再答，可以连查几次；和这些数据无关就直接回答，不要查。\n\
+         - 用用户提问的语言回答，调用工具前后说的话也一样（用户用中文问就用中文写）。\n\
          - 合计、平均、占比、变化、天数、预计完成这类数字以查到的为准，直接引用，不要自己重新加总或推算。\n\
          - 用户没说时间时，自己选合适的时间段，并在回答里写明看的是哪段时间。\n\
          - 查到的内容里没有的，就说没有记录，不要编造。提到具体的记录时写出它的完整名称。\n\
@@ -480,6 +528,18 @@ pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, toda
         Ok(a) => a,
         Err(e) => return failed(m, e),
     };
+    let key = cloud_key(m.key, args.view(&FINANCE_VIEWS).unwrap_or(""));
+    if access.cloud && !access.allows(key) {
+        let label = part_label(key).unwrap_or(m.label);
+        let sentence = cloud_sentence(&[label]);
+        return Answer {
+            module: Some(key.into()),
+            label: format!("{label} · 不发给云端，没看"),
+            state: "blocked",
+            text: format!("没有查：{label}的数据不发给云端模型。请在回答开头写明「{sentence}」，并提醒可以换本地模型再问。"),
+            records: vec![],
+        };
+    }
     let found = match m.key {
         "todo" => todo_view(conn, &args, today),
         "finance" => finance_view(conn, &args, today),
@@ -496,7 +556,7 @@ pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, toda
         Ok(f) => {
             let label = format!("{} · {}", m.label, f.label);
             let (text, records) = f.render(budget.min(MAX_RESULT));
-            Answer { module: Some(m.key.into()), label, state: "ok", text, records }
+            Answer { module: Some(key.into()), label, state: "ok", text, records }
         }
         Err(e) => failed(m, e),
     }
@@ -892,8 +952,10 @@ fn month_start(d: &str) -> String {
     format!("{}-01", &d[..7])
 }
 
+const FINANCE_VIEWS: [&str; 5] = ["assets", "entries", "months", "budgets", "fixed"];
+
 fn finance_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> {
-    match a.view(&["assets", "entries", "months", "budgets", "fixed"])? {
+    match a.view(&FINANCE_VIEWS)? {
         "assets" => assets_view(conn, a, today),
         "entries" => entries_view(conn, a, today),
         "months" => months_view(conn, a, today),
@@ -1075,7 +1137,7 @@ fn entries_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, Strin
     let mut by_kind: BTreeMap<(&str, &str, String), i64> = BTreeMap::new();
     let mut periods = false;
     for e in &list {
-        let part = finance::share_between(e.amount, &e.day, e.end_day.as_deref(), &from, &to);
+        let part = finance::share_between(e.amount, &e.day, e.end_day.as_deref(), &from, &to) * if e.is_refund { -1 } else { 1 };
         periods |= e.end_day.is_some();
         sums.entry((e.flow.as_str(), e.currency.as_str())).or_insert((e.flow, e.currency, 0)).2 += part;
         *by_kind.entry((e.flow.as_str(), e.currency.as_str(), kind_of(e))).or_default() += part;
@@ -1098,12 +1160,12 @@ fn entries_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, Strin
                 Some(end) => format!("{} – {}（记小额）", e.day, end),
                 None => e.day.clone(),
             };
-            let part = finance::share_between(e.amount, &e.day, e.end_day.as_deref(), &from, &to);
+            let part = finance::share_between(e.amount, &e.day, e.end_day.as_deref(), &from, &to) * if e.is_refund { -1 } else { 1 };
             let share = if part != e.amount { format!("，算进这段的 {}", money(part, e.currency)) } else { String::new() };
             let note = e.note.as_deref().map(|n| format!(" · {}", clip(n, 40))).unwrap_or_default();
             let title = e.note.clone().unwrap_or_else(|| kind_of(e));
             Row {
-                text: format!("- {when} {} {} {}{share}{note}{}", flow_text(e.flow), kind_of(e), money(e.amount, e.currency), if e.fixed_id.is_some() { " · 固定支出" } else { "" }),
+                text: format!("- {when} {} {} {}{share}{note}{}", flow_text(e.flow), kind_of(e), money(e.signed_amount(), e.currency), if e.fixed_id.is_some() { " · 固定支出" } else { "" }),
                 rec: Some(Rec { day: Some(e.day.clone()), ..rec("finance", "entry", e.id, &title) }),
             }
         })
@@ -2352,7 +2414,7 @@ pub(crate) fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result
             (
                 title.clone(),
                 vec![
-                    line(flow_text(e.flow), Some(money(e.amount, e.currency))),
+                    line(flow_text(e.flow), Some(money(e.signed_amount(), e.currency))),
                     line("日期", Some(match &e.end_day { Some(end) => format!("{} 至 {end}（记小额）", e.day), None => e.day.clone() })),
                     line("分类", Some(kind)),
                     line("备注", e.note.clone()),
@@ -2419,6 +2481,12 @@ pub(crate) fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result
 }
 
 /// What a question sends about its page; None = nothing at all (芝麻开门, 小拾, unknown pages).
+/// Which part of 钱来钱往 a page shows: 资产, or 报表 on its 资产 tab → "assets"; else 收支.
+fn finance_page_part(ctx: &PageContext) -> &'static str {
+    let page = ctx.page.as_deref().unwrap_or("");
+    if page == "资产" || (page == "报表" && ctx.filter.as_deref().is_some_and(|f| f.starts_with("资产"))) { "assets" } else { "entries" }
+}
+
 pub fn page_query(conn: &Connection, access: &Access, today: &str, ctx: &PageContext) -> Option<Query> {
     if let Some(m) = custom::by_key(conn, &ctx.module) {
         return Some(made_page(conn, access, today, ctx, &m));
@@ -2435,11 +2503,13 @@ pub fn page_query(conn: &Connection, access: &Access, today: &str, ctx: &PageCon
         Some(p) => format!("{label} · {p}"),
         None => label.to_string(),
     };
-    let only_where = |why: &str| Query { module: m.map(|m| m.key.to_string()), label: format!("{place}{why}"), state: "ok".into(), result: format!("页面：{place}"), records: vec![] };
+    let key = m.map(|m| cloud_key(m.key, finance_page_part(ctx)));
+    let only_where = |why: &str| Query { module: key.map(str::to_string), label: format!("{place}{why}"), state: "ok".into(), result: format!("页面：{place}"), records: vec![] };
     let Some(m) = m else { return Some(only_where("")) };
     match access.check(m) {
         Err(Blocked::Hidden) => return Some(Query { state: "blocked".into(), ..only_where("（隐藏的模块，只带了在哪一页）") }),
         Err(Blocked::Cloud) => return Some(Query { state: "blocked".into(), ..only_where("（不发给云端，只带了在哪一页）") }),
+        Ok(()) if access.cloud && !access.allows(key.unwrap_or(m.key)) => return Some(Query { state: "blocked".into(), ..only_where("（不发给云端，只带了在哪一页）") }),
         Ok(()) => {}
     }
     let mut lines = vec![format!("页面：{place}")];
@@ -3060,6 +3130,30 @@ pub mod tests {
     }
 
     #[test]
+    fn finance_goes_to_the_cloud_by_part() {
+        let c = memory_db();
+        let flow = Access { cloud: true, cloud_allowed: vec![FIN_FLOW.into()], ..all() };
+        let a = ask(&c, &flow, "pomelo_finance", json!({ "view": "entries" }));
+        assert_eq!((a.state, a.module.as_deref()), ("ok", Some(FIN_FLOW)));
+        assert_eq!(ask(&c, &flow, "pomelo_finance", json!({ "view": "months" })).state, "ok");
+        let a = ask(&c, &flow, "pomelo_finance", json!({ "view": "assets" }));
+        assert_eq!((a.state, a.label.as_str()), ("blocked", "钱来钱往 · 资产 · 不发给云端，没看"));
+        assert!(a.text.contains("「钱来钱往 · 资产不发给云端，这部分没看」"));
+        let told = instructions(TODAY, &flow, false);
+        assert!(told.contains("钱来钱往 · 资产") && !told.contains("钱来钱往 · 收支") && !told.contains("钱来钱往、"), "{told}");
+        // an earlier lookup goes by its part; one from before the split needs both
+        let q = |m: &str| Query { module: Some(m.into()), label: String::new(), state: "ok".into(), result: String::new(), records: vec![] };
+        assert!(flow.may_send(&q(FIN_FLOW)) && !flow.may_send(&q(FIN_ASSETS)) && !flow.may_send(&q("finance")));
+        assert!(all().may_send(&q("finance")) && !Access { hidden: vec!["finance".into()], ..all() }.may_send(&q(FIN_FLOW)));
+        // the page: 收支 sent, 资产 and the 报表's 资产 tab only where
+        let at = |p: &str, filter: Option<&str>| page_query(&c, &flow, TODAY, &PageContext { filter: filter.map(str::to_string), ..page("finance", Some(p), None, &[]) }).unwrap().state;
+        assert_eq!((at("收支", None), at("资产", None), at("报表", Some("资产 · CNY")), at("报表", Some("2026 年 10 月 · CNY"))), ("ok".into(), "blocked".into(), "blocked".into(), "ok".into()));
+        let assets = Access { cloud: true, cloud_allowed: vec![FIN_ASSETS.into()], ..all() };
+        assert_eq!(ask(&c, &assets, "pomelo_finance", json!({ "view": "assets" })).module.as_deref(), Some(FIN_ASSETS));
+        assert_eq!(ask(&c, &assets, "pomelo_finance", json!({ "view": "fixed" })).state, "blocked");
+    }
+
+    #[test]
     fn tools_follow_hidden_modules_and_cloud_rules() {
         let c = memory_db();
         let names = |a: &Access| tools(a).iter().map(|t| t["function"]["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
@@ -3093,16 +3187,20 @@ pub mod tests {
     }
 
     #[test]
-    fn cloud_settings_default_to_finance_local_only() {
+    fn cloud_settings_default_to_finance_assets_local_only() {
         let p = crate::picky::store::tests::memory_db();
         let made = [Made { key: "list/3".into(), name: "游戏".into(), template: Template::List }, Made { key: "progress/4".into(), name: "日语".into(), template: Template::Progress }];
         let allowed = |p: &Connection| cloud_settings(p, &made).unwrap().into_iter().filter(|s| s.allowed).map(|s| s.module).collect::<Vec<_>>();
-        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", "jobs", "notes", "days", "site", "list/3", "progress/4"]);
-        set_cloud(&p, "finance", true, &made).unwrap();
+        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", FIN_FLOW, "jobs", "notes", "days", "site", "list/3", "progress/4"]);
+        // the one 钱来钱往 switch from before goes on as 资产's; it can't be set any more
+        pref_set(&p, CLOUD_KEY, &HashMap::from([("finance".to_string(), true)])).unwrap();
+        assert!(allowed(&p).contains(&FIN_ASSETS.to_string()));
+        assert!(set_cloud(&p, "finance", false, &made).is_err());
+        set_cloud(&p, FIN_FLOW, false, &made).unwrap();
         set_cloud(&p, "notes", false, &made).unwrap();
         set_cloud(&p, "list/3", false, &made).unwrap();
         set_cloud(&p, "site", false, &made).unwrap();
-        assert_eq!(cloud_allowed(&p, &["list/3".into(), "progress/4".into(), "list/9".into()]), ["todo", "books", "films", "drawing", "packing", "finance", "jobs", "days", "progress/4", "list/9"]);
+        assert_eq!(cloud_allowed(&p, &["list/3".into(), "progress/4".into(), "list/9".into()]), ["todo", "books", "films", "drawing", "packing", FIN_ASSETS, "jobs", "days", "progress/4", "list/9"]);
         // 呦呦漫游 has a switch but never a tool
         assert!(!tools(&all()).iter().any(|t| t.to_string().contains("site")));
         assert_eq!(cloud_settings(&p, &made).unwrap().last().unwrap().label, "日语");

@@ -323,9 +323,10 @@ async fn split(text: &str, max: i64, counter: &Counter) -> Vec<String> {
     pieces
 }
 
-/// One request of a month reader (`max` has room for thinking); its usage joins `usage`.
+/// One request of a month reader (`max` has room for thinking), at the model's default 思考强度 (many
+/// of them: only the letter takes the level chosen); its usage joins `usage`.
 async fn ask_month(target: &Target, messages: Vec<Msg>, max: i64, thinking: bool, month: &str, usage: &mut Vec<Option<(i64, i64)>>) -> Result<String, String> {
-    let (out, u) = super::brief::ask(target, messages, max, thinking).await?;
+    let (out, u) = super::brief::ask(target, messages, max, thinking, None).await?;
     usage.push(u);
     if out.is_empty() {
         return Err(format!("模型没有写出{}的要点。", month_label(month)));
@@ -371,8 +372,8 @@ async fn size(counter: &Counter, messages: &[Msg]) -> i64 {
     used
 }
 
-fn letter_opts(max_tokens: i64, thinking: bool) -> Options {
-    Options { max_tokens: Some(max_tokens), thinking: Some(thinking), ..Default::default() }
+fn letter_opts(max_tokens: i64, thinking: bool, effort: Option<&str>) -> Options {
+    Options { max_tokens: Some(max_tokens), thinking: Some(thinking), effort: effort.map(String::from), ..Default::default() }
 }
 
 /// Where the letter goes and what it may use (the app: the run's reply; tests: memory).
@@ -482,7 +483,7 @@ async fn read_months(sink: &impl Sink, target: &Target, model: (&str, &str), win
 /// The whole 年度总结 for `year`: everything read, then the letter streamed — from all the records
 /// when they fit, else from the month readers' notes.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn compose(sink: &mut impl Sink, target: &Target, model: (&str, &str), window: i64, thinking: bool, access: &Access, year: &str, today: &str, system: &str, instruction: &str) -> Result<(), String> {
+pub(crate) async fn compose(sink: &mut impl Sink, target: &Target, model: (&str, &str), window: i64, thinking: bool, effort: Option<&str>, access: &Access, year: &str, today: &str, system: &str, instruction: &str) -> Result<(), String> {
     let counter = Counter::for_target(target);
     let left_out = data::year_left_out(access);
     if !left_out.is_empty() {
@@ -505,7 +506,7 @@ pub(crate) async fn compose(sink: &mut impl Sink, target: &Target, model: (&str,
     let whole = year_messages(year, system, Read::Whole(&months), &facts, instruction);
     let used = size(&counter, &whole).await;
     if used + out_room(target, window) <= window {
-        return sink.article(whole, letter_opts(window - used, thinking)).await;
+        return sink.article(whole, letter_opts(window - used, thinking, effort)).await;
     }
     let notes = read_months(sink, target, model, window, thinking, year, &months).await?;
     let mut messages = year_messages(year, system, Read::Notes(&notes), &facts, instruction);
@@ -517,7 +518,7 @@ pub(crate) async fn compose(sink: &mut impl Sink, target: &Target, model: (&str,
     if used + MIN_LETTER > window {
         return Err("这一年的要点加起来放不下这个模型的上下文，换一个上下文大的模型（比如云端）再运行。".into());
     }
-    sink.article(messages, letter_opts(window - used, thinking)).await
+    sink.article(messages, letter_opts(window - used, thinking, effort)).await
 }
 
 // ---------- commands ----------
@@ -545,6 +546,7 @@ pub(crate) mod tests {
         /// The letter's request (system, user) and the letter.
         pub request: (String, String),
         pub thinking: Option<bool>,
+        pub effort: Option<String>,
         pub article: String,
     }
 
@@ -574,6 +576,7 @@ pub(crate) mod tests {
         async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<(), String> {
             self.request = (messages[0].content.clone(), messages[1].content.clone());
             self.thinking = opts.thinking;
+            self.effort = opts.effort.clone();
             let mut out = String::new();
             super::super::provider::stream(self.target.clone(), messages, opts, |e| {
                 if let super::super::provider::Event::Content(t) = e {
@@ -596,6 +599,7 @@ pub(crate) mod tests {
             calls: RefCell::default(),
             request: Default::default(),
             thinking: None,
+            effort: None,
             article: String::new(),
         }
     }
@@ -624,8 +628,11 @@ pub(crate) mod tests {
         run_thinking(s, window, today, false);
     }
     fn run_thinking(s: &mut TestSink, window: i64, today: &str, thinking: bool) {
+        run_at(s, window, today, thinking, None);
+    }
+    fn run_at(s: &mut TestSink, window: i64, today: &str, thinking: bool, effort: Option<&str>) {
         let target = s.target.clone();
-        tauri::async_runtime::block_on(compose(s, &target, ("local:x", "X"), window, thinking, &Access::default(), &today[..4], today, "", "写我这一年的年度总结")).unwrap();
+        tauri::async_runtime::block_on(compose(s, &target, ("local:x", "X"), window, thinking, effort, &Access::default(), &today[..4], today, "", "写我这一年的年度总结")).unwrap();
     }
 
     #[test]
@@ -683,7 +690,8 @@ pub(crate) mod tests {
     #[test]
     fn the_whole_year_in_one_go_when_it_fits() {
         let mut s = sink(seeded(), Target::Mock { thinking: false });
-        run_thinking(&mut s, 16384, "2026-03-31", true);
+        run_at(&mut s, 16384, "2026-03-31", true, Some("high"));
+        assert_eq!(s.effort.as_deref(), Some("high"));
         assert_eq!((*s.calls.borrow(), s.months.borrow().len()), (0, 0), "no month readers");
         assert!(s.article.contains("一次读完了全年") && s.article.contains("这一年的关键词"), "{}", s.article);
         assert_eq!(s.thinking, Some(true));

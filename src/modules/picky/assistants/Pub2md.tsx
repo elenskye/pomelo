@@ -15,10 +15,10 @@ import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { useDropTarget } from "@/shared/attachments/target";
 import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
-import { pickyApi, usePickyStatus, type Level, type Pub2mdFormat, type Pub2mdPart, type Pub2mdRecent, type Pub2mdSettings, type Pub2mdStaged, type Pub2mdView, type Think } from "../api";
+import { pickyApi, usePickyStatus, type Level, type Pub2mdFormat, type Pub2mdPart, type Pub2mdRecent, type Pub2mdSettings, type Pub2mdStaged, type Pub2mdView } from "../api";
 import { modelOptions } from "../ModelMenu";
 import { useModels } from "../Schedules";
-import { thinkOf } from "../Thinking";
+import { LevelPicker } from "../Thinking";
 import { useSubPage } from "@/app/subpage";
 import { watchJob } from "@/app/Pomelo";
 
@@ -42,12 +42,6 @@ const FORMATS: { value: Pub2mdFormat; label: string }[] = [
   { value: "html", label: "HTML" },
 ];
 const previewable = (f: string) => f.endsWith(".mmd") || f.endsWith(".md");
-const LEVELS: { value: Level; label: string }[] = [
-  { value: "off", label: "不思考" },
-  { value: "low", label: "思考 · 低" },
-  { value: "medium", label: "思考 · 中" },
-  { value: "high", label: "思考 · 高" },
-];
 const STATES: Record<Pub2mdRecent["state"], string> = { running: "进行中", done: "完成", stopped: "已停止", failed: "出错" };
 
 function duration(s: number) {
@@ -195,21 +189,13 @@ export function Pub2mdPage() {
   );
 }
 
-function LevelPicker(props: { label: string; value: Level; ability: Think; onChange: (v: Level) => void }) {
-  const options = props.ability === "never" ? LEVELS.slice(0, 1) : props.ability === "always" ? LEVELS.slice(1) : LEVELS;
-  const value = props.ability === "never" ? "off" : props.ability === "always" && props.value === "off" ? "high" : props.value;
-  return <Dropdown<Level> ariaLabel={props.label} value={value} options={options} onChange={props.onChange} />;
-}
-
 function ModelRow(props: { name: string; model: string | null; level: Level; onChange: (model: string | null, level: Level) => void }) {
-  const status = usePickyStatus().data;
   const { models, keep } = useModels(props.model, props.level !== "off");
-  const ability = thinkOf(status, props.model ?? status?.selection ?? null);
   return (
     <div className="flex items-center gap-2">
       <span className="w-20 shrink-0 text-muted-foreground">{props.name}</span>
       <Dropdown<string | null> ariaLabel={`${props.name} 的模型`} value={props.model} options={models} foldKey="models" onChange={(m) => props.onChange(m, props.level)} menuMaxHeight={360} />
-      <LevelPicker label={`${props.name} 的思考`} value={props.level} ability={ability} onChange={(l) => props.onChange(keep(props.model, l !== "off"), l)} />
+      <LevelPicker label={`${props.name} 的思考`} model={props.model} value={props.level} onChange={(l) => props.onChange(keep(props.model, l !== "off"), l)} />
     </div>
   );
 }

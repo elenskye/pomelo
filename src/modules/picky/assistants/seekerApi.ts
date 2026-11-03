@@ -22,7 +22,10 @@ export const SHARED_KINDS = ["fact", "application", "application_line"];
 /** Whether a page in `lang` shows the record (Rust catalog.rs `for_lang`). */
 export const recordIn = (r: SeekerRecord, lang: SeekerLang) => SHARED_KINDS.includes(r.kind) || r.lang === "" || (r.lang ?? "cn") === lang;
 /** lang: the language the page shows ("en"; else Chinese). */
-export type SeekerSettings = { selectionModel: string | null; reviewModel: string | null; thinking: boolean; cloudAllowed: boolean; lang?: string };
+export type SeekerModel = { model: string | null; thinking: boolean; effort?: string | null };
+/** The default model and 思考, and the functions that have their own (Rust catalog.rs `Settings`). */
+export type SeekerSettings = SeekerModel & { features: Record<string, SeekerModel>; cloudAllowed: boolean; lang?: string };
+export const seekerModel = (s: SeekerSettings, kind: string): SeekerModel => s.features[kind] ?? { model: s.model, thinking: s.thinking, effort: s.effort };
 export type SeekerRevision = { id: number; recordId: string; body: SeekerRecord; savedAt: string };
 /** A page's group (Rust catalog.rs `GroupName`): the name a built-in group of 素材 / 规则 shows (`label`, "" = its own) and its place (`sort`, 上移 / 下移). kind: the page (application: both 网申 kinds; rule: 豁免情况 too); lang: 素材's, else "". */
 export type SeekerGroupKind = "material" | "rule" | "fact" | "application";

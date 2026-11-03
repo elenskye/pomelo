@@ -13,6 +13,7 @@
 //!   menu bar; it can't change while a reply is being written.
 
 pub mod act;
+pub mod ask;
 pub mod assist;
 pub mod assistants;
 pub mod brief;
@@ -43,6 +44,7 @@ pub mod storage;
 pub mod store;
 pub mod templates;
 pub mod transfer;
+pub mod excel;
 pub mod word;
 pub mod work;
 pub mod yearly;

@@ -15,6 +15,8 @@
 //!   not the conversation's. A cloud model only when Seeker's 「允许发给云端」 is on.
 use super::*;
 use crate::picky::assistants::seeker::{self, catalog::Record, company, output::JobSnapshot, JobRef, Workspace};
+use crate::picky::assistants::Choice;
+use crate::picky::cloud::Level;
 use crate::picky::store::{pref_get, pref_set};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
@@ -133,26 +135,20 @@ pub fn rules_of(w: &Workspace, groups: &[&str], answers: bool) -> String {
 /// Rater's AI functions (设置 page): each may have its own model and 思考, else the default.
 pub const FEATURES: [(&str, &str); 8] = [("suggest", "补题"), ("polish", "润色答案"), ("pick", "卡片练习 · 按 JD 挑卡"), ("follow", "卡片练习 · 追问"), ("comment", "卡片练习 · 点评"), ("prep", "面试 · 准备"), ("record", "复盘 · 记录"), ("summary", "复盘 · 总结")];
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Choice {
-    pub model: Option<String>,
-    pub thinking: bool,
-}
-
 /// The default model and 思考, and the functions that have their own (`features`, by key).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Options {
     pub model: Option<String>,
     pub thinking: bool,
+    pub effort: Option<String>,
     pub features: BTreeMap<String, Choice>,
 }
 
 impl Options {
     /// The model and 思考 a function uses.
     pub fn of(&self, feature: &str) -> Choice {
-        self.features.get(feature).cloned().unwrap_or(Choice { model: self.model.clone(), thinking: self.thinking })
+        self.features.get(feature).cloned().unwrap_or(Choice { model: self.model.clone(), thinking: self.thinking, effort: self.effort.clone() })
     }
 }
 
@@ -490,8 +486,9 @@ pub(super) async fn job_context(app: &AppHandle, job: Option<i64>, cloud: bool) 
 
 /// The model (and 思考) a Rater function uses (`feature`, `FEATURES`), checked: a cloud one only
 /// when Seeker allows it (Rater follows it).
-pub(crate) fn chosen_model(w: &Workspace, opts: &Options, feature: &str) -> Result<(String, bool), String> {
+pub(crate) fn chosen_model(w: &Workspace, opts: &Options, feature: &str) -> Result<(String, Level), String> {
     let pick = opts.of(feature);
+    let level = pick.level();
     let model = pick.model.ok_or("请先在 Rater 的设置里选模型")?;
     if !model.starts_with("local:") && !model.starts_with("cloud:") {
         return Err("请在 Rater 的设置里重新选择模型".into());
@@ -499,7 +496,7 @@ pub(crate) fn chosen_model(w: &Workspace, opts: &Options, feature: &str) -> Resu
     if model.starts_with("cloud:") && !w.catalog.settings.cloud_allowed {
         return Err("Seeker 资料（Rater 也照它）还没允许发给云端，请在 Seeker 的设置里打开，或选本地模型".into());
     }
-    Ok((model, pick.thinking))
+    Ok((model, level))
 }
 
 /// What one call to Rater's model gave: its JSON (None: the mock model; the caller makes the answer
@@ -512,10 +509,10 @@ pub(crate) struct Reply {
 
 /// One call to Rater's model (`chosen_model`), no tools, no loops. `max`: the reply's length before
 /// room to think.
-pub(crate) async fn call(state: &AppState, model: &str, system: &str, user: &str, max: i64, thinking: bool) -> Result<Reply, String> {
+pub(crate) async fn call(state: &AppState, model: &str, system: &str, user: &str, max: i64, level: &Level) -> Result<Reply, String> {
     use crate::picky::{context, provider::{self, Event, Msg, Target}, schedule};
     let (route, note, _) = schedule::route(&state.picky, Some(model)).await?;
-    let output = route.with_thinking(max, thinking);
+    let output = route.with_thinking(max, level.thinking());
     if context::estimate(system) + context::estimate(user) + output + 512 > route.window {
         return Err("资料超出所选模型的上下文，请少选几段素材，或换更大上下文的模型".into());
     }
@@ -524,7 +521,7 @@ pub(crate) async fn call(state: &AppState, model: &str, system: &str, user: &str
     }
     let mut answer = String::new();
     let mut finish = String::new();
-    let stream = provider::stream(route.target.clone(), vec![Msg::new("system", system), Msg::new("user", user)], provider::Options { max_tokens: Some(output), thinking: Some(thinking), one_off: true, ..Default::default() }, |event| match event {
+    let stream = provider::stream(route.target.clone(), vec![Msg::new("system", system), Msg::new("user", user)], provider::Options { max_tokens: Some(output), thinking: Some(level.thinking()), effort: level.effort(), one_off: true, ..Default::default() }, |event| match event {
         Event::Content(text) => answer.push_str(&text),
         Event::Finished(reason) => finish = reason,
         _ => (),
@@ -545,7 +542,7 @@ pub async fn generate(app: &AppHandle, ask: Ask) -> Result<Proposal, String> {
         bank.questions.retain(|x| x.id != q.id);
         bank.questions.push(q.clone());
     }
-    let (model, thinking) = chosen_model(&w, &opts, if ask.kind == POLISH { "polish" } else { "suggest" })?;
+    let (model, level) = chosen_model(&w, &opts, if ask.kind == POLISH { "polish" } else { "suggest" })?;
     let cloud = model.starts_with("cloud:");
     if ask.kind == "突击题" && ask.job.is_none() {
         return Err("突击题要先选一个岗位".into());
@@ -562,7 +559,7 @@ pub async fn generate(app: &AppHandle, ask: Ask) -> Result<Proposal, String> {
         Err(e) => return Err(e),
     };
     let (system, user) = prompt(&w, &bank, &ask, job.as_ref(), &employer)?;
-    let reply = call(&state, &model, &system, &user, if ask.kind == POLISH { 2048 } else { 6144 }, thinking).await?;
+    let reply = call(&state, &model, &system, &user, if ask.kind == POLISH { 2048 } else { 6144 }, &level).await?;
     let json = reply.json.unwrap_or_else(|| mock(&w, &bank, &ask));
     let mut proposal = parse(&json, &w, &bank, &ask, job.as_ref())?;
     proposal.model = reply.model;

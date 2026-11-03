@@ -1,7 +1,7 @@
 // Work in conversations (rules in Rust work.rs; the plugin library's Word 工具箱 / 文本工具箱 propose):
-// the reply's card — each changed paragraph as a diff with its tick, 写入文件 writes the ticked ones into
+// the reply's card — each changed paragraph (or cell, or row) as a diff with its tick, 写入文件 writes the ticked ones into
 // the file (refused when it changed meanwhile); or a new Word document (name, folder, its text), 保存
-// writes it. An older question shows the file it picked (EditFileTag). 保存为 Word — any finished reply
+// writes it (Excel 工具箱's workbook the same way; its changes name their cell or row). An older question shows the file it picked (EditFileTag). 保存为 Word — any finished reply
 // into a .docx (the cited sources at the end) in a folder chosen here (remembered), then 打开 / 在访达中显示.
 import { useEffect, useState, type FormEvent } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -39,7 +39,9 @@ export function EditFileTag(props: { target: EditTarget }) {
 function NewWordCard(props: { edit: FileEdit; streaming: boolean; onChanged: () => void }) {
   const { edit } = props;
   const toast = useToast();
-  const [name, setName] = useState(edit.name.replace(/\.docx$/, ""));
+  const excel = edit.kind === "new-excel";
+  const ext = excel ? "xlsx" : "docx";
+  const [name, setName] = useState(edit.name.replace(/\.(docx|xlsx)$/, ""));
   const [folder, setFolder] = useState(edit.path);
   const [busy, setBusy] = useState(false);
   const pending = edit.state === "pending";
@@ -62,7 +64,7 @@ function NewWordCard(props: { edit: FileEdit; streaming: boolean; onChanged: () 
   return (
     <div data-find-skip className="mt-2 max-w-2xl rounded-card border bg-card text-sm">
       <p className="flex items-center gap-1.5 border-b px-3 py-2 text-xs text-muted-foreground">
-        <FilePlus2 size={12} strokeWidth={1.75} /> 新建 Word「{pending ? `${name}.docx` : edit.name}」
+        <FilePlus2 size={12} strokeWidth={1.75} /> 新建 {excel ? "Excel" : "Word"}「{pending ? `${name}.${ext}` : edit.name}」
       </p>
       <div className="-m-1 max-h-60 overflow-y-auto p-1">
         <div className="px-3 py-2">
@@ -108,7 +110,7 @@ function NewWordCard(props: { edit: FileEdit; streaming: boolean; onChanged: () 
 
 /** Under a reply: the changes it proposes to a file (or a new Word document). */
 export function EditCard(props: { edit: FileEdit; streaming: boolean; onChanged: () => void }) {
-  if (props.edit.kind === "new-word") return <NewWordCard {...props} />;
+  if (props.edit.kind === "new-word" || props.edit.kind === "new-excel") return <NewWordCard {...props} />;
   return <ChangesCard {...props} />;
 }
 
@@ -134,7 +136,7 @@ function ChangesCard(props: { edit: FileEdit; streaming: boolean; onChanged: () 
   return (
     <div data-find-skip className="mt-2 max-w-2xl rounded-card border bg-card text-sm">
       <p className="border-b px-3 py-2 text-xs text-muted-foreground">
-        改「{edit.name}」· {edit.items.length} 段
+        改「{edit.name}」· {edit.items.length} {edit.kind === "excel" ? "处" : "段"}
       </p>
       <ul className="divide-y">
         {edit.items.map((it) => (
@@ -144,11 +146,11 @@ function ChangesCard(props: { edit: FileEdit; streaming: boolean; onChanged: () 
               checked={pending ? !off.has(it.position) : it.checked}
               disabled={!pending || busy}
               onChange={() => setOff((s) => (s.has(it.position) ? new Set([...s].filter((x) => x !== it.position)) : new Set(s).add(it.position)))}
-              aria-label={`第 ${it.paragraph} 段`}
+              aria-label={it.label ?? `第 ${it.paragraph} 段`}
               className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]"
             />
             <div className="min-w-0 flex-1">
-              <p className="mb-1 text-xs text-muted-foreground">第 {it.paragraph} 段</p>
+              <p className="mb-1 text-xs text-muted-foreground">{it.label ?? `第 ${it.paragraph} 段`}</p>
               {it.after ? <DiffView from={it.before} to={it.after} /> : <p className="rounded-control bg-background px-2.5 py-2 leading-relaxed text-muted-foreground line-through">{it.before}</p>}
             </div>
           </li>

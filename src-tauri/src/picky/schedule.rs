@@ -7,14 +7,16 @@
 //!   The monitor checks every 30 s, so Pomelo closed at the time runs it when next open — once, for
 //!   the latest time missed. Several due run one after another.
 //! - A run: a new conversation (listed under 定时, unseen until opened, titled 「名称 · MM/DD」) asking
-//!   `prompt` under the model's rules (cloud rules for a cloud model), read-only (no write tools), no
-//!   memories picked; it runs beside replies being written (a local model takes turns). A local model that isn't running
+//!   `prompt` under the model's rules (cloud rules for a cloud model), Pomelo's data read-only (no write tools), no
+//!   memories picked; it runs beside replies being written (a local model takes turns). It may search the web (联网搜索 on
+//!   and with its Key, chat.rs) and use the file toolboxes, whose cards wait in that conversation until the user
+//!   ticks them (v0.8). A local model that isn't running
 //!   is started (the schedule's, else the last used) and stopped after if this run started it and
 //!   nothing else is writing; another local model running → that one is used and the result says so
 //!   at the top. Can't get a model → the conversation holds a failed reply saying why.
-//! - 思考 (`thinking`, default on): the run asks its model to think (or not); its model must be able to
-//!   (`check_model`: a cloud model's 思考能力, a local one's catalog entry; None = the selection, taken as
-//!   it is at run time). The conversation it writes keeps the switch.
+//! - 思考 (`thinking`, default on; `effort`: its 思考强度, None = the model's default): the run asks its model
+//!   to think (or not); its model must be able to (`check_model`: a cloud model's 思考能力, a local one's catalog
+//!   entry; None = the selection, taken as it is at run time). The conversation it writes keeps both.
 //! - 立即运行 runs it now without touching its times. One schedule runs at a time.
 //! - Edits are undoable (`with_picky_undo`); the bookkeeping (`schedule_state`, sessions.unseen) is
 //!   not, and undoable edits never touch it.
@@ -116,6 +118,7 @@ pub struct Schedule {
     pub rule: Rule,
     pub model: Option<String>,
     pub thinking: bool,
+    pub effort: Option<String>,
     pub enabled: bool,
     pub builtin: Option<String>,
     /// A workflow (年度总结): how it goes, drawn in 定时 instead of its prompt.
@@ -144,6 +147,8 @@ pub struct ScheduleInput {
     pub model: Option<String>,
     #[serde(default = "yes")]
     pub thinking: bool,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 fn yes() -> bool {
@@ -176,13 +181,14 @@ fn checked(i: &ScheduleInput) -> Result<ScheduleInput, String> {
     if model.as_deref().is_some_and(|m| !(m.starts_with("local:") || m.starts_with("cloud:"))) {
         return Err("不认识这个模型".into());
     }
-    Ok(ScheduleInput { name, prompt, every: i.every.clone(), day, month, at, model, thinking: i.thinking })
+    let effort = i.effort.as_deref().map(str::trim).filter(|e| i.thinking && !e.is_empty()).map(String::from);
+    Ok(ScheduleInput { name, prompt, every: i.every.clone(), day, month, at, model, thinking: i.thinking, effort })
 }
 
 const COLS: &str = "s.id, s.name, s.prompt, s.every, s.day, s.at, s.model, s.enabled, s.builtin, \
     (SELECT max(x.id) FROM sessions x WHERE x.schedule_id = s.id), \
     (SELECT x.created_at FROM sessions x WHERE x.schedule_id = s.id ORDER BY x.id DESC LIMIT 1), \
-    st.last_slot, strftime('%Y-%m-%d %H:%M', s.since, 'localtime'), s.month, s.thinking";
+    st.last_slot, strftime('%Y-%m-%d %H:%M', s.since, 'localtime'), s.month, s.thinking, s.effort";
 
 struct Row {
     s: Schedule,
@@ -203,6 +209,7 @@ fn rows(conn: &Connection, filter: &str, args: &[&dyn rusqlite::ToSql]) -> Resul
                     rule: Rule { every: r.get(3)?, day: r.get(4)?, month: r.get(13)?, at: r.get(5)? },
                     model: r.get(6)?,
                     thinking: r.get(14)?,
+                    effort: r.get(15)?,
                     enabled: r.get(7)?,
                     flow: (r.get::<_, Option<String>>(8)?.as_deref() == Some(super::yearly::BUILTIN)).then_some(super::yearly::FLOW),
                     builtin: r.get(8)?,
@@ -241,8 +248,8 @@ pub fn get(conn: &Connection, id: i64) -> Result<Schedule, String> {
 pub fn create(conn: &Connection, input: &ScheduleInput) -> Result<i64, String> {
     let i = checked(input)?;
     conn.execute(
-        "INSERT INTO schedules (name, prompt, every, day, month, at, model, thinking, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT coalesce(max(sort_order), -1) + 1 FROM schedules))",
-        params![i.name, i.prompt, i.every, i.day, i.month, i.at, i.model, i.thinking],
+        "INSERT INTO schedules (name, prompt, every, day, month, at, model, thinking, effort, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, (SELECT coalesce(max(sort_order), -1) + 1 FROM schedules))",
+        params![i.name, i.prompt, i.every, i.day, i.month, i.at, i.model, i.thinking, i.effort],
     )
     .map_err(err)?;
     Ok(conn.last_insert_rowid())
@@ -255,8 +262,8 @@ pub fn update(conn: &Connection, id: i64, input: &ScheduleInput) -> Result<(), S
     let rule = Rule { every: i.every.clone(), day: i.day, month: i.month, at: i.at.clone() };
     let since = if rule != old.rule { NOW } else { "since" };
     conn.execute(
-        &format!("UPDATE schedules SET name = ?1, prompt = ?2, every = ?3, day = ?4, month = ?5, at = ?6, model = ?7, thinking = ?9, since = {since}, updated_at = {NOW} WHERE id = ?8"),
-        params![i.name, i.prompt, i.every, i.day, i.month, i.at, i.model, id, i.thinking],
+        &format!("UPDATE schedules SET name = ?1, prompt = ?2, every = ?3, day = ?4, month = ?5, at = ?6, model = ?7, thinking = ?9, effort = ?10, since = {since}, updated_at = {NOW} WHERE id = ?8"),
+        params![i.name, i.prompt, i.every, i.day, i.month, i.at, i.model, id, i.thinking, i.effort],
     )
     .map_err(err)?;
     Ok(())
@@ -311,7 +318,7 @@ fn title(name: &str, now: &str) -> String {
 /// Saves the question and an empty reply in a new conversation under 定时.
 pub fn begin(conn: &Connection, s: &Schedule, now: &str, model: &str, model_name: &str) -> Result<chat::Begun, String> {
     let tx = Tx::begin(conn)?;
-    let b = chat::begin_run_in(&tx, None, &NewSession { thinking_off: !s.thinking, ..Default::default() }, &s.prompt, model, model_name, &Extras::default())?;
+    let b = chat::begin_run_in(&tx, None, &NewSession { thinking_off: !s.thinking, effort: s.effort.clone(), ..Default::default() }, &s.prompt, model, model_name, &Extras::default())?;
     tx.execute(
         "UPDATE sessions SET scheduled = 1, schedule_id = ?1, unseen = 1, title = ?2, title_source = 'user' WHERE id = ?3",
         params![s.id, title(&s.name, now), b.session_id],
@@ -415,7 +422,7 @@ pub const NOTE_MARK: &str = "【定时任务】";
 
 /// What the model is told besides the question (end of the system message).
 pub(crate) fn note(name: &str, rule: &Rule, now: &str) -> String {
-    format!("{NOTE_MARK}这是用户设的定时任务「{name}」（{}），{now} 自动运行，用户现在不在：不要反问，直接查数据写好；只能读，不能记录或修改任何东西。", rule.text())
+    format!("{NOTE_MARK}这是用户设的定时任务「{name}」（{}），{now} 自动运行，用户现在不在：不要反问，直接查数据写好。柚儿园的数据只能读，不能记录或修改。任务要用到网上的新信息时可以联网搜索（有这个工具的话）；任务要改文件、存成 Word 或 Excel 时用工具箱：只是提议，确认卡片留在这个对话里，用户之后点了才写，回答里写明等用户确认。", rule.text())
 }
 
 /// Runs `id` for `slot` (None = 立即运行, now): writes the conversation (in its own slot, beside
@@ -573,7 +580,7 @@ mod tests {
         Rule { every: every.into(), day, month: None, at: at.into() }
     }
     fn input(name: &str, every: &str, day: Option<i64>, at: &str) -> ScheduleInput {
-        ScheduleInput { name: name.into(), prompt: "回顾一下".into(), every: every.into(), day, month: None, at: at.into(), model: None, thinking: true }
+        ScheduleInput { name: name.into(), prompt: "回顾一下".into(), every: every.into(), day, month: None, at: at.into(), model: None, thinking: true, effort: None }
     }
 
     #[test]
@@ -674,7 +681,13 @@ mod tests {
         assert!(!get(&c, id).unwrap().thinking);
         update(&c, id, &input("早报", "day", None, "08:00")).unwrap();
         assert!(get(&c, id).unwrap().thinking);
-        update(&c, id, &ScheduleInput { thinking: false, ..input("早报", "day", None, "08:00") }).unwrap();
+        // its 思考强度 goes with the conversation; none without thinking
+        update(&c, id, &ScheduleInput { effort: Some(" high ".into()), ..input("早报", "day", None, "08:00") }).unwrap();
+        assert_eq!(get(&c, id).unwrap().effort.as_deref(), Some("high"));
+        let b = begin(&c, &get(&c, id).unwrap(), "2026-10-14 10:00", "local:x", "X").unwrap();
+        assert_eq!(b.request.effort.as_deref(), Some("high"));
+        update(&c, id, &ScheduleInput { thinking: false, effort: Some("high".into()), ..input("早报", "day", None, "08:00") }).unwrap();
+        assert_eq!(get(&c, id).unwrap().effort, None);
         let b = begin(&c, &get(&c, id).unwrap(), "2026-10-14 08:00", "local:x", "X").unwrap();
         assert!(!b.request.thinking);
         assert!(!library::library(&c).unwrap().scheduled[0].thinking);

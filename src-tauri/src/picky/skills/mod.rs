@@ -17,7 +17,9 @@
 //! - v0.7 阶段 ④: 「Seeker 资料」 (seeker.rs) reads Seeker and Rater; on and automatic by default, not
 //!   offered when both are hidden; chat.rs runs it with the answer's `Access` (cloud, hidden).
 //! - v0.7 阶段 ⑤: the three 题库 SKILLs (qbank.rs; 简历题 / 通用题 / 突击题) propose questions for Rater:
-//!   they write (a card), so never for 定时任务; not offered when Rater is hidden.
+//!   they write (a card), never for 定时任务; not offered when Rater is hidden.
+//! - v0.8: Excel 工具箱 (toolbox.rs, excel.rs). 定时任务 get 联网搜索 (no one to press 联网: on and with its Key is enough) and the
+//!   file toolboxes (their cards wait in the conversation they wrote); not the 题库 SKILLs.
 //! - Not a tool, ever: starting / stopping models, 芝麻开门, import / export, backups (act/).
 
 pub mod files;
@@ -54,6 +56,7 @@ pub const SEEKER_TOOL: &str = seeker::TOOL;
 pub const QBANK_RESUME: &str = "qbank_resume";
 pub const QBANK_GENERAL: &str = "qbank_general";
 pub const QBANK_JOB: &str = "qbank_job";
+pub const EXCEL: &str = "excel";
 const PREF: &str = "skills";
 /// The contact Wikidata / Open Library get (the user sets it in the 插件库).
 const CONTACT: &str = "skills.contact";
@@ -114,7 +117,8 @@ pub struct Skill {
     pub features: &'static [&'static str],
     pub keys: &'static [KeySpec],
     pub auto: bool,
-    /// It proposes writing files (a card the user confirms): never for 定时任务.
+    /// It proposes writing (a card the user confirms): for 定时任务 only the file toolboxes, whose cards wait in the
+    /// conversation they wrote; never the 题库 (Pomelo data stays read-only there).
     pub writes: bool,
 }
 
@@ -166,7 +170,7 @@ pub const SKILLS: &[Skill] = &[
             again("不够就换个词再搜（一条回答最多查 4 轮）", "小拾写搜索词"),
             s("回答带来源"),
         ],
-        features: &["上网查新的信息，回答带来源，点了用浏览器打开", "用斜杠命令时直接拿问题去搜（可能带上私人内容）", "搜到的存进对话，追问还用得上", "要填 Tavily API Key"],
+        features: &["上网查新的信息，回答带来源，点了用浏览器打开", "用斜杠命令时直接拿问题去搜（可能带上私人内容）", "搜到的存进对话，追问还用得上", "定时任务不用按「联网」，打开了、填了 Key 就能自己搜", "要填 Tavily API Key"],
         keys: &[KeySpec { account: web::ACCOUNT, label: "Tavily API Key", required: true }],
         auto: false,
         writes: false,
@@ -181,9 +185,10 @@ pub const SKILLS: &[Skill] = &[
             s("先给目录和按问题挑出的段落"),
             s("小拾按段号读 / 按字找"),
             again("不够就再读（一条回答最多查 4 轮）", "小拾按段号读 / 按字找"),
+            check("问到文档里的图？", "是", &["列出 Word、PowerPoint、PDF 里的图片", "云端模型看一张（PDF 看整页），本地模型看不了"], "回答标出处", "否"),
             s("回答标出处"),
         ],
-        features: &["读附件和项目资料：看目录、按段号读、按字找", "资料太长时先给目录和按问题挑出的段落，再读需要的部分", "只读已经带上的文件，不碰别的文件", "内容只随这个问题发给你选的模型"],
+        features: &["读附件和项目资料：看目录、按段号读、按字找", "资料太长时先给目录和按问题挑出的段落，再读需要的部分", "云端模型能看 Word、PowerPoint 里的图片和 PDF 的整页，一个回答最多 8 张", "只读已经带上的文件，不碰别的文件", "内容只随这个问题发给你选的模型"],
         keys: &[],
         auto: true,
         writes: false,
@@ -197,11 +202,11 @@ pub const SKILLS: &[Skill] = &[
             s("选库：对话 → 项目 → 全部"),
             check("用的是云端模型？", "是", &["跳过设成不发给云端的文件夹"], "找段落 / 列文件 / 读整篇", "否"),
             s("找段落 / 列文件 / 读整篇"),
-            check("是图片或扫描件？", "是", &["只认文件名；云端模型能看图片"], "回答标出处", "否"),
+            check("是图片、扫描件或文档里的图？", "是", &["按意思找不到，只认文件名；云端模型能看"], "回答标出处", "否"),
             again("不够就再查（一条回答最多查 4 轮）", "找段落 / 列文件 / 读整篇"),
             s("回答标出处"),
         ],
-        features: &["按问题在知识库里找相关的段落", "列出库里有哪些文件，整篇读一个文件（看目录、按段读、按字找）", "图片和扫描件只认文件名，云端模型能看图片", "用云端模型时不查不发给云端的文件夹"],
+        features: &["按问题在知识库里找相关的段落", "列出库里有哪些文件，整篇读一个文件（看目录、按段读、按字找）", "图片和扫描件按意思找不到，云端模型能看，Word、PowerPoint、PDF 里嵌的图片也能看", "用云端模型时不查不发给云端的文件夹"],
         keys: &[],
         auto: true,
         writes: false,
@@ -221,7 +226,7 @@ pub const SKILLS: &[Skill] = &[
             check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
             s("写入文件（只动改了的字，不留备份）"),
         ],
-        features: &["改文字和格式：加粗、斜体、下划线、标题、列表", "加段、删段", "新建一个 Word，你点「保存」才存", "只改附件和知识库里的 Word；不留备份，文件被改过就不写"],
+        features: &["改文字和格式：加粗、斜体、下划线、标题、列表", "加段、删段", "新建一个 Word，你点「保存」才存", "只改附件和知识库里的 Word；不留备份，文件被改过就不写", "定时任务也能用：卡片留在那次的对话里，你点了才写"],
         keys: &[],
         auto: true,
         writes: true,
@@ -238,7 +243,27 @@ pub const SKILLS: &[Skill] = &[
             check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
             s("写入文件（保留原来的换行和编码，不留备份）"),
         ],
-        features: &["改段、删段", "保留原来的换行和编码", "只改附件和知识库里的这类文件；不留备份，文件被改过就不写"],
+        features: &["改段、删段", "保留原来的换行和编码", "只改附件和知识库里的这类文件；不留备份，文件被改过就不写", "定时任务也能用：卡片留在那次的对话里，你点了才写"],
+        keys: &[],
+        auto: true,
+        writes: true,
+    },
+    Skill {
+        key: EXCEL,
+        name: "general-excel-toolkit",
+        tool: toolbox::EXCEL_TOOL,
+        flow: &[
+            s("问题"),
+            check("要新建一个 Excel？", "是", &["表和内容放进卡片", "你选文件夹、点「保存」才存"], "", "改已有的"),
+            s("附件或知识库里的 .xlsx，读成一行行带位置的格子"),
+            s("小拾提出修改：改格子、加行、删行"),
+            check("改不了（合并的格子、设了保护的表，有图表的表不能加删行）？", "是", &["不放进卡片，告诉小拾为什么"], "小拾提出修改：改格子、加行、删行", "能改"),
+            s("放进确认卡片（同一格再改就换掉）"),
+            s("你勾选、点「写入文件」"),
+            check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
+            s("写入文件（下面的行和公式挪好，样式不动，不留备份）"),
+        ],
+        features: &["改格子里的数字、文字、日期和公式，空格子能填", "加行、删行，下面的行和用到它们的公式跟着挪", "新建一个 .xlsx，你点「保存」才存", "只认 .xlsx，只改附件和知识库里的；不留备份，文件被改过就不写", "定时任务也能用：卡片留在那次的对话里，你点了才写"],
         keys: &[],
         auto: true,
         writes: true,
@@ -322,10 +347,19 @@ pub struct Ctx {
     pub kb: bool,
     /// Markdown / text files 文本工具箱 may change.
     pub text: bool,
+    /// A 定时任务: no one to press 联网, so 联网搜索 is offered whenever it is on and has its Key.
+    pub scheduled: bool,
 }
 
 pub fn skill(key: &str) -> Option<&'static Skill> {
     SKILLS.iter().find(|s| s.key == key)
+}
+
+impl Skill {
+    /// A toolbox for files: its proposals are cards, which a 定时任务 may leave for the user.
+    pub fn is_file_toolbox(&self) -> bool {
+        matches!(self.key, WORD | TEXT | EXCEL)
+    }
 }
 
 fn by_tool(tool: &str) -> Option<&'static Skill> {
@@ -374,7 +408,7 @@ pub fn offered(conn: &Connection, p: &super::Picky, forced: &[String], ctx: Ctx)
     SKILLS
         .iter()
         .filter(|s| (s.key != FILES || ctx.files) && (s.key != KB || ctx.kb) && (s.key != TEXT || ctx.text))
-        .filter(|s| switch(conn, s.key).enabled && ready(p, s) && (switch(conn, s.key).auto || forced.iter().any(|f| f == s.key)))
+        .filter(|s| switch(conn, s.key).enabled && ready(p, s) && (switch(conn, s.key).auto || forced.iter().any(|f| f == s.key) || (ctx.scheduled && s.key == WEB)))
         .collect()
 }
 
@@ -411,14 +445,17 @@ pub fn tools(skills: &[&Skill]) -> Vec<Value> {
                 SEEKER => return seeker::tool(),
                 QBANK_RESUME | QBANK_GENERAL | QBANK_JOB => return qbank::tool(sk.tool),
                 WORD => return toolbox::tool(true),
+                EXCEL => return toolbox::excel_tool(),
                 TEXT => return toolbox::tool(false),
                 KB => (
-                    "查用户的知识库（自己的文件夹和保存的网页）。view=search（默认）：按意思找和问题有关的段落，重排后最多 6 段；问到用户自己的资料、文档里的内容时先用它，可以换个说法再查。view=files：列出库里有哪些文件（keyword 按路径里的字筛）。view=outline：看某个文件的目录（每段的编号和开头）；view=read：按段号读这个文件的全文（from、to）；view=find：在这个文件里按字找（keyword）。要知道有哪些文件、要读完整的一份文档时用 files 再 outline / read。图片没有文字，按意思找不到：files 里标着「图片」，view=look 看一张（file 写它的路径；一次一张，要看几张就调用几次）。",
+                    "查用户的知识库（自己的文件夹和保存的网页）。view=search（默认）：按意思找和问题有关的段落，重排后最多 6 段；问到用户自己的资料、文档里的内容时先用它，可以换个说法再查。view=files：列出库里有哪些文件（keyword 按路径里的字筛）。view=outline：看某个文件的目录（每段的编号和开头）；view=read：按段号读这个文件的全文（from、to）；view=find：在这个文件里按字找（keyword）。要知道有哪些文件、要读完整的一份文档时用 files 再 outline / read。图片没有文字，按意思找不到：files 里标着「图片」，view=look 看一张（file 写它的路径；一次一张，要看几张就调用几次）。Word、PowerPoint、PDF 里嵌的图片：view=images 列出，view=look 看（image 写图号，PDF 用 page 看那一页）。",
                     json!({
-                        "view": { "type": "string", "enum": ["search", "files", "outline", "read", "find", "look"] },
+                        "view": { "type": "string", "enum": ["search", "files", "outline", "read", "find", "images", "look"] },
                         "query": s("search：要找什么，一句话说清"),
                         "keyword": s("files：路径里的字；find：要找的字（空格隔开的几个字都要有）"),
-                        "file": s("outline / read / find / look：文件的路径（files 列出的）"),
+                        "file": s("outline / read / find / images / look：文件的路径（files 列出的）"),
+                        "image": { "type": "integer", "description": "look：图号（images 列出的）" },
+                        "page": { "type": "integer", "description": "look：PDF 的第几页" },
                         "from": { "type": "integer", "description": "read：从第几段（1 开始）" },
                         "to": { "type": "integer", "description": "read：到第几段（默认同 from）" }
                     }),
@@ -441,12 +478,13 @@ pub fn instructions(skills: &[&Skill], forced: &[String]) -> String {
         s.push_str(match sk.key {
             BOOKS => "\n- 书单检索（pomelo_find_book）：要补书的作者、国家、类型，或者推荐书的时候用：推荐的每一本先核对（真的有、作者对），再写进回答，标出处。",
             FILMS => "\n- 影单检索（pomelo_find_film）：电影、剧集、动漫同上。",
-            FILES => "\n- 读文件（pomelo_file）：这个问题带的附件和项目资料；没有全部给你时先看目录，再按段号读需要的部分，用到的标出处。",
+            FILES => "\n- 读文件（pomelo_file）：这个问题带的附件和项目资料；没有全部给你时先看目录，再按段号读需要的部分，用到的标出处。文档里的图片用 images、look 看。",
             WORD => "\n- Word 工具箱（pomelo_word）：用户要改 Word 文件时，read 读要改的部分，再调用 edit 把改好的整段文字放进确认卡片；要把写好的内容存成 Word 时用 create。只在回答里写改法不会进卡片：要改就一定调用 edit / create，它返回「已放进确认卡片」之后才能说放进去了；也不要说已经改好、已经存好（用户确认后才写）。只是问意见、没让改时不用 edit。",
             TEXT => "\n- 文本工具箱（pomelo_text）：用户要改 Markdown、纯文本文件时，read 之后调用 edit 提议改动，规矩同 Word 工具箱。",
+            EXCEL => "\n- Excel 工具箱（pomelo_excel）：用户要改 Excel（.xlsx）、要把表格存成 Excel 时用：read 读要改的部分，再调用 edit 放进确认卡片，新建用 create。规矩同 Word 工具箱：只在回答里写改法不会进卡片，也不要说已经改好、已经存好。",
             QBANK_RESUME | QBANK_GENERAL | QBANK_JOB => "",
             SEEKER => "\n- Seeker 资料（pomelo_seeker）：问到用户的简历、求职素材、cv/ 里的简历版本、导出过的简历、面试题库和练习时用，只读；回答里引用原文，不要改写成新的事实。",
-            KB => "\n- 查知识库（pomelo_kb）：问到用户自己的文件、文档里的内容时先 search；问有哪些文件时用 files；要读完整的一份时 outline 再 read，用到的标出处；问到图片时用 files 找、look 看；查不到就说没查到。",
+            KB => "\n- 查知识库（pomelo_kb）：问到用户自己的文件、文档里的内容时先 search；问有哪些文件时用 files；要读完整的一份时 outline 再 read，用到的标出处；问到图片时用 files 找、look 看，文档里的图先 images 再 look；查不到就说没查到。",
             _ => "\n- 联网搜索（pomelo_web_search）：问到最近的事、你不知道或可能过时的事时用；可以换个说法再搜一次。",
         });
     }
@@ -738,6 +776,10 @@ pub fn mock_calls(question: &str, system: &str) -> Vec<(&'static str, Value)> {
             out.push(("pomelo_find_book", json!({ "titles": titles })));
         }
     }
+    // 「存成 Excel」: Excel 工具箱 proposes a new workbook
+    if ["存成", "写成", "做成", "新建"].iter().any(|w| q.contains(&format!("{w} Excel")) || q.contains(&format!("{w}Excel"))) {
+        out.push((toolbox::EXCEL_TOOL, json!({ "view": "create", "name": "小拾的表格", "sheets": [{ "name": "十月", "rows": [["项目", "金额", "日期"], ["房租", 3000, "2026-10-01"]] }] })));
+    }
     // 「按柚子银行的 JD 出 5 道突击题」「补 3 道通用题」: the 题库 SKILLs (job: the words between 按 and 的)
     if (q.contains('出') || q.contains('补')) && q.contains("道") && q.contains('题') {
         let count: Option<u64> = q.split('道').next().map(|s| s.chars().rev().take_while(char::is_ascii_digit).collect::<Vec<_>>().into_iter().rev().collect::<String>()).and_then(|n| n.parse().ok());
@@ -827,17 +869,23 @@ mod tests {
     fn tools_instructions_and_the_mock() {
         let all: Vec<&Skill> = SKILLS.iter().collect();
         let defs = tools(&all);
-        assert_eq!(defs.len(), 11);
+        assert_eq!(defs.len(), 12);
         assert!(defs.iter().any(|t| t["function"]["name"] == files::TOOL) && defs.iter().any(|t| t["function"]["name"] == KB_TOOL));
-        // 读文件 / 查知识库 / 文本工具箱 only where the question has something for them; Word 工具箱 always
+        // 读文件 / 查知识库 / 文本工具箱 only where the question has something for them; Word 和 Excel 工具箱 always
         // (it can also make a new document)
         let c = crate::picky::store::tests::memory_db();
         let dir = crate::db::tests::temp_dir("skills-ctx");
         let p = crate::picky::Picky::init(&crate::paths::DataPaths::new(dir.to_path_buf()), &dir, crate::picky::Mode::Mock);
         let keys = |ctx| offered(&c, &p, &[], ctx).iter().map(|s| s.key).collect::<Vec<_>>();
-        assert_eq!(keys(Ctx::default()), [BOOKS, FILMS, WORD, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
-        assert_eq!(keys(Ctx { files: true, kb: true, text: true }), [BOOKS, FILMS, FILES, KB, WORD, TEXT, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
-        assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, TEXT, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB])); // never for 定时任务
+        assert_eq!(keys(Ctx::default()), [BOOKS, FILMS, WORD, EXCEL, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
+        assert_eq!(keys(Ctx { files: true, kb: true, text: true, scheduled: false }), [BOOKS, FILMS, FILES, KB, WORD, TEXT, EXCEL, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
+        assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, TEXT, EXCEL, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]));
+        assert!(SKILLS.iter().filter(|s| s.writes && !s.is_file_toolbox()).map(|s| s.key).eq([QBANK_RESUME, QBANK_GENERAL, QBANK_JOB])); // never for 定时任务
+        // 定时任务: 联网搜索 without pressing anything, once it has its Key
+        assert!(keys(Ctx { scheduled: true, ..Ctx::default() }).contains(&WEB) && !keys(Ctx::default()).contains(&WEB));
+        set_switch(&c, WEB, Some(false), None).unwrap();
+        assert!(!keys(Ctx { scheduled: true, ..Ctx::default() }).contains(&WEB));
+        set_switch(&c, WEB, Some(true), None).unwrap();
         let text = instructions(&all, &[WEB.into(), BOOKS.into()]);
         assert!(text.contains("已经用问题先搜了一次") && text.contains("先调用 pomelo_find_book"));
         assert!(instructions(&[], &[]).is_empty());

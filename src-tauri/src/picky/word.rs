@@ -525,7 +525,7 @@ fn document_xml(data: &[u8]) -> Result<String, String> {
     part(data, DOCUMENT)?.ok_or_else(bad)
 }
 
-fn attr(e: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
+pub(crate) fn attr(e: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
     e.attributes().flatten().find(|a| AsRef::<str>::as_ref(&a.key.local_name()) == key).and_then(|a| quick_xml::escape::unescape(&a.value).ok().map(|v| v.to_string()))
 }
 

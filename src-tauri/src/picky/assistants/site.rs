@@ -242,7 +242,7 @@ mod tests {
         let title = "春天的散步";
         let body = "## 河边\n\n沿着河边走了一圈，樱花开了一半，风里还有一点凉。**最好看**的是桥下那一段，水很清。\n\n![桥下的河水和樱花](/images/wander/spring-walk/river.jpg)\n\n- 早上七点出门\n- 带了相机和一本书\n\n{% sharedImage image=\"wander-spring-card\" /%}\n\n更多照片见[相册](https://example.com/album)。\n";
         let t = std::time::Instant::now();
-        let english = tauri::async_runtime::block_on(assist::site_english_with(&route, title, "", body)).unwrap();
+        let english = tauri::async_runtime::block_on(assist::site_english_with(&route, &crate::picky::cloud::Level::on(), title, "", body)).unwrap();
         println!("===== 补全（{:.1}s）\n{english:?}", t.elapsed().as_secs_f64());
         let mut s = translate::Settings { thinking: std::env::var("POMELO_THINK").as_deref() == Ok("1"), ..Default::default() };
         (s.source, s.target, s.prompt) = ("zh".into(), "en".into(), NOTE.into());

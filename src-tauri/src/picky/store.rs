@@ -42,6 +42,10 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 29, name: "no_resume_copies", sql: include_str!("../../migrations/picky/0029_no_resume_copies.sql") },
     Migration { version: 30, name: "seeker_group_order", sql: include_str!("../../migrations/picky/0030_seeker_group_order.sql") },
     Migration { version: 31, name: "rater_records", sql: include_str!("../../migrations/picky/0031_rater_records.sql") },
+    Migration { version: 32, name: "effort", sql: include_str!("../../migrations/picky/0032_effort.sql") },
+    Migration { version: 33, name: "asks", sql: include_str!("../../migrations/picky/0033_asks.sql") },
+    Migration { version: 34, name: "schedule_effort", sql: include_str!("../../migrations/picky/0034_schedule_effort.sql") },
+    Migration { version: 35, name: "excel_cards", sql: include_str!("../../migrations/picky/0035_excel_cards.sql") },
 ];
 
 pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";

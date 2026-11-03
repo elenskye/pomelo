@@ -108,7 +108,7 @@ function linkRecords(box: HTMLElement, records: QueryRecord[]) {
 
 /** The [n] a text cites, among `sources`, in number order. */
 export function citedIn(text: string, sources: Source[]): Source[] {
-  const used = new Set([...text.matchAll(/\[(\d{1,3})\](?!\()/g)].map((m) => Number(m[1])));
+  const used = new Set([...text.matchAll(/[[［](\d{1,3})[\]］](?!\()/g)].map((m) => Number(m[1])));
   return sources.filter((s) => used.has(s.n));
 }
 
@@ -122,7 +122,7 @@ function linkCites(box: HTMLElement, sources: Source[]) {
   for (const t of texts) {
     const parts: (string | Source)[] = [];
     let last = 0;
-    for (const m of t.data.matchAll(/\[(\d{1,3})\](?!\()/g)) {
+    for (const m of t.data.matchAll(/[[［](\d{1,3})[\]］](?!\()/g)) {
       const s = known.get(Number(m[1]));
       if (!s) continue;
       parts.push(t.data.slice(last, m.index), s);

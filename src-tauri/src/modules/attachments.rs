@@ -6,7 +6,8 @@
 //! - Links (`attachments`): owner + record id + file, ordered, at most 50 per record. They are
 //!   written with the record by its module (one ⌘Z step) and removed in the same step as the
 //!   record (`prune` after every delete: cascades included, no triggers so undo replays cleanly).
-//! - Cleaning (设置 → 附件): copies no record uses are deleted (file and row); not undoable.
+//! - Cleaning (设置 → 附件): copies no record uses are deleted (file and row); not undoable. The 速记小窗's
+//!   draft (settings `capture.files`, capture.rs) counts as a use.
 //! - Data files carry each record's attachments as { name, sha256 } only; importing relinks to a
 //!   file with the same bytes, else keeps the name as a missing file. Not in backups.
 //! - The page shows a stored image through `pomelo-file://localhost/<id>` (lib.rs); nothing else
@@ -337,10 +338,11 @@ pub struct Usage {
     pub dir: String,
 }
 
-const USED: &str = "EXISTS (SELECT 1 FROM attachments a WHERE a.file_id = f.id AND (
+const USED: &str = "(EXISTS (SELECT 1 FROM attachments a WHERE a.file_id = f.id AND (
     (a.owner = 'note' AND a.record_id IN (SELECT id FROM notes)) OR
     (a.owner = 'task' AND a.record_id IN (SELECT id FROM todo_tasks)) OR
-    (a.owner = 'goal' AND a.record_id IN (SELECT id FROM todo_goals))))";
+    (a.owner = 'goal' AND a.record_id IN (SELECT id FROM todo_goals))))
+  OR f.id IN (SELECT value FROM json_each((SELECT value FROM settings WHERE key = 'capture.files'))))";
 
 pub fn usage(conn: &Connection, dir: &Path) -> Result<Usage, String> {
     let (files, bytes, unused, unused_bytes) = conn

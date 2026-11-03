@@ -1,7 +1,7 @@
 // Module registry. Add new modules here (id = route path segment).
 // MODULES hold data (search, export, 小拾 read them); the 助手 are 小拾's, shown as modules in the 模块坞, the
 // 索引签 and the 柚子瓣 (their data and code stay in 小拾; hiding 小拾 hides them too).
-import { Bird, BookOpen, Briefcase, CalendarHeart, Clapperboard, Compass, Feather, FileUser, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, Settings, Shapes, Wallet, type LucideIcon } from "lucide-react";
+import { Bird, BookOpen, Briefcase, CalendarHeart, Clapperboard, Compass, Feather, FileInput, FileUser, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, Settings, Shapes, Wallet, type LucideIcon } from "lucide-react";
 
 export type ModuleDef = {
   id: string;
@@ -10,6 +10,8 @@ export type ModuleDef = {
   color: string;
   /** One of 小拾's 助手 (a small bird next to its name). */
   assistant?: boolean;
+  /** Opens this page instead of its own (Importer has none: 钱来钱往 · 导入账单). */
+  to?: string;
   /** Its pages (the path's second part, `/site/works`); each one is a step of 前进后退. */
   subs?: readonly { value: string; label: string }[];
 };
@@ -29,6 +31,7 @@ export const MODULES: ModuleDef[] = [
       { value: "entries", label: "收支" },
       { value: "assets", label: "资产" },
       { value: "reports", label: "报表" },
+      { value: "import", label: "导入账单" },
     ],
   },
   {
@@ -116,13 +119,14 @@ export const ASSISTANT_MODULES: ModuleDef[] = [
       { value: "settings", label: "设置" },
     ],
   },
+  { id: "importer", label: "Importer", icon: FileInput, color: "var(--module-importer)", assistant: true, to: "/finance/import" },
 ];
 
 /** Pages that aren't modules: 首页, 模块坞, 设置. */
 export const PLACES: ModuleDef[] = [
   { id: "", label: "首页", icon: House, color: "var(--muted-foreground)" },
   { id: "dock", label: "模块坞", icon: LayoutGrid, color: "var(--muted-foreground)" },
-  { id: "settings", label: "设置", icon: Settings, color: "var(--muted-foreground)" },
+  { id: "settings", label: "设置", icon: Settings, color: "var(--muted-foreground)", subs: [{ value: "health", label: "体检" }] },
 ];
 
 /** Modules made from 五花八门 / 循序渐进 ("list/3"…), kept current by useAllModules (modules/custom/api.ts). */
