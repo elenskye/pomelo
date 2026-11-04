@@ -289,7 +289,7 @@ pub fn clean_value(f: &Field, v: &Value) -> Result<Option<Value>, String> {
     }
 }
 
-/// How a value reads (小拾, search snippets).
+/// How a value reads (柚子, search snippets).
 pub fn value_text(f: &Field, v: &Value) -> String {
     match (f.kind, v) {
         (FieldType::Check, _) => "是".into(),

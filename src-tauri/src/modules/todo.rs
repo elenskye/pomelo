@@ -1342,7 +1342,7 @@ pub fn agenda(conn: &Connection, today: &str) -> Result<Agenda, String> {
     Ok(Agenda { today: today.into(), overdue, due, done_today })
 }
 
-/// Several new subtasks under `parent_id`, in order, as one step (小拾's 拆成子任务 the user picked).
+/// Several new subtasks under `parent_id`, in order, as one step (柚子's 拆成子任务 the user picked).
 pub fn create_subtasks(conn: &Connection, parent_id: i64, titles: &[String], today: &str) -> Result<Vec<Task>, String> {
     if titles.is_empty() || titles.len() > 20 {
         return Err("一次加 1～20 个子任务".into());
@@ -1356,7 +1356,7 @@ pub fn create_subtasks(conn: &Connection, parent_id: i64, titles: &[String], tod
     Ok(out)
 }
 
-/// Several new root tasks from a note, in order, as one step (小拾's 拆成待办 the user picked), at the
+/// Several new root tasks from a note, in order, as one step (柚子's 拆成待办 the user picked), at the
 /// group / goal given.
 pub fn create_from_note(conn: &Connection, note_id: i64, group_id: Option<i64>, goal_id: Option<i64>, titles: &[String], today: &str) -> Result<Vec<Task>, String> {
     if titles.is_empty() || titles.len() > 20 {
@@ -1371,7 +1371,7 @@ pub fn create_from_note(conn: &Connection, note_id: i64, group_id: Option<i64>, 
     Ok(out)
 }
 
-/// A check-in task's days in a span (小拾's 年度总结).
+/// A check-in task's days in a span (柚子's 年度总结).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Checkins {
     pub title: String,
@@ -1406,7 +1406,7 @@ pub fn checkins_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<C
     Ok(out)
 }
 
-/// Unfinished tasks everywhere (any goal status), in place order (小拾).
+/// Unfinished tasks everywhere (any goal status), in place order (柚子).
 pub fn open_tasks(conn: &Connection, today: &str) -> Result<Vec<PlacedTask>, String> {
     placed(conn, "t.done = 0", PLACE_ORDER, &[], today)
 }

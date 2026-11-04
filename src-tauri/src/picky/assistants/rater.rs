@@ -14,13 +14,13 @@
 //!   and shown on Rater's 规则 page only. Some are the program's until the user writes their own
 //!   (qbank.rs `builtins`: the workflows; 准备面试, 记录复盘, 总结复盘).
 //! - Each AI function may have its own model and 思考 (设置 page, qbank.rs `Options`, `FEATURES`).
-//! - 复盘 · 记录 (record.rs): a conversation (小拾's own, kept out of its list) fills a review.
+//! - 复盘 · 记录 (record.rs): a conversation (柚子's own, kept out of its list) fills a review.
 //! - Data file (format 23): the whole bank replaces Rater's tables; an older file leaves it as it is.
 //!   Format 24 adds the practice rounds (practice.rs, 阶段 ⑥), 25 the interviews (interview.rs, 阶段 ⑦);
 //!   a file without them leaves them.
 //! - 卡片练习 (阶段 ⑥): practice.rs. Each question's practice record (`Bank::practice`) is worked out
 //!   from the rounds on reading.
-//! - 小拾 reads it through the 「Seeker 资料」 skill (skills/seeker.rs) and adds to it through the three
+//! - 柚子 reads it through the 「Seeker 资料」 skill (skills/seeker.rs) and adds to it through the three
 //!   题库 SKILLs (阶段 ⑤, qbank.rs): proposals the user confirms.
 pub mod interview;
 pub mod practice;

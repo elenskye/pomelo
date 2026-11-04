@@ -48,7 +48,7 @@ export function levelFor(status: PickyStatus | undefined, code: string | null, l
 export const levelOf = (thinking: boolean, effort?: string | null): Level => (!thinking ? "off" : (effort ?? "on"));
 export const fromLevel = (level: Level) => ({ thinking: level !== "off", effort: level === "off" || level === "on" ? null : level });
 
-/** The choice of thinking for `model` (null: 小拾's current one; `exact`: none chosen yet), where it's a setting. */
+/** The choice of thinking for `model` (null: 柚子's current one; `exact`: none chosen yet), where it's a setting. */
 export function LevelPicker(props: { label: string; model: string | null; exact?: boolean; value: Level; onChange: (v: Level) => void }) {
   const status = usePickyStatus().data;
   const code = props.model ?? (props.exact ? null : (status?.selection ?? null));

@@ -16,9 +16,9 @@ import SitePage from "@/modules/site/SitePage";
 import ListPage from "@/modules/custom/ListPage";
 import ProgressPage from "@/modules/custom/ProgressPage";
 import VaultPage from "@/modules/vault/VaultPage";
-// 小拾 brings Markdown / highlighting / formulas: loaded when first opened
+// 柚子 brings Markdown / highlighting / formulas: loaded when first opened
 const PickyPage = lazy(() => import("@/modules/picky/PickyPage"));
-// 小拾's 助手 as modules (v0.7)
+// 柚子's 助手 as modules (v0.7)
 const AssistantModule = lazy(() => import("@/modules/picky/assistants"));
 import DockPage from "@/app/DockPage";
 import TodoPage from "@/modules/todo/TodoPage";

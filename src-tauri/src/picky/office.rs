@@ -1,4 +1,4 @@
-//! More kinds of files for 小拾 (v0.4.5), turned into what files.rs stores:
+//! More kinds of files for 柚子 (v0.4.5), turned into what files.rs stores:
 //! - Word (.docx / .doc): macOS `textutil` → plain text.
 //! - PowerPoint (.pptx): each slide's text (the zip's `ppt/slides/slideN.xml`, `<a:t>` runs, one line
 //!   per paragraph), one segment per slide.

@@ -50,7 +50,7 @@ pub struct Card {
     /// What was asked: the question's text when the round started, a follow-up's own.
     pub text: String,
     pub category: String,
-    /// A follow-up card (dashed), with 小拾's reference answer.
+    /// A follow-up card (dashed), with 柚子's reference answer.
     pub follow: bool,
     pub reference: String,
     /// The follow-up went into the bank as this question.
@@ -88,7 +88,7 @@ pub struct Round {
     pub mode: String,
     /// 按 JD's job.
     pub job: Option<JobLink>,
-    /// 按 JD: why 小拾 picked these.
+    /// 按 JD: why 柚子 picked these.
     pub advice: String,
     pub cards: Vec<Card>,
     pub started_at: String,
@@ -262,7 +262,7 @@ pub struct Start {
     pub questions: Vec<String>,
     /// 随机: how many (0: `RANDOM_COUNT`).
     pub count: usize,
-    /// 按 JD: 小拾's word on the picks.
+    /// 按 JD: 柚子's word on the picks.
     pub advice: String,
 }
 
@@ -548,7 +548,7 @@ pub fn comment_prompt(w: &Workspace, bank: &Bank, r: &Round, job: Option<&JobSna
         let Some(mark) = &c.mark else { continue };
         let head = if c.follow {
             let parent = r.cards[..i].iter().rposition(|p| !p.follow && p.question == c.question).map_or(String::new(), |p| format!(" · 接卡 {}", p + 1));
-            format!("卡 {}【追问{parent}】{} —— {mark}\n  小拾的参考答案：{}", i + 1, c.text, cut(&c.reference, 400))
+            format!("卡 {}【追问{parent}】{} —— {mark}\n  柚子的参考答案：{}", i + 1, c.text, cut(&c.reference, 400))
         } else {
             let answer = bank.questions.iter().find(|q| q.id == c.question).map(|q| q.answer.as_str()).unwrap_or("");
             format!("卡 {}【{}】{}{} —— {mark}\n  题库里的口述稿：{}", i + 1, c.category, c.text, material(&c.question), if answer.trim().is_empty() { "（还没写）".into() } else { cut(answer, 400) })
@@ -722,7 +722,7 @@ pub async fn picky_rater_comment(app: AppHandle, id: String) -> Result<Round, St
         return Err("这一轮还没结束".into());
     }
     if !round.wants_comment() {
-        return Err("这一轮没打字也没追问，不用小拾点评".into());
+        return Err("这一轮没打字也没追问，不用柚子点评".into());
     }
     let (model, level) = qbank::chosen_model(&w, &opts, "comment")?;
     let job = job_of(&state, round.job.as_ref());

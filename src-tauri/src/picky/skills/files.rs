@@ -9,7 +9,7 @@
 //! - Long material (`excerpts`): when the question's files don't fit and this skill is offered, the
 //!   question goes with their outline and the segments that share the most words with it (rarer words
 //!   count more; at most 8, each at least half the best score, cut to about 1500 characters; a file
-//!   none of whose segments was picked shows its first one), and 小拾 reads the rest with the tool —
+//!   none of whose segments was picked shows its first one), and 柚子 reads the rest with the tool —
 //!   instead of reading everything in segments first. The outline numbers segments 「第 3 段」, never
 //!   in brackets, so they aren't taken for citations.
 

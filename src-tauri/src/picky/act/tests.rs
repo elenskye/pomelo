@@ -198,7 +198,7 @@ fn confirming_writes_the_ticked_items_in_one_undo_step() {
     assert_eq!((n("fin_entries"), done()), (1, true));
     assert!(confirm(&st, 1, &picks[..1]).is_err()); // once only
     // one ⌘Z takes both back; the card then shows them as gone (the edit: back to how it was)
-    assert_eq!(crate::undo::step_back(&st, false).unwrap().label.as_deref(), Some("小拾：卡片里的 2 条"));
+    assert_eq!(crate::undo::step_back(&st, false).unwrap().label.as_deref(), Some("柚子：卡片里的 2 条"));
     assert_eq!((n("fin_entries"), done()), (0, false));
     let mut card = st.picky.with_db(|c| card_of(c, 1)).unwrap().unwrap();
     st.with_db(|c| Ok(mark_gone(c, &mut card))).unwrap();

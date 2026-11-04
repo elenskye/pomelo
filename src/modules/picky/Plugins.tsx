@@ -1,5 +1,5 @@
 // 插件库 (v0.4 phase 6; beside 管理 at the bottom of the conversation list): the skills (rules in
-// Rust skills/). Left the list, right the chosen one: what it does and sends, 启用 / 小拾自己决定用, its
+// Rust skills/). Left the list, right the chosen one: what it does and sends, 启用 / 柚子自己决定用, its
 // keys (keychain only: shown as 已保存, never read back). 小工具 get their own group when one exists.
 // Also here: the skills a draft asks for (chips above the input, the 联网 button), sent with it.
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -81,8 +81,8 @@ function SkillPane(props: { skill: Skill }) {
             <Switch label="启用" checked={s.enabled} onChange={(v) => set({ enabled: v })} />
           </label>
           <label className={`flex items-center justify-between gap-4 ${s.enabled ? "" : "opacity-50"}`}>
-            <span>小拾自己决定用</span>
-            <Switch label="小拾自己决定用" checked={s.auto} onChange={(v) => s.enabled && set({ auto: v })} />
+            <span>柚子自己决定用</span>
+            <Switch label="柚子自己决定用" checked={s.auto} onChange={(v) => s.enabled && set({ auto: v })} />
           </label>
         </div>
         {s.usesContact && <ContactField value={s.contact} />}
@@ -314,7 +314,7 @@ function KeyField(props: { spec: SkillKey }) {
   );
 }
 
-// ---------- asking for skills (the input of the 小拾 page and the 小窗) ----------
+// ---------- asking for skills (the input of the 柚子 page and the 小窗) ----------
 
 /** The skills each draft asks for (「/名称」, 联网): only for its next question. */
 export function useAskedSkills(draftKey: string) {

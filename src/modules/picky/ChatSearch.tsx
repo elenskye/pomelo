@@ -1,4 +1,4 @@
-// 小拾's own search (the magnifier above the conversation list): titles and every message, all words
+// 柚子's own search (the magnifier above the conversation list): titles and every message, all words
 // must appear; filters for the reply's model, a time range and whether archived ones count. Opening a
 // result jumps to that message (switching to its version if it's an older one). Rules in find.rs.
 // Below: 意思相近 (v0.4, by meaning, same filters, without the conversations words found).

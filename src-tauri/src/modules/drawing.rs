@@ -1,7 +1,7 @@
 //! 随意画画 (drawing courses → lessons, progress). 类型 = kinds.rs (module "drawing").
 //! New lessons append to the end of their course; order comes from import / creation.
 //! Status: 未开始 / 进行中 / 已完成 (no 待标记: one given — an old data file — becomes 未开始).
-//! Pace (小拾 「照现在的速度什么时候画完」): lessons finished in the last `PACE_MONTHS` months (this
+//! Pace (柚子 「照现在的速度什么时候画完」): lessons finished in the last `PACE_MONTHS` months (this
 //! month included) ÷ `PACE_MONTHS` = per month; remaining ÷ that, rounded up = months left.
 
 use super::common::{self, err, some, Status};

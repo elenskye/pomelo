@@ -1,4 +1,4 @@
-// Markdown → HTML for 小拾 messages (ported from the old Picky's Resources/Web/markdown.js, same rules).
+// Markdown → HTML for 柚子 messages (ported from the old Picky's Resources/Web/markdown.js, same rules).
 // - Raw HTML from the model is escaped; only http/https links become anchors; images are never loaded
 //   (a link-like label instead); tables get a horizontal scroller; fenced code gets a language label,
 //   a copy button and highlighting — except a fence still open while streaming.

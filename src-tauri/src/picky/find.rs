@@ -1,11 +1,11 @@
 //! Searching conversations (from Picky's ConversationSearch, but plain substring matching like
 //! Pomelo's 全局搜索: every word must appear, case-insensitive; the data is small).
-//! - The 小拾 search: titles and every finished message (all versions), filtered by the reply's model,
+//! - The 柚子 search: titles and every finished message (all versions), filtered by the reply's model,
 //!   a start time and whether archived ones count. One hit per session: title matches first, then
 //!   the newest matching message; the hit carries that message (possibly an older version).
 //! - ⌘K (search.rs) gets the same without archived sessions, at most PER_SOURCE.
 //! - Opening a hit on an older version first shows that version (`reveal`).
-//! - 意思相近 (v0.4): the search index's meaning hits among 小拾's messages and titles, with the
+//! - 意思相近 (v0.4): the search index's meaning hits among 柚子's messages and titles, with the
 //!   same filters and one hit per conversation (`similar`); the page leaves out the ones words found.
 
 use super::chat;
@@ -209,7 +209,7 @@ pub fn picky_search(state: State<AppState>, q: String, model: Option<String>, si
     state.picky.with_db(|c| search(c, &q, &Filter { model, since, archived }, LIMIT))
 }
 
-/// 意思相近 in 小拾's search (may start the embedding service).
+/// 意思相近 in 柚子's search (may start the embedding service).
 #[tauri::command]
 pub async fn picky_search_similar(app: tauri::AppHandle, q: String, model: Option<String>, since: Option<String>, archived: bool) -> Result<Vec<ChatHit>, String> {
     use crate::search::query::{self, Request, Way};

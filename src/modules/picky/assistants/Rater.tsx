@@ -2,7 +2,7 @@
 // 题库 (questions by category: 简历题 by the material they're about, 突击题 by job; each with its practice
 // record), 卡片 (RaterCards.tsx), 面试 (RaterInterview.tsx) and 规则 (Seeker records of Rater's 用途,
 // the same editor as Seeker's; a SKILL without its own workflow shows the built-in one). The three
-// 题库 SKILLs: 「让小拾补题」 (a list to tick, then one undo step) and 润色 (a diff). 设置: the default model
+// 题库 SKILLs: 「让柚子补题」 (a list to tick, then one undo step) and 润色 (a diff). 设置: the default model
 // and 思考, and each AI function's own (Rust qbank.rs `Options`; not undone).
 // Each edit: fields → 查看差异 → 确认保存, one undo step; lengths come from Rust.
 import { PickField } from "@/shared/PickField";
@@ -176,7 +176,7 @@ function QuestionBank(p: BankProps) {
       {tags.length > 0 && <Dropdown ariaLabel="标签" value={tag} options={[{ value: ALL, label: "全部标签" }, ...tags.map((t) => ({ value: t, label: t }))]} onChange={setTag} />}
       <span className="flex-1" />
       <SelectButton select={sel} />
-      <Button disabled={p.busy || !p.can("suggest")} onClick={() => setAsking(true)}><Sparkles size={14} />让小拾补题</Button>
+      <Button disabled={p.busy || !p.can("suggest")} onClick={() => setAsking(true)}><Sparkles size={14} />让柚子补题</Button>
       <Button disabled={p.busy} onClick={() => setEditing(blank(category === ALL ? "简历题" : category))}><Plus size={14} />题目</Button>
     </div>
     <SelectBar select={sel}>
@@ -204,7 +204,7 @@ function QuestionBank(p: BankProps) {
   </div>;
 }
 
-/** 让小拾补题: which SKILL, what about, how many → the proposals to tick → 写进题库 (one undo step). */
+/** 让柚子补题: which SKILL, what about, how many → the proposals to tick → 写进题库 (one undo step). */
 function SuggestDialog(props: { seeker: SeekerWorkspace; materials: SeekerRecord[]; bank: RaterBank; start: string; busy: boolean; write: BankProps["write"]; close: () => void }) {
   const jobs = useJobs();
   const [kind, setKind] = useState(props.start);
@@ -229,7 +229,7 @@ function SuggestDialog(props: { seeker: SeekerWorkspace; materials: SeekerRecord
   const name = (id: string | null) => props.materials.find((m) => m.id === id)?.title;
   const from = (id: string | null) => props.bank.questions.find((q) => q.id === id)?.question;
   const ticked = result?.questions.filter((q) => !off.has(q.id)) ?? [];
-  if (result) return <Modal size="xl" title="小拾出的题" error={error} onClose={props.close} submitLabel={`写进题库（${ticked.length} 道）`} submitDisabled={props.busy || !ticked.length} footerLeft={<Button disabled={props.busy} onClick={() => setResult(null)}>返回</Button>} onSubmit={(e) => { e.preventDefault(); void props.write(() => raterApi.add(ticked)).then((ok) => (ok ? props.close() : setError("没写进去，请重试"))); }}>
+  if (result) return <Modal size="xl" title="柚子出的题" error={error} onClose={props.close} submitLabel={`写进题库（${ticked.length} 道）`} submitDisabled={props.busy || !ticked.length} footerLeft={<Button disabled={props.busy} onClick={() => setResult(null)}>返回</Button>} onSubmit={(e) => { e.preventDefault(); void props.write(() => raterApi.add(ticked)).then((ok) => (ok ? props.close() : setError("没写进去，请重试"))); }}>
     <div className="-m-1 max-h-[62vh] space-y-3 overflow-y-auto p-1">
       <p className="text-xs text-muted-foreground">{[result.model, result.note].filter(Boolean).join(" · ")}</p>
       {result.advice && <p className="whitespace-pre-wrap text-sm">{result.advice}</p>}
@@ -238,7 +238,7 @@ function SuggestDialog(props: { seeker: SeekerWorkspace; materials: SeekerRecord
       </PickRow>)}
     </div>
   </Modal>;
-  return <Modal size="xl" title="让小拾补题" error={error} onClose={() => { if (!running) props.close(); }} submitLabel={running ? "正在出题…" : "出题"} submitDisabled={running || (kind === "突击题" && job == null)} onSubmit={(e) => { e.preventDefault(); void run(); }}>
+  return <Modal size="xl" title="让柚子补题" error={error} onClose={() => { if (!running) props.close(); }} submitLabel={running ? "正在出题…" : "出题"} submitDisabled={running || (kind === "突击题" && job == null)} onSubmit={(e) => { e.preventDefault(); void run(); }}>
     <fieldset disabled={running} className="-m-1 max-h-[62vh] space-y-3 overflow-y-auto p-1">
       <Segmented<string> ariaLabel="补哪一类" value={kind} onChange={setKind} options={RATER_CATEGORIES.map((c) => ({ value: c, label: c }))} />
       {kind === "简历题" && <Field label="经历"><div className="flex flex-wrap gap-1.5">{experiences.map((m) => <Chip key={m.id} on={materials.includes(m.id)} onClick={() => setMaterials((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id]))} className="max-w-full truncate">{m.title}{inDraft.has(m.id) && <span className="ml-1.5 text-xs text-muted-foreground">简历上</span>}</Chip>)}{!experiences.length && <p className="text-sm text-muted-foreground">还没有中文素材</p>}</div></Field>}

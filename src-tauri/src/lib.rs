@@ -39,7 +39,7 @@ pub struct AppState {
     vault: Mutex<modules::vault::Session>,
     /// Set when the DB could not be opened/migrated; UI shows it instead of crashing.
     startup_error: Option<String>,
-    /// 小拾 (AI): its own picky.db, model services, cloud keys (see picky/mod.rs).
+    /// 柚子 (AI): its own picky.db, model services, cloud keys (see picky/mod.rs).
     pub(crate) picky: picky::Picky,
     /// v0.4: search.db and its indexer (see search/mod.rs).
     pub(crate) search: search::Search,
@@ -59,7 +59,7 @@ impl AppState {
             }
             Ok(conn)
         });
-        // after pomelo.db: ensure() made the folders; a 小拾 failure never blocks the rest
+        // after pomelo.db: ensure() made the folders; a 柚子 failure never blocks the rest
         let picky = picky::Picky::init(&paths, home, mode);
         let search = search::Search::open(&paths);
         let (db, startup_error) = match opened {
@@ -610,6 +610,9 @@ pub fn run() {
             modules::notes::note_delete,
             modules::notes::notes_tag_rename,
             modules::notes::notes_tag_set,
+            modules::notes::notes_tag_place,
+            modules::notes::notes_tag_pins,
+            modules::notes::notes_tag_delete,
             search::search_all,
             search::query::search_query,
             search::query::search_similar,

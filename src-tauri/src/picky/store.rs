@@ -1,6 +1,6 @@
 //! picky.db: its own file next to pomelo.db, its own migration chain (`migrations/picky/`) and
-//! version, so 小拾 never changes pomelo.db. Backups / restore treat it as store `picky`.
-//! `preferences` holds 小拾 settings (JSON values, never undone).
+//! version, so 柚子 never changes pomelo.db. Backups / restore treat it as store `picky`.
+//! `preferences` holds 柚子 settings (JSON values, never undone).
 
 use crate::backup::Store;
 use crate::db::{self, Migration};
@@ -46,6 +46,8 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 33, name: "asks", sql: include_str!("../../migrations/picky/0033_asks.sql") },
     Migration { version: 34, name: "schedule_effort", sql: include_str!("../../migrations/picky/0034_schedule_effort.sql") },
     Migration { version: 35, name: "excel_cards", sql: include_str!("../../migrations/picky/0035_excel_cards.sql") },
+    Migration { version: 36, name: "youzi", sql: include_str!("../../migrations/picky/0036_youzi.sql") },
+    Migration { version: 37, name: "year_atlas", sql: include_str!("../../migrations/picky/0037_year_atlas.sql") },
 ];
 
 pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -54,7 +56,7 @@ pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 /// previous run of the app as interrupted.
 pub fn open(path: &Path, backups: &Path) -> Result<Connection, String> {
     let mut conn = db::open(path)?;
-    db::migrate_as(&mut conn, MIGRATIONS, Some(backups), Store::Picky).map_err(|e| format!("小拾的{e}"))?;
+    db::migrate_as(&mut conn, MIGRATIONS, Some(backups), Store::Picky).map_err(|e| format!("柚子的{e}"))?;
     recover_interrupted(&conn)?;
     Ok(conn)
 }
@@ -72,7 +74,7 @@ pub fn pref_get<T: DeserializeOwned>(conn: &Connection, key: &str) -> Result<Opt
         .query_row("SELECT value FROM preferences WHERE key = ?1", [key], |r| r.get(0))
         .optional()
         .map_err(err)?;
-    raw.map(|s| serde_json::from_str(&s).map_err(|e| format!("小拾设置 {key} 读不出来：{e}"))).transpose()
+    raw.map(|s| serde_json::from_str(&s).map_err(|e| format!("柚子设置 {key} 读不出来：{e}"))).transpose()
 }
 
 pub fn pref_set<T: Serialize + ?Sized>(conn: &Connection, key: &str, value: &T) -> Result<(), String> {
@@ -134,7 +136,7 @@ pub mod tests {
         c.pragma_update(None, "user_version", 99).unwrap();
         drop(c);
         let e = open(&p, &dir.join("backups")).unwrap_err();
-        assert!(e.contains("小拾") && e.contains("新"), "{e}");
+        assert!(e.contains("柚子") && e.contains("新"), "{e}");
     }
 
     #[test]
@@ -153,6 +155,40 @@ pub mod tests {
         let (m, r): (String, String) =
             c.query_row("SELECT m.state, r.state FROM messages m JOIN runs r ON r.id = m.run_id", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((m.as_str(), r.as_str()), ("interrupted", "interrupted"));
+    }
+
+    /// v36: what the user wrote for the model says 柚子; messages, other prefs and Seeker's material don't change.
+    #[test]
+    fn v35_renames_xiaoshi_in_what_the_user_wrote() {
+        let mut c = Connection::open_in_memory().unwrap();
+        db::configure(&c).unwrap();
+        db::migrate_as(&mut c, &MIGRATIONS[..35], None, Store::Picky).unwrap();
+        c.execute_batch(
+            r#"INSERT INTO memories (content, noted_on) VALUES ('叫我小柚，小拾说话简短', '2026-10-01'), ('住在上海', '2026-10-01');
+             UPDATE global_instructions SET content = '小拾用中文';
+             INSERT INTO projects (name, instructions) VALUES ('论文', '小拾先列提纲');
+             INSERT INTO sessions (id, title, instructions) VALUES (1, '和小拾聊', '小拾别客套');
+             INSERT INTO runs (id, session_id, model, model_name, state) VALUES (1, 1, 'local:x', 'X', 'done');
+             INSERT INTO messages (session_id, run_id, role, content, state) VALUES (1, 1, 'assistant', '我是小拾', 'done');
+             INSERT INTO templates (title, body) VALUES ('问小拾', '小拾，帮我看看');
+             INSERT INTO presets (name, content) VALUES ('小拾写作', '小拾写得短');
+             INSERT INTO schedules (name, prompt, every, at) VALUES ('周报', '小拾总结这周', 'week', '09:00');
+             INSERT INTO preferences (key, value) VALUES ('brief.prompt', '"你是小拾"'), ('work.folder', '"~/小拾"');
+             INSERT INTO seeker_records (id, body) VALUES ('r', '{"kind":"rule","text":"小拾别编"}'), ('m', '{"kind":"material","text":"小拾项目"}'), ('x', 'not json 小拾');"#,
+        )
+        .unwrap();
+        db::migrate_as(&mut c, &MIGRATIONS[..36], None, Store::Picky).unwrap();
+        let one = |sql: &str| c.query_row(sql, [], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!(one("SELECT group_concat(content, '|') FROM memories"), "叫我小柚，柚子说话简短|住在上海");
+        assert_eq!(one("SELECT content FROM global_instructions"), "柚子用中文");
+        assert_eq!(one("SELECT instructions FROM projects"), "柚子先列提纲");
+        assert_eq!(one("SELECT title || '/' || instructions FROM sessions"), "和小拾聊/柚子别客套"); // titles are the conversation's
+        assert_eq!(one("SELECT content FROM messages"), "我是小拾");
+        assert_eq!(one("SELECT title || '/' || body FROM templates"), "问柚子/柚子，帮我看看");
+        assert_eq!(one("SELECT name || '/' || content FROM presets"), "柚子写作/柚子写得短");
+        assert_eq!(one("SELECT prompt FROM schedules WHERE name = '周报'"), "柚子总结这周");
+        assert_eq!(one("SELECT group_concat(value, '|') FROM preferences WHERE key IN ('brief.prompt', 'work.folder') ORDER BY key"), "\"你是柚子\"|\"~/小拾\"");
+        assert_eq!(one("SELECT group_concat(body, '|') FROM (SELECT body FROM seeker_records ORDER BY id)"), r#"{"kind":"material","text":"小拾项目"}|{"kind":"rule","text":"柚子别编"}|not json 小拾"#);
     }
 
     #[test]

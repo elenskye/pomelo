@@ -1,4 +1,4 @@
-//! Organising 小拾's conversations (from Picky's ConversationLibrary / SessionGroups / SidebarOrder):
+//! Organising 柚子's conversations (from Picky's ConversationLibrary / SessionGroups / SidebarOrder):
 //! - Lists: 置顶 = pinned and not archived (shown only there, whatever its project) · each project =
 //!   its sessions not pinned / archived · 定时 = the rest written by 定时任务 (schedule.rs) · 最近 = the
 //!   rest · 归档 = archived. Shown in that order. 定时 and 最近 don't take each other's sessions.
@@ -12,7 +12,7 @@
 //!   (none: the model's default; a level the model doesn't have counts as none, see cloud.rs).
 //!   知识库 (`knowledge`, off for new ones) and the libraries it chose (knowledge.rs) likewise; a
 //!   project's libraries are saved with its settings.
-//! - 私密 (`private`): stays in its list with a lock; 年度总结 and 小拾's pomelo_search / pomelo_read
+//! - 私密 (`private`): stays in its list with a lock; 年度总结 and 柚子's pomelo_search / pomelo_read
 //!   leave it out (⌘K and 对话搜索 don't).
 //! - Unlisted (`unlisted!`): Rater's records (rater/record.rs) and the 速记小窗's conversation (capture.rs,
 //!   preference `capture.chat`: one at a time, private, deleted when the window starts another, listed
@@ -76,7 +76,7 @@ pub struct SessionRow {
     /// Written by a 定时任务; not opened yet.
     pub scheduled: bool,
     pub unseen: bool,
-    /// 私密: 年度总结 and 小拾's search leave it out.
+    /// 私密: 年度总结 and 柚子's search leave it out.
     pub private: bool,
     /// Its 思考 switch (the composer's button) and 思考强度.
     pub thinking: bool,
@@ -326,7 +326,7 @@ pub fn keep_capture_chat(conn: &Connection) -> Result<Option<i64>, String> {
     Ok(id)
 }
 
-/// 私密 conversations (left out of 年度总结 and 小拾's search).
+/// 私密 conversations (left out of 年度总结 and 柚子's search).
 pub fn private_ids(conn: &Connection) -> Result<HashSet<i64>, String> {
     let mut st = conn.prepare("SELECT id FROM sessions WHERE private").map_err(err)?;
     let rows = st.query_map([], |r| r.get(0)).map_err(err)?;

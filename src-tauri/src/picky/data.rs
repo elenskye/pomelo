@@ -1,11 +1,11 @@
-//! 小拾查数据 (v0.3.5 「问我的数据」): read-only lookups the model asks for while answering (tool calls).
-//! Rules (requirements.md「小拾 · 懂 Pomelo」, architecture.md「小拾」):
+//! 柚子查数据 (v0.3.5 「问我的数据」): read-only lookups the model asks for while answering (tool calls).
+//! Rules (requirements.md「柚子 · 懂 Pomelo」, architecture.md「柚子」):
 //! - One tool per module (`pomelo_todo` …). Each view runs the module's own read functions, so totals
 //!   and derived numbers are the pages' (jobs::stats, finance::assets / totals, todo::agenda …); only
 //!   the wording for the model is here. Results are compact Chinese text cut to the room left in the
 //!   window ("还有 N 条没列出"); the records shown are kept so the answer can link them.
 //! - Never read: 芝麻开门 (no tool exists) and modules hidden in the 模块坞 (no tool offered; a call
-//!   anyway is refused). For a cloud model, modules not allowed to go to the cloud (设置 → 小拾,
+//!   anyway is refused). For a cloud model, modules not allowed to go to the cloud (设置 → 柚子,
 //!   `data.cloud`) are refused with the sentence the answer starts with. 钱来钱往 goes in two parts, each
 //!   with its own switch (v0.8): 收支 (entries, 固定支出, 预算, monthly totals; allowed by default, 导入账单
 //!   is 收支's) and 资产 (accounts, balances, holdings; local only by default, it keeps the old 钱来钱往
@@ -13,7 +13,7 @@
 //! - 五花八门 / 循序渐进: one tool each (`pomelo_lists`, `pomelo_progress`) for every module made from
 //!   it; each made module is hidden / allowed for the cloud on its own (key "list/3"), like a module.
 //! - Tool definitions carry no user data (no names, categories, amounts).
-//! - 呦呦漫游 (HELP_ONLY): 小拾 helps in its editor (润色、补全、起草英文版) but never reads it — no tool,
+//! - 呦呦漫游 (HELP_ONLY): 柚子 helps in its editor (润色、补全、起草英文版) but never reads it — no tool,
 //!   only its 「发给云端」 switch (allowed by default: the site is public once published).
 //! - Nothing here writes Pomelo data.
 
@@ -57,7 +57,7 @@ pub const MODULES: &[Module] = &[
     Module { key: "days", label: "来日方长", tool: "pomelo_days", cloud: true },
 ];
 
-/// Modules 小拾 only helps in (assist.rs), never reads: no tool, only a 「发给云端」 switch.
+/// Modules 柚子 only helps in (assist.rs), never reads: no tool, only a 「发给云端」 switch.
 pub const HELP_ONLY: &[Module] = &[Module { key: "site", label: "呦呦漫游", tool: "", cloud: true }];
 
 /// 钱来钱往's two parts for the cloud (keys in `data.cloud` and `cloud_allowed`, never "finance").
@@ -92,12 +92,12 @@ fn module(key: &str) -> Option<&'static Module> {
     MODULES.iter().chain(HELP_ONLY).find(|m| m.key == key)
 }
 
-/// A module 小拾 knows (reads or helps in).
+/// A module 柚子 knows (reads or helps in).
 pub fn module_info(key: &str) -> Option<&'static Module> {
     module(key)
 }
 
-// ---------- 设置 → 小拾: 允许发给云端 ----------
+// ---------- 设置 → 柚子: 允许发给云端 ----------
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,7 +146,7 @@ pub struct Access {
     pub made: Vec<Made>,
 }
 
-/// A module made from 五花八门 / 循序渐进, as 小拾 sees it.
+/// A module made from 五花八门 / 循序渐进, as 柚子 sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Made {
     pub key: String,
@@ -203,7 +203,7 @@ impl Access {
             Ok(())
         }
     }
-    /// This answer may read `module` (小拾's own conversations always).
+    /// This answer may read `module` (柚子's own conversations always).
     pub fn allows(&self, module: &str) -> bool {
         module == "picky" || self.check_key(module)
     }
@@ -510,7 +510,7 @@ pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, toda
     };
     match access.check(m) {
         Err(Blocked::Hidden) => {
-            return Answer { module: Some(m.key.into()), label: format!("{} · 已隐藏，没看", m.label), state: "blocked", text: format!("没有查：{}在模块坞里隐藏了，小拾不读它的数据。", m.label), records: vec![] }
+            return Answer { module: Some(m.key.into()), label: format!("{} · 已隐藏，没看", m.label), state: "blocked", text: format!("没有查：{}在模块坞里隐藏了，柚子不读它的数据。", m.label), records: vec![] }
         }
         Err(Blocked::Cloud) => {
             let sentence = cloud_sentence(&[m.label]);
@@ -1769,7 +1769,7 @@ fn remind_text(r: &[i64]) -> String {
     format!("{}提醒", leads.join("、"))
 }
 
-/// One day, on one line. 证件: name and expiry only (its note never goes to 小拾).
+/// One day, on one line. 证件: name and expiry only (its note never goes to 柚子).
 fn day_bits(d: &days::Day) -> Vec<String> {
     let date = match (d.kind, d.date.strip_prefix("--")) {
         (_, Some(m)) => format!("每年 {}（不知道哪年）", md(&format!("0000-{m}"))),
@@ -2480,7 +2480,7 @@ pub(crate) fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result
     Ok((title, lines.into_iter().flatten().collect::<Vec<_>>().join("\n"), rc))
 }
 
-/// What a question sends about its page; None = nothing at all (芝麻开门, 小拾, unknown pages).
+/// What a question sends about its page; None = nothing at all (芝麻开门, 柚子, unknown pages).
 /// Which part of 钱来钱往 a page shows: 资产, or 报表 on its 资产 tab → "assets"; else 收支.
 fn finance_page_part(ctx: &PageContext) -> &'static str {
     let page = ctx.page.as_deref().unwrap_or("");
@@ -2752,10 +2752,133 @@ pub fn brief_parts(conn: &Connection, access: &Access, today: &str, budget: i64)
     Ok((parts, left))
 }
 
-/// What 年度总结 reads (笔记; 做完的事、目标和打卡; 画完的课; 投递的进展; 出行; 读完看完的书影; never
-/// 钱来钱往 or 芝麻开门), and the ones left out this time.
+/// What 年度总结 reads (笔记; 做完的事、目标和打卡; 画完的课; 投递的进展; 出行; 读完看完的书影; 来日方长的
+/// 日子; 钱来钱往的收支、资产, each by its own 「发给云端」; never 芝麻开门), and the ones left out this time.
 pub fn year_left_out(access: &Access) -> Vec<&'static str> {
-    readable(access, &["notes", "todo", "drawing", "jobs", "packing", "books", "films"]).1
+    let mut left = readable(access, &["notes", "todo", "drawing", "jobs", "packing", "books", "films", "days"]).1;
+    if access.cloud && !access.hidden.iter().any(|h| h == "finance") {
+        left.extend(FIN_PARTS.iter().filter(|p| !access.sends(p.0)).map(|p| p.1));
+    }
+    left
+}
+
+/// One category's spending in a year (in its currency's cents).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Spent {
+    pub currency: Currency,
+    pub kind: String,
+    pub amount: i64,
+}
+
+/// Total assets (CNY cents, finance::assets) at the start and the end of a span.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetsSpan {
+    pub from_day: String,
+    pub from: i64,
+    pub to_day: String,
+    pub to: i64,
+}
+
+/// 钱来钱往 in 年度总结 / Atlas: spending by category (biggest first within a currency) and income by
+/// currency (收支, the page's `finance::range`), total assets then and now (资产, `finance::assets`: the
+/// last full total on or before the start, else the first inside, to the last inside). Each part only
+/// when it may be read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YearMoney {
+    pub spent: Vec<Spent>,
+    pub income: Vec<(Currency, i64)>,
+    pub assets: Option<AssetsSpan>,
+}
+
+pub fn year_money(conn: &Connection, access: &Access, from: &str, to: &str) -> Result<Option<YearMoney>, String> {
+    let (flow, assets) = (access.allows(FIN_FLOW), access.allows(FIN_ASSETS));
+    if !flow && !assets {
+        return Ok(None);
+    }
+    let mut out = YearMoney::default();
+    if flow {
+        let names = kinds::name_map(conn, finance::OUT_KINDS)?;
+        for t in finance::range(conn, from, to, None, None, None)?.totals {
+            match t.flow {
+                Flow::Out => {
+                    let kind = t.kind_id.and_then(|k| names.get(&k).cloned()).unwrap_or_else(|| "未分类".into());
+                    match out.spent.iter_mut().find(|x| x.currency == t.currency && x.kind == kind) {
+                        Some(x) => x.amount += t.amount,
+                        None => out.spent.push(Spent { currency: t.currency, kind, amount: t.amount }),
+                    }
+                }
+                Flow::In => match out.income.iter_mut().find(|x| x.0 == t.currency) {
+                    Some(x) => x.1 += t.amount,
+                    None => out.income.push((t.currency, t.amount)),
+                },
+            }
+        }
+        out.spent.retain(|x| x.amount > 0);
+        out.spent.sort_by(|a, b| a.currency.as_str().cmp(b.currency.as_str()).then(b.amount.cmp(&a.amount)));
+    }
+    if assets {
+        let full: Vec<(String, i64)> = finance::assets(conn)?.totals.into_iter().filter_map(|t| t.total_cny.map(|v| (t.day, v))).filter(|t| t.0.as_str() <= to).collect();
+        let start = full.iter().rev().find(|t| t.0.as_str() <= from).or_else(|| full.iter().find(|t| t.0.as_str() >= from));
+        if let (Some(a), Some(b)) = (start, full.last().filter(|t| t.0.as_str() >= from)) {
+            if a.0 != b.0 {
+                out.assets = Some(AssetsSpan { from_day: a.0.clone(), from: a.1, to_day: b.0.clone(), to: b.1 });
+            }
+        }
+    }
+    Ok((!out.spent.is_empty() || !out.income.is_empty() || out.assets.is_some()).then_some(out))
+}
+
+/// Categories listed per currency (the rest summed as 其他).
+const MONEY_KINDS: usize = 8;
+
+fn money_text(m: &YearMoney) -> String {
+    let mut out = vec![];
+    let mut currencies: Vec<Currency> = m.spent.iter().map(|x| x.currency).chain(m.income.iter().map(|x| x.0)).collect();
+    currencies.dedup();
+    currencies.sort_by_key(|c| c.as_str());
+    currencies.dedup();
+    let mut flow = vec![];
+    for c in currencies {
+        let mine: Vec<&Spent> = m.spent.iter().filter(|x| x.currency == c).collect();
+        if !mine.is_empty() {
+            let total: i64 = mine.iter().map(|x| x.amount).sum();
+            let mut parts: Vec<String> = mine.iter().take(MONEY_KINDS).map(|x| format!("{} {}", x.kind, money(x.amount, c))).collect();
+            if mine.len() > MONEY_KINDS {
+                parts.push(format!("其他 {}", money(mine.iter().skip(MONEY_KINDS).map(|x| x.amount).sum(), c)));
+            }
+            flow.push(format!("- 支出（{}）{}：{}", currency_name(c), money(total, c), parts.join("、")));
+        }
+        if let Some((_, n)) = m.income.iter().find(|x| x.0 == c).filter(|x| x.1 != 0) {
+            flow.push(format!("- 收入（{}）{}", currency_name(c), money(*n, c)));
+        }
+    }
+    if !flow.is_empty() {
+        out.push(format!("【钱来钱往 · 收支】（分类从多到少）\n{}", flow.join("\n")));
+    }
+    if let Some(a) = &m.assets {
+        out.push(format!(
+            "【钱来钱往 · 资产】总资产（按汇率折成人民币）：{} {} → {} {}，变化 {}（{}）",
+            a.from_day,
+            money(a.from, Currency::Cny),
+            a.to_day,
+            money(a.to, Currency::Cny),
+            signed(a.to - a.from, Currency::Cny),
+            percent(a.to - a.from, a.from)
+        ));
+    }
+    out.join("\n\n")
+}
+
+/// 「第 2 周年」/「28 岁」/ nothing.
+pub fn nth_text(h: &days::Happened) -> String {
+    match (h.kind, h.nth) {
+        (days::Kind::Birthday, Some(n)) => format!("{n} 岁"),
+        (_, Some(n)) if n > 0 => format!("第 {n} 周年"),
+        _ => String::new(),
+    }
 }
 
 fn shown(access: &Access, key: &str) -> bool {
@@ -2879,9 +3002,11 @@ fn trips_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<(String,
 }
 
 /// The year as a whole for 年度总结: books / films finished in it, each course's lessons finished
-/// this year, the year's applications (how far they got), check-ins and trips.
-pub fn year_part(conn: &Connection, access: &Access, year: &str) -> Result<String, String> {
-    let (from, to) = (format!("{year}-01-01"), format!("{year}-12-31"));
+/// this year, the year's applications (how far they got), check-ins, 来日方长's days in it, 钱来钱往
+/// (year_money) and trips.
+/// A year not over yet (`until`): what happened up to that day (books / films keep only the year).
+pub fn year_part(conn: &Connection, access: &Access, year: &str, until: Option<&str>) -> Result<String, String> {
+    let (from, to) = (format!("{year}-01-01"), until.map_or_else(|| format!("{year}-12-31"), String::from));
     let mut out = vec![];
     for (key, label) in [("books", "读完的书"), ("films", "看完的电影和剧")] {
         if shown(access, key) {
@@ -2921,6 +3046,16 @@ pub fn year_part(conn: &Connection, access: &Access, year: &str) -> Result<Strin
         if !c.is_empty() {
             out.push(format!("【打卡】\n{}", c.iter().map(|c| format!("- {}：这一年打卡 {} 天，最长连续打了 {} 次", c.title, c.days, c.longest)).collect::<Vec<_>>().join("\n")));
         }
+    }
+    if shown(access, "days") {
+        let days = days::happened(conn, &from, &to)?;
+        if !days.is_empty() {
+            let lines: Vec<String> = days.iter().map(|h| format!("- {} {}（{}{}）", md(&h.on), h.name, h.kind.label(), Some(nth_text(h)).filter(|t| !t.is_empty()).map(|t| format!("，{t}")).unwrap_or_default())).collect();
+            out.push(format!("【来日方长 · 这一年的重要日子】（记着的纪念日、生日，不是这一年做的事）\n{}", lines.join("\n")));
+        }
+    }
+    if let Some(m) = year_money(conn, access, &from, &to)? {
+        out.push(money_text(&m));
     }
     if shown(access, "packing") {
         let trips = trips_between(conn, &from, &to)?;
@@ -3626,7 +3761,7 @@ pub mod tests {
         assert_eq!(q.label, "钱来钱往 · 收支（不发给云端，只带了在哪一页）");
         let hidden = Access { hidden: vec!["jobs".into()], ..all() };
         assert_eq!(page_query(&c, &hidden, TODAY, &page("jobs", None, Some(("job", a)), &[])).unwrap().result, "页面：投石问路");
-        // 芝麻开门 and 小拾: nothing; 首页: where
+        // 芝麻开门 and 柚子: nothing; 首页: where
         assert!(page_query(&c, &all(), TODAY, &page("vault", None, Some(("job", a)), &[])).is_none());
         assert!(page_query(&c, &all(), TODAY, &page("picky", None, None, &[])).is_none());
         assert_eq!(page_query(&c, &all(), TODAY, &page("home", None, None, &[])).unwrap().result, "页面：首页");

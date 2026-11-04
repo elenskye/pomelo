@@ -374,7 +374,7 @@ function LibraryPane(props: { library: KbLibrary; onRename: () => void; onChange
 function status(s: KbSource): { text: string; bad?: boolean } {
   if (s.missing) return { text: s.kind === "web" ? "网页副本已删除" : "找不到这个文件夹", bad: true };
   if (s.building) return { text: `正在建立索引 ${s.ready + s.failed.length}/${s.files}` };
-  if (s.kind === "folder" && s.files === 0 && s.images === 0 && !s.scans) return { text: "没有小拾能读的文件" };
+  if (s.kind === "folder" && s.files === 0 && s.images === 0 && !s.scans) return { text: "没有柚子能读的文件" };
   const parts = [s.kind === "folder" ? `${s.files} 个文件` : s.pending ? "还没建立索引" : "已建立索引"];
   if (s.images > 0) parts.push(`${s.images} 张图片`);
   if (s.scans > 0) parts.push(`${s.scans} 个扫描件`);

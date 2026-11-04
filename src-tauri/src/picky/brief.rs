@@ -1,5 +1,5 @@
-//! 今日简报 (v0.4 phase 8; requirements「小拾 · 定时任务、今日简报、年度总结」):
-//! - A card at the top of 首页: a few sentences 小拾 writes the first time 首页 is shown each day
+//! 今日简报 (v0.4 phase 8; requirements「柚子 · 定时任务、今日简报、年度总结」):
+//! - A card at the top of 首页: a few sentences 柚子 writes the first time 首页 is shown each day
 //!   (the page asks for it), kept for the day; 「重写」 writes it again. On / off and its model are set
 //!   in 管理 → 定时 (preferences `brief.enabled`, default on; `brief.model`, None = the selection;
 //!   `brief.thinking`, default on: the model must be able to, as for 定时任务; `brief.effort`, its 思考强度, None
@@ -177,7 +177,7 @@ const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 
 /// The prompt 定时 shows and the user may rewrite (preference `brief.prompt`, None = this). Its last
 /// rule gives the mood line; without one the face goes by the hour.
-pub const DEFAULT_PROMPT: &str = "你是小拾，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
+pub const DEFAULT_PROMPT: &str = "你是柚子，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
 - 根据读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。
 - 只写这几件事：今天要做的、快到期的和过期的待办（看【一步一步】）；快到的日子，还有几天或者就是今天（看【来日方长】）；该跟进的投递、正在笔试面试的（看【投石问路】）；最近两周的笔记里常在想什么，一两句，像朋友一样提一下（看【念念不忘】）。
 - 没读到的就一个字都不要提（比如没读到笔记，就不要说笔记）。
@@ -275,7 +275,7 @@ fn start(app: &AppHandle, force: bool) -> Result<Brief, String> {
     let day = st.with_db(|c| crate::modules::todo::today(c))?;
     let b = st.picky.with_db(|c| get(c, &day))?;
     if force && !b.enabled {
-        return Err("今日简报关着（小拾 → 管理 → 定时）。".into());
+        return Err("今日简报关着（柚子 → 管理 → 定时）。".into());
     }
     if !needs(&b, force) || WRITING.swap(true, Ordering::SeqCst) {
         return Ok(b);

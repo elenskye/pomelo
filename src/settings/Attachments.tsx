@@ -30,7 +30,7 @@ export function AttachmentsRow() {
   return (
     <Row
       label="附件"
-      help="笔记、任务和目标里的附件（复制进来的一份，在数据目录的 attachments 文件夹）。小拾的附件和资料另外放，算在「小拾 → 空间」里，两边不重复。不进每日备份。删掉笔记或任务后，附件先留着，在这里清理。"
+      help="笔记、任务和目标里的附件（复制进来的一份，在数据目录的 attachments 文件夹）。柚子的附件和资料另外放，算在「柚子 → 空间」里，两边不重复。不进每日备份。删掉笔记或任务后，附件先留着，在这里清理。"
       actions={usage.unused > 0 ? <Button onClick={() => void clean()}>清理没用到的</Button> : undefined}
     >
       {usage.files} 个 · {fileSize(usage.bytes)}

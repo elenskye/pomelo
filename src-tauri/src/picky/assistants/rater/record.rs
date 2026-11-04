@@ -1,11 +1,11 @@
 //! 复盘 · 记录 (Rater, v0.7 R8): a conversation fills a review. picky.db `rater_records` (migration
-//! 0031): one row per review being recorded, on a 小拾 session of its own (`private`, and left out of
-//! 小拾's list, 对话搜索, ⌘K and the 模块坞 count; deleted with the session).
+//! 0031): one row per review being recorded, on a 柚子 session of its own (`private`, and left out of
+//! 柚子's list, 对话搜索, ⌘K and the 模块坞 count; deleted with the session).
 //! - Start (`start`): the job, the date and the round (第 N 轮) → a session (its 思考 Rater's, 知识库 on) and a table
-//!   with only those. The conversation is 小拾's own (chat.rs): its model is Rater's 「复盘 · 记录」
+//!   with only those. The conversation is 柚子's own (chat.rs): its model is Rater's 「复盘 · 记录」
 //!   (chat.rs `prepare` → `route`), its system message gets the task, the table so far (JSON), the JD,
 //!   the job's newest 速查卡, its earlier reviews and the rules 复盘 (`system`), and it may call `TOOL`
-//!   (`fill`) besides 小拾's tools (Seeker 资料 reads preps and reviews; 知识库, 记忆, skills as anywhere).
+//!   (`fill`) besides 柚子's tools (Seeker 资料 reads preps and reviews; 知识库, 记忆, skills as anywhere).
 //! - `fill`: the whole table as the model has it now (a field it leaves out stays); `ready` once the user
 //!   said it's complete: the page then asks 继续记录 / 确认. Filling and the user's edits (`edit`) aren't
 //!   undone (they are the conversation's).
@@ -269,7 +269,7 @@ pub async fn picky_rater_record_edit(state: tauri::State<'_, AppState>, session:
 #[tauri::command]
 pub async fn picky_rater_record_save(state: tauri::State<'_, AppState>, session: i64, review: Review) -> Result<Interviews, String> {
     if state.picky.runs.busy_in(session) {
-        return Err("小拾还在回复，等它说完再存".into());
+        return Err("柚子还在回复，等它说完再存".into());
     }
     state.with_picky_undo("记复盘", |c| {
         save(c, session, &review)?;
@@ -280,7 +280,7 @@ pub async fn picky_rater_record_save(state: tauri::State<'_, AppState>, session:
 #[tauri::command]
 pub async fn picky_rater_record_discard(state: tauri::State<'_, AppState>, session: i64) -> Result<Vec<Draft>, String> {
     if state.picky.runs.busy_in(session) {
-        return Err("小拾还在回复，等它说完或先停下".into());
+        return Err("柚子还在回复，等它说完或先停下".into());
     }
     state.with_picky_undo("放弃这次复盘记录", |c| {
         discard(c, session)?;
@@ -301,7 +301,7 @@ mod tests {
     fn a_record_is_filled_by_the_model_and_saved_as_a_review_without_its_conversation() {
         let c = memory_db();
         let d = start(&c, job(), "2026-10-20", "第 1 轮", &Level::word("high")).unwrap();
-        // its session is private, left out of 小拾's list
+        // its session is private, left out of 柚子's list
         let (private, thinking): (bool, bool) = c.query_row("SELECT private, thinking FROM sessions WHERE id = ?1", [d.session], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert!(private && thinking && is_record(&c, d.session).unwrap());
         assert_eq!(c.query_row("SELECT effort FROM sessions WHERE id = ?1", [d.session], |r| r.get::<_, Option<String>>(0)).unwrap().as_deref(), Some("high"));

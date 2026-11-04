@@ -312,10 +312,10 @@ fn random_name(ext: &str) -> String {
 fn folder(dir: &Path) -> Result<(), String> {
     match std::fs::symlink_metadata(dir) {
         Ok(m) if m.file_type().is_dir() => Ok(()),
-        Ok(_) => Err("小拾的文件夹不是普通文件夹".into()),
+        Ok(_) => Err("柚子的文件夹不是普通文件夹".into()),
         Err(_) => {
             use std::os::unix::fs::DirBuilderExt;
-            std::fs::DirBuilder::new().mode(0o700).recursive(true).create(dir).map_err(|e| format!("没能建立小拾的文件夹：{e}"))
+            std::fs::DirBuilder::new().mode(0o700).recursive(true).create(dir).map_err(|e| format!("没能建立柚子的文件夹：{e}"))
         }
     }
 }

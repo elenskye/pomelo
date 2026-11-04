@@ -1,4 +1,4 @@
-//! 小拾's space (设置 → 小拾 → 空间管理, from Picky's StorageMaintenance):
+//! 柚子's space (设置 → 柚子 → 空间管理, from Picky's StorageMaintenance):
 //! - What it takes: picky.db (with its -wal) and the copies in picky-files/ (backups are in the
 //!   backup list).
 //! - Every stored copy with its size and what uses it (questions, project files, 知识库 web pages).

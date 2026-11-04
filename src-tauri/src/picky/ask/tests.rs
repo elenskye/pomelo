@@ -130,7 +130,7 @@ fn real_ask() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     let mut report = String::new();
     for (expect, q) in cases {
-        let mut messages = vec![Msg::new("system", "你是小拾，用中文回答。"), Msg::new("user", q)];
+        let mut messages = vec![Msg::new("system", "你是柚子，用中文回答。"), Msg::new("user", q)];
         let (mut asked, mut said, mut bad) = (0, String::new(), String::new());
         for _ in 0..4 {
             let (mut text, mut calls) = (String::new(), vec![]);

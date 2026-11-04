@@ -48,6 +48,8 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 33, name: "finance_screenshots", sql: include_str!("../migrations/0033_finance_screenshots.sql") },
     Migration { version: 34, name: "finance_ai", sql: include_str!("../migrations/0034_finance_ai.sql") },
     Migration { version: 35, name: "finance_import_order", sql: include_str!("../migrations/0035_finance_import_order.sql") },
+    Migration { version: 36, name: "note_tag_order", sql: include_str!("../migrations/0036_note_tag_order.sql") },
+    Migration { version: 37, name: "youzi", sql: include_str!("../migrations/0037_youzi.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -502,6 +504,23 @@ pub mod tests {
         let rows: Vec<(String, Option<i64>, Option<String>)> =
             c.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY tag").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
         assert_eq!(rows, [("读书".into(), Some(1), None), ("读书/摘抄".into(), None, Some("📖".into()))]);
+    }
+
+    /// v36 adds the tags' own order; v37 renames the 模块坞 category 小拾 (only that name) to 柚子.
+    #[test]
+    fn v35_upgrades_to_tag_order_and_youzi() {
+        let dir = temp_dir("v35-youzi");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..35], &dir.join("backups")).unwrap();
+        let dock = r#"{"cats":[{"id":"c1","name":"日常","tone":0,"mods":["notes"]},{"id":"c6","name":"小拾","tone":5,"mods":["picky"]}],"pinned":["picky"]}"#;
+        c.execute_batch(&format!("INSERT INTO settings (key, value) VALUES ('ui.dock', '{dock}'), ('capture.draft', '{{\"ask\":\"问小拾\"}}'); INSERT INTO note_tag_meta (tag, icon) VALUES ('读书', '📖');")).unwrap();
+        assert_eq!(migrate(&mut c, &MIGRATIONS[..37], &dir.join("backups")).unwrap(), 37);
+        let v: serde_json::Value = serde_json::from_str(&c.query_row("SELECT value FROM settings WHERE key = 'ui.dock'", [], |r| r.get::<_, String>(0)).unwrap()).unwrap();
+        assert_eq!((v["cats"][1]["name"].as_str(), v["cats"][0]["name"].as_str(), v["pinned"][0].as_str()), (Some("柚子"), Some("日常"), Some("picky")));
+        let draft: String = c.query_row("SELECT value FROM settings WHERE key = 'capture.draft'", [], |r| r.get(0)).unwrap();
+        assert!(draft.contains("问小拾")); // what the user typed stays
+        let row: (Option<String>, Option<i64>) = c.query_row("SELECT icon, sort_order FROM note_tag_meta", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(row, (Some("📖".into()), None));
     }
 
     /// v30: 五花八门 日期 fields become 年份 (values keep the year, other values as they were);

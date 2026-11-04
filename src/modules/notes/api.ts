@@ -22,8 +22,8 @@ export type Note = {
 export type NoteTask = { id: number; title: string; done: boolean; groupId: number; goalId: number | null };
 export type NoteFilter = { tag?: string; day?: string; q?: string; id?: number };
 export type NotePatch = { content?: string; pinned?: boolean; refs?: number[]; attachments?: number[] };
-/** icon: emoji shown instead of 「#」. */
-export type TagCount = { tag: string; count: number; icon: string | null };
+/** icon: emoji shown instead of 「#」; order: place among its siblings once dragged (null: after those, by pinyin). */
+export type TagCount = { tag: string; count: number; icon: string | null; order: number | null };
 /** pinned: tags in use that are pinned, in pin order. */
 export type Overview = { total: number; days: { day: string; count: number }[]; tags: TagCount[]; pinned: string[] };
 
@@ -37,6 +37,11 @@ const api = {
   remove: (id: number) => invoke<void>("note_delete", { id }),
   renameTag: (v: { from: string; to: string }) => invoke<number>("notes_tag_rename", v),
   setTag: (v: { tag: string; patch: { pinned?: boolean; icon?: string | null } }) => invoke<void>("notes_tag_set", v),
+  /** Under `parent` (null = first level; a new parent rewrites the notes), then `order` = its children's order. */
+  placeTag: (v: { tag: string; parent: string | null; order: string[] }) => invoke<number>("notes_tag_place", v),
+  orderPins: (v: { order: string[] }) => invoke<void>("notes_tag_pins", v),
+  /** → [notes changed or deleted, notes that were only the tag (left as they were)]. */
+  deleteTag: (v: { tag: string; notes: boolean }) => invoke<[number, number]>("notes_tag_delete", v),
 };
 
 export const NOTES_KEY = ["notes"];
@@ -58,6 +63,9 @@ export function useNoteMutations() {
     remove: useMutation({ mutationFn: api.remove, onSuccess, onError }),
     renameTag: useMutation({ mutationFn: api.renameTag, onSuccess }),
     setTag: useMutation({ mutationFn: api.setTag, onSuccess, onError }),
+    placeTag: useMutation({ mutationFn: api.placeTag, onSuccess, onError }),
+    orderPins: useMutation({ mutationFn: api.orderPins, onSuccess, onError }),
+    deleteTag: useMutation({ mutationFn: api.deleteTag, onSuccess }),
   };
 }
 

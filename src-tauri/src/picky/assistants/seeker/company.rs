@@ -1,4 +1,4 @@
-//! 公司资料 (v0.7 阶段 ②): `<Seeker>/knowledge/` added (by the user, once) as a folder of a 小拾 知识库
+//! 公司资料 (v0.7 阶段 ②): `<Seeker>/knowledge/` added (by the user, once) as a folder of a 柚子 知识库
 //! (read in place: never copied, changed or imported). Each sub-folder is one company (`seek-lenovo`).
 //! - A company's names: the folder name's parts that not every folder shares (`lenovo`, not `seek`),
 //!   and from the Markdown files at the top of knowledge/ (招聘索引.md): the text of a link into the

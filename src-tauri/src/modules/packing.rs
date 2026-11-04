@@ -2,7 +2,7 @@
 //! earlier trip (its items, all unpacked again) — copies the items; afterwards the lists are
 //! independent (history stays intact). A trip copied from a trip records no template.
 //! 类别 = kinds.rs (module "packing"), shared by template items and trip items.
-//! 可能漏的 (小拾): names in the templates or other trips that this trip lacks (case / spaces
+//! 可能漏的 (柚子): names in the templates or other trips that this trip lacks (case / spaces
 //! ignored), most frequent first; its own template's come first.
 
 use super::common::{self, err, some};
@@ -21,7 +21,7 @@ fn gone(what: &str) -> String {
     format!("找不到这个{what}，可能已经被删除了")
 }
 
-/// Several new items at the end of a list, as one step (小拾's ideas the user picked).
+/// Several new items at the end of a list, as one step (柚子's ideas the user picked).
 pub fn create_items(conn: &Connection, list: List, parent_id: i64, patches: Vec<ItemPatch>) -> Result<Vec<Item>, String> {
     if patches.is_empty() || patches.len() > 50 {
         return Err("一次加 1～50 件".into());

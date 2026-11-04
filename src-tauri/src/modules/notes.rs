@@ -3,12 +3,16 @@
 //!   after whitespace and runs to the next whitespace or `#`; trailing `/` is dropped; valid when
 //!   non-empty, ≤ 50 chars, no leading `/`, no `//` (the UI renderer mirrors this rule).
 //!   `note_tags` is re-derived from content on every write; filtering by a tag includes sub-tags.
-//!   Renaming a tag rewrites the notes' text (into an existing tag = merge).
+//!   Renaming a tag rewrites the notes' text (into an existing tag = merge); dragging a tag under another
+//!   is a rename too. Deleting a tag takes `#tag` (and sub-tags) out of the text — a note that was only
+//!   the tag stays as it is — or deletes the notes using it.
 //! - Refs (Flomo 批注): a note may quote others (`note_refs`, ordered); both sides list the link.
 //! - created_at (UTC, ms) is a note's identity in data files: unique, refs are exported by it.
 //! - Tag settings (`note_tag_meta`, by full path): pinned (first-level tags only; listed above the tag
-//!   tree with their sub-tags, in pin order) and an icon (an emoji, or `i:<name>` for one of the UI's
-//!   line icons). They outlive a tag's last note (it comes back with them) and move on rename.
+//!   tree with their sub-tags, in pin order), an icon (an emoji, or `i:<name>` for one of the UI's
+//!   line icons) and a place among its siblings (dragged; never-placed ones follow in pinyin order, the
+//!   UI sorts). They outlive a tag's last note (it comes back with them) and move on rename; deleting
+//!   a tag drops those no note uses any more.
 //! - Attachments (attachments.rs): images and files, ordered; saved with the note (one ⌘Z step), a
 //!   change counts as an edit; they go with the note.
 //! Formatting is the UI's business: **bold**, ==highlight==, ++underline++, `- ` / `1. ` lists
@@ -44,6 +48,17 @@ fn valid_tag(t: &str) -> bool {
 
 /// Tags in `text` as (byte start, byte end, tag) — the span covers the tag after `#`.
 pub fn tag_spans(text: &str) -> Vec<(usize, usize, String)> {
+    tokens(text).into_iter().map(|t| (t.hash + 1, t.hash + 1 + t.tag.len(), t.tag)).collect()
+}
+
+/// A tag as written: `#` at `hash`, the token running to `end` (a trailing `/` included).
+struct Token {
+    hash: usize,
+    end: usize,
+    tag: String,
+}
+
+fn tokens(text: &str) -> Vec<Token> {
     let mut out = Vec::new();
     let mut prev: Option<char> = None;
     let mut it = text.char_indices().peekable();
@@ -60,7 +75,7 @@ pub fn tag_spans(text: &str) -> Vec<(usize, usize, String)> {
             }
             let tag = text[start..end].trim_end_matches('/');
             if valid_tag(tag) {
-                out.push((start, start + tag.len(), tag.to_string()));
+                out.push(Token { hash: i, end, tag: tag.to_string() });
             }
             prev = text[..end].chars().next_back();
             continue;
@@ -68,6 +83,41 @@ pub fn tag_spans(text: &str) -> Vec<(usize, usize, String)> {
         prev = Some(c);
     }
     out
+}
+
+/// `text` without the tags at or under `root`: one space next to each goes with it, and a line (or
+/// list item) left with nothing goes too.
+pub fn strip_tag(text: &str, root: &str) -> String {
+    let mut lines = Vec::new();
+    for line in text.split('\n') {
+        let toks: Vec<Token> = tokens(line).into_iter().filter(|t| under(&t.tag, root)).collect();
+        if toks.is_empty() {
+            lines.push(line.to_string());
+            continue;
+        }
+        let mut out = String::with_capacity(line.len());
+        let mut last = 0;
+        for t in toks {
+            let (mut a, mut b) = (t.hash, t.end);
+            match line[b..].chars().next() {
+                Some(c) if c.is_whitespace() => b += c.len_utf8(),
+                _ => {
+                    if let Some(c) = line[last..a].chars().next_back().filter(|c| c.is_whitespace()) {
+                        a -= c.len_utf8();
+                    }
+                }
+            }
+            out.push_str(&line[last..a]);
+            last = b;
+        }
+        out.push_str(&line[last..]);
+        let left = out.trim();
+        let bare = left.is_empty() || left == "-" || left == "*" || left.strip_suffix(['.', ')']).is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()));
+        if !bare {
+            lines.push(out.trim_end().to_string());
+        }
+    }
+    lines.join("\n")
 }
 
 /// Distinct tags in order of appearance.
@@ -266,7 +316,7 @@ pub struct Filter {
     pub q: Option<String>,
     #[serde(default)]
     pub id: Option<i64>,
-    /// Local dates written, inclusive (小拾).
+    /// Local dates written, inclusive (柚子).
     #[serde(default)]
     pub from: Option<String>,
     #[serde(default)]
@@ -504,13 +554,7 @@ pub fn rename_tag(conn: &Connection, from: &str, to: &str) -> Result<usize, Stri
     if under(&to, from) {
         return Err("不能改成它自己下面的标签".into());
     }
-    let mut st = conn
-        .prepare("SELECT DISTINCT n.id, n.content FROM notes n JOIN note_tags t ON t.note_id = n.id WHERE t.tag = ?1 OR substr(t.tag, 1, length(?1) + 1) = ?1 || '/'")
-        .map_err(err)?;
-    let rows: Vec<(i64, String)> = st.query_map([from], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
-    if rows.is_empty() {
-        return Err(format!("没有笔记用到「#{from}」"));
-    }
+    let rows = using(conn, from)?;
     let tx = common::Tx::begin(conn)?;
     for (id, content) in &rows {
         let next = clean_content(&replace_tag(content, from, &to))?;
@@ -522,27 +566,141 @@ pub fn rename_tag(conn: &Connection, from: &str, to: &str) -> Result<usize, Stri
     Ok(rows.len())
 }
 
-// ---------- tag settings (pinned, icon) ----------
+/// Takes `#tag` (and its sub-tags) out of every note using it; with `notes`, deletes those notes instead.
+/// Returns (notes changed or deleted, notes kept as they were because the tag was all they had).
+/// Settings of the tags no note uses any more go too.
+pub fn delete_tag(conn: &Connection, tag: &str, notes: bool) -> Result<(usize, usize), String> {
+    let tag = tag.trim().trim_start_matches('#');
+    let rows = using(conn, tag)?;
+    let tx = common::Tx::begin(conn)?;
+    let mut kept = 0;
+    if notes {
+        for (id, _) in &rows {
+            tx.execute("DELETE FROM notes WHERE id = ?1", [id]).map_err(err)?;
+        }
+        attachments::prune(&tx)?;
+    } else {
+        for (id, content) in &rows {
+            match clean_content(&strip_tag(content, tag)) {
+                Ok(next) => {
+                    tx.execute(&format!("UPDATE notes SET content = ?1, updated_at = {NOW} WHERE id = ?2"), params![next, id]).map_err(err)?;
+                    sync_tags(&tx, *id, &next)?;
+                }
+                Err(_) => kept += 1,
+            }
+        }
+    }
+    tx.execute(
+        "DELETE FROM note_tag_meta WHERE (tag = ?1 OR substr(tag, 1, length(?1) + 1) = ?1 || '/')
+           AND NOT EXISTS (SELECT 1 FROM note_tags t WHERE t.tag = note_tag_meta.tag OR substr(t.tag, 1, length(note_tag_meta.tag) + 1) = note_tag_meta.tag || '/')",
+        [tag],
+    )
+    .map_err(err)?;
+    tx.commit()?;
+    Ok((rows.len() - kept, kept))
+}
 
-type Meta = (Option<i64>, Option<String>);
+/// (id, content) of the notes at or under `tag`; none is an error.
+fn using(conn: &Connection, tag: &str) -> Result<Vec<(i64, String)>, String> {
+    let mut st = conn
+        .prepare("SELECT DISTINCT n.id, n.content FROM notes n JOIN note_tags t ON t.note_id = n.id WHERE t.tag = ?1 OR substr(t.tag, 1, length(?1) + 1) = ?1 || '/'")
+        .map_err(err)?;
+    let rows: Vec<(i64, String)> = st.query_map([tag], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    if rows.is_empty() {
+        return Err(format!("没有笔记用到「#{tag}」"));
+    }
+    Ok(rows)
+}
+
+fn parent_of(tag: &str) -> Option<&str> {
+    tag.rfind('/').map(|i| &tag[..i])
+}
+
+/// Drag in the tag list: `tag` goes under `parent` (None = first level; a new parent is a rename, see
+/// rename_tag), then `order` (full paths of `parent`'s direct children, the moved one by its new path)
+/// is their order from now on. Children left out keep theirs. Returns the notes rewritten by the move.
+pub fn place_tag(conn: &Connection, tag: &str, parent: Option<&str>, order: &[String]) -> Result<usize, String> {
+    let tag = tag.trim().trim_start_matches('#');
+    let parent = parent.map(|p| p.trim().trim_start_matches('#')).filter(|p| !p.is_empty());
+    let leaf = tag.rsplit('/').next().unwrap_or(tag);
+    let to = match parent {
+        Some(p) => format!("{p}/{leaf}"),
+        None => leaf.to_string(),
+    };
+    if parent.is_some_and(|p| under(p, tag)) {
+        return Err("不能移到它自己下面".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    let moved = if to == tag { 0 } else { rename_tag(&tx, tag, &to)? };
+    let mut seen = HashSet::new();
+    let mut place = 0;
+    for t in order {
+        let t = t.trim().trim_start_matches('#');
+        if parent_of(t) != parent {
+            return Err(format!("「#{t}」不在同一层"));
+        }
+        if !seen.insert(t) {
+            continue;
+        }
+        let used: bool = tx
+            .query_row("SELECT EXISTS (SELECT 1 FROM note_tags WHERE tag = ?1 OR substr(tag, 1, length(?1) + 1) = ?1 || '/')", [t], |r| r.get(0))
+            .map_err(err)?;
+        if !used {
+            return Err(format!("没有笔记用到「#{t}」，请重新拖一次"));
+        }
+        place += 1;
+        let mut m = meta_of(&tx, t)?.unwrap_or_default();
+        m.order = Some(place);
+        put_meta(&tx, t, m)?;
+    }
+    tx.commit()?;
+    Ok(moved)
+}
+
+/// The pinned tags in `order` (all of them, as listed); pins of tags no note uses go after.
+pub fn order_pins(conn: &Connection, order: &[String]) -> Result<(), String> {
+    let pinned: Vec<String> = overview(conn)?.pinned;
+    let order: Vec<&str> = order.iter().map(|t| t.trim().trim_start_matches('#')).collect();
+    if order.len() != pinned.len() || !pinned.iter().all(|p| order.contains(&p.as_str())) {
+        return Err("置顶的标签已经变了，请重新拖一次".into());
+    }
+    let mut st = conn.prepare("SELECT tag FROM note_tag_meta WHERE pin_order IS NOT NULL ORDER BY pin_order, tag").map_err(err)?;
+    let rest: Vec<String> = st.query_map([], |r| r.get(0)).map_err(err)?.collect::<Result<Vec<String>, _>>().map_err(err)?;
+    let all = order.iter().map(|t| t.to_string()).chain(rest.into_iter().filter(|t| !order.contains(&t.as_str())));
+    let tx = common::Tx::begin(conn)?;
+    for (i, t) in all.enumerate() {
+        tx.execute("UPDATE note_tag_meta SET pin_order = ?1 WHERE tag = ?2", params![i as i64 + 1, t]).map_err(err)?;
+    }
+    tx.commit()
+}
+
+// ---------- tag settings (pinned, icon, order) ----------
+
+#[derive(Debug, Default, Clone, PartialEq)]
+struct Meta {
+    pin: Option<i64>,
+    icon: Option<String>,
+    /// Place among its siblings (None = never placed).
+    order: Option<i64>,
+}
 
 fn meta_of(conn: &Connection, tag: &str) -> Result<Option<Meta>, String> {
-    conn.query_row("SELECT pin_order, icon FROM note_tag_meta WHERE tag = ?1", [tag], |r| Ok((r.get(0)?, r.get(1)?)))
+    conn.query_row("SELECT pin_order, icon, sort_order FROM note_tag_meta WHERE tag = ?1", [tag], |r| Ok(Meta { pin: r.get(0)?, icon: r.get(1)?, order: r.get(2)? }))
         .optional()
         .map_err(err)
 }
 
 /// Writes a tag's settings; a row with nothing set is removed.
-fn put_meta(conn: &Connection, tag: &str, (pin, icon): Meta) -> Result<(), String> {
-    if pin.is_none() && icon.is_none() {
+fn put_meta(conn: &Connection, tag: &str, m: Meta) -> Result<(), String> {
+    if m == Meta::default() {
         conn.execute("DELETE FROM note_tag_meta WHERE tag = ?1", [tag]).map_err(err)?;
     } else {
         conn.execute(
             &format!(
-                "INSERT INTO note_tag_meta (tag, pin_order, icon) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(tag) DO UPDATE SET pin_order = excluded.pin_order, icon = excluded.icon, updated_at = {NOW}"
+                "INSERT INTO note_tag_meta (tag, pin_order, icon, sort_order) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(tag) DO UPDATE SET pin_order = excluded.pin_order, icon = excluded.icon, sort_order = excluded.sort_order, updated_at = {NOW}"
             ),
-            params![tag, pin, icon],
+            params![tag, m.pin, m.icon, m.order],
         )
         .map_err(err)?;
     }
@@ -550,21 +708,27 @@ fn put_meta(conn: &Connection, tag: &str, (pin, icon): Meta) -> Result<(), Strin
 }
 
 /// Rename: settings of `from` and its sub-tags follow; merging into a tag that has its own keeps
-/// the target's icon (else takes this one) and the earlier pin. A pin doesn't survive becoming a sub-tag.
+/// the target's icon and place (else takes this one's) and the earlier pin. A pin doesn't survive
+/// becoming a sub-tag; the place doesn't survive a new parent (it is a place among the old siblings).
 fn move_meta(conn: &Connection, from: &str, to: &str) -> Result<(), String> {
-    let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta").map_err(err)?;
-    let rows: Vec<(String, Option<i64>, Option<String>)> =
-        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
-    for (tag, pin, icon) in rows.into_iter().filter(|(t, _, _)| under(t, from)) {
+    let mut st = conn.prepare("SELECT tag, pin_order, icon, sort_order FROM note_tag_meta").map_err(err)?;
+    let rows: Vec<(String, Meta)> = st
+        .query_map([], |r| Ok((r.get(0)?, Meta { pin: r.get(1)?, icon: r.get(2)?, order: r.get(3)? })))
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    let new_parent = parent_of(from) != parent_of(to);
+    for (tag, m) in rows.into_iter().filter(|(t, _)| under(t, from)) {
         let target = format!("{to}{}", &tag[from.len()..]);
-        let (tpin, ticon) = meta_of(conn, &target)?.unwrap_or((None, None));
-        let pin = match (tpin, pin) {
+        let t = meta_of(conn, &target)?.unwrap_or_default();
+        let pin = match (t.pin, m.pin) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
         .filter(|_| !target.contains('/'));
+        let order = t.order.or(m.order.filter(|_| !(new_parent && tag == from)));
         conn.execute("DELETE FROM note_tag_meta WHERE tag = ?1", [&tag]).map_err(err)?;
-        put_meta(conn, &target, (pin, ticon.or(icon)))?;
+        put_meta(conn, &target, Meta { pin, icon: t.icon.or(m.icon), order })?;
     }
     Ok(())
 }
@@ -601,19 +765,18 @@ pub fn set_tag(conn: &Connection, tag: &str, p: TagPatch) -> Result<(), String> 
     if used == 0 {
         return Err(format!("没有笔记用到「#{tag}」"));
     }
-    let (pin, icon) = meta_of(conn, &tag)?.unwrap_or((None, None));
-    let pin = match p.pinned {
-        Some(true) if pin.is_none() => {
+    let mut m = meta_of(conn, &tag)?.unwrap_or_default();
+    m.pin = match p.pinned {
+        Some(true) if m.pin.is_none() => {
             Some(conn.query_row("SELECT coalesce(max(pin_order), 0) + 1 FROM note_tag_meta", [], |r| r.get::<_, i64>(0)).map_err(err)?)
         }
         Some(false) => None,
-        _ => pin,
+        _ => m.pin,
     };
-    let icon = match p.icon {
-        Some(i) => clean_icon(i)?,
-        None => icon,
-    };
-    put_meta(conn, &tag, (pin, icon))
+    if let Some(i) = p.icon {
+        m.icon = clean_icon(i)?;
+    }
+    put_meta(conn, &tag, m)
 }
 
 // ---------- overview (left column: counts, heatmap, tag tree) ----------
@@ -634,6 +797,8 @@ pub struct TagCount {
     pub count: i64,
     /// Emoji shown instead of 「#」.
     pub icon: Option<String>,
+    /// Place among its siblings once dragged (None: after those, in pinyin order — the UI sorts).
+    pub order: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -670,21 +835,27 @@ pub fn overview(conn: &Connection) -> Result<Overview, String> {
             under.entry(path.clone()).or_default().insert(id);
         }
     }
-    let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY pin_order, tag").map_err(err)?;
-    let meta: Vec<(String, Option<i64>, Option<String>)> =
-        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
-    let pinned = meta.iter().filter(|(t, p, _)| p.is_some() && !t.contains('/') && under.contains_key(t)).map(|(t, _, _)| t.clone()).collect();
-    let icons: HashMap<&str, &str> = meta.iter().filter_map(|(t, _, i)| i.as_deref().map(|i| (t.as_str(), i))).collect();
+    let mut st = conn.prepare("SELECT tag, pin_order, icon, sort_order FROM note_tag_meta ORDER BY pin_order, tag").map_err(err)?;
+    let meta: Vec<(String, Meta)> = st
+        .query_map([], |r| Ok((r.get(0)?, Meta { pin: r.get(1)?, icon: r.get(2)?, order: r.get(3)? })))
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    let pinned = meta.iter().filter(|(t, m)| m.pin.is_some() && !t.contains('/') && under.contains_key(t)).map(|(t, _)| t.clone()).collect();
+    let by_tag: HashMap<&str, &Meta> = meta.iter().map(|(t, m)| (t.as_str(), m)).collect();
     let tags = under
         .iter()
-        .map(|(tag, ids)| TagCount { tag: tag.clone(), count: ids.len() as i64, icon: icons.get(tag.as_str()).map(|i| i.to_string()) })
+        .map(|(tag, ids)| {
+            let m = by_tag.get(tag.as_str());
+            TagCount { tag: tag.clone(), count: ids.len() as i64, icon: m.and_then(|m| m.icon.clone()), order: m.and_then(|m| m.order) }
+        })
         .collect();
     Ok(Overview { total, days, tags, pinned })
 }
 
 // ---------- import / export: { notes: [{ content, pinned?, refs?: [createdAt], attachments?: [{ name, sha256 }],
 //            createdAt, updatedAt }],
-//            tags?: [{ tag, pinned?, icon? }] (pinned ones in pin order) } ----------
+//            tags?: [{ tag, pinned?, icon?, order? }] (pinned ones in pin order) } ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -713,6 +884,9 @@ pub struct TagRecord {
     pub pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Place among its siblings (v36 and older: none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -814,7 +988,7 @@ pub fn replace_all(conn: &Connection, rec: &NotesRecord) -> Result<usize, String
     for (i, t) in rec.tags.iter().enumerate() {
         let tag = clean_tag(&t.tag)?;
         // v10 files may pin a sub-tag: dropped, as migration 22 did
-        put_meta(conn, &tag, ((t.pinned && !tag.contains('/')).then_some(i as i64 + 1), clean_icon(t.icon.clone())?))?;
+        put_meta(conn, &tag, Meta { pin: (t.pinned && !tag.contains('/')).then_some(i as i64 + 1), icon: clean_icon(t.icon.clone())?, order: t.order })?;
     }
     for (task, at) in made_from {
         conn.execute("UPDATE todo_tasks SET from_note = (SELECT id FROM notes WHERE created_at = ?2) WHERE id = ?1", params![task, at]).map_err(err)?;
@@ -845,9 +1019,9 @@ pub fn export(conn: &Connection) -> Result<NotesRecord, String> {
             })
         })
         .collect::<Result<_, String>>()?;
-    let mut st = conn.prepare("SELECT tag, pin_order, icon FROM note_tag_meta ORDER BY pin_order IS NULL, pin_order, tag").map_err(err)?;
+    let mut st = conn.prepare("SELECT tag, pin_order, icon, sort_order FROM note_tag_meta ORDER BY pin_order IS NULL, pin_order, tag").map_err(err)?;
     let tags = st
-        .query_map([], |r| Ok(TagRecord { tag: r.get(0)?, pinned: r.get::<_, Option<i64>>(1)?.is_some(), icon: r.get(2)? }))
+        .query_map([], |r| Ok(TagRecord { tag: r.get(0)?, pinned: r.get::<_, Option<i64>>(1)?.is_some(), icon: r.get(2)?, order: r.get(3)? }))
         .map_err(err)?
         .collect::<Result<_, _>>()
         .map_err(err)?;
@@ -893,6 +1067,20 @@ pub fn notes_tag_set(state: State<AppState>, tag: String, patch: TagPatch) -> Re
 #[tauri::command]
 pub fn notes_tag_rename(state: State<AppState>, from: String, to: String) -> Result<usize, String> {
     state.with_undo("标签改名", |c| rename_tag(c, &from, &to))
+}
+#[tauri::command]
+pub fn notes_tag_place(state: State<AppState>, tag: String, parent: Option<String>, order: Vec<String>) -> Result<usize, String> {
+    let moved = parent_of(tag.trim().trim_start_matches('#')) != parent.as_deref().map(|p| p.trim().trim_start_matches('#')).filter(|p| !p.is_empty());
+    state.with_undo(if moved { "移动标签" } else { "标签排序" }, |c| place_tag(c, &tag, parent.as_deref(), &order))
+}
+#[tauri::command]
+pub fn notes_tag_pins(state: State<AppState>, order: Vec<String>) -> Result<(), String> {
+    state.with_undo("置顶标签排序", |c| order_pins(c, &order))
+}
+/// (notes changed or deleted, notes left as they were).
+#[tauri::command]
+pub fn notes_tag_delete(state: State<AppState>, tag: String, notes: bool) -> Result<(usize, usize), String> {
+    state.with_undo(if notes { "删除标签和笔记" } else { "删除标签" }, |c| delete_tag(c, &tag, notes))
 }
 
 #[cfg(test)]
@@ -1067,6 +1255,85 @@ mod tests {
         replace_all(&c2, &serde_json::from_value(json!({"notes": [{"content": "#a/b x"}], "tags": [{"tag": "a/b", "pinned": true}, {"tag": "a", "pinned": true}]})).unwrap()).unwrap();
         assert_eq!(overview(&c2).unwrap().pinned, ["a"]);
         assert!(validate_records(&serde_json::from_value(json!({"tags": [{"tag": "a"}, {"tag": "#a"}]})).unwrap()).is_err());
+    }
+
+    #[test]
+    fn strip_tags() {
+        assert_eq!(strip_tag("#阅读/摘录 #崔庆龙 #\n正文", "阅读"), "#崔庆龙 #\n正文");
+        assert_eq!(strip_tag("#a\n正文 #a/b 中间 #ab 结尾 #a", "a"), "正文 中间 #ab 结尾");
+        assert_eq!(strip_tag("一\n#a/ #a\n二", "a"), "一\n二"); // a line of only the tag goes
+        assert_eq!(strip_tag("- 买书 #a\n- #a\n  - 子项", "a"), "- 买书\n  - 子项");
+        assert_eq!(strip_tag("全角　#a　后面", "a"), "全角　后面");
+        assert_eq!(strip_tag("#a", "a"), "");
+        assert_eq!(strip_tag("C# 和 x#a 不是标签", "a"), "C# 和 x#a 不是标签");
+    }
+
+    #[test]
+    fn delete_tags() {
+        let c = memory_db();
+        let a = add(&c, "#读书/摘抄 #崔庆龙\n一段话");
+        let b = add(&c, "#读书");
+        let d = add(&c, "#电影 #读书 三");
+        let tp = |v: serde_json::Value| -> TagPatch { serde_json::from_value(v).unwrap() };
+        set_tag(&c, "读书", tp(json!({"pinned": true, "icon": "📖"}))).unwrap();
+        set_tag(&c, "读书/摘抄", tp(json!({"icon": "✂️"}))).unwrap();
+        assert!(delete_tag(&c, "不存在", false).is_err());
+        // a note that was only the tag stays (and so does the tag's setting)
+        assert_eq!(delete_tag(&c, "#读书", false).unwrap(), (2, 1));
+        assert_eq!(get(&c, a.id).unwrap().content, "#崔庆龙\n一段话");
+        assert_eq!((get(&c, b.id).unwrap().content.as_str(), get(&c, d.id).unwrap().content.as_str()), ("#读书", "#电影 三"));
+        let o = overview(&c).unwrap();
+        assert_eq!((o.pinned.clone(), o.tags.iter().map(|t| t.tag.as_str()).collect::<Vec<_>>()), (vec!["读书".to_string()], vec!["崔庆龙", "电影", "读书"]));
+        assert_eq!(c.query_row("SELECT count(*) FROM note_tag_meta WHERE tag = '读书/摘抄'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        // with the notes: they go, the settings too
+        assert_eq!(delete_tag(&c, "读书", true).unwrap(), (1, 0));
+        assert!(get(&c, b.id).is_err());
+        assert_eq!(c.query_row("SELECT count(*) FROM note_tag_meta", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(count(&c).unwrap(), 2);
+    }
+
+    #[test]
+    fn place_and_move_tags() {
+        let c = memory_db();
+        add(&c, "#读书/摘抄 一 #读书/小说 #电影");
+        add(&c, "#读书/传记 二 #宏观叙事/商业");
+        let order = |o: &Overview, t: &str| o.tags.iter().find(|x| x.tag == t).and_then(|x| x.order);
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // reorder siblings: no rewrite
+        assert_eq!(place_tag(&c, "读书/传记", Some("读书"), &s(&["读书/传记", "读书/小说", "读书/摘抄"])).unwrap(), 0);
+        let o = overview(&c).unwrap();
+        assert_eq!((order(&o, "读书/传记"), order(&o, "读书/小说"), order(&o, "读书/摘抄")), (Some(1), Some(2), Some(3)));
+        assert!(place_tag(&c, "读书/传记", Some("读书"), &s(&["读书/传记", "电影"])).unwrap_err().contains("同一层"));
+        assert!(place_tag(&c, "读书", Some("读书/摘抄"), &s(&[])).unwrap_err().contains("自己下面"));
+        // move under another tag (a rename), placed among its new siblings; sub-tags keep their order
+        assert_eq!(place_tag(&c, "读书", Some("宏观叙事"), &s(&["宏观叙事/读书", "宏观叙事/商业"])).unwrap(), 2);
+        let o = overview(&c).unwrap();
+        assert_eq!((order(&o, "宏观叙事/读书"), order(&o, "宏观叙事/商业"), order(&o, "宏观叙事/读书/传记")), (Some(1), Some(2), Some(1)));
+        // out to the first level: the old place doesn't come along
+        set_tag(&c, "宏观叙事/读书/小说", TagPatch { icon: Some(Some("📚".into())), ..Default::default() }).unwrap();
+        place_tag(&c, "宏观叙事/读书/小说", None, &s(&[])).unwrap();
+        let o = overview(&c).unwrap();
+        assert_eq!((order(&o, "小说"), o.tags.iter().find(|t| t.tag == "小说").unwrap().icon.as_deref()), (None, Some("📚")));
+        // merging: the target keeps its own place, the moved one's old place doesn't come along
+        place_tag(&c, "电影", None, &s(&["电影", "小说", "宏观叙事"])).unwrap();
+        add(&c, "#宏观叙事/电影 三");
+        place_tag(&c, "宏观叙事/电影", Some("宏观叙事"), &s(&["宏观叙事/商业", "宏观叙事/读书", "宏观叙事/电影"])).unwrap();
+        place_tag(&c, "电影", Some("宏观叙事"), &s(&[])).unwrap();
+        assert_eq!(order(&overview(&c).unwrap(), "宏观叙事/电影"), Some(3));
+        // pins
+        add(&c, "#甲 #乙 #丙");
+        for t in ["甲", "乙", "丙"] {
+            set_tag(&c, t, TagPatch { pinned: Some(true), ..Default::default() }).unwrap();
+        }
+        assert!(order_pins(&c, &s(&["丙", "甲"])).is_err());
+        order_pins(&c, &s(&["丙", "甲", "乙"])).unwrap();
+        assert_eq!(overview(&c).unwrap().pinned, ["丙", "甲", "乙"]);
+        // the order goes out and comes back
+        let out = export(&c).unwrap();
+        assert!(out.tags.iter().any(|t| t.tag == "宏观叙事/读书" && t.order == Some(2)));
+        let c2 = memory_db();
+        replace_all(&c2, &out).unwrap();
+        assert_eq!(serde_json::to_value(&out).unwrap(), serde_json::to_value(export(&c2).unwrap()).unwrap());
     }
 
     #[test]

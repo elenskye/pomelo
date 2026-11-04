@@ -377,7 +377,7 @@ export function ImportPanel(props: { onClose: () => void; onPosted: (day: string
   const points = settings.data?.points ?? [];
   const models = cloud.map((m) => ({ value: `cloud:${m.id}`, label: m.name }));
   const model = [settings.data?.model].find((m) => m && models.some((x) => x.value === m)) ?? models[0]?.value ?? null;
-  // 收支 local only (设置 → 小拾): nothing to read with
+  // 收支 local only (设置 → 柚子): nothing to read with
   const flowOut = useQuery({ queryKey: ["picky", "data-cloud"], queryFn: pickyApi.dataCloud }).data?.find((m) => m.module === "finance/flow")?.allowed !== false;
   const aiOk = !!model && flowOut;
   const noAi = !flowOut ? "钱来钱往 · 收支不发给云端" : !model ? "没有云端模型" : null;
@@ -575,7 +575,7 @@ export function ImportPanel(props: { onClose: () => void; onPosted: (day: string
     <section aria-label="导入账单" className="absolute inset-0 z-20 flex flex-col gap-3 bg-background px-6 pt-5 pb-4">
       <header className="flex shrink-0 flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">导入账单</h2>
-        <Bird size={14} strokeWidth={1.75} aria-label="小拾的助手 Importer" style={{ color: "var(--module-picky)" }} />
+        <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手 Importer" style={{ color: "var(--module-picky)" }} />
         <span className="mr-auto" />
         {noAi && <span className="text-xs text-muted-foreground">{noAi}</span>}
         <Dropdown ariaLabel="模型" value={model} options={models.length ? models : [{ value: null, label: "没有云端模型" }]} onChange={(m) => m && saveSettings({ model: m })} align="end" />

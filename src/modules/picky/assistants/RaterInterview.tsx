@@ -1,5 +1,5 @@
 // Rater 面试 (v0.7 阶段 ⑦, R8; Rust picky/assistants/rater/interview.rs, record.rs): one 投石问路 job at a
-// time — its 准备 (小拾 picks the bank's questions, adds likely follow-ups, writes a one-page 速查卡 the user
+// time — its 准备 (柚子 picks the bank's questions, adds likely follow-ups, writes a one-page 速查卡 the user
 // edits and saves as Word; 用这些题练一轮 starts a card round), its 复盘 (记录: a conversation with Rater's
 // model fills the table — what was asked and answered, the feedback, the user's own judgement — then
 // 继续记录 / 确认; an unfinished one waits under its job) and its 总结 (the top-right button: a 速查卡 and
@@ -330,7 +330,7 @@ function RecordStart(props: { jobs: Job[]; job: number | null; next: (j: Job | n
   </Modal>;
 }
 
-/** A record's conversation (小拾's engine, Rater's model; not in 小拾's list) beside its table. When the model
+/** A record's conversation (柚子's engine, Rater's model; not in 柚子's list) beside its table. When the model
  * says the table is filled (and after 存成复盘), the table opens to check: 继续记录 / 确认. */
 function RecordChat(props: { session: number; close: () => void; saved: (out: RaterInterviews, more: boolean) => void }) {
   const qc = useQueryClient();
@@ -402,7 +402,7 @@ function RecordChat(props: { session: number; close: () => void; saved: (out: Ra
           <Transcript ref={transcript} compact sessionKey={`rater-record-${current}`} messages={shownWith(messages.data ?? [])} busy={busy} empty={<p className="text-base">说说这场面试吧，从第一个问题开始。</p>} onEdit={(m, text) => void versionRun(m, text)} onRegenerate={(m) => void versionRun(m, null)} onSwitch={switchVersion} onOpenFile={(id) => openFile(id, toast)} onStop={stop} />
           <div className="space-y-2 px-4 pt-2 pb-4">
             <PrepNotices prep={prep} />
-            <Composer ref={composer} draftKey={draftKey} busy={busy} templates={templates} onManageTemplates={() => toast("模板在小拾页管理")} skills={ask.usable} onAskSkill={ask.toggle}
+            <Composer ref={composer} draftKey={draftKey} busy={busy} templates={templates} onManageTemplates={() => toast("模板在柚子页管理")} skills={ask.usable} onAskSkill={ask.toggle}
               tools={web?.enabled && <button type="button" aria-pressed={ask.asked.includes(WEB_SKILL)} onClick={() => ask.toggle(WEB_SKILL)} className={`${toolClass} ${ask.asked.includes(WEB_SKILL) ? "bg-accent text-accent-foreground" : ""}`}><Globe size={14} strokeWidth={1.5} /> 联网</button>}
               chips={ask.asked.length > 0 && <div className="flex flex-wrap gap-1.5 px-3 pt-2.5"><SkillChips skills={ask.skills} asked={ask.asked} onRemove={ask.toggle} /></div>}
               onSend={send} onStop={stop} />

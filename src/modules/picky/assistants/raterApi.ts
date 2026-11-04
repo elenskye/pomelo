@@ -37,7 +37,7 @@ export const RATER_KNOW = "会";
 export const RATER_UNSURE = "不熟";
 export const RATER_FOLLOW_MAX = 2;
 export const RATER_RANDOM_COUNT = 10;
-/** A card: question = the bank question (a follow-up: the one it follows up); follow-ups are dashed with 小拾's reference answer. */
+/** A card: question = the bank question (a follow-up: the one it follows up); follow-ups are dashed with 柚子's reference answer. */
 export type RaterCard = { question: string; text: string; category: string; follow: boolean; reference: string; saved: string | null; mark: string | null; markedAt: string | null; typed: string; asked: boolean };
 /** notes: card = index in the round. */
 export type RaterFeedback = { model: string; summary: string; good: string[]; gaps: string[]; notes: { card: number; text: string }[] };
@@ -46,7 +46,7 @@ export type RaterRoundRow = { id: string; mode: string; job: string | null; star
 export type RaterPractice = { running: RaterRound | null; rounds: RaterRoundRow[] };
 export type RaterStart = { mode: string; job: number | null; questions: string[]; count: number; advice: string };
 export type RaterPick = { questions: string[]; advice: string; model: string; note: string };
-/** 小拾 should comment: something typed, or a follow-up (Rust `Round::wants_comment`). */
+/** 柚子 should comment: something typed, or a follow-up (Rust `Round::wants_comment`). */
 export const wantsComment = (r: RaterRound) => r.cards.some((c) => c.follow || (c.mark != null && c.typed.trim() !== ""));
 export const RATER_PRACTICE_KEY = ["picky", "rater", "practice"];
 export const RATER_KEY = ["picky", "rater"];
@@ -95,7 +95,7 @@ export type RaterReview = { id: string; job: RaterJob; date: string; round: stri
 export type RaterSummary = { id: string; job: RaterJob; prep: string | null; reviews: string[]; analysis: RaterAnalysis; createdAt: string };
 /** Newest first. */
 export type RaterInterviews = { preps: RaterPrep[]; reviews: RaterReview[]; summaries: RaterSummary[] };
-/** 复盘 · 记录: a review being filled in a conversation (Rust rater/record.rs `Draft`); session = its 小拾 conversation. */
+/** 复盘 · 记录: a review being filled in a conversation (Rust rater/record.rs `Draft`); session = its 柚子 conversation. */
 export type RaterRecord = { session: number; review: RaterReview; ready: boolean; fills: number; createdAt: string };
 export const RATER_RECORDS_KEY = ["picky", "rater", "records"];
 export type RaterPrepAsk = { job: number; lang: string; form: string; request: string };

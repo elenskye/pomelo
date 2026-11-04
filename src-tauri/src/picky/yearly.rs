@@ -1,13 +1,13 @@
-//! 年度总结 (v0.4 phase 8; how it reads and writes: 第六轮问卷, requirements「小拾 · 定时任务、今日简报、年度总结」):
+//! 年度总结 (v0.4 phase 8; how it reads and writes: 第六轮问卷, requirements「柚子 · 定时任务、今日简报、年度总结」):
 //! the ready-made 定时任务 (builtin `yearly`, 12 月 31 日 21:00, picky migration 13; editable, can be
 //! switched off / deleted) writes its year in a conversation, without looking things up.
 //! - Reads everything, January up to its month (立即运行 mid-year: so far): data.rs `month_part` per
 //!   month (notes in full, goals and tasks done, lessons finished, applications' steps) plus the
-//!   month's conversations with 小拾 (`talks`: title and first question; not 私密, not 定时); data.rs
-//!   `year_part` (books / films, courses, applications, check-ins, trips); the numbers Rust counts
+//!   month's conversations with 柚子 (`talks`: title and first question; not 私密, not 定时); data.rs
+//!   `year_part` (books / films, courses, applications, check-ins, 来日方长's days, 钱来钱往's 收支 and
+//!   资产 each as 「发给云端」 says, trips; up to the run's day); the numbers Rust counts
 //!   (`year_counts` / `year_extras`) and the same numbers for last year up to the same day with the
-//!   differences worked out; last year's 年度总结 when there is one. 钱来钱往 and 芝麻开门 never
-//!   (money talked about in notes is fine).
+//!   differences worked out; last year's 年度总结 when there is one. 芝麻开门 never.
 //! - The whole year in one request when it fits the model's window with room for the letter
 //!   (`out_room`; a cloud model nearly always). Otherwise month readers first: each month with
 //!   something gets notes that keep dates, names and the user's own words (picky.db
@@ -16,7 +16,7 @@
 //!   model, one by one on a local one; then the letter from the notes. The notes are kept with the
 //!   run (`run_month_notes`) and shown folded under it.
 //! - Thinking as the schedule says (default on: month readers and the letter, each with room for it).
-//! - The letter: to 「你」 from 小拾; 关键词 line, 总述, 数字 (copied), themes with
+//! - The letter: to 「你」 from 柚子; 关键词 line, 总述, 数字 (copied), themes with
 //!   content, 3～5 quotes with dates, 之最, last year woven in, 写给明年; length by how much there is;
 //!   empty months / parts in a sentence; nothing about how it was read. The schedule's prompt (定时 shows
 //!   `FLOW` instead) comes last and wins.
@@ -24,6 +24,8 @@
 //!   with the run (`year_runs`) for 首页's new-year card (`card`) and next year's comparison.
 //! - Model rules as other 定时任务; for a cloud model the modules not sent are left out and said at
 //!   the top. Stopped midway: the months done are kept and reused next time.
+//! - Then Atlas's 「呈现结果」 (atlas.rs): the same model writes the scenes; that step failing never
+//!   fails the letter.
 
 use super::context::{self, Counter};
 use super::data::{self, month_label, Access, Count};
@@ -36,7 +38,7 @@ use std::collections::VecDeque;
 
 pub const BUILTIN: &str = "yearly";
 
-const READ: &str = "按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和小拾的对话（私密对话、隐藏的模块不读）";
+const READ: &str = "按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和柚子的对话（私密对话、隐藏的模块不读）";
 const NEXT: &str = "下一个有记录的月份";
 const MONTH: &str = "写这个月的要点，存下来";
 const LETTER: &str = "写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）";
@@ -45,7 +47,7 @@ pub const FLOW: &[Flow] = &[
     s("到点或立即运行（1 月运行的写刚过完的那一年）"),
     check("用的是云端模型？", "是", &["不许发给云端的模块不读，在开头说一句"], READ, "否"),
     s(READ),
-    s("读全年的书影、画画、求职、打卡、出行，数今年和去年同期的数字，找去年的年度总结（钱来钱往、芝麻开门从来不读）"),
+    s("读全年的书影、画画、求职、打卡、出行、来日方长的日子、钱来钱往（收支、资产各按「发给云端」），数今年和去年同期的数字，找去年的年度总结（芝麻开门从来不读）"),
     check("整年的记录放得下模型的上下文？", "是", &["一次读完"], LETTER, "否"),
     s(NEXT),
     check("记录和上次读时一样？", "是", &["用上次存的要点"], NEXT, "否"),
@@ -54,6 +56,7 @@ pub const FLOW: &[Flow] = &[
     again("还有月份没读（云端 4 个月一起读，本地一个一个）", NEXT),
     check("要点加起来放不下？", "是", &["不带去年的年度总结；还放不下就停下，请你换个上下文大的模型"], LETTER, "否"),
     s(LETTER),
+    s("接着让同一个模型给 Atlas 写各幕的话、从记录里挑引用，和数字快照一起存下（这一步没写成，信照样留着）"),
 ];
 /// Start the system messages (the mock model answers by them).
 pub const MONTH_MARK: &str = "【年度总结 · 每月要点】";
@@ -154,12 +157,12 @@ pub fn card(conn: &Connection, today: &str) -> Result<Option<Letter>, String> {
     letter_of(conn, &last, true, true)
 }
 
-/// Conversations with 小拾 started in [from, to] (local days): not 私密, not written by a 定时任务.
+/// Conversations with 柚子 started in [from, to] (local days): not 私密, not written by a 定时任务.
 pub fn talk_count(conn: &Connection, from: &str, to: &str) -> Result<i64, String> {
     conn.query_row("SELECT count(*) FROM sessions WHERE NOT private AND NOT scheduled AND date(created_at, 'localtime') BETWEEN ?1 AND ?2", [from, to], |r| r.get(0)).map_err(err)
 }
 
-/// 【和小拾的对话】 of a month: each one's day, title and first question (clipped). Empty: none.
+/// 【和柚子的对话】 of a month: each one's day, title and first question (clipped). Empty: none.
 pub fn talks(conn: &Connection, month: &str) -> Result<String, String> {
     let mut st = conn
         .prepare(
@@ -186,7 +189,7 @@ pub fn talks(conn: &Connection, month: &str) -> Result<String, String> {
     if all.len() > TALK_LINES {
         lines.push(format!("……还有 {} 个没列出", all.len() - TALK_LINES));
     }
-    Ok(format!("【和小拾的对话 {} 个】\n{}", all.len(), lines.join("\n")))
+    Ok(format!("【和柚子的对话 {} 个】\n{}", all.len(), lines.join("\n")))
 }
 
 /// 「3～5 月、7 月」
@@ -207,10 +210,10 @@ pub fn month_spans(months: &[String]) -> String {
 
 fn month_messages(year: &str, month: &str, text: &str, pieces: bool) -> Vec<Msg> {
     let system = format!(
-        "{MONTH_MARK}你在帮小拾准备用户 {year} 年的年度总结，现在读 {m} 的全部记录（来自用户自己的生活记录 App「柚儿园」）。把它整理成这个月的要点，交给之后写全年的人：他看不到原始记录，所以尽量留下原样的信息。\n\
+        "{MONTH_MARK}你在帮柚子准备用户 {year} 年的年度总结，现在读 {m} 的全部记录（来自用户自己的生活记录 App「柚儿园」）。把它整理成这个月的要点，交给之后写全年的人：他看不到原始记录，所以尽量留下原样的信息。\n\
          - 这个月做了什么、做成了什么、发生了什么、在想什么、心情怎样：一条一条写，带上日期；人名、地名、书名和事情的名称照原样写。\n\
          - 原话：从笔记里摘 2～4 句最能代表这个月的原话，照抄不改字，写成「原话」（{m}几日）这样。没有笔记就不摘。\n\
-         - 有和小拾的对话的，用一句话说聊了哪些话题。\n\
+         - 有和柚子的对话的，用一句话说聊了哪些话题。\n\
          - 只根据{}，不要编，不要评价；不要标题、开场白和总结语。不超过 800 字。",
         if pieces { "下面分段读出来的要点" } else { "下面的记录" },
         m = month_label(month),
@@ -220,7 +223,7 @@ fn month_messages(year: &str, month: &str, text: &str, pieces: bool) -> Vec<Msg>
 
 fn piece_messages(year: &str, month: &str, i: usize, n: usize, text: &str) -> Vec<Msg> {
     let system = format!(
-        "{PIECE_MARK}你在帮小拾准备用户 {year} 年的年度总结。{} 的记录太多，分 {n} 段读，这是第 {i} 段。记下这一段的要点：做了什么、发生了什么、在想什么（带日期，名称照原样写），再摘 1～3 句原话（照抄不改字，带日期）。只根据记录，不要编；不超过 500 字。",
+        "{PIECE_MARK}你在帮柚子准备用户 {year} 年的年度总结。{} 的记录太多，分 {n} 段读，这是第 {i} 段。记下这一段的要点：做了什么、发生了什么、在想什么（带日期，名称照原样写），再摘 1～3 句原话（照抄不改字，带日期）。只根据记录，不要编；不超过 500 字。",
         month_label(month)
     );
     vec![Msg::new("system", &system), Msg::new("user", text)]
@@ -229,6 +232,10 @@ fn piece_messages(year: &str, month: &str, i: usize, n: usize, text: &str) -> Ve
 /// What the letter is written from besides the months.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Facts {
+    /// The counts behind 【这一年的数字】 / 【和去年比】 (Atlas keeps them).
+    pub this: Vec<Count>,
+    pub last: Vec<Count>,
+    pub extras: Vec<String>,
     /// 【这一年的数字】
     pub numbers: String,
     /// 【和去年比】 and how far each year was counted.
@@ -257,7 +264,7 @@ fn year_system(year: &str, facts: &Facts) -> String {
         ""
     };
     format!(
-        "{YEAR_MARK}你是小拾，用户自己的生活记录 App「柚儿园」里的助手。现在给用户写 {year} 年的年度总结：一封写给用户的信，像一个熟悉用户的朋友，陪用户回看这一年。{until}\n\
+        "{YEAR_MARK}你是柚子，用户自己的生活记录 App「柚儿园」里的助手。现在给用户写 {year} 年的年度总结：一封写给用户的信，像一个熟悉用户的朋友，陪用户回看这一年。{until}\n\
          \n\
          怎么写：\n\
          - 称呼用户「你」。口吻温暖、具体、真诚，像朋友聊天；不要写成报告，不要堆形容词和空泛的鼓励，不要说教。\n\
@@ -265,13 +272,14 @@ fn year_system(year: &str, facts: &Facts) -> String {
          \x20 1. 第一行：**这一年的关键词**：词 · 词 · 词（3～5 个，从这一年的内容里提炼）\n\
          \x20 2. 一段总述：这一年整体是什么样的。\n\
          \x20 3. 「## 这一年的数字」：从【这一年的数字】里挑有意义的，写成几行或一小段。数字照抄，不要自己加减、估算或换算。\n\
-         \x20 4. 按主题分几块，每块一个「## 小标题」：比如读书观影、创作、学业和工作、感情和家人、身体和习惯、和小拾聊的事……只写这一年真有内容的主题，标题按内容起。每块写具体的事：书名、人名、地名、日期照原样写，说说它们在这一年里的分量和变化。\n\
+         \x20 4. 按主题分几块，每块一个「## 小标题」：比如读书观影、创作、学业和工作、感情和家人、身体和习惯、钱、和柚子聊的事……只写这一年真有内容的主题，标题按内容起。每块写具体的事：书名、人名、地名、日期照原样写，说说它们在这一年里的分量和变化。\n\
          \x20 5. 「## 你写下的话」：摘 3～5 句用户在笔记里写下的原话，照抄不改字（可以只截一句里的一段），每句一行，写成「> 原话（3 月 12 日）」。\n\
          \x20 6. 「## 这一年之最」：几条，有依据的才写，比如写笔记最多的月份、最常出现的人和事、打卡坚持最久的、评分最高的书影。{compare}\n\
          \x20 8. 最后「## 写给明年」：几句对明年的期待，或者留给明年的一两个问题。\n\
          - 篇幅看这一年的内容：内容多就写长、写细，内容少就写短，不要硬凑。\n\
          - 没有记录的月份、没有内容的事（比如这一年没画完课），一句带过（像「3～9 月几乎没有记录」），不要单独成块。\n\
          - 只根据下面给你的内容写，不要编；拿不准的就不写。\n\
+         - 【来日方长】里是记着的纪念日、生日，可以提到那一天，但不是这一年做成的事；钱的数字照【钱来钱往】写，不要自己加总或换算。\n\
          - 只写信本身：不要提你是怎么读的、读了什么没读什么、用了哪些要点或小结，结尾不要加说明或备注。\n\
          - 用户的要求（最后一段）和上面冲突时，照用户的要求。"
     )
@@ -388,8 +396,10 @@ pub(crate) trait Sink {
     fn asked(&self, usage: Option<(i64, i64)>);
     /// Text at the top of the reply (not from the model).
     fn say(&self, text: &str);
-    /// Streams the letter into the reply.
-    async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<(), String>;
+    /// Streams the letter into the reply; the letter back.
+    async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<String, String>;
+    /// The run writing it (None in tests).
+    fn run_id(&self) -> Option<i64>;
 }
 
 /// 「10 月 15 日」
@@ -406,7 +416,7 @@ fn facts(sink: &impl Sink, access: &Access, year: &str, today: &str, quiet: Vec<
     let (prev_from, prev_to) = (format!("{prev}-01-01"), format!("{prev}{}", if &to[4..] == "-02-29" { "-02-28" } else { &to[4..] }));
     let counts = |f: &str, t: &str| -> Result<Vec<Count>, String> {
         let mut c = sink.with_pomelo(|c| data::year_counts(c, access, f, t))?;
-        c.push(Count { label: "和小拾的对话", unit: "个", n: sink.with_picky(|c| talk_count(c, f, t))? });
+        c.push(Count { label: "和柚子的对话", unit: "个", n: sink.with_picky(|c| talk_count(c, f, t))? });
         Ok(c)
     };
     let (this, last) = (counts(&from, &to)?, counts(&prev_from, &prev_to)?);
@@ -422,7 +432,10 @@ fn facts(sink: &impl Sink, access: &Access, year: &str, today: &str, quiet: Vec<
     Ok(Facts {
         numbers: data::numbers_text(&this, &extras),
         compare: data::compare_text(&this, &last).map(|t| (t, counted)),
-        whole: sink.with_pomelo(|c| data::year_part(c, access, year))?,
+        this,
+        last,
+        extras,
+        whole: sink.with_pomelo(|c| data::year_part(c, access, year, until.as_deref()))?,
         quiet,
         last_letter,
         until,
@@ -506,7 +519,9 @@ pub(crate) async fn compose(sink: &mut impl Sink, target: &Target, model: (&str,
     let whole = year_messages(year, system, Read::Whole(&months), &facts, instruction);
     let used = size(&counter, &whole).await;
     if used + out_room(target, window) <= window {
-        return sink.article(whole, letter_opts(window - used, thinking, effort)).await;
+        let letter = sink.article(whole, letter_opts(window - used, thinking, effort)).await?;
+        super::atlas::write(sink, target, model, window, thinking, access, year, &facts, &letter).await;
+        return Ok(());
     }
     let notes = read_months(sink, target, model, window, thinking, year, &months).await?;
     let mut messages = year_messages(year, system, Read::Notes(&notes), &facts, instruction);
@@ -518,7 +533,9 @@ pub(crate) async fn compose(sink: &mut impl Sink, target: &Target, model: (&str,
     if used + MIN_LETTER > window {
         return Err("这一年的要点加起来放不下这个模型的上下文，换一个上下文大的模型（比如云端）再运行。".into());
     }
-    sink.article(messages, letter_opts(window - used, thinking, effort)).await
+    let letter = sink.article(messages, letter_opts(window - used, thinking, effort)).await?;
+    super::atlas::write(sink, target, model, window, thinking, access, year, &facts, &letter).await;
+    Ok(())
 }
 
 // ---------- commands ----------
@@ -573,7 +590,10 @@ pub(crate) mod tests {
         fn say(&self, text: &str) {
             self.said.borrow_mut().push_str(text);
         }
-        async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<(), String> {
+        fn run_id(&self) -> Option<i64> {
+            None
+        }
+        async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<String, String> {
             self.request = (messages[0].content.clone(), messages[1].content.clone());
             self.thinking = opts.thinking;
             self.effort = opts.effort.clone();
@@ -584,8 +604,8 @@ pub(crate) mod tests {
                 }
             })
             .await?;
-            self.article = out;
-            Ok(())
+            self.article = out.clone();
+            Ok(out)
         }
     }
 
@@ -623,6 +643,21 @@ pub(crate) mod tests {
         c
     }
 
+    /// `seeded` plus what Atlas and the new parts read: 来日方长's days (a birthday, a yearly one, a
+    /// December birthday, a monthly one), last year's note on 03-10, a payment, two asset totals.
+    pub(crate) fn seeded_for_atlas() -> Connection {
+        let c = seeded();
+        c.execute_batch(
+            "INSERT INTO notes (content, created_at) VALUES ('去年三月十日也想过换工作', '2025-03-10T02:00:00.000Z');
+             INSERT INTO days (kind, name, date, repeat) VALUES ('birthday', '妈妈生日', '1968-05-20', 'year'), ('day', '在一起', '2024-02-14', 'year'), ('birthday', '十二月的生日', '--12-25', 'year'), ('day', '每月的房租日', '2026-01-15', 'month');
+             INSERT INTO fin_entries (flow, amount, currency, day) VALUES ('out', 4500, 'CNY', '2026-04-01');
+             INSERT INTO fin_accounts (name, currency, sort_order) VALUES ('招行', 'CNY', 1);
+             INSERT INTO fin_balances (account_id, day, amount) VALUES (1, '2025-12-31', 100000), (1, '2026-09-30', 150000);",
+        )
+        .unwrap();
+        c
+    }
+
     /// Thinking off unless said: the counts below assume the plain room.
     fn run(s: &mut TestSink, window: i64, today: &str) {
         run_thinking(s, window, today, false);
@@ -648,18 +683,18 @@ pub(crate) mod tests {
         assert!(march.contains("【做完的事 5 件】（每次重复、打卡、进度记录各算一件）\n- 背单词 ×4（生活）\n- 03-02 办游泳卡（生活）"), "{march}");
         assert!(!march.contains("一月的计划"));
         assert!(data::month_part(&c, &all, "2026-02").unwrap().is_empty());
-        let whole = data::year_part(&c, &all, "2026").unwrap();
+        let whole = data::year_part(&c, &all, "2026", None).unwrap();
         assert!(whole.contains("《三体》（刘慈欣，5 星）") && !whole.contains("旧书") && whole.contains("这一年画完 1 节，一共画完 1 / 2 节"));
         assert!(whole.contains("- 背单词：这一年打卡 4 天，最长连续打了 3 次") && whole.contains("【出行 1 次】\n- 3 月 28 日 出发：东京看樱花（五天）"), "{whole}");
         // 投石问路: the steps taken that month, and the year's applications
         data::tests::seed_jobs(&c);
         let sept = data::month_part(&c, &all, "2026-09").unwrap();
         assert!(sept.contains("【求职进展") && sept.contains("甲公司"), "{sept}");
-        assert!(data::year_part(&c, &all, "2026").unwrap().contains("【求职】这一年有进展的投递"));
+        assert!(data::year_part(&c, &all, "2026", None).unwrap().contains("【求职】这一年有进展的投递"));
         // a cloud model without 念念不忘: notes left out and said
         let cloud = Access { cloud: true, cloud_allowed: vec!["todo".into(), "drawing".into(), "jobs".into(), "packing".into(), "books".into(), "films".into()], ..Default::default() };
         assert!(!data::month_part(&c, &cloud, "2026-03").unwrap().contains("想换工作了"));
-        assert_eq!(data::year_left_out(&cloud), ["念念不忘"]);
+        assert_eq!(data::year_left_out(&cloud), ["念念不忘", "来日方长", "钱来钱往 · 收支", "钱来钱往 · 资产"]);
     }
 
     #[test]
@@ -692,7 +727,7 @@ pub(crate) mod tests {
         let mut s = sink(seeded(), Target::Mock { thinking: false });
         run_at(&mut s, 16384, "2026-03-31", true, Some("high"));
         assert_eq!(s.effort.as_deref(), Some("high"));
-        assert_eq!((*s.calls.borrow(), s.months.borrow().len()), (0, 0), "no month readers");
+        assert_eq!((*s.calls.borrow(), s.months.borrow().len()), (1, 0), "no month readers (the one call: Atlas's scenes)");
         assert!(s.article.contains("一次读完了全年") && s.article.contains("这一年的关键词"), "{}", s.article);
         assert_eq!(s.thinking, Some(true));
         let (system, user) = &s.request;
@@ -721,15 +756,15 @@ pub(crate) mod tests {
         assert!(s.article.contains("读了 2 个月的要点"), "{}", s.article);
         assert!(s.request.1.contains("【每个月的要点】") && s.request.1.contains("模拟要点"));
         let first = *s.calls.borrow();
-        assert_eq!(first, 2);
-        // again: nothing changed, no month written
+        assert_eq!(first, 3); // two months, then Atlas's scenes
+        // again: nothing changed, no month written (Atlas's scenes again)
         s.months.borrow_mut().clear();
         run(&mut s, 6144, "2026-03-31");
-        assert_eq!((*s.calls.borrow(), s.months.borrow().len()), (first, 2));
+        assert_eq!((*s.calls.borrow(), s.months.borrow().len()), (first + 1, 2));
         // a new note in March: only March again
         s.pomelo.execute("INSERT INTO notes (content, created_at) VALUES ('三月最后一条', '2026-03-30T02:00:00.000Z')", []).unwrap();
         run(&mut s, 6144, "2026-03-31");
-        assert_eq!(*s.calls.borrow(), first + 1);
+        assert_eq!(*s.calls.borrow(), first + 3);
     }
 
     #[test]
@@ -785,7 +820,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let t = talks(&p, "2026-03").unwrap();
-        assert_eq!(t, "【和小拾的对话 2 个】\n- 03-02 租房：上海哪里租房便宜？\n- 03-04 三月第一句很长的问题");
+        assert_eq!(t, "【和柚子的对话 2 个】\n- 03-02 租房：上海哪里租房便宜？\n- 03-04 三月第一句很长的问题");
         assert!(talks(&p, "2026-04").unwrap().is_empty());
         assert_eq!(talk_count(&p, "2026-01-01", "2026-12-31").unwrap(), 2);
         assert_eq!(month_spans(&["2026-02".into(), "2026-03".into(), "2026-04".into(), "2026-07".into(), "2026-09".into(), "2026-10".into()]), "2～4 月、7 月、9～10 月");

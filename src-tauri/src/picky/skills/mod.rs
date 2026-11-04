@@ -1,6 +1,6 @@
-//! 插件库 (v0.4 phase 6): skills 小拾 and Pomelo's other model features use.
+//! 插件库 (v0.4 phase 6): skills 柚子 and Pomelo's other model features use.
 //! - Built in (Rust): 书单检索 (books), 影单检索 (films), 联网搜索 (web). Each has 启用 and
-//!   「小拾自己决定用」 (offered as a tool on every reply; off = only when a question asks for it with
+//!   「柚子自己决定用」 (offered as a tool on every reply; off = only when a question asks for it with
 //!   「/名称」 or the 联网 button), and its own keys (only in the keychain, KeyStore). Defaults: books /
 //!   films on and automatic; web on, not automatic (it sends search words that may carry private
 //!   content to Tavily). The switches live in picky.db `preferences` (`skills`).
@@ -8,7 +8,7 @@
 //!   when not automatic; 联网 searches the question before the model is asked (chat.rs).
 //! - Results are numbered web sources (cite.rs) saved with the run; their 「查了」 entries go along with
 //!   later questions (data::WEB is never private).
-//! - Elsewhere (`work`): 补全 and 一句话填好 of a book / film, and a 新书影 小拾 proposes, take the
+//! - Elsewhere (`work`): 补全 and 一句话填好 of a book / film, and a 新书影 柚子 proposes, take the
 //!   creator / country / 类型 from the lookup when the skill is on.
 //! - v0.4.5 阶段 9: 读文件 (files.rs: the question's own files — outline, read, find) and 查知识库 (the
 //!   conversation's 知识库, knowledge.rs), on and automatic by default, offered only where there is
@@ -101,7 +101,7 @@ const CHECKED: &str = "检查模型的回答（素材、改自对得上，去掉
 const POLISH_BANK: Flow = check("说了题库里哪道题？", "是", &["按字找那道题（没找到或有几道 → 问你）", "Rater 的模型重写它的答案"], CHECKED, "否");
 const QBANK_END: [Flow; 5] = [
     s(CHECKED),
-    check("回答用不了？", "是", &["告诉小拾没出成"], "", "否"),
+    check("回答用不了？", "是", &["告诉柚子没出成"], "", "否"),
     s("放进确认卡片"),
     s("你勾选、确认"),
     s("写进题库（一步撤销）"),
@@ -135,7 +135,7 @@ pub const SKILLS: &[Skill] = &[
             check("作者对不上？", "是", &["以 Wikidata 为准，注明不一样"], "作者 · 国家 · 类型", "对得上"),
             s("作者 · 国家 · 类型"),
         ],
-        features: &["查书的作者、国家、类型，回答标出处", "书影面板的「补全」「一句话填好」", "小拾提议新书时补上作者、国家、类型", "发出去的只有书名（和作者）"],
+        features: &["查书的作者、国家、类型，回答标出处", "书影面板的「补全」「一句话填好」", "柚子提议新书时补上作者、国家、类型", "发出去的只有书名（和作者）"],
         keys: &[],
         auto: true,
         writes: false,
@@ -153,7 +153,7 @@ pub const SKILLS: &[Skill] = &[
             s("不核对，只用 Wikidata"),
             s("导演 · 国家 · 类型"),
         ],
-        features: &["查电影、剧集、动漫的导演、国家、类型，回答标出处", "书影面板的「补全」「一句话填好」，小拾提议新影视时补上", "没填 TMDb Token 时电影、剧集只用 Wikidata", "发出去的只有名称（和导演）"],
+        features: &["查电影、剧集、动漫的导演、国家、类型，回答标出处", "书影面板的「补全」「一句话填好」，柚子提议新影视时补上", "没填 TMDb Token 时电影、剧集只用 Wikidata", "发出去的只有名称（和导演）"],
         keys: &[KeySpec { account: works::TMDB_ACCOUNT, label: "TMDb Read Access Token", required: false }],
         auto: true,
         writes: false,
@@ -164,10 +164,10 @@ pub const SKILLS: &[Skill] = &[
         tool: "pomelo_web_search",
         flow: &[
             s("问题"),
-            check("用了斜杠命令或「联网」？", "是", &["先拿问题直接搜一次，结果和问题一起给小拾"], "小拾写搜索词", "否"),
-            s("小拾写搜索词"),
+            check("用了斜杠命令或「联网」？", "是", &["先拿问题直接搜一次，结果和问题一起给柚子"], "柚子写搜索词", "否"),
+            s("柚子写搜索词"),
             s("Tavily 搜索，读搜到的网页摘要"),
-            again("不够就换个词再搜（一条回答最多查 4 轮）", "小拾写搜索词"),
+            again("不够就换个词再搜（一条回答最多查 4 轮）", "柚子写搜索词"),
             s("回答带来源"),
         ],
         features: &["上网查新的信息，回答带来源，点了用浏览器打开", "用斜杠命令时直接拿问题去搜（可能带上私人内容）", "搜到的存进对话，追问还用得上", "定时任务不用按「联网」，打开了、填了 Key 就能自己搜", "要填 Tavily API Key"],
@@ -183,8 +183,8 @@ pub const SKILLS: &[Skill] = &[
             s("这个问题带的文件"),
             check("放得进这次的篇幅？", "是", &["全文随问题发给模型"], "回答标出处", "放不下"),
             s("先给目录和按问题挑出的段落"),
-            s("小拾按段号读 / 按字找"),
-            again("不够就再读（一条回答最多查 4 轮）", "小拾按段号读 / 按字找"),
+            s("柚子按段号读 / 按字找"),
+            again("不够就再读（一条回答最多查 4 轮）", "柚子按段号读 / 按字找"),
             check("问到文档里的图？", "是", &["列出 Word、PowerPoint、PDF 里的图片", "云端模型看一张（PDF 看整页），本地模型看不了"], "回答标出处", "否"),
             s("回答标出处"),
         ],
@@ -219,8 +219,8 @@ pub const SKILLS: &[Skill] = &[
             s("问题"),
             check("要新建一个 Word？", "是", &["名称和内容放进卡片", "你选文件夹、点「保存」才存"], "", "改已有的"),
             s("附件或知识库里的 Word，读成编号的段落"),
-            s("小拾提出修改"),
-            check("这一段改不了（表格、域，或格式对不上）？", "是", &["不放进卡片，告诉小拾为什么"], "小拾提出修改", "能改"),
+            s("柚子提出修改"),
+            check("这一段改不了（表格、域，或格式对不上）？", "是", &["不放进卡片，告诉柚子为什么"], "柚子提出修改", "能改"),
             s("放进确认卡片（同一段再改就换掉）"),
             s("你勾选、点「写入文件」"),
             check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
@@ -237,7 +237,7 @@ pub const SKILLS: &[Skill] = &[
         tool: toolbox::TEXT_TOOL,
         flow: &[
             s("附件或知识库里的 Markdown / 文本，读成编号的段落"),
-            s("小拾提出修改"),
+            s("柚子提出修改"),
             s("放进确认卡片（同一段再改就换掉）"),
             s("你勾选、点「写入文件」"),
             check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
@@ -256,8 +256,8 @@ pub const SKILLS: &[Skill] = &[
             s("问题"),
             check("要新建一个 Excel？", "是", &["表和内容放进卡片", "你选文件夹、点「保存」才存"], "", "改已有的"),
             s("附件或知识库里的 .xlsx，读成一行行带位置的格子"),
-            s("小拾提出修改：改格子、加行、删行"),
-            check("改不了（合并的格子、设了保护的表，有图表的表不能加删行）？", "是", &["不放进卡片，告诉小拾为什么"], "小拾提出修改：改格子、加行、删行", "能改"),
+            s("柚子提出修改：改格子、加行、删行"),
+            check("改不了（合并的格子、设了保护的表，有图表的表不能加删行）？", "是", &["不放进卡片，告诉柚子为什么"], "柚子提出修改：改格子、加行、删行", "能改"),
             s("放进确认卡片（同一格再改就换掉）"),
             s("你勾选、点「写入文件」"),
             check("文件这之间被改过？", "是", &["不写，要重新读"], "", "没有"),
@@ -274,7 +274,7 @@ pub const SKILLS: &[Skill] = &[
         tool: seeker::TOOL,
         flow: &[
             s("问到求职资料"),
-            check("Seeker / Rater 隐藏了，或云端模型没被允许？", "是", &["不读，告诉小拾为什么"], "", "否"),
+            check("Seeker / Rater 隐藏了，或云端模型没被允许？", "是", &["不读，告诉柚子为什么"], "", "否"),
             s("挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"),
             s("只读启用的，按剩下的篇幅截短"),
             again("不够就换一种查法（一条回答最多查 4 轮）", "挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"),
@@ -290,7 +290,7 @@ pub const SKILLS: &[Skill] = &[
         name: "rater-qbank-resume",
         tool: qbank::RESUME_TOOL,
         flow: &[
-            s("小拾写出经历、题目里的字或卡片编号"),
+            s("柚子写出经历、题目里的字或卡片编号"),
             REWRITE_PENDING,
             POLISH_BANK,
             s("找经历：没说就用简历草稿里的（找不到 → 问你）"),
@@ -308,7 +308,7 @@ pub const SKILLS: &[Skill] = &[
         name: "rater-qbank-general",
         tool: qbank::GENERAL_TOOL,
         flow: &[
-            s("小拾写出题目里的字或卡片编号"),
+            s("柚子写出题目里的字或卡片编号"),
             REWRITE_PENDING,
             POLISH_BANK,
             s("读基本信息、已确认事实、经历一览和已有的通用题"),
@@ -325,7 +325,7 @@ pub const SKILLS: &[Skill] = &[
         name: "rater-qbank-job",
         tool: qbank::JOB_TOOL,
         flow: &[
-            s("小拾写出岗位、题目里的字或卡片编号"),
+            s("柚子写出岗位、题目里的字或卡片编号"),
             REWRITE_PENDING,
             POLISH_BANK,
             check("投石问路里对不上一个岗位？", "是", &["没说、没找到或有几个 → 问你"], "", "对上了"),
@@ -421,7 +421,7 @@ pub fn checked_forced(conn: &Connection, p: &super::Picky, asked: &[String]) -> 
             return Err(format!("「{}」在插件库里关着", s.name));
         }
         if !ready(p, s) {
-            return Err(format!("「{}」还没填 {}（小拾 → 插件库）", s.name, s.keys.iter().filter(|k| k.required).map(|k| k.label).collect::<Vec<_>>().join("、")));
+            return Err(format!("「{}」还没填 {}（柚子 → 插件库）", s.name, s.keys.iter().filter(|k| k.required).map(|k| k.label).collect::<Vec<_>>().join("、")));
         }
         if !out.contains(&s.key.to_string()) {
             out.push(s.key.to_string());
@@ -737,7 +737,7 @@ pub fn picky_skill_set(state: State<AppState>, key: String, enabled: Option<bool
 #[tauri::command]
 pub fn picky_skill_key_save(state: State<AppState>, account: String, key: String) -> Result<Vec<SkillInfo>, String> {
     let spec = key_spec(&account)?;
-    state.picky.keys.save(spec.account, &key, &format!("Pomelo 小拾 · {}", spec.label))?;
+    state.picky.keys.save(spec.account, &key, &format!("Pomelo 柚子 · {}", spec.label))?;
     state.picky.with_db(|c| Ok(infos(c, &state.picky)))
 }
 
@@ -778,7 +778,7 @@ pub fn mock_calls(question: &str, system: &str) -> Vec<(&'static str, Value)> {
     }
     // 「存成 Excel」: Excel 工具箱 proposes a new workbook
     if ["存成", "写成", "做成", "新建"].iter().any(|w| q.contains(&format!("{w} Excel")) || q.contains(&format!("{w}Excel"))) {
-        out.push((toolbox::EXCEL_TOOL, json!({ "view": "create", "name": "小拾的表格", "sheets": [{ "name": "十月", "rows": [["项目", "金额", "日期"], ["房租", 3000, "2026-10-01"]] }] })));
+        out.push((toolbox::EXCEL_TOOL, json!({ "view": "create", "name": "柚子的表格", "sheets": [{ "name": "十月", "rows": [["项目", "金额", "日期"], ["房租", 3000, "2026-10-01"]] }] })));
     }
     // 「按柚子银行的 JD 出 5 道突击题」「补 3 道通用题」: the 题库 SKILLs (job: the words between 按 and 的)
     if (q.contains('出') || q.contains('补')) && q.contains("道") && q.contains('题') {

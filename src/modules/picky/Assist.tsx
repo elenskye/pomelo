@@ -1,4 +1,4 @@
-// 小拾 helps in the edit panels (v0.3.5 阶段 4; rules in src-tauri/src/picky/assist.rs): results only go into
+// 柚子 helps in the edit panels (v0.3.5 阶段 4; rules in src-tauri/src/picky/assist.rs): results only go into
 // the panel (the user saves as usual, ⌘Z works) or into a list to pick from (「加上」 adds in one undoable step).
 // - <Polish>: a small button in the field's corner (on hover / focus) opens a box: this time's request,
 //   then the rewritten text with the changes marked, 「替换」 puts it into the field.
@@ -72,7 +72,7 @@ export function AssistAction(props: { onClick: () => void; disabled?: boolean; c
   );
 }
 
-/** These helps are 小拾's: gone while 小拾 is hidden. */
+/** These helps are 柚子's: gone while 柚子 is hidden. */
 export function useAssistOn() {
   const [hidden] = useHiddenModules();
   return !hidden.includes("picky");

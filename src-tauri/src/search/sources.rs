@@ -131,15 +131,15 @@ pub const SOURCES: &[Source] = &[
               FROM jobs j LEFT JOIN kinds k ON k.id = j.kind_id",
     },
     Source { module: "notes", kind: "note", label: "笔记", db: Db::Pomelo, sql: "SELECT id, content, NULL, NULL, date(created_at, 'localtime'), created_at, content FROM notes" },
-    Source { module: "picky", kind: "session", label: "小拾对话", db: Db::Picky, sql: concat!("SELECT id, title, NULL, NULL, NULL, created_at, title FROM sessions WHERE id NOT IN ", crate::picky::library::unlisted!()) },
+    Source { module: "picky", kind: "session", label: "柚子对话", db: Db::Picky, sql: concat!("SELECT id, title, NULL, NULL, NULL, created_at, title FROM sessions WHERE id NOT IN ", crate::picky::library::unlisted!()) },
     Source {
         module: "picky",
         kind: "message",
-        label: "小拾对话",
+        label: "柚子对话",
         db: Db::Picky,
         // parent = the conversation; detail = who wrote it; reasoning never
         sql: concat!(
-            "SELECT m.id, s.title, CASE m.role WHEN 'user' THEN '你' ELSE coalesce(r.model_name, '小拾') END, m.session_id, NULL, m.created_at, m.content
+            "SELECT m.id, s.title, CASE m.role WHEN 'user' THEN '你' ELSE coalesce(r.model_name, '柚子') END, m.session_id, NULL, m.created_at, m.content
               FROM messages m JOIN sessions s ON s.id = m.session_id LEFT JOIN runs r ON r.id = m.run_id
               WHERE m.state <> 'streaming' AND trim(m.content) <> '' AND m.session_id NOT IN ",
             crate::picky::library::unlisted!()

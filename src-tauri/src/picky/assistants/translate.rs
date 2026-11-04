@@ -6,7 +6,7 @@
 //!   of LANGS. The same language on both sides is refused.
 //! - 提示词: the user's own paragraph (≤ 2000 chars) and one keyword per group at most (长度、专业度、语气、
 //!   意译或直译; GROUPS), turned into lines of the system message (`instructions`, also the preview).
-//! - Model: as a 定时任务 (schedule.rs `route`): its own choice, None = 小拾现在选的; a stopped local model is
+//! - Model: as a 定时任务 (schedule.rs `route`): its own choice, None = 柚子现在选的; a stopped local model is
 //!   started (and left running: the user is at work), another running local model is used and said so.
 //!   思考 as set: off by default here (the user's choice: Qwen3.5 9B thinks minutes even for two
 //!   sentences), on when the user turns it on; the page offers only models that fit.
@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 
 /// Starts the system message (the mock model answers by it).
-pub const MARK: &str = "【小拾翻译】";
+pub const MARK: &str = "【柚子翻译】";
 const KEY: &str = "assistant.translate";
 pub const MAX_INPUT: usize = 100_000;
 const PROMPT_CHARS: usize = 2000;
@@ -135,7 +135,7 @@ pub struct Settings {
     pub source: String,
     /// zh-en | a LANGS code
     pub target: String,
-    /// local:<key> | cloud:<id>; None = 小拾现在选的.
+    /// local:<key> | cloud:<id>; None = 柚子现在选的.
     pub model: Option<String>,
     pub thinking: bool,
     /// Its 思考强度 (None: the model's default).

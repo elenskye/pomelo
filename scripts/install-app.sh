@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Signed with the fixed self-signed certificate (tauri.conf.json bundle.macOS.signingIdentity) so macOS
-# sees every update as the same app: keychain items (小拾's API keys) stay readable.
+# sees every update as the same app: keychain items (柚子's API keys) stay readable.
 if ! security find-identity -v -p codesigning | grep -q "Pomelo Self-Signed"; then
   echo "缺少签名证书 Pomelo Self-Signed（钥匙串访问 → 证书助理 → 创建证书，见 docs/architecture.md）" >&2
   exit 1

@@ -36,7 +36,7 @@ export type Job = {
   waitingDays: number | null;
   followUp: boolean;
 };
-/** 统计 (jobs.rs `stats`; 首页 and 小拾 use the same numbers). */
+/** 统计 (jobs.rs `stats`; 首页 and 柚子 use the same numbers). */
 export type JobStats = {
   today: string;
   applied: number;

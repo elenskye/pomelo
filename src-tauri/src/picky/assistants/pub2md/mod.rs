@@ -4,7 +4,7 @@
 //! - Two models: the Worker cleans and translates each chunk; the Supervisor reviews the cut, makes the term
 //!   list (looking terms up on the web: search.rs), troubleshoots chunks that fail the program's checks,
 //!   reviews chunks (精修, a switch) and reads the whole translation through (通读). Each has its own
-//!   model (None = 小拾现在选的) and thinking level.
+//!   model (None = 柚子现在选的) and thinking level.
 //! - No data folder of its own: each document gets a folder in the output folder (default 下载) holding the
 //!   results, the work log and, while it isn't done, a hidden `.pub2md` with what 继续 needs.
 //! - Settings and the last 10 documents live in picky.db `preferences` (`assistant.pub2md`); never undone,
@@ -154,7 +154,7 @@ impl Format {
     }
 }
 
-/// The backup model at first: DeepSeek Flash (小拾's default cloud model).
+/// The backup model at first: DeepSeek Flash (柚子's default cloud model).
 pub const BACKUP: &str = "cloud:deepseek-flash";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -165,7 +165,7 @@ pub struct Settings {
     pub md: bool,
     /// Bilingual text: keep only the English.
     pub english_only: bool,
-    /// local:<key> | cloud:<id>; None = 小拾现在选的.
+    /// local:<key> | cloud:<id>; None = 柚子现在选的.
     pub worker: Option<String>,
     pub worker_level: Level,
     pub supervisor: Option<String>,
@@ -409,7 +409,7 @@ pub struct View {
 }
 
 fn view(st: &AppState) -> Result<View, String> {
-    // what needs 小拾's database or the keychain first, then the queue's lock alone
+    // what needs 柚子's database or the keychain first, then the queue's lock alone
     let saved = st.picky.with_db(|c| Ok(load(c)))?;
     let keys = &st.picky.keys;
     let web_default = search::service_of(&st.picky, saved.settings.supervisor.as_deref()).is_some_and(search::native);
@@ -698,8 +698,8 @@ pub fn picky_pub2md_keys_save(state: State<AppState>, id: String, key: String) -
     let k = &state.picky.keys;
     crate::picky::cloud::checked_key(&id).map_err(|_| "App ID 为空或格式不对".to_string())?;
     crate::picky::cloud::checked_key(&key).map_err(|_| "App Key 为空或格式不对".to_string())?;
-    k.save(mathpix::ID_ACCOUNT, &id, "Pomelo 小拾 · Mathpix App ID")?;
-    k.save(mathpix::KEY_ACCOUNT, &key, "Pomelo 小拾 · Mathpix App Key")?;
+    k.save(mathpix::ID_ACCOUNT, &id, "Pomelo 柚子 · Mathpix App ID")?;
+    k.save(mathpix::KEY_ACCOUNT, &key, "Pomelo 柚子 · Mathpix App Key")?;
     view(&state)
 }
 
@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn the_page_opens_with_the_supervisor_left_to_picky() {
-        // it hung the app: the web default asked for 小拾's selection while holding its database lock
+        // it hung the app: the web default asked for 柚子's selection while holding its database lock
         let dir = crate::db::tests::temp_dir("pub2md-view");
         let st = std::sync::Arc::new(crate::AppState::init(crate::paths::DataPaths::new(dir.to_path_buf()), &dir, crate::picky::Mode::Mock));
         let (tx, rx) = std::sync::mpsc::channel();

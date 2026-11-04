@@ -18,7 +18,7 @@ export function backupLabel(label: string) {
 
 const minutes = (b: BackupInfo) => b.createdAt.slice(0, 16);
 
-const storeName = (b: BackupInfo) => (b.store === "picky" ? "小拾" : "生活数据");
+const storeName = (b: BackupInfo) => (b.store === "picky" ? "柚子" : "生活数据");
 
 const size = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -56,7 +56,7 @@ export function BackupsSection() {
       message: (
         <div className="space-y-1">
           <p>
-            现在的{b.store === "picky" ? "小拾数据（对话和设置）" : "生活数据（小拾以外的全部）"}会换成 <span className="text-foreground">{minutes(b)}</span>（{backupLabel(b.label)}）这份备份里的内容。
+            现在的{b.store === "picky" ? "柚子数据（对话和设置）" : "生活数据（柚子以外的全部）"}会换成 <span className="text-foreground">{minutes(b)}</span>（{backupLabel(b.label)}）这份备份里的内容。
           </p>
           <p>恢复前会先把现在的数据备份一份，恢复错了可以再从那份恢复回来。</p>
         </div>
@@ -74,7 +74,7 @@ export function BackupsSection() {
   return (
     <Section
       title="备份"
-      help="生活数据和小拾分开备份、分开恢复。每天第一次打开 App 时各自动备份一份：生活数据保留最近 30 份，小拾保留最近 7 份，更早的每个月只留一份；升级前、导入前、恢复前的备份各留最近 3 份；手动备份不会自动删除。恢复前会先备份现在的数据。"
+      help="生活数据和柚子分开备份、分开恢复。每天第一次打开 App 时各自动备份一份：生活数据保留最近 30 份，柚子保留最近 7 份，更早的每个月只留一份；升级前、导入前、恢复前的备份各留最近 3 份；手动备份不会自动删除。恢复前会先备份现在的数据。"
       actions={
         <>
           <Button onClick={() => void api.revealBackupsDir().catch((e) => toast(errorText(e), "error"))}>

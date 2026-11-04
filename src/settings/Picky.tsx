@@ -1,5 +1,5 @@
-// 设置 → 小拾: model services (status, switch, stop), the embedding and rerank services, 使用记忆, 发给云端 (which modules'
-// data a cloud model may get when 小拾 looks things up), cloud API keys (keychain
+// 设置 → 柚子: model services (status, switch, stop), the embedding and rerank services, 使用记忆, 发给云端 (which modules'
+// data a cloud model may get when 柚子 looks things up), cloud API keys (keychain
 // only: shown as 已保存, never read back) and the cloud model list (a summary; 编辑 opens the list: drag to
 // reorder, edit, delete, add). Rules live in Rust (src-tauri/src/picky).
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -33,7 +33,7 @@ import { Path, Row, Section } from "./layout";
 import { StorageRow } from "./PickyStorage";
 
 const HELP =
-  "本地模型、向量和重排服务由 ~/Documents/LLM 里的脚本和模型清单管理，小拾只启动、切换和停止它们，不改里面的文件；同一时间只运行一个本地模型；退出柚儿园时，小拾启动的本地模型、向量和重排服务都会停掉。选云端模型时，这一轮的消息会发给那家服务。";
+  "本地模型、向量和重排服务由 ~/Documents/LLM 里的脚本和模型清单管理，柚子只启动、切换和停止它们，不改里面的文件；同一时间只运行一个本地模型；退出柚儿园时，柚子启动的本地模型、向量和重排服务都会停掉。选云端模型时，这一轮的消息会发给那家服务。";
 const SERVICE: Record<ServiceKind, { label: string; port: number; use: string }> = {
   embedding: { label: "向量服务", port: 8081, use: "挑选记忆、给资料建索引时" },
   rerank: { label: "重排服务", port: 8082, use: "给搜索结果重新排序时" },
@@ -50,7 +50,7 @@ function ServiceRow(props: { kind: ServiceKind; status: ServiceStatus }) {
     <>
       <Row
         label={meta.label}
-        help={`127.0.0.1:${meta.port}，${meta.use}自动启动；小拾启动的闲置 30 分钟后自动停。模型从 ~/Documents/LLM 的模型清单里选${kind === "embedding" ? "，换了会在后台重算搜索用的向量" : ""}。`}
+        help={`127.0.0.1:${meta.port}，${meta.use}自动启动；柚子启动的闲置 30 分钟后自动停。模型从 ~/Documents/LLM 的模型清单里选${kind === "embedding" ? "，换了会在后台重算搜索用的向量" : ""}。`}
         actions={
           s.model && (
             <>
@@ -340,7 +340,7 @@ function CloudDataRow() {
       (e) => toast(errorText(e), "error"),
     );
   return (
-    <Row label="发给云端" help="选云端模型时，小拾只查选中的模块，查到的内容会发给那家服务；没选中的只给本地模型。钱来钱往的收支和资产分开选，导入账单的 AI 跟着收支。芝麻开门和模块坞里隐藏的模块，小拾都不读。">
+    <Row label="发给云端" help="选云端模型时，柚子只查选中的模块，查到的内容会发给那家服务；没选中的只给本地模型。钱来钱往的收支和资产分开选，导入账单的 AI 跟着收支。芝麻开门和模块坞里隐藏的模块，柚子都不读。">
       <div className="flex flex-wrap gap-1.5">
         {list.map((m) => (
           <button
@@ -376,7 +376,7 @@ function SearchIndexRow() {
   return (
     <Row
       label="搜索索引"
-      help="从各模块的记录和小拾的对话算出来的搜索用的数据（按字找的索引和按意思找的向量；芝麻开门不算进去），单独存在数据目录的 search.db 里，不进备份和导出，删掉会自动重建。改过的记录，在按意思搜索时或向量服务开着时补算向量。"
+      help="从各模块的记录和柚子的对话算出来的搜索用的数据（按字找的索引和按意思找的向量；芝麻开门不算进去），单独存在数据目录的 search.db 里，不进备份和导出，删掉会自动重建。改过的记录，在按意思搜索时或向量服务开着时补算向量。"
     >
       <span className="flex flex-col">
         <span>
@@ -406,7 +406,7 @@ function AssistRow(props: { status: PickyStatus }) {
   const level = levelFor(status, code, stored);
   const thinking = level !== "off";
   const { efforts, fixed } = levelsOf(status, code);
-  const options: DropdownOption<string | null>[] = [{ value: null, label: "小拾现在选的" }, ...modelOptions(status)];
+  const options: DropdownOption<string | null>[] = [{ value: null, label: "柚子现在选的" }, ...modelOptions(status)];
   if (model && !options.some((o) => o.value === model)) options.push({ value: model, label: "（已经不在了）", group: "" });
   const label = "text-xs text-muted-foreground";
   return (
@@ -443,7 +443,7 @@ export function PickySection() {
   if (!status) return null;
   const local = status.local;
   return (
-    <Section title="小拾" help={HELP}>
+    <Section title="柚子" help={HELP}>
       {status.mode === "mock" && (
         <Row label="模型" help="开发版只用模拟的模型：不启动、不切换你的模型，不连真实接口，也不碰钥匙串。">
           <span className="text-muted-foreground">模拟</span>
@@ -491,7 +491,7 @@ export function PickySection() {
       <CloudModels status={status} />
       <AssistRow status={status} />
       {info && (
-        <Row label="数据库" help="小拾的对话和设置单独存在这个文件里，和生活数据分开备份、分开恢复。">
+        <Row label="数据库" help="柚子的对话和设置单独存在这个文件里，和生活数据分开备份、分开恢复。">
           <Path value={info.dbPath} />
           <span className="ml-2 text-xs text-muted-foreground">版本 {info.schemaVersion ?? "—"}</span>
         </Row>

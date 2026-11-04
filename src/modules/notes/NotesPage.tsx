@@ -19,7 +19,7 @@ import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { Button, PageHeader, SearchInput } from "@/shared/ui";
 import { NOTES_KEY, useNoteMutations, useNotes, useOverview, useSimilarNotes, type Brief, type Note, type NoteFilter } from "./api";
-import { Editor, type EditorHandle } from "./Editor";
+import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
 import { excerpt } from "./NoteBody";
 import { BriefRow, NoteCard } from "./NoteCard";
 import { TagTree } from "./TagTree";
@@ -52,7 +52,7 @@ function Chip(props: { children: ReactNode; onClear: () => void }) {
   );
 }
 
-function Composer(props: { tags: string[]; activeTag: string | null; quoting: Brief[]; setQuoting: (b: Brief[]) => void; editor: RefObject<EditorHandle | null>; onOpen: (id: number) => void }) {
+function Composer(props: { tags: string[]; activeTag: string | null; quoting: Brief[]; setQuoting: (b: Brief[]) => void; editor: RefObject<LiveTextHandle | null>; onOpen: (id: number) => void }) {
   const m = useNoteMutations();
   const toast = useToast();
   const [draft, setDraft] = useState("");
@@ -83,7 +83,7 @@ function Composer(props: { tags: string[]; activeTag: string | null; quoting: Br
   };
   return (
     <div ref={box} className={`rounded-card border bg-card px-4 pt-3 pb-2 focus-within:ring-2 focus-within:ring-ring ${dropping ? "ring-2 ring-primary" : ""}`}>
-      <Editor ref={props.editor} value={draft} onChange={setDraft} onSubmit={submit} tags={props.tags} placeholder="现在的想法是……" />
+      <LiteEditor ref={props.editor} value={draft} onChange={setDraft} onSubmit={submit} tags={props.tags} placeholder="现在的想法是……" />
       <AttachmentStrip files={files} onRemove={(id) => setFiles(files.filter((f) => f.id !== id))} className="pt-2" />
       <div className="flex items-end gap-3 pt-1">
         <div className="min-w-0 flex-1 space-y-0.5">
@@ -108,7 +108,7 @@ export default function NotesPage() {
   const [q, setQ] = useState("");
   const [quoting, setQuoting] = useState<Brief[]>([]);
   const [shown, setShown] = useState(PAGE);
-  const editor = useRef<EditorHandle>(null);
+  const editor = useRef<LiveTextHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);

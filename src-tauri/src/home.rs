@@ -13,6 +13,9 @@
 //! - 快到的日子 (来日方长): what days.rs marks `soon` (a reminder's window, expired 证件), in its order.
 //! - 最近: the newest `RECENT` of notes, books, films, courses, lessons, trips, jobs and 收支 added,
 //!   and tasks checked off (books / lessons keep no finish time, so they count when added).
+//! - 那年今日: earlier years' records on today's month-day (local): notes written, goals done (their
+//!   end date), tasks checked off, trips leaving; per year notes first, newest year first. The page shows
+//!   one per year (换一条 = the next); no year with any → no card. 02-29 only matches 02-29.
 
 use crate::modules::common::{self, err};
 use crate::modules::jobs::{self, Stage};
@@ -108,6 +111,8 @@ pub struct Overview {
     pub drawing: Option<Vec<CourseLine>>,
     /// 快到的日子; None = 来日方长 hidden.
     pub days: Option<Vec<days::Day>>,
+    /// 那年今日 (empty: nothing on this day before).
+    pub then: Vec<Then>,
     pub recent: Vec<Recent>,
 }
 
@@ -293,6 +298,52 @@ fn recent(conn: &Connection, shown: &impl Fn(&str) -> bool) -> Result<Vec<Recent
     Ok(out)
 }
 
+/// One earlier year's records on today's month-day.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Then {
+    pub year: String,
+    pub items: Vec<Hit>,
+}
+
+/// 那年今日: (module, kind, SQL yielding id, title, detail, parent, local day) per source, in the order a
+/// year lists them; `?1` = MM-DD, `?2` = this year.
+const THEN: &[(&str, &str, &str)] = &[
+    ("notes", "note", "SELECT id, content, NULL, NULL, date(created_at, 'localtime') AS d FROM notes WHERE strftime('%m-%d', created_at, 'localtime') = ?1 AND strftime('%Y', created_at, 'localtime') < ?2 ORDER BY created_at, id"),
+    ("todo", "goal", "SELECT g.id, g.name, gr.name, g.group_id, g.end_date FROM todo_goals g JOIN todo_groups gr ON gr.id = g.group_id WHERE g.status = 'done' AND substr(g.end_date, 6) = ?1 AND substr(g.end_date, 1, 4) < ?2 ORDER BY g.id"),
+    (
+        "todo",
+        "task",
+        "SELECT t.id, replace(t.title, '**', ''), coalesce(go.name, gr.name), CASE WHEN t.goal_id IS NULL THEN t.group_id ELSE -t.goal_id END, date(t.done_at, 'localtime')
+         FROM todo_tasks t JOIN todo_groups gr ON gr.id = t.group_id LEFT JOIN todo_goals go ON go.id = t.goal_id
+         WHERE t.done = 1 AND t.done_at IS NOT NULL AND strftime('%m-%d', t.done_at, 'localtime') = ?1 AND strftime('%Y', t.done_at, 'localtime') < ?2 ORDER BY t.done_at, t.id",
+    ),
+    ("packing", "trip", "SELECT id, name, NULL, NULL, depart_on FROM trips WHERE substr(depart_on, 6) = ?1 AND substr(depart_on, 1, 4) < ?2 ORDER BY id"),
+];
+
+fn then(conn: &Connection, today: &str, shown: &impl Fn(&str) -> bool) -> Result<Vec<Then>, String> {
+    let mut by_year: std::collections::BTreeMap<String, Vec<Hit>> = std::collections::BTreeMap::new();
+    for (module, kind, sql) in THEN.iter().filter(|t| shown(t.0)) {
+        let mut st = conn.prepare(sql).map_err(err)?;
+        let rows = st
+            .query_map([&today[5..], &today[..4]], |r| {
+                let mut h = hit(module, kind, r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+                h.day = r.get(4)?;
+                Ok(h)
+            })
+            .map_err(err)?;
+        for row in rows {
+            let mut h = row.map_err(err)?;
+            if *kind == "note" {
+                h.title = notes::excerpt(&h.title);
+            }
+            let year = h.day.as_deref().map(|d| d[..4].to_string()).unwrap_or_default();
+            by_year.entry(year).or_default().push(h);
+        }
+    }
+    Ok(by_year.into_iter().rev().map(|(year, items)| Then { year, items }).collect())
+}
+
 pub fn overview(conn: &Connection, today: &str, hidden: &[String]) -> Result<Overview, String> {
     common::check_date(&Some(today.to_string()), "日期")?;
     let shown = |m: &str| !hidden.iter().any(|h| h == m);
@@ -310,6 +361,7 @@ pub fn overview(conn: &Connection, today: &str, hidden: &[String]) -> Result<Ove
         reading: if shown("books") || shown("films") { Some(reading(conn, &shown)?) } else { None },
         drawing: if shown("drawing") { Some(drawing_card(conn)?) } else { None },
         days: if shown("days") { Some(days::soon(conn, today)?) } else { None },
+        then: then(conn, today, &shown)?,
         recent: recent(conn, &shown)?,
     })
 }
@@ -326,6 +378,33 @@ pub fn home_overview(state: State<AppState>, hidden: Vec<String>) -> Result<Over
 mod tests {
     use super::*;
     use crate::db::tests::memory_db;
+
+    #[test]
+    fn then_lists_earlier_years_on_this_day() {
+        let c = memory_db();
+        c.execute_batch(
+            "INSERT INTO notes (content, created_at) VALUES ('#读书 前年的这天', '2024-10-08T02:00:00.000Z'), ('去年的这天', '2025-10-08T03:00:00.000Z'), ('今年的', '2026-10-08T02:00:00.000Z'), ('去年的前一天', '2025-10-07T02:00:00.000Z');
+             INSERT INTO todo_groups (name, sort_order) VALUES ('生活', 1);
+             INSERT INTO todo_goals (group_id, name, status, start_date, end_date, sort_order) VALUES (1, '学会游泳', 'done', '2025-09-01', '2025-10-08', 1);
+             INSERT INTO todo_tasks (group_id, title, task_type, done, done_at, sort_order) VALUES (1, '办**游泳卡**', 'normal', 1, '2025-10-08T05:00:00.000Z', 1);
+             INSERT INTO trips (name, depart_on) VALUES ('东京', '2025-10-08'), ('老家', '2024-10-09');",
+        )
+        .unwrap();
+        let all = |o: &Overview| o.then.iter().map(|t| (t.year.clone(), t.items.iter().map(|h| (h.kind, h.title.clone())).collect::<Vec<_>>())).collect::<Vec<_>>();
+        let o = overview(&c, TODAY, &[]).unwrap();
+        assert_eq!(
+            all(&o),
+            [
+                ("2025".to_string(), vec![("note", "去年的这天".to_string()), ("goal", "学会游泳".into()), ("task", "办游泳卡".into()), ("trip", "东京".into())]),
+                ("2024".to_string(), vec![("note", "前年的这天".to_string())]),
+            ]
+        );
+        assert_eq!(o.then[0].items[2].parent, Some(1));
+        // hidden modules stay out
+        let o = overview(&c, TODAY, &["notes".into(), "packing".into()]).unwrap();
+        assert_eq!(all(&o), [("2025".to_string(), vec![("goal", "学会游泳".to_string()), ("task", "办游泳卡".into())])]);
+        assert!(overview(&c, "2026-10-10", &[]).unwrap().then.is_empty());
+    }
 
     const TODAY: &str = "2026-10-08"; // a Thursday
 

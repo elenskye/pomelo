@@ -2,7 +2,7 @@
 //! (`record`); the resulting changeset (all tables except `settings`, FK cascades included) goes
 //! on an in-memory stack. Undo applies its inverse, redo re-applies it. Stacks live only while the
 //! app runs, and import / restore clear them (their changesets would no longer match the data).
-//! Two databases: each step remembers its store (pomelo.db or 小拾's picky.db) and is replayed there.
+//! Two databases: each step remembers its store (pomelo.db or 柚子's picky.db) and is replayed there.
 
 use crate::backup::Store;
 use crate::modules::common::err;
@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::State;
 
 const LIMIT: usize = 100;
-/// Not user data (UI state like the last page; 芝麻开门 unlock state; 小拾 settings); never undone.
+/// Not user data (UI state like the last page; 芝麻开门 unlock state; 柚子 settings); never undone.
 /// Search indexes live in search.db, outside undo.
 const SKIP: &[&str] = &["settings", "vault_meta", "preferences"];
 
@@ -112,7 +112,7 @@ impl AppState {
         self.with_undo_in(Store::Pomelo, label, f)
     }
 
-    /// Same for 小拾's picky.db.
+    /// Same for 柚子's picky.db.
     pub(crate) fn with_picky_undo<T>(&self, label: &str, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
         self.with_undo_in(Store::Picky, label, f)
     }
@@ -304,7 +304,7 @@ pub(crate) mod tests {
         assert_eq!(tags, ["读书", "读书/摘抄"]);
     }
 
-    /// 小拾 steps carry their store and replay on picky.db (cascades included; preferences skipped).
+    /// 柚子 steps carry their store and replay on picky.db (cascades included; preferences skipped).
     #[test]
     fn picky_steps_replay_on_picky_db() {
         use crate::picky::{chat, store};
@@ -325,7 +325,7 @@ pub(crate) mod tests {
         assert_eq!(h.next_store(true), Some(Store::Picky));
     }
 
-    /// 小拾's list: a drop (membership + hand order) and deleting a project come back whole.
+    /// 柚子's list: a drop (membership + hand order) and deleting a project come back whole.
     #[test]
     fn picky_list_changes_undo() {
         use crate::picky::{chat, library, store};
@@ -351,7 +351,7 @@ pub(crate) mod tests {
         assert_eq!(n(&c, "manual_lists"), 0);
     }
 
-    /// 小拾's project files: add / replace / remove come back; indexes (derived) are never recorded.
+    /// 柚子's project files: add / replace / remove come back; indexes (derived) are never recorded.
     #[test]
     fn picky_project_file_changes_undo() {
         use crate::picky::files::{self, tests::add};
@@ -383,7 +383,7 @@ pub(crate) mod tests {
         assert!(files::project_files(&c, Some(p)).unwrap().is_empty());
     }
 
-    /// 小拾's 知识库: deleting a library brings back its folders and the choices of it; the switch and
+    /// 柚子's 知识库: deleting a library brings back its folders and the choices of it; the switch and
     /// 「发给云端」 are steps too.
     #[test]
     fn picky_knowledge_changes_undo() {
@@ -420,7 +420,7 @@ pub(crate) mod tests {
         assert!(kb::libraries(&c).unwrap().is_empty());
     }
 
-    /// 小拾's memories: edits come back, and deleting a project brings its memories back with it.
+    /// 柚子's memories: edits come back, and deleting a project brings its memories back with it.
     #[test]
     fn picky_memory_changes_undo() {
         use crate::picky::memory::{self, MemoryInput};
@@ -445,7 +445,7 @@ pub(crate) mod tests {
         assert_eq!(snapshot(&c), before);
     }
 
-    /// 小拾's templates, presets and instructions: deleting a preset in use comes back with its sessions.
+    /// 柚子's templates, presets and instructions: deleting a preset in use comes back with its sessions.
     #[test]
     fn picky_instruction_changes_undo() {
         use crate::picky::{chat, instructions as ins, store, templates as tpl};

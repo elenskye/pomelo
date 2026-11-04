@@ -1,5 +1,5 @@
 //! Memories (from Picky's Memories / MemorySelection):
-//! - One or two sentences (1–300 characters) the user asked 小拾 to remember: global, or one
+//! - One or two sentences (1–300 characters) the user asked 柚子 to remember: global, or one
 //!   project's (optionally also used by other projects). A project can leave out global memories.
 //!   A memory can be turned off, or kept 「仅本地」 (never sent to a cloud model). 「记于」 is the
 //!   day it was noted (a changed text is noted again today). Creating, editing, switching and

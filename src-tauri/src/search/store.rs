@@ -6,9 +6,9 @@
 //!   vhash what the vectors are made from.
 //! - vectors: per model, one vector per passage of a doc (int8, vectors.rs), with the doc's hash
 //!   when computed (a different hash = stale).
-//! - file_indexes / file_chunks: 小拾 project file passages and vectors (f32), per model and
+//! - file_indexes / file_chunks: 柚子 project file passages and vectors (f32), per model and
 //!   artifact (sha256 guards against a restored picky.db reusing the id for other bytes).
-//! - memory_vectors: 小拾 memory vectors (f32), with the text hash they were made from.
+//! - memory_vectors: 柚子 memory vectors (f32), with the text hash they were made from.
 //! - kb_docs / kb_chunks (v2, 知识库): every readable file a library folder holds (path relative to
 //!   the folder; a saved web page is one doc with path ""), with the size and mtime last seen and
 //!   what its passages were made from (sha256, model); its passages (label, text, int8 vector).

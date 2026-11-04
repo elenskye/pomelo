@@ -27,7 +27,7 @@ pub fn resolve_root(base: &Path, env_override: Option<PathBuf>) -> PathBuf {
 pub struct DataPaths {
     pub root: PathBuf,
     pub db: PathBuf,
-    /// 小拾 (AI): its own database + attachment folder, so pomelo.db never changes for it.
+    /// 柚子 (AI): its own database + attachment folder, so pomelo.db never changes for it.
     pub picky_db: PathBuf,
     pub picky_files: PathBuf,
     /// v0.4: everything search computes from the data (rebuilt when missing; never backed up).

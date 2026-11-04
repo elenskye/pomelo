@@ -238,7 +238,7 @@ function PromptTab(props: { data: TranslateView; settings: TranslateSettings; on
       {preview.data && (
         <div className="flex flex-col gap-1.5 border-t pt-4">
           <span className="text-muted-foreground">发给模型的说明</span>
-          <p className="selectable font-reading leading-relaxed whitespace-pre-wrap text-muted-foreground">{preview.data.replace(/^【小拾翻译】/, "")}</p>
+          <p className="selectable font-reading leading-relaxed whitespace-pre-wrap text-muted-foreground">{preview.data.replace(/^【柚子翻译】/, "")}</p>
         </div>
       )}
     </div>

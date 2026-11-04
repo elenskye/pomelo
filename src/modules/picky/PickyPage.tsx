@@ -1,4 +1,4 @@
-// 小拾: conversation list (collapsible; or the search panel) · message area · input. Opening the page
+// 柚子: conversation list (collapsible; or the search panel) · message area · input. Opening the page
 // returns to the last conversation. 「新对话」 (also inside a project) is only a draft until its first
 // question is sent. A search hit (here or from ⌘K) opens its conversation at that message, switching to
 // its version if needed. Replies stream in over a
@@ -16,7 +16,7 @@
 // v0.4.5 阶段 7: the 知识库 button (and its manager from the list's bottom); opening the page compares the
 // library folders with their index. 阶段 8: a 助手 (left column) opens its own page in place of the
 // conversation; it is remembered like the last conversation. Work (改文件, 新建 Word) is the plugin
-// library's Word 工具箱 / 文本工具箱 now: 小拾 uses them when it decides to (no entry here).
+// library's Word 工具箱 / 文本工具箱 now: 柚子 uses them when it decides to (no entry here).
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bird, Globe, PanelLeftClose, PanelLeftOpen, Pin, Plus, SquarePen } from "lucide-react";
@@ -403,7 +403,7 @@ export default function PickyPage() {
       <PageHeader
         icon={Bird}
         color="var(--module-picky)"
-        title="小拾"
+        title="柚子"
         right={
           <div className="flex items-center justify-end gap-2">
             <IconButton label={collapsed ? "展开对话列表" : "收起对话列表"} onClick={() => setCollapsed(!collapsed)}>
@@ -453,7 +453,7 @@ export default function PickyPage() {
                 onAskFollowUp={followUp}
                 empty={
                   <div className="flex flex-col items-center gap-6">
-                    <p>小拾在这儿，想聊点什么？</p>
+                    <p>柚子在这儿，想聊点什么？</p>
                     {pinnedTemplates.length > 0 && (
                       <div className="grid grid-cols-2 gap-3 text-sm">
                         {pinnedTemplates.map((t) => (

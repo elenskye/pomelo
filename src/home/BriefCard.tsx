@@ -1,5 +1,5 @@
 // 今日简报 (top of 首页; rules in Rust picky/brief.rs): on showing, asks for today's brief once
-// (written in the background, polled while writing); 重写 / 重试 write it again. Hidden when 小拾 is
+// (written in the background, polled while writing); 重写 / 重试 write it again. Hidden when 柚子 is
 // hidden or the brief is off (管理 → 定时).
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";

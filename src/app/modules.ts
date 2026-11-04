@@ -1,6 +1,6 @@
 // Module registry. Add new modules here (id = route path segment).
-// MODULES hold data (search, export, 小拾 read them); the 助手 are 小拾's, shown as modules in the 模块坞, the
-// 索引签 and the 柚子瓣 (their data and code stay in 小拾; hiding 小拾 hides them too).
+// MODULES hold data (search, export, 柚子 read them); the 助手 are 柚子's, shown as modules in the 模块坞, the
+// 索引签 and the 柚子瓣 (their data and code stay in 柚子; hiding 柚子 hides them too).
 import { Bird, BookOpen, Briefcase, CalendarHeart, Clapperboard, Compass, Feather, FileInput, FileUser, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, Settings, Shapes, Wallet, type LucideIcon } from "lucide-react";
 
 export type ModuleDef = {
@@ -8,7 +8,7 @@ export type ModuleDef = {
   label: string;
   icon: LucideIcon;
   color: string;
-  /** One of 小拾's 助手 (a small bird next to its name). */
+  /** One of 柚子's 助手 (a small bird next to its name). */
   assistant?: boolean;
   /** Opens this page instead of its own (Importer has none: 钱来钱往 · 导入账单). */
   to?: string;
@@ -62,10 +62,10 @@ export const MODULES: ModuleDef[] = [
     ],
   },
   { id: "vault", label: "芝麻开门", icon: KeyRound, color: "var(--module-vault)" },
-  { id: "picky", label: "小拾", icon: Bird, color: "var(--module-picky)" },
+  { id: "picky", label: "柚子", icon: Bird, color: "var(--module-picky)" },
 ];
 
-/** 小拾's 助手 as modules (names are the user's to choose). */
+/** 柚子's 助手 as modules (names are the user's to choose). */
 export const ASSISTANT_MODULES: ModuleDef[] = [
   {
     id: "translate",

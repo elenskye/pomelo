@@ -36,7 +36,7 @@
 //!   required` — a service that refuses it left nothing searched); the tool stays for more searches.
 //!   Their results are web sources and 「查了」 entries. A 新书影 proposal takes its creator / country /
 //!   类型 from 书单 / 影单检索 first.
-//! - Citations (v0.4, cite.rs): retrieved passages and what 小拾's search finds are numbered as
+//! - Citations (v0.4, cite.rs): retrieved passages and what 柚子's search finds are numbered as
 //!   the reply goes (saved and sent as they grow); the reply cites them as [n].
 //! - 知识库 (v0.4.5, knowledge.rs): its passages come like project file passages (the page retrieves
 //!   them before sending); a new conversation keeps the draft's switch and libraries. A folder's
@@ -129,13 +129,15 @@ pub struct Message {
     pub files: Vec<MessageFile>,
     /// Replies: notes from reading material in segments.
     pub notes: Vec<Note>,
+    /// 年度总结: Atlas's scenes, folded under the letter (atlas.rs `preview`).
+    pub atlas: Option<Note>,
     /// Replies: the memories their run was given.
     pub memories: Vec<UsedMemory>,
     /// Replies: what their run looked up in Pomelo.
     pub queries: Vec<Query>,
     /// Replies: what their run was given, numbered for its [n] citations.
     pub sources: Vec<cite::Source>,
-    /// Replies: the confirmation card of what 小拾 proposed to write.
+    /// Replies: the confirmation card of what 柚子 proposed to write.
     pub card: Option<act::Card>,
     /// Questions asked in the 小窗: the page they went with.
     pub page: Option<Query>,
@@ -183,6 +185,7 @@ fn message_row(r: &rusqlite::Row) -> rusqlite::Result<Message> {
         version_count: 1,
         files: vec![],
         notes: vec![],
+        atlas: None,
         memories: vec![],
         queries: vec![],
         sources: vec![],
@@ -245,6 +248,7 @@ pub fn path(conn: &Connection, session_id: i64) -> Result<Vec<Message>, String> 
             }
         } else if let Some(run) = m.run_id {
             m.notes = reading::notes_of(conn, run)?.into_iter().chain(super::yearly::notes_of(conn, run)?).map(|(label, content)| Note { label, content }).collect();
+            m.atlas = super::atlas::preview(conn, run)?.map(|(label, content)| Note { label, content });
             m.memories = memory::used_of(conn, run)?;
             m.queries = data::lookups_of(conn, run)?;
             m.sources = cite::of_run(conn, run)?;
@@ -1548,7 +1552,7 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     }
     let counter = Counter::for_target(&route.target);
     let question = request.prompt.clone(); // before the page joins it
-    // Rater 复盘 · 记录: its task and table go with 小拾's instructions; its tool with the lookups
+    // Rater 复盘 · 记录: its task and table go with 柚子's instructions; its tool with the lookups
     let rec = app.state::<AppState>().picky.with_db(|c| {
         let session: i64 = c.query_row("SELECT session_id FROM runs WHERE id = ?1", [shared.run_id], |r| r.get(0)).map_err(err)?;
         Ok(record::is_record(c, session)?.then_some(session))
@@ -1700,8 +1704,14 @@ impl super::yearly::Sink for YearSink<'_> {
         b.content.push_str(&piece);
         let _ = self.shared.channel.send(StreamEvent::Content { text: piece });
     }
-    async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<(), String> {
-        stream_round(self.app, self.shared, &self.target, messages, opts, &mut self.last).await.0
+    async fn article(&mut self, messages: Vec<Msg>, opts: Options) -> Result<String, String> {
+        let start = self.shared.buf.lock().unwrap_or_else(|e| e.into_inner()).content.len();
+        stream_round(self.app, self.shared, &self.target, messages, opts, &mut self.last).await.0?;
+        let b = self.shared.buf.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(b.content.get(start..).unwrap_or("").trim().to_string())
+    }
+    fn run_id(&self) -> Option<i64> {
+        Some(self.shared.run_id)
     }
 }
 
@@ -3156,7 +3166,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// 「我关于租房记过什么」: 小拾 searches across modules, the results are numbered and the answer cites them.
+    /// 「我关于租房记过什么」: 柚子 searches across modules, the results are numbered and the answer cites them.
     #[test]
     fn a_search_numbers_what_it_found_and_the_answer_cites_it() {
         let pomelo = crate::db::tests::memory_db();
@@ -3188,7 +3198,7 @@ pub(crate) mod tests {
         assert_eq!(cite::read_with(&hidden, &h.sources, &format!(r#"{{"n":{note}}}"#), 2000, |_, _, _| Ok("x".into())).state, "blocked");
     }
 
-    /// 「午饭 35」: 小拾 proposes (a card, nothing written, not a 「查了」); a cloud model is refused.
+    /// 「午饭 35」: 柚子 proposes (a card, nothing written, not a 「查了」); a cloud model is refused.
     #[test]
     fn writing_is_proposed_into_a_card_and_refused_for_the_cloud() {
         let pomelo = crate::db::tests::memory_db();
@@ -3223,7 +3233,7 @@ pub(crate) mod tests {
     }
 
     /// 联网 / 「/书单检索」: the asked-for skill alone first (a call required), its pages numbered; on its
-    /// own 小拾 checks a book with 书单检索; a 新书影 takes the lookup's creator and country.
+    /// own 柚子 checks a book with 书单检索; a 新书影 takes the lookup's creator and country.
     #[test]
     fn skills_asked_for_and_on_their_own() {
         let mut h = TestHost::new(crate::db::tests::memory_db(), data::Access::default());

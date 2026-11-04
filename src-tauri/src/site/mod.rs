@@ -1,7 +1,7 @@
 //! 呦呦漫游 (v0.5): the personal website (its own project, its own git history) edited and published from
 //! Pomelo. The content stays in the site folder (setting `site.folder`, default
 //! ~/Documents/GitHub/personal-website); nothing goes into pomelo.db, backups, export, undo or search.
-//! - Mode (like 小拾): `Real` only for the installed app on the real data dir (or POMELO_REAL_SITE=1): the
+//! - Mode (like 柚子): `Real` only for the installed app on the real data dir (or POMELO_REAL_SITE=1): the
 //!   set folder, real pushes, Vercel's result via gh. Otherwise `Sandbox`: a copy in the data dir
 //!   (`site-sandbox/website`, made by 建副本 from the site folder with APFS clones) pushing to a bare repo
 //!   beside it (`site-sandbox/remote.git`); a sandbox never commits or pushes towards a remote that isn't

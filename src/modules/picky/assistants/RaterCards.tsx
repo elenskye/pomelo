@@ -1,6 +1,6 @@
 // Rater 卡片 (v0.7 阶段 ⑥; Rust picky/assistants/rater/practice.rs): start a round (自己挑 / 按 JD /
 // 随机), practice one big card at a time (click to flip; 不熟 / 会; typing is optional; 追问 puts a
-// dashed follow-up card next), then the round's feedback (the program lists 不熟 / 会 / 追问; 小拾
+// dashed follow-up card next), then the round's feedback (the program lists 不熟 / 会 / 追问; 柚子
 // comments when something was typed or followed up). Every write is one undo step in Rust; after ⌘Z
 // the App re-reads every query, so the page follows the round as Rust has it.
 import { PickField } from "@/shared/PickField";
@@ -30,7 +30,7 @@ function tallyText(t: RaterTally | undefined) {
 export function RaterCards(p: Props) {
   const qc = useQueryClient();
   const practice = useQuery({ queryKey: RATER_PRACTICE_KEY, queryFn: raterApi.practice });
-  // the ended round on screen (and whether it just ended here: then 小拾 comments by itself)
+  // the ended round on screen (and whether it just ended here: then 柚子 comments by itself)
   const [viewing, setViewing] = useState<{ id: string; fresh: boolean } | null>(null);
   /** A practice write: the new state, the bank's records re-read; `after` sees the result. */
   const write = (action: () => Promise<RaterPractice>, after?: (out: RaterPractice) => void) => p.guarded(async () => {
@@ -54,7 +54,7 @@ export function RaterCards(p: Props) {
 
 type Write = (action: () => Promise<RaterPractice>, after?: (out: RaterPractice) => void) => Promise<boolean>;
 
-/** How a round starts: 自己挑 (filters and ticks), 按 JD (小拾 picks, the user removes / adds), 随机 (N). */
+/** How a round starts: 自己挑 (filters and ticks), 按 JD (柚子 picks, the user removes / adds), 随机 (N). */
 function StartRound(p: Props & { practice: RaterPractice; write: Write; open: (id: string) => void }) {
   const jobs = useJobs();
   const [mode, setMode] = useState<string>(RATER_MODES[0]);
@@ -126,7 +126,7 @@ function StartRound(p: Props & { practice: RaterPractice; write: Write; open: (i
       {mode === "按 JD" && <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <PickField<number | null> ariaLabel="岗位" title="按哪个岗位挑卡" value={job} placeholder="选择岗位" options={jobPicks(jobs.data ?? [])} onChange={(j) => { setJob(j); setPick(null); }} />
-          <Button disabled={p.busy || picking || job == null || !p.can("pick")} onClick={() => void runPick()}><Sparkles size={14} />{picking ? "正在挑…" : pick ? "重新挑" : "让小拾挑"}</Button>
+          <Button disabled={p.busy || picking || job == null || !p.can("pick")} onClick={() => void runPick()}><Sparkles size={14} />{picking ? "正在挑…" : pick ? "重新挑" : "让柚子挑"}</Button>
         </div>
         {pick && <div className="space-y-2">
           <p className="text-xs text-muted-foreground">{[pick.model, pick.note].filter(Boolean).join(" · ")}</p>
@@ -209,7 +209,7 @@ function Practice(p: Props & { round: RaterRound; write: Write; ended: (out: Rat
           </div>
           <div className={`rater-flip-face rater-flip-back flex min-h-64 flex-col gap-3 rounded-card border bg-card p-6 shadow-sm ${card.follow ? "border-[1.5px] border-dashed" : ""}`}>
             <span className="text-xs text-muted-foreground">{card.text}</span>
-            {card.follow && <span className="text-xs text-muted-foreground">小拾的参考答案</span>}
+            {card.follow && <span className="text-xs text-muted-foreground">柚子的参考答案</span>}
             <span className="whitespace-pre-wrap leading-relaxed">{q || card.follow ? answer.trim() || "还没写答案" : "这道题已经删除了"}</span>
           </div>
         </div>
@@ -230,7 +230,7 @@ function Practice(p: Props & { round: RaterRound; write: Write; ended: (out: Rat
   </div>;
 }
 
-/** An ended round: the counts, 小拾's comment (when wanted), 不熟 / 会, the follow-ups. */
+/** An ended round: the counts, 柚子's comment (when wanted), 不熟 / 会, the follow-ups. */
 function RoundView(p: Props & { id: string; fresh: boolean; write: Write; back: () => void }) {
   const qc = useQueryClient();
   const key = [...RATER_PRACTICE_KEY, p.id];
@@ -246,7 +246,7 @@ function RoundView(p: Props & { id: string; fresh: boolean; write: Write; back: 
     catch (e) { setError(errorText(e)); }
     finally { setCommenting(false); }
   };
-  // a round that just ended here: 小拾 comments by itself, once
+  // a round that just ended here: 柚子 comments by itself, once
   useEffect(() => {
     if (!r || tried.current || !p.fresh || !p.can("comment") || r.feedback || !wantsComment(r)) return;
     tried.current = true;
@@ -269,7 +269,7 @@ function RoundView(p: Props & { id: string; fresh: boolean; write: Write; back: 
     <div className="flex items-start gap-2"><span className="min-w-0 flex-1 font-medium">{c.text}</span>{c.follow && <span className={`shrink-0 text-xs ${c.mark === RATER_UNSURE ? "text-primary" : "text-muted-foreground"}`}>{c.mark ?? "没练到"}</span>}</div>
     {c.follow && <p className="whitespace-pre-wrap text-muted-foreground">{c.reference}</p>}
     {c.typed.trim() && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">我说的：</span>{c.typed}</p>}
-    {note(i) && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">小拾：</span>{note(i)}</p>}
+    {note(i) && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">柚子：</span>{note(i)}</p>}
     {c.follow && <div>{c.saved ? <span className="text-xs text-muted-foreground">已存进题库</span> : <Button variant="ghost" className="-ml-2" disabled={p.busy} onClick={() => keep(i)}><Plus size={14} />存进题库</Button>}</div>}
   </li>;
   const section = (title: string, rows: { c: RaterCard; i: number }[], tone = "") => rows.length > 0 && <section className="space-y-2">
@@ -286,12 +286,12 @@ function RoundView(p: Props & { id: string; fresh: boolean; write: Write; back: 
       </div>
       <p className="text-sm text-muted-foreground">{r.cards.filter((c) => !c.follow).length} 张 · 会 {lists.know.length} · 不熟 {lists.unsure.length}{lists.follows.length > 0 && ` · 追问 ${lists.follows.length}`}{left > 0 && ` · 还剩 ${left} 张没练`}</p>
       {wantsComment(r) && <section className="space-y-2 rounded-card border bg-card px-4 py-3 text-sm">
-        <h3 className="flex items-center gap-1.5 font-bold"><Sparkles size={14} className="text-[var(--module-picky)]" />小拾的点评{fb?.model && <span className="font-normal text-xs text-muted-foreground">{fb.model}</span>}</h3>
+        <h3 className="flex items-center gap-1.5 font-bold"><Sparkles size={14} className="text-[var(--module-picky)]" />柚子的点评{fb?.model && <span className="font-normal text-xs text-muted-foreground">{fb.model}</span>}</h3>
         {fb ? <>
           {fb.summary && <p className="whitespace-pre-wrap">{fb.summary}</p>}
           {fb.good.length > 0 && <div><p className="text-xs text-muted-foreground">说得好</p><ul className="list-disc space-y-0.5 pl-5">{fb.good.map((g, i) => <li key={i}>{g}</li>)}</ul></div>}
           {fb.gaps.length > 0 && <div><p className="text-xs text-muted-foreground">讲不清的</p><ul className="list-disc space-y-0.5 pl-5">{fb.gaps.map((g, i) => <li key={i}>{g}</li>)}</ul></div>}
-        </> : commenting ? <p className="animate-pulse text-muted-foreground">正在写…</p> : <div className="flex items-center gap-2">{error && <p className="min-w-0 flex-1 text-destructive">{error}</p>}<Button disabled={p.busy || !p.can("comment")} onClick={() => void comment()}>{error ? "重试" : "让小拾点评"}</Button></div>}
+        </> : commenting ? <p className="animate-pulse text-muted-foreground">正在写…</p> : <div className="flex items-center gap-2">{error && <p className="min-w-0 flex-1 text-destructive">{error}</p>}<Button disabled={p.busy || !p.can("comment")} onClick={() => void comment()}>{error ? "重试" : "让柚子点评"}</Button></div>}
       </section>}
       {section("不熟", lists.unsure, "text-primary")}
       {section("会", lists.know)}

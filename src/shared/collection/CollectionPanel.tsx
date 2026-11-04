@@ -89,7 +89,7 @@ export function CollectionPanel(props: {
     filled.clear(k);
     setD((x) => ({ ...x, [k]: v }));
   };
-  // 小拾 补全: 作者 / 导演、国家、类型 from the name (its own knowledge) into the empty fields
+  // 柚子 补全: 作者 / 导演、国家、类型 from the name (its own knowledge) into the empty fields
   const assistOn = useAssistOn();
   const status = usePickyStatus().data;
   const [filling, setFilling] = useState(false);

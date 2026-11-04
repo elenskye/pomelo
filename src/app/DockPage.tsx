@@ -1,5 +1,5 @@
 // 模块坞 (requirements「界面外框」; route /dock, and what a new 页签 shows first): every module — built in,
-// made from 五花八门 / 循序渐进, and 小拾's 助手 — with a line of live text (Rust dock.rs). The pinned row on
+// made from 五花八门 / 循序渐进, and 柚子's 助手 — with a line of live text (Rust dock.rs). The pinned row on
 // top, then the categories; hidden ones fold away at the bottom. Drag to move between categories, into
 // 置顶 (or the 索引签) to pin, into 已隐藏 to hide; 「⋯」 or right-click for the same; a category's 「＋」
 // makes a module in it. Same layout as the 柚子瓣.

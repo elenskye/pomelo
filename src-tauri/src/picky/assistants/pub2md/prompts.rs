@@ -589,7 +589,7 @@ mod tests {
         let (text, skipped) = apply("苹果的产品的设计", &fixes);
         assert_eq!((text.as_str(), skipped.len()), ("苹果公司的产品的设计", 2)); // 「的」 twice, 「无」 nowhere
         assert!(fixes_in("not json").is_none() && fixes_in("{\"fixes\":[]}").unwrap().is_empty());
-        assert!(is_mine(&read_system()) && is_mine(&script_system(true, "")) && !is_mine("【小拾翻译】"));
+        assert!(is_mine(&read_system()) && is_mine(&script_system(true, "")) && !is_mine("【柚子翻译】"));
     }
 
     #[test]

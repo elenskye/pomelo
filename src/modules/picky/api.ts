@@ -1,4 +1,4 @@
-// 小拾 (Picky): typed wrappers for src-tauri/src/picky. Rules (model control, selection, keys) live in Rust.
+// 柚子 (Picky): typed wrappers for src-tauri/src/picky. Rules (model control, selection, keys) live in Rust.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -64,7 +64,7 @@ export type PickyStatus = {
   generating: boolean;
   /** What is being written, one per conversation. */
   active: ActiveRun[];
-  /** Conversations from 定时任务 not opened yet (the dot on 小拾 in the sidebar). */
+  /** Conversations from 定时任务 not opened yet (the dot on 柚子 in the sidebar). */
   unseen: number;
 };
 
@@ -79,7 +79,7 @@ export type PickyInfo = { mode: Mode; dbPath: string; filesDir: string; schemaVe
 
 export type Session = { id: number; title: string; updatedAt: string };
 
-/** `scheduled`: written by a 定时任务; `unseen`: not opened since; `private`: 私密 (年度总结 and 小拾's search leave it out); `thinking`, `effort`: its 思考 switch and 思考强度 (none: the model's default);
+/** `scheduled`: written by a 定时任务; `unseen`: not opened since; `private`: 私密 (年度总结 and 柚子's search leave it out); `thinking`, `effort`: its 思考 switch and 思考强度 (none: the model's default);
  *  `knowledge`: its 知识库 switch, `libraries` the ones it chose (none: its project's, then all). */
 export type SessionRow = { id: number; title: string; projectId: number | null; pinned: boolean; archived: boolean; updatedAt: string; scheduled: boolean; unseen: boolean; private: boolean; thinking: boolean; effort?: string | null; knowledge: boolean; libraries: number[] };
 /** `libraries`: the 知识库 its conversations search (none: all). */
@@ -107,13 +107,15 @@ export type ChatMessage = {
   files: MessageFile[];
   /** Replies: notes from reading material in segments. */
   notes: Note[];
+  /** 年度总结: Atlas's scenes (folded under the letter). */
+  atlas?: Note | null;
   /** Replies: the memories their run was given. */
   memories: UsedMemory[];
   /** Replies: what their run looked up in Pomelo. */
   queries: Query[];
   /** Replies: what their run was given, numbered for its [n] citations (picky/cite.rs). */
   sources: Source[];
-  /** Replies: the card of what 小拾 proposed to write (picky/act.rs). */
+  /** Replies: the card of what 柚子 proposed to write (picky/act.rs). */
   card?: Card | null;
   /** Questions asked in the 小窗: the page they went with. */
   page: Query | null;
@@ -155,7 +157,7 @@ export type Source = {
   kbSource?: number | null;
   kbPath?: string | null;
 };
-/** 小拾's proposals to write (picky/act.rs): one tick each; confirming writes the ticked ones in one ⌘Z step. */
+/** 柚子's proposals to write (picky/act.rs): one tick each; confirming writes the ticked ones in one ⌘Z step. */
 export type CardField = { label: string; before?: string | null; after: string; long?: boolean };
 /** A written record (opened like a 全局搜索 hit); gone = taken back (⌘Z) or deleted. */
 export type CardWritten = { module: string; kind: string; id: number; parent: number | null; day: string | null; gone: boolean };
@@ -166,7 +168,7 @@ export type CardPick = { position: number; option: number | null };
 export type Card = { runId: number; state: "pending" | "confirmed" | "cancelled"; items: CardItem[] };
 /** What a page tells the 小窗 (ids only; Rust fetches the content under its rules). */
 export type PageContextPayload = { module: string; page: string | null; filter: string | null; record: { kind: string; id: number } | null; selected: { kind: string; id: number }[] };
-/** 设置 → 小拾: which modules may go to cloud models. */
+/** 设置 → 柚子: which modules may go to cloud models. */
 export type CloudData = { module: string; label: string; allowed: boolean };
 export type FileFormat = "PDF" | "Markdown" | "文本" | "Word" | "PowerPoint" | "Excel" | "CSV" | "图片" | "网页";
 /** pageCount: PDF pages / PowerPoint slides; rowCount: a table's rows; url: a saved web page's address. */
@@ -221,7 +223,7 @@ export type EditTarget = { path: string; name: string };
 export type EditItem = { position: number; paragraph: number; label?: string | null; before: string; after: string; checked: boolean };
 /** kind new-word / new-excel (the 工具箱 create): name, path = the folder it goes to (then the file), the Markdown in items[0].after. excel: each item's label says where. */
 export type FileEdit = { runId: number; path: string; name: string; kind: "markdown" | "text" | "word" | "excel" | "new-word" | "new-excel"; total: number; state: "pending" | "written" | "cancelled"; error: string | null; items: EditItem[] };
-/** 翻译 (assistants/translate.rs): its settings (`model` null = 小拾现在选的; `keywords`: group → choice). */
+/** 翻译 (assistants/translate.rs): its settings (`model` null = 柚子现在选的; `keywords`: group → choice). */
 export type TranslateSettings = { source: string; target: string; model: string | null; thinking: boolean; effort?: string | null; prompt: string; keywords: Record<string, string> };
 /** Pub2MD (assistants/pub2md/): how hard a model thinks. */
 /** "off", "on" (at the model's default) or one of the model's levels. */
@@ -594,7 +596,7 @@ export function selectedLabel(s: PickyStatus): { title: string; dot: Dot | "clou
   return { title: s.local.presentation.title, dot: s.local.presentation.dot, missingKey: false };
 }
 
-/** 小拾's own UI state (picky.db `ui.*`), like useSetting. */
+/** 柚子's own UI state (picky.db `ui.*`), like useSetting. */
 export function usePickyUi<T>(key: string, fallback: T, valid: (v: unknown) => v is T) {
   const [value, setValue] = useState<T>(fallback);
   useEffect(() => {
@@ -618,7 +620,7 @@ export const isNumbers = (v: unknown): v is number[] => Array.isArray(v) && v.ev
 export const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 /** 定时任务 (rules in Rust schedule.rs). every: day | week | month; day: 周几 1–7 / 几号 1–31; at: "HH:MM";
- * model: local:<key> | cloud:<id> | null (= 小拾现在选的). next: "YYYY-MM-DD HH:MM" (null when off). */
+ * model: local:<key> | cloud:<id> | null (= 柚子现在选的). next: "YYYY-MM-DD HH:MM" (null when off). */
 export type ScheduleRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
 export type ScheduleInput = ScheduleRule & { name: string; prompt: string; model: string | null; thinking: boolean; effort: string | null };
 /** `flow`: a workflow (年度总结), drawn instead of its prompt. */

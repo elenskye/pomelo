@@ -1,4 +1,4 @@
-//! The one search entry (⌘K, conversation search, 念念不忘 and 小拾 use it from v0.4 phase 3):
+//! The one search entry (⌘K, conversation search, 念念不忘 and 柚子 use it from v0.4 phase 3):
 //! a question, a scope and a way.
 //! - Scope: the modules / kinds asked for (all when empty), minus modules hidden in the 模块坞,
 //!   minus — for an answer going to a cloud model — modules not allowed there (picky/data.rs).
@@ -163,7 +163,7 @@ fn by_words(c: &Connection, q: &str, mask: u32, exclude: &[String], limit: usize
     Ok(out)
 }
 
-/// Word hits as results (also what tests drive 小拾's search with).
+/// Word hits as results (also what tests drive 柚子's search with).
 pub fn found_by_words(c: &Connection, q: &str, mask: u32, exclude: &[String], limit: usize) -> Result<Vec<Found>, String> {
     let first = text::first_word(q);
     Ok(by_words(c, q, mask, exclude, limit)?.into_iter().map(|(d, score)| found(&d, crate::picky::find::snippet(&d.body, &first, SNIPPET), score, Way::Words)).collect())
@@ -326,7 +326,7 @@ pub async fn search_query(app: AppHandle, request: Request) -> Result<Answer, St
     search(&app, &request).await
 }
 
-/// 意思相近 in ⌘K: meaning hits shaped like ⌘K's (小拾's open their conversation).
+/// 意思相近 in ⌘K: meaning hits shaped like ⌘K's (柚子's open their conversation).
 #[tauri::command]
 pub async fn search_similar(app: AppHandle, q: String) -> Result<Vec<super::Hit>, String> {
     let req = Request { text: q, way: Way::Meaning, modules: vec![], kinds: vec![], for_cloud: false, limit: Some(8) };
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(allowed(&[], &[], &["notes".into()], None) & note, 0);
         let cloud = allowed(&[], &[], &[], Some(&["notes".to_string()]));
         assert_eq!(cloud & (1 << sources::source("finance", "entry").unwrap().0), 0); // not allowed for the cloud
-        assert_ne!(cloud & (1 << sources::source("picky", "message").unwrap().0), 0); // 小拾's own conversations
+        assert_ne!(cloud & (1 << sources::source("picky", "message").unwrap().0), 0); // 柚子's own conversations
         assert_eq!(cloud & note, note);
         assert_eq!(source_filter(all, &[]), "");
         assert_eq!(source_filter(0, &[]), " AND 0");

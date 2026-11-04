@@ -1,11 +1,11 @@
 //! 速记小窗 (v0.8): ⌥Space anywhere (a global shortcut) shows a small window of Pomelo's own (label
-//! `capture`, page capture.html) to jot a 念念不忘 note, a 一步一步 task, or ask 小拾. Rules:
+//! `capture`, page capture.html) to jot a 念念不忘 note, a 一步一步 task, or ask 柚子. Rules:
 //! - Same pomelo.db, undo history and menu bar as the main window: a saved note / task is one ⌘Z step
 //!   (the main window's ⌘Z, or 撤销 right after saving); the main window is told (`capture-saved`), also
-//!   when a 小拾 card is confirmed here (act/card.rs).
-//! - 问小拾 chats right here, in a conversation of the window's own (picky.db preference `capture.chat`,
-//!   library.rs): private and out of 小拾's list and searches, at most one; 新对话 deletes it, 「在 Pomelo 里
-//!   继续对话」 makes it an ordinary one and opens it on the 小拾 page (event `capture-chat`). The page's
+//!   when a 柚子 card is confirmed here (act/card.rs).
+//! - 问柚子 chats right here, in a conversation of the window's own (picky.db preference `capture.chat`,
+//!   library.rs): private and out of 柚子's list and searches, at most one; 新对话 deletes it, 「在 Pomelo 里
+//!   继续对话」 makes it an ordinary one and opens it on the 柚子 page (event `capture-chat`). The page's
 //!   model and memories; no attachments, 知识库 or page. The window grows for a conversation and goes
 //!   back to its size after (`capture_fit`).
 //! - The draft (`capture.draft`: tab, note text, task title / date / group, the question), the note's
@@ -14,7 +14,7 @@
 //! - The window is made on first use, then only hidden. Esc / ⌘W / its close button hide it (the page
 //!   writes the draft first) and give the focus back to the app that was in front; losing the focus hides
 //!   it too unless pinned. It floats on every desktop, also over full-screen apps.
-//! - A tab whose module is hidden (念念不忘, 一步一步, 小拾) is not offered.
+//! - A tab whose module is hidden (念念不忘, 一步一步, 柚子) is not offered.
 
 use crate::modules::common::{err, Tx};
 use crate::modules::{attachments, notes, todo};
@@ -366,12 +366,12 @@ pub fn capture_chat_effort(state: State<AppState>, effort: Option<String>) -> Re
 #[tauri::command]
 pub fn capture_chat_clear(state: State<AppState>) -> Result<(), String> {
     if state.picky.with_db(|c| library::capture_chat(c))?.is_some_and(|id| state.picky.runs.busy_in(id)) {
-        return Err("小拾还在写，等它写完再开新对话。".into());
+        return Err("柚子还在写，等它写完再开新对话。".into());
     }
     state.picky.with_db(|c| library::drop_capture_chat(c))
 }
 
-/// 「在 Pomelo 里继续对话」: an ordinary conversation now, opened on the 小拾 page; this window hides.
+/// 「在 Pomelo 里继续对话」: an ordinary conversation now, opened on the 柚子 page; this window hides.
 #[tauri::command]
 pub fn capture_chat_keep(app: AppHandle, state: State<AppState>) -> Result<(), String> {
     let id = state.picky.with_db(|c| library::keep_capture_chat(c))?.ok_or("这个对话已经没有了")?;

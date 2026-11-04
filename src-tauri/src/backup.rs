@@ -1,6 +1,6 @@
 //! Snapshot backups: `backups/<store>-YYYYMMDD-HHMMSS-<label>[-n].db`, written with `VACUUM INTO`
 //! (consistent single-file copy, WAL-safe). The file name is the only metadata (store + time + label).
-//! Stores: `pomelo` (pomelo.db, life data) and `picky` (picky.db, 小拾); each is backed up, pruned and
+//! Stores: `pomelo` (pomelo.db, life data) and `picky` (picky.db, 柚子); each is backed up, pruned and
 //! restored on its own. Labels: `daily` (auto, first launch/focus of the day; pruned), `manual`,
 //! `before-vN` (migration), `before-import`, `before-picky-import`, `before-restore`. `manual` is never
 //! pruned; the safety copies (升级前 = any `before-vN`, 导入前, 恢复前) keep the newest KEEP_SAFETY of each
@@ -115,7 +115,7 @@ fn parse_name(file: &str) -> Option<Name> {
 #[serde(rename_all = "camelCase")]
 pub struct BackupInfo {
     pub file_name: String,
-    /// Which database: `pomelo` (life data) or `picky` (小拾).
+    /// Which database: `pomelo` (life data) or `picky` (柚子).
     pub store: Store,
     /// Raw label (`daily`, `manual`, `before-v7`, ...); UI maps to Chinese.
     pub label: String,
@@ -297,7 +297,7 @@ pub fn backups_list(state: State<AppState>) -> Result<Vec<BackupInfo>, String> {
     list(&state.paths.backups)
 }
 
-/// Backs up both databases (小拾 only when it opened). Returns the life-data snapshot.
+/// Backs up both databases (柚子 only when it opened). Returns the life-data snapshot.
 #[tauri::command]
 pub fn backup_now(state: State<AppState>) -> Result<BackupInfo, String> {
     let dir = state.paths.backups.clone();

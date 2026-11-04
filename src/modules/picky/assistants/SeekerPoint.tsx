@@ -1,10 +1,10 @@
 // A point's text box, drawn while typing the way the Word export reads it (word.rs `styled`): each
 // line on its own, split at 「**」, every other piece bold; the marks stay, dimmed. 念念不忘's way
-// (shared/editable.ts): the text is the model, the browser types inside a line, everything else
+// (shared/editor/editable.ts): the text is the model, the browser types inside a line, everything else
 // (↩, paste, drop, ⌘B) edits the text here; after each change the lines are drawn again and the caret
 // put back. Nothing is redrawn while an IME composes. The box keeps its own ⌘Z / ⌘⇧Z.
 import { useEffect, useLayoutEffect, useRef, type ClipboardEvent, type KeyboardEvent } from "react";
-import { select, selectionIn, serialize } from "@/shared/editable";
+import { select, selectionIn, serialize } from "@/shared/editor/editable";
 
 const MARK = "text-muted-foreground/45";
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

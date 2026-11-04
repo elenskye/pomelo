@@ -1,4 +1,4 @@
-//! 小拾's part of the Pomelo data file (「设置 → 导出 / 导入」, module `picky`, from format version
+//! 柚子's part of the Pomelo data file (「设置 → 导出 / 导入」, module `picky`, from format version
 //! 11): the global instructions, projects (name, background instructions, whether they use global
 //! memories), purpose presets, templates, memories (sharing by project name) and, from 12, 定时任务
 //! (from 13 with 思考; before: on), and from 19 the Seeker workspace (seeker.rs; replaced whole; from 20 with
@@ -10,7 +10,7 @@
 //! Import replaces the global instructions, templates and memories; projects and presets are
 //! matched by name (updated or added; others are kept, so conversations keep theirs). Schedules
 //! (when the file has them) replace too, matched by name so their conversations stay linked; they
-//! count from the import on (nothing runs for the past); a cloud model not set up here → 小拾's
+//! count from the import on (nothing runs for the past); a cloud model not set up here → 柚子's
 //! selection.
 //! Export → import into an empty picky.db → export gives the same record (see test).
 
@@ -22,7 +22,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 pub const KEY: &str = "picky";
-pub const LABEL: &str = "小拾";
+pub const LABEL: &str = "柚子";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,26 +185,26 @@ pub fn validate(r: &PickyRecord) -> Result<(), String> {
     }
     let names: Vec<&str> = r.projects.iter().map(|p| p.name.trim()).collect();
     if names.iter().any(|n| n.is_empty()) {
-        return Err("小拾：有项目没有名称".into());
+        return Err("柚子：有项目没有名称".into());
     }
     if r.presets.iter().any(|p| p.name.trim().is_empty()) {
-        return Err("小拾：有用途预设没有名称".into());
+        return Err("柚子：有用途预设没有名称".into());
     }
     let mut seen = std::collections::HashSet::new();
     for s in r.schedules.iter().flatten() {
-        schedule::check_input(&s.input()).map_err(|e| format!("小拾：定时任务「{}」：{e}", s.name.trim()))?;
+        schedule::check_input(&s.input()).map_err(|e| format!("柚子：定时任务「{}」：{e}", s.name.trim()))?;
         if !seen.insert(s.name.trim()) {
-            return Err(format!("小拾：有两个定时任务都叫「{}」", s.name.trim()));
+            return Err(format!("柚子：有两个定时任务都叫「{}」", s.name.trim()));
         }
     }
     for m in &r.memories {
         let n = m.content.trim().chars().count();
         if n == 0 || n > memory::MAX_CHARS {
-            return Err(format!("小拾：记忆需要 1 至 {} 个字", memory::MAX_CHARS));
+            return Err(format!("柚子：记忆需要 1 至 {} 个字", memory::MAX_CHARS));
         }
         for p in m.project.iter().chain(&m.shared_projects) {
             if !names.contains(&p.trim()) {
-                return Err(format!("小拾：记忆用到的项目「{p}」不在文件里"));
+                return Err(format!("柚子：记忆用到的项目「{p}」不在文件里"));
             }
         }
     }

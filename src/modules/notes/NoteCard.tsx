@@ -1,6 +1,6 @@
-// One note in the stream: time · pin · menu (编辑 / 引用 / 转成待办 / 让小拾拆成待办 / 置顶 / 删除), the text
+// One note in the stream: time · pin · menu (编辑 / 引用 / 转成待办 / 让柚子拆成待办 / 置顶 / 删除), the text
 // (long ones fold), its attachments, the tasks made from it, the notes it quotes and the notes quoting it.
-// Double-click edits in place. 拆成待办 lists what 小拾 found to pick from, with where they go.
+// Double-click edits in place. 拆成待办 lists what 柚子 found to pick from, with where they go.
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,7 +15,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
 import { NOTES_KEY, noteTime, useNoteMutations, type Brief, type Note, type NoteTask } from "./api";
-import { Editor } from "./Editor";
+import { LiteEditor } from "@/shared/editor/LiteEditor";
 import { NoteBody } from "./NoteBody";
 
 const FOLD_PX = 320;
@@ -65,7 +65,7 @@ function Folding(props: { children: ReactNode }) {
   );
 }
 
-/** 拆成待办: 小拾's list to pick from, and the group / goal they go to. */
+/** 拆成待办: 柚子's list to pick from, and the group / goal they go to. */
 function SplitList(props: { note: Note; ideas: string[]; onDone: () => void }) {
   const { data: groups = [] } = useGroups();
   const { data: goals = [] } = useGoals();
@@ -210,7 +210,7 @@ export function NoteCard(props: {
               { value: "edit", label: "编辑" },
               { value: "quote", label: "引用" },
               ...(props.onToTodo ? [{ value: "todo", label: "转成待办" }] : []),
-              ...(assist ? [{ value: "split", label: "让小拾拆成待办" }] : []),
+              ...(assist ? [{ value: "split", label: "让柚子拆成待办" }] : []),
               { value: "pin", label: n.pinned ? "取消置顶" : "置顶" },
               { value: "delete", label: <span className="text-destructive">删除</span> },
             ]}
@@ -222,7 +222,7 @@ export function NoteCard(props: {
 
       {editing ? (
         <div className="space-y-2">
-          <Editor
+          <LiteEditor
             value={draft.content}
             onChange={(content) => setDraft({ ...draft, content })}
             onSubmit={save}

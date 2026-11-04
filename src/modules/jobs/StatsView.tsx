@@ -1,6 +1,6 @@
 // 统计: a few numbers, the funnel (per step: checked / applications that have the step — one that
 // skipped 笔试 counts for neither), applications per day / week (by 投递日期 = the first checked day),
-// and where everything is now. All computed in Rust (jobs.rs `stats`), shared with 首页 and 小拾.
+// and where everything is now. All computed in Rust (jobs.rs `stats`), shared with 首页 and 柚子.
 import { useState, type ReactNode } from "react";
 import { BarList, ColumnChart } from "@/shared/charts";
 import { Segmented } from "@/shared/ui";

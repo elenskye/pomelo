@@ -1,6 +1,6 @@
 //! 出处 (v0.4 phase 3): what a reply is given gets a number — the question's retrieved project file
 //! passages first (reading::prompt shows them as 【[1] 资料 · 第 3 页】; then the 知识库's, v0.4.5, which
-//! keep their source and file to open), then the records 小拾's search
+//! keep their source and file to open), then the records 柚子's search
 //! finds — and the reply marks what it used with [n]. The list is kept per run (`run_sources`) as it
 //! grows; the page shows the cited ones under the reply and opens them (records like a 全局搜索 hit,
 //! passages as their text). Memories are not numbered (they keep their own list).
@@ -9,7 +9,7 @@
 //!   私密 conversations never (library.rs).
 //!   A record found again keeps its number.
 //! - pomelo_read: the whole of a numbered record (data::record_text; items open their trip /
-//!   template; 小拾 messages from picky.db), checked again against the same rules.
+//!   template; 柚子 messages from picky.db), checked again against the same rules.
 //! - Earlier results re-sent with a later question lose their numbers (`unnumbered`): numbers
 //!   belong to their own reply.
 //! - Web pages (v0.4 phase 6, skills/: 联网搜索, 书单 / 影单检索) are numbered too (kind web, with
@@ -65,7 +65,7 @@ pub struct Source {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Sources(pub Vec<Source>);
 
-/// 「笔记」「出行物品」「小拾对话」…
+/// 「笔记」「出行物品」「柚子对话」…
 fn label(module: &str, kind: &str) -> &'static str {
     index_sources::source(module, kind).map_or("记录", |(_, s)| s.label)
 }
@@ -380,7 +380,7 @@ pub fn read_with(access: &Access, sources: &Sources, arguments: &str, budget: i6
     }
 }
 
-/// A 小拾 conversation (title) or one of its messages, as text.
+/// A 柚子 conversation (title) or one of its messages, as text.
 fn conversation_text(c: &Connection, kind: &str, id: i64) -> Result<String, String> {
     let private: Option<bool> = if kind == "session" {
         c.query_row("SELECT private FROM sessions WHERE id = ?1", [id], |r| r.get(0)).ok()

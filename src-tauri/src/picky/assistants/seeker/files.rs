@@ -7,7 +7,7 @@
 //!   series names (company.rs `matched` with the series' words as names: `keyreply` ↔ 「KeyReply」).
 //! - Its text (`text`): a .docx's paragraphs, a .pdf's pages — only inside <Seeker>/cv/.
 //! - material/ (证书原件): file names by sub-folder only; Pomelo never opens them for a model.
-//! - 小拾 reads the list and a resume's text through 「Seeker 资料」 (skills/seeker.rs); cv/ can go
+//! - 柚子 reads the list and a resume's text through 「Seeker 资料」 (skills/seeker.rs); cv/ can go
 //!   into the 知识库 「Seeker」 like knowledge/ (company.rs).
 //! - The real Seeker folder is out of bounds in mock mode (output.rs `allowed_path`).
 use super::*;
@@ -202,7 +202,7 @@ pub fn root(c: &Connection, mode: crate::picky::Mode) -> Result<Option<PathBuf>,
     output::allowed_path(Path::new(folder.trim()), mode).map(Some)
 }
 
-/// The list for the pages and 小拾: exports from picky.db, jobs from pomelo.db (read apart, never
+/// The list for the pages and 柚子: exports from picky.db, jobs from pomelo.db (read apart, never
 /// nested).
 pub fn list(state: &AppState) -> Files {
     let read = state.picky.with_db(|c| Ok((root(c, state.picky.mode)?, read(c)?.output.exports.iter().map(|e| (e.id.clone(), e.path.clone())).collect::<Vec<_>>())));

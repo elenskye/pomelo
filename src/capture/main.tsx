@@ -11,7 +11,7 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   await (await import("@/dev/mockIpc")).installMockIpc("capture");
 }
 
-// as the main window's (问小拾 uses 小拾's queries)
+// as the main window's (问柚子 uses 柚子's queries)
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, staleTime: Infinity } },
 });

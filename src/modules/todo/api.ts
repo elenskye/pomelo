@@ -108,9 +108,9 @@ const api = {
   updateTask: (v: { id: number; patch: TaskPatch }) => invoke<Task>("todo_task_update", v),
   setDone: (v: { id: number; done: boolean }) => invoke<void>("todo_task_set_done", v),
   deleteTask: (id: number) => invoke<void>("todo_task_delete", { id }),
-  /** Several subtasks at once (小拾's 拆成子任务), one undo step. */
+  /** Several subtasks at once (柚子's 拆成子任务), one undo step. */
   addSubtasks: (v: { parentId: number; titles: string[] }) => invoke<Task[]>("todo_subtasks_create", v),
-  /** Root tasks from a note (小拾's 拆成待办), one undo step. */
+  /** Root tasks from a note (柚子's 拆成待办), one undo step. */
   fromNote: (v: { noteId: number; groupId: number | null; goalId: number | null; titles: string[] }) => invoke<Task[]>("todo_tasks_from_note", v),
   agenda: (today: string) => invoke<Agenda>("todo_agenda", { today }),
   doneBetween: (from: string, to: string) => invoke<DoneItem[]>("todo_done_between", { from, to }),

@@ -8,7 +8,7 @@
 //!   statuses are never steps.
 //! - 投递日期 (`applied_on`) = the earliest checked day.
 //! - Follow-up: current stage applied and ≥ 14 days since max(its day, followed_on).
-//! - 统计 (`stats`, also 首页 and 小拾): 投出 = applications with a 投递日期; 本周投了 = since this
+//! - 统计 (`stats`, also 首页 and 柚子): 投出 = applications with a 投递日期; 本周投了 = since this
 //!   Monday; 进行中 = now 等回音 / 进行中; 拿到 = now 拿到. Funnel: 已投递 → … → the first 拿到 status
 //!   (Offer), per status checked / applications that have the step, only among applications with
 //!   any step checked. Applications per day (last 30) and per week (last 12, Monday first).

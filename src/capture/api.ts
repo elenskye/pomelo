@@ -1,5 +1,5 @@
 // 速记小窗 (Rust src-tauri/src/capture.rs): its own window; the draft is a setting (not undoable), a saved
-// note / task is one ⌘Z step, 问小拾 chats in a conversation of the window's own.
+// note / task is one ⌘Z step, 问柚子 chats in a conversation of the window's own.
 import { invoke } from "@tauri-apps/api/core";
 import type { FileInfo } from "@/shared/attachments/api";
 
@@ -27,13 +27,13 @@ export const captureApi = {
   note: (content: string) => invoke<void>("capture_note", { content }),
   todo: (title: string, due: string | null, group: number) => invoke<void>("capture_todo", { title, due, group }),
   undo: () => invoke<{ label: string | null }>("capture_undo"),
-  /** The window's conversation (out of 小拾's list), if any. */
+  /** The window's conversation (out of 柚子's list), if any. */
   chat: () => invoke<{ id: number; thinking: boolean; effort?: string | null } | null>("capture_chat"),
   chatThinking: (on: boolean) => invoke<void>("capture_chat_thinking", { on }),
   chatEffort: (effort: string | null) => invoke<void>("capture_chat_effort", { effort }),
   /** 新对话: the conversation goes. */
   chatClear: () => invoke<void>("capture_chat_clear"),
-  /** 在 Pomelo 里继续对话: listed and opened on the 小拾 page; the window hides. */
+  /** 在 Pomelo 里继续对话: listed and opened on the 柚子 page; the window hides. */
   chatKeep: () => invoke<void>("capture_chat_keep"),
   /** Grows the window for a conversation, or back to its height before. */
   fit: (chat: boolean) => invoke<void>("capture_fit", { chat }),

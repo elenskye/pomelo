@@ -1,10 +1,10 @@
 //! Keeps search.db in line with pomelo.db and picky.db, in the background (`spawn`, every 2 s):
 //! - Changes: its own read-only connections watch `PRAGMA data_version` (it moves whenever the
-//!   app's connection commits: edits, undo, import, restore, 小拾 messages). Then every source is
+//!   app's connection commits: edits, undo, import, restore, 柚子 messages). Then every source is
 //!   read again and compared by hash: new / changed docs are written with their word tokens;
 //!   docs whose vector text changed lose their vectors; deleted records are removed.
 //! - Vectors (the user's choice): computed only while the embedding service runs anyway, or when
-//!   a meaning search / 小拾 needs them (`fill` before searching), except a rebuild — fresh
+//!   a meaning search / 柚子 needs them (`fill` before searching), except a rebuild — fresh
 //!   search.db, other embedding model, other text rules — which starts the service and fills
 //!   everything (`meta.rebuild`), newest records first. Once complete, other models' vectors,
 //!   file indexes and memory vectors are dropped.

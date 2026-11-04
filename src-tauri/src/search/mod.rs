@@ -6,7 +6,7 @@
 //! each word of the query appears somewhere in its text (case-insensitive substring). Per source at
 //! most `PER_SOURCE` hits; titles that start with the first word come first, then the newest.
 //! A hit carries what the UI needs to open it: module + kind + id (and parent / day where a page
-//! needs them). 小拾's conversations come from picky.db (picky/find.rs), after the rest.
+//! needs them). 柚子's conversations come from picky.db (picky/find.rs), after the rest.
 
 pub mod indexer;
 pub mod query;

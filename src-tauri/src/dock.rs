@@ -2,11 +2,11 @@
 //! 模块坞 and its rows (「今天 3 件」). Read-only; a module with nothing worth saying is left out.
 //! Where the dock's categories, pins and hidden modules live: pomelo.db settings `ui.dock` and
 //! `ui.module_hidden` (the UI keeps them; not undoable).
-//! - 一步一步: due today + overdue (as 小拾's 「今天」); 念念不忘: written today, else all; 来日方长: the
+//! - 一步一步: due today + overdue (as 柚子's 「今天」); 念念不忘: written today, else all; 来日方长: the
 //!   nearest coming day; 钱来钱往: entries this month; 出门走走: the next trip with a date; 书影: in progress,
 //!   else wanted; 随意画画: lessons done / all; 投石问路: to follow up, else active, else all; 芝麻开门:
 //!   locked / open; made modules: items (五花八门) or lessons done / all (循序渐进).
-//! - 小拾: writing, else conversations; Translator: its target; Pub2MD: being done + waiting; Seeker: a
+//! - 柚子: writing, else conversations; Translator: its target; Pub2MD: being done + waiting; Seeker: a
 //!   draft. 呦呦漫游 says nothing (its changes need git).
 
 use crate::modules::common::{err, Status};

@@ -1,5 +1,5 @@
 //! Word 工具箱 (`pomelo_word`) and 文本工具箱 (`pomelo_text`) (v0.4.5 improve-10): 改文件 as plugin
-//! skills that 小拾 uses when it decides to. A toolbox changes only files the question has an original
+//! skills that 柚子 uses when it decides to. A toolbox changes only files the question has an original
 //! of — its attachments added from disk (`artifacts.source_path`), the file an older question picked to
 //! change — and the 知识库's files (in place); never any other path.
 //! - view=files: what may be changed (also in the system message: `note`). read: the numbered

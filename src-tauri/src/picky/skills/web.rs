@@ -37,7 +37,7 @@ pub async fn search(key: Option<String>, query: &str, mock: bool) -> Result<Vec<
             })
             .collect());
     }
-    let key = key.ok_or("还没填 Tavily API Key（小拾 → 插件库 → 联网搜索）")?;
+    let key = key.ok_or("还没填 Tavily API Key（柚子 → 插件库 → 联网搜索）")?;
     let c = reqwest::Client::builder().timeout(Duration::from_secs(25)).build().map_err(|e| e.to_string())?;
     let resp = c
         .post(URL)
@@ -50,7 +50,7 @@ pub async fn search(key: Option<String>, query: &str, mock: bool) -> Result<Vec<
     let body = resp.text().await.unwrap_or_default();
     match status {
         200 => {}
-        401 | 403 => return Err("Tavily API Key 不对（小拾 → 插件库 → 联网搜索）。".into()),
+        401 | 403 => return Err("Tavily API Key 不对（柚子 → 插件库 → 联网搜索）。".into()),
         429 | 432 | 433 => return Err("Tavily 这个月的额度用完了，或者搜得太频繁。".into()),
         _ => return Err(format!("Tavily 返回了错误（{status}）。")),
     }

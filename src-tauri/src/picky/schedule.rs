@@ -1,6 +1,6 @@
-//! 定时任务 (v0.4 phase 7; requirements「小拾 · 定时任务、今日简报、年度总结」):
+//! 定时任务 (v0.4 phase 7; requirements「柚子 · 定时任务、今日简报、年度总结」):
 //! - A schedule: 名称, when (every day / a weekday / a day of the month, at HH:MM local time; a month
-//!   without that day uses its last), the model (None = what 小拾 has selected), 提示词 (the question
+//!   without that day uses its last), the model (None = what 柚子 has selected), 提示词 (the question
 //!   it asks; a workflow — 年度总结 — shows its `flow` instead), on / off. Ready-made (migration 12, editable and deletable): 每周回顾, 每月回顾.
 //! - Due = enabled and its latest time (≤ now) is after both the last time it ran for
 //!   (`schedule_state`) and `since` (made / time changed / switched on: never runs for the past).
@@ -338,7 +338,7 @@ pub fn seen(conn: &Connection, session: i64) -> Result<(), String> {
     conn.execute("UPDATE sessions SET unseen = 0 WHERE id = ?1 AND unseen", [session]).map(|_| ()).map_err(err)
 }
 
-/// Unseen conversations from schedules (the dot on 小拾 in the sidebar).
+/// Unseen conversations from schedules (the dot on 柚子 in the sidebar).
 pub fn unseen(conn: &Connection) -> i64 {
     conn.query_row("SELECT count(*) FROM sessions WHERE unseen", [], |r| r.get(0)).unwrap_or(0)
 }

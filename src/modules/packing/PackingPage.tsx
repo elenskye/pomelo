@@ -271,7 +271,7 @@ export default function PackingPage() {
       />
     );
 
-  // 小拾: what this trip may have forgotten (picked ones are added in one undoable step)
+  // 柚子: what this trip may have forgotten (picked ones are added in one undoable step)
   const assistOn = useAssistOn();
   const pickyStatus = usePickyStatus().data;
   const [ideas, setIdeas] = useState<{ tripId: number; items: ItemIdea[] } | null>(null);

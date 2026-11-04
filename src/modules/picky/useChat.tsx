@@ -1,4 +1,4 @@
-// What the 小拾 page and the 小窗 share about conversations:
+// What the 柚子 page and the 小窗 share about conversations:
 // - useLiveReply: replies being written are laid over their saved paths as they stream (a new question
 //   shows at once). Each conversation has its own (several write side by side; a reply waiting for the
 //   local model shows 排队中); at most ~25 repaints a second; when the stream is lost (reload) the

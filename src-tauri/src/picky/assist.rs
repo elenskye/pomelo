@@ -1,12 +1,12 @@
-//! 小拾 helps in the edit panels (v0.3.5 阶段 4 「润色和补全」): one model call each, thinking off (fast),
-//! nothing kept in 小拾's conversations. Results only go into the panel or a list to pick from — the
+//! 柚子 helps in the edit panels (v0.3.5 阶段 4 「润色和补全」): one model call each, thinking off (fast),
+//! nothing kept in 柚子's conversations. Results only go into the panel or a list to pick from — the
 //! user saves / adds (undoable as usual); nothing here writes Pomelo data.
 //! - 润色: a note rewritten to this time's request (任务内容、目标复盘、投递备注、书影 / 课节 / 出行 /
 //!   收支的备注; never 念念不忘).
 //! - 补全: 书影 (作者 / 导演、国家、类型 from the model's own knowledge), JD (公司、岗位、地点), a task's
 //!   子任务, what a trip may have forgotten (names + 类别), a website work's English title and summary
 //!   (呦呦漫游, from its Chinese title, summary and the start of its body).
-//! - Same model as 小拾; a stopped local model is started first (the last one picked, else the first in
+//! - Same model as 柚子; a stopped local model is started first (the last one picked, else the first in
 //!   the list). A module a cloud model may not get (钱来钱往 by default) is refused.
 
 use super::cloud::Level;
@@ -24,12 +24,12 @@ use tauri::{AppHandle, Manager};
 /// The local model picked last (started when a help is asked with none running).
 pub const LAST_LOCAL: &str = "model.last_local";
 /// Every assist system prompt starts with this (the mock model answers by it).
-pub const MARK: &str = "【小拾帮忙】";
+pub const MARK: &str = "【柚子帮忙】";
 const START_WAIT: Duration = Duration::from_secs(180);
 
 // ---------- the model ----------
 
-/// Where a help goes: the model chosen for the helpers (设置 → 小拾 → 面板帮手), else the selected one (also when the
+/// Where a help goes: the model chosen for the helpers (设置 → 柚子 → 面板帮手), else the selected one (also when the
 /// chosen cloud model was deleted since); a stopped local one is started.
 async fn route(p: &Picky) -> Result<Route, String> {
     let chosen = p.with_db(|c| Ok(model_choice(c))).unwrap_or(None).filter(|m| match m.strip_prefix("cloud:") {
@@ -90,9 +90,9 @@ pub(crate) fn check(p: &Picky, route: &Route, module: &str) -> Result<(), String
     }
 }
 
-/// How the helpers think (设置 → 小拾 → 面板帮手; preference `assist.level`, a setting: not undoable). Default: at the model's default.
+/// How the helpers think (设置 → 柚子 → 面板帮手; preference `assist.level`, a setting: not undoable). Default: at the model's default.
 const LEVEL: &str = "assist.level";
-/// The helpers' own model (`local:<key>` / `cloud:<id>`; none: 小拾's selection).
+/// The helpers' own model (`local:<key>` / `cloud:<id>`; none: 柚子's selection).
 const MODEL: &str = "assist.model";
 
 pub fn model_choice(c: &rusqlite::Connection) -> Option<String> {
@@ -373,7 +373,7 @@ async fn split_task(app: &AppHandle, task_id: i64) -> Result<Vec<String>, String
     parse_list(&ask(&route, &level_now(p), SPLIT, &user, 1024).await?, 8, &have)
 }
 
-/// 念念不忘 让小拾拆成待办: the things to do a note mentions (those already made into tasks left out).
+/// 念念不忘 让柚子拆成待办: the things to do a note mentions (those already made into tasks left out).
 async fn split_note(app: &AppHandle, note_id: i64) -> Result<Vec<String>, String> {
     let p = &app.state::<AppState>().picky;
     let route = route(p).await?;
@@ -908,7 +908,7 @@ fn mock_quick(system: &str, sentence: &str) -> String {
 
 // ---------- commands ----------
 
-/// 设置 → 小拾 → 面板帮手: its model (None: 小拾's selection), whether and how hard it thinks.
+/// 设置 → 柚子 → 面板帮手: its model (None: 柚子's selection), whether and how hard it thinks.
 #[tauri::command]
 pub fn picky_assist_model(state: tauri::State<AppState>) -> Result<Option<String>, String> {
     state.picky.with_db(|c| Ok(model_choice(c)))

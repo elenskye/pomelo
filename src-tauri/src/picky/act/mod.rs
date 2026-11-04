@@ -1,4 +1,4 @@
-//! 小拾动手 (v0.4 phases 4–5): 小拾 proposes, the user confirms, Rust writes.
+//! 柚子动手 (v0.4 phases 4–5): 柚子 proposes, the user confirms, Rust writes.
 //! - A write tool only proposes. Its arguments are read like 「一句话填好」 (make.rs: names matched to
 //!   existing 分类 / 分组 / 状态 / 模板, a date word in the question worked out by Rust); an edit names
 //!   its record with words and Rust finds it (one → it, several → candidates to pick on the card, none
@@ -394,7 +394,7 @@ pub fn refused(access: &Access, tool: &str, arguments: &str) -> Option<Answer> {
     let m = data::MODULES.iter().find(|m| m.key == module)?;
     let label = label_of(tool, module, None);
     if access.hidden.iter().any(|h| h == module) {
-        return Some(Answer { module: Some(m.key.into()), label: format!("提议{label} · 已隐藏"), state: "blocked", text: format!("没有提议：{}在模块坞里隐藏了，小拾不改它的数据。", m.label), records: vec![] });
+        return Some(Answer { module: Some(m.key.into()), label: format!("提议{label} · 已隐藏"), state: "blocked", text: format!("没有提议：{}在模块坞里隐藏了，柚子不改它的数据。", m.label), records: vec![] });
     }
     let key = cloud_key(tool, module);
     if !access.allows(key) {

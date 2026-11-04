@@ -2,7 +2,7 @@
 // fields on the right (类别、话题、年月、封面、画廊、slug). Saving (保存 / ⌘S) writes both files through Rust,
 // which checks they weren't changed elsewhere meanwhile. 预览 saves first, then opens the page on the
 // local site in Pomelo's preview window. Images (dropped, pasted, chosen, or reused from 资源库) are
-// copied into the work's own image folder by Rust. 小拾 helps (gone while it is hidden): 润色 the summaries,
+// copied into the work's own image folder by Rust. 柚子 helps (gone while it is hidden): 润色 the summaries,
 // image descriptions and the body (the selection, else all of it), 补全 the English stub's title and
 // summary, and 按中文起草 the English version with the 翻译 assistant's settings (Rust keeps the draft in
 // memory; this page takes it in while it is written, read-only meanwhile, then clears it).

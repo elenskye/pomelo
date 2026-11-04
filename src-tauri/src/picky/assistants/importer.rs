@@ -1,4 +1,4 @@
-//! Importer: 小拾's 助手 for 钱来钱往 · 导入账单 (no page of its own; its settings are on that page, the rows and
+//! Importer: 柚子's 助手 for 钱来钱往 · 导入账单 (no page of its own; its settings are on that page, the rows and
 //! the 入账 in modules/finance/import.rs). The model does the reading; Rust only gets the file to it and checks what
 //! comes back, value by value, for that row alone.
 //! - Reading (`picky_importer_extract`): Excel as numbered text lines (a long one in parts, each with what's above
@@ -14,7 +14,7 @@
 //! - 提示词清单: my own points, sent as a Markdown list with all three, above the built-in rules. They, the model and
 //!   its 思考 (`Level`, off by default: it reads quickly, a level is my choice) are in picky.db `assistant.importer`:
 //!   never undone, never exported, like the other 助手.
-//! - Models: 小拾's cloud models only (a local model can't see images), while 钱来钱往 · 收支 may go to the cloud and
+//! - Models: 柚子's cloud models only (a local model can't see images), while 钱来钱往 · 收支 may go to the cloud and
 //!   钱来钱往 isn't hidden; the mock model in dev and tests. Results wait for 入账 and go in by one ⌘Z step each.
 use super::super::provider::{self, Event, Image, Msg, Options, Target};
 use super::super::store::{pref_get, pref_set};
@@ -167,7 +167,7 @@ async fn route(state: &AppState, model: &str) -> Result<Model, String> {
     let p = &state.picky;
     let id = model.strip_prefix("cloud:").ok_or("先选一个云端模型")?;
     if p.with_db(|c| cloud::model(c, id))?.is_none() { return Err("这个云端模型已经被删除了，换一个再试".into()); }
-    if !p.with_db(|c| Ok(data::cloud_allowed(c, &[])))?.iter().any(|k| k == data::FIN_FLOW) { return Err("钱来钱往 · 收支设成了不发给云端（设置 → 小拾），用不了 Importer".into()); }
+    if !p.with_db(|c| Ok(data::cloud_allowed(c, &[])))?.iter().any(|k| k == data::FIN_FLOW) { return Err("钱来钱往 · 收支设成了不发给云端（设置 → 柚子），用不了 Importer".into()); }
     if state.with_db(|c| Ok(data::hidden(c)))?.iter().any(|h| h == finance::KEY) { return Err("钱来钱往隐藏着，用不了 Importer".into()); }
     let (route, ..) = schedule::route(p, Some(model)).await?;
     let level = p.with_db(|c| Ok(load(c).level))?;

@@ -9,7 +9,7 @@
 //!   With a cloud model, sources not allowed there are left out (`Scope::skipped`, shown in the menu).
 //! - search.db (derived, never undone): every readable file of each folder (`kb_docs`: path, size and
 //!   mtime last seen, what its passages were made from) and its passages with int8 vectors
-//!   (`kb_chunks`). `scan` (opening 小拾, every 10 minutes, after adding) compares size and mtime:
+//!   (`kb_chunks`). `scan` (opening 柚子, every 10 minutes, after adding) compares size and mtime:
 //!   new and changed files become pending, gone ones go. Building a pending file reads it again
 //!   (files::read: the formats attachments take, whole tables), cuts it like project files
 //!   (index::pieces) and embeds what changed — passages whose text is the same keep their vectors;
@@ -1408,7 +1408,7 @@ pub fn picky_kb_source_rebuild(app: AppHandle, id: i64) -> Result<(), String> {
     Ok(())
 }
 
-/// Opening 小拾 (and the monitor every 10 minutes).
+/// Opening 柚子 (and the monitor every 10 minutes).
 #[tauri::command]
 pub fn picky_kb_scan(app: AppHandle) {
     let app2 = app.clone();

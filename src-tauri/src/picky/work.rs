@@ -3,7 +3,7 @@
 //!   lists and tables, and the sources it cites listed under 「出处」 at the end. Into a folder the user
 //!   picks (remembered: preference `work.folder`, default ~/Documents), named after the reply's first
 //!   heading (else the conversation) and the date; an existing file is never overwritten (「 (2)」…).
-//! - 改文件 (improve-10: the plugin library's Word 工具箱 / 文本工具箱, skills/toolbox.rs, used when 小拾
+//! - 改文件 (improve-10: the plugin library's Word 工具箱 / 文本工具箱, skills/toolbox.rs, used when 柚子
 //!   decides): a file (Markdown, plain text, Word) read in place (never copied; no backup kept — the
 //!   user's choice) as numbered paragraphs (a table, a field, an empty paragraph 不能改); each change the
 //!   model proposes is checked (a Word change must keep its formatting, word::check) into the reply's
@@ -383,7 +383,7 @@ pub fn write(conn: &Connection, run_id: i64, positions: &[i64]) -> Result<FileEd
     }
     let path = PathBuf::from(&e.path);
     let sha: String = conn.query_row("SELECT sha256 FROM file_edits WHERE run_id = ?1", [run_id], |r| r.get(0)).map_err(err)?;
-    let changed = || format!("「{}」在这之间被改过了，没写进去：让小拾重新改一次", e.name);
+    let changed = || format!("「{}」在这之间被改过了，没写进去：让柚子重新改一次", e.name);
     let bytes = if e.kind == EXCEL {
         let raw = std::fs::read(&path).map_err(|_| "读不了这个文件，可能已经移走或删除了".to_string())?;
         if super::pdf::sha256_hex(&raw) != sha {
@@ -449,7 +449,7 @@ pub fn clean_name(name: &str) -> String {
     let n = n.split_whitespace().collect::<Vec<_>>().join(" ");
     let n = n.trim_matches('.').trim();
     let n: String = n.chars().take(80).collect();
-    if n.is_empty() { "小拾的报告".into() } else { n }
+    if n.is_empty() { "柚子的报告".into() } else { n }
 }
 
 /// A finished reply: (its run, content, its conversation's title).

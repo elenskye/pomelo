@@ -1854,7 +1854,7 @@ async fn mathpix_convert(keys: &mathpix::Keys, mmd: &str, formats: &[Format]) ->
     Ok(out)
 }
 
-/// The mock's stand-ins: a real Word file (小拾's writer), a small PDF, zips holding the text.
+/// The mock's stand-ins: a real Word file (柚子's writer), a small PDF, zips holding the text.
 fn mock_convert(mmd: &str, formats: &[Format]) -> Result<Vec<(Format, Result<Vec<u8>, String>)>, String> {
     let zip_one = |name: &str, body: &str| -> Result<Vec<u8>, String> {
         let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));

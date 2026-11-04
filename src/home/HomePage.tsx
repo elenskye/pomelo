@@ -16,7 +16,7 @@ import { LineChart } from "@/shared/charts";
 import { formatDay, toYmd, weekday } from "@/shared/dates";
 import type { Hit } from "@/shared/open";
 import { PageHeader, ProgressBar } from "@/shared/ui";
-import { useOverview, type CourseLine, type JobsCard, type Point, type Recent, type Year } from "./api";
+import { useOverview, type CourseLine, type JobsCard, type Point, type Recent, type Then, type Year } from "./api";
 import { BriefCard } from "./BriefCard";
 import { YearCard } from "./YearCard";
 
@@ -238,6 +238,42 @@ function RecentBlock(props: { items: Recent[]; today: string; open: (h: Hit) => 
   );
 }
 
+/** 那年今日: one record per earlier year (notes first); 换一条 shows its next one. */
+function ThenBlock(props: { years: Then[]; open: (h: Hit) => void }) {
+  const [at, setAt] = useState<Record<string, number>>({});
+  if (props.years.length === 0) return null;
+  return (
+    <section>
+      <h2 className="mb-1.5 px-1 text-sm font-bold">那年今日</h2>
+      <div className={box}>
+        {props.years.map((y) => {
+          const i = (at[y.year] ?? 0) % y.items.length;
+          const h = y.items[i];
+          const { icon: Icon, color } = icon(h.module);
+          return (
+            <div key={y.year} className="flex items-center border-b last:border-b-0">
+              <button type="button" onClick={() => props.open(h)} className={`${rowClass} min-w-0 flex-1 border-b-0`}>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{y.year}</span>
+                <Icon size={14} strokeWidth={1.75} style={{ color }} className="shrink-0 self-center" />
+                <span className="min-w-0 truncate">{h.title}</span>
+              </button>
+              {y.items.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setAt({ ...at, [y.year]: i + 1 })}
+                  className="mr-2 shrink-0 rounded-control px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  换一条
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function AssetsBlock(props: { points: Point[]; go: () => void }) {
   const p = props.points;
   const last = p[p.length - 1];
@@ -399,6 +435,7 @@ export default function HomePage() {
   const main = [
     shown("todo") && <TodayBlock key="todo" today={today} onOpen={(t) => open.record(taskHit(t))} go={() => open.module("todo")} />,
     data?.days && <DaysBlock key="days" days={data.days} open={open.record} go={() => open.module("days")} />,
+    data && <ThenBlock key="then" years={data.then} open={open.record} />,
     data && <RecentBlock key="recent" items={data.recent} today={today} open={open.record} />,
   ];
   const side = data

@@ -798,7 +798,7 @@ fn cv_resumes_are_told_apart_by_series_and_version_and_material_is_names_only() 
     assert!(files::text(&dir, &dir.join("material/证件照.jpg")).unwrap_err().contains("只能读 cv/"));
     assert!(files::text(&dir, &dir.join("cv/en/notes.txt")).is_err());
 
-    // 小拾 through 「Seeker 资料」: the list (material by name only) and one resume's text
+    // 柚子 through 「Seeker 资料」: the list (material by name only) and one resume's text
     let c = memory_db();
     c.execute("INSERT INTO seeker_settings (id, folder) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET folder = excluded.folder", [dir.to_string_lossy()]).unwrap();
     let local = crate::picky::data::Access::default();

@@ -18,8 +18,8 @@ use crate::picky::{skills, Picky, Route};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-/// The service of the model a choice names (None = 小拾现在选的); None for a local model.
-/// Takes 小拾's database lock itself (twice: the selection, then the model), so never call it holding it.
+/// The service of the model a choice names (None = 柚子现在选的); None for a local model.
+/// Takes 柚子's database lock itself (twice: the selection, then the model), so never call it holding it.
 pub fn service_of(p: &Picky, choice: Option<&str>) -> Option<Service> {
     let code = match choice {
         Some(c) => c.to_string(),

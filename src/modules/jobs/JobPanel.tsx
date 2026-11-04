@@ -109,7 +109,7 @@ function Steps(props: { statuses: Status[]; value: DraftStep[]; onChange: (v: Dr
   );
 }
 
-/** 「贴 JD」 (opened from the 公司 label row): 小拾 finds 公司、岗位、地点 in it; the panel fills the empty
+/** 「贴 JD」 (opened from the 公司 label row): 柚子 finds 公司、岗位、地点 in it; the panel fills the empty
  * ones and keeps the JD in 备注. */
 function JdFill(props: { onFill: (f: JobFill, jd: string) => void; onClose: () => void }) {
   const status = usePickyStatus().data;
@@ -189,7 +189,7 @@ export function JobPanel(props: {
     filled.clear(k);
     setD((x) => ({ ...x, [k]: v }));
   };
-  /** 小拾 read a JD: empty fields get what it found, the JD itself goes into 备注. */
+  /** 柚子 read a JD: empty fields get what it found, the JD itself goes into 备注. */
   const fromJd = (f: JobFill, jd: string) => {
     const next = { ...d };
     const keys: (keyof Draft)[] = ["note"];

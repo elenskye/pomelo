@@ -5,7 +5,8 @@
 //! - The model list (name, API model name, token limits) lives in picky.db `preferences`
 //!   (`cloud.models`; its presence, even `[]`, marks the defaults as seeded — deleted defaults stay
 //!   deleted). Keys never enter the database, backups, exports or logs: only the keychain
-//!   (service "<data dir name> 小拾", account = service code, or a skill's key: tavily, tmdb). The
+//!   (service "<data dir name> 小拾" — the old name, kept so saved keys stay readable — account = service
+//!   code, or a skill's key: tavily, tmdb). The
 //!   release build is signed with a
 //!   fixed self-signed certificate, so an update can still read them.
 //! - Mock mode keeps keys in memory.
@@ -14,7 +15,7 @@
 //! - How hard a thinking model thinks (思考强度): the user lists the levels a model takes, in its API's own words
 //!   (`efforts`, none = it has none), and may fix one as its default (`default_effort`). provider.rs `stream` is the one
 //!   place a request gets its level: what it asked if this model has it, else the model's default, else none (the model's
-//!   own). So every call of 小拾 has the default without doing anything, and the few that let me choose (`Level`: Pub2MD,
+//!   own). So every call of 柚子 has the default without doing anything, and the few that let me choose (`Level`: Pub2MD,
 //!   Importer; a conversation's own) override it. A local model has only the switch.
 
 use super::store::{pref_get, pref_set};
@@ -302,6 +303,7 @@ enum KeyKind {
 
 impl KeyStore {
     pub fn keychain() -> Self {
+        // 小拾 = the old name: keep it, or every saved key is lost
         KeyStore { kind: KeyKind::Keychain { service: format!("{} 小拾", crate::paths::data_dir_name()) }, present: Mutex::default() }
     }
     pub fn memory() -> Self {
@@ -330,7 +332,7 @@ impl KeyStore {
         }
     }
 
-    /// `label`: what Keychain Access shows (「Pomelo 小拾 · DeepSeek」).
+    /// `label`: what Keychain Access shows (「Pomelo 柚子 · DeepSeek」).
     pub fn save(&self, account: &str, key: &str, label: &str) -> Result<(), String> {
         let key = checked_key(key)?;
         match &self.kind {

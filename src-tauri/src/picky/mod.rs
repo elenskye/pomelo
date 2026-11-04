@@ -1,5 +1,5 @@
-//! 小拾 · Picky (v0.3): the old Picky app rewritten into Pomelo — Pomelo's LLM service.
-//! Rules (requirements.md「小拾」):
+//! 柚子 · Picky (v0.3): the old Picky app rewritten into Pomelo — Pomelo's LLM service.
+//! Rules (requirements.md「柚子」):
 //! - Data: picky.db (store.rs), never pomelo.db. Only Rust reads/writes it.
 //! - Models: local models via ~/Documents/LLM/scripts/llmctl.sh and config/models.json
 //!   (runtime.rs, catalog.rs): chat one at a time on 8080, the embedding (8081) and rerank (8082)
@@ -14,6 +14,7 @@
 
 pub mod act;
 pub mod ask;
+pub mod atlas;
 pub mod assist;
 pub mod assistants;
 pub mod brief;
@@ -131,7 +132,7 @@ pub struct Picky {
 }
 
 impl Picky {
-    /// Opens picky.db (a failure only disables 小拾; the rest of Pomelo keeps working).
+    /// Opens picky.db (a failure only disables 柚子; the rest of Pomelo keeps working).
     pub fn init(paths: &DataPaths, home: &Path, mode: Mode) -> Self {
         let existed = paths.picky_db.exists();
         let opened = store::open(&paths.picky_db, &paths.backups).inspect(|c| {
@@ -175,10 +176,10 @@ impl Picky {
     }
 
     pub(crate) fn with_db<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
-        let mut guard = self.conn.lock().map_err(|_| "小拾的数据库连接异常，请重启 App".to_string())?;
+        let mut guard = self.conn.lock().map_err(|_| "柚子的数据库连接异常，请重启 App".to_string())?;
         match guard.as_mut() {
             Some(c) => f(c),
-            None => Err(format!("小拾的数据库没有打开：{}", self.error.as_deref().unwrap_or("未知原因"))),
+            None => Err(format!("柚子的数据库没有打开：{}", self.error.as_deref().unwrap_or("未知原因"))),
         }
     }
 
@@ -303,7 +304,7 @@ pub struct Status {
     pub generating: bool,
     /// What is being written, one per conversation (to show and stop it after the page reloaded).
     pub active: Vec<chat::ActiveRun>,
-    /// Conversations from 定时任务 not opened yet (the dot on 小拾 in the sidebar).
+    /// Conversations from 定时任务 not opened yet (the dot on 柚子 in the sidebar).
     pub unseen: i64,
 }
 
@@ -430,7 +431,7 @@ pub fn picky_info(state: State<AppState>) -> Info {
     Info { mode: p.mode, db_path: p.db_path.display().to_string(), files_dir: p.files_dir.display().to_string(), schema_version: p.with_db(|c| crate::db::user_version(c)).ok(), error: p.error.clone() }
 }
 
-/// 小拾's own UI state (last open session, list collapsed…): `ui.*` keys in picky.db preferences.
+/// 柚子's own UI state (last open session, list collapsed…): `ui.*` keys in picky.db preferences.
 #[tauri::command]
 pub fn picky_ui_get(state: State<AppState>, key: String) -> Result<Option<serde_json::Value>, String> {
     ui_key(&key)?;
@@ -564,7 +565,7 @@ pub fn picky_cloud_model_delete(state: State<AppState>, id: String) -> Result<()
 
 #[tauri::command]
 pub fn picky_cloud_key_save(state: State<AppState>, service: Service, key: String) -> Result<(), String> {
-    state.picky.keys.save(service.code(), &key, &format!("Pomelo 小拾 · {}", service.name()))
+    state.picky.keys.save(service.code(), &key, &format!("Pomelo 柚子 · {}", service.name()))
 }
 
 #[tauri::command]
@@ -621,7 +622,7 @@ mod tests {
         std::fs::write(dir.join("picky.db"), b"not a database at all, definitely").unwrap();
         let p = Picky::init(&DataPaths::new(dir.to_path_buf()), &dir, Mode::Mock);
         assert!(!p.is_open());
-        assert!(p.with_db(|_| Ok(())).unwrap_err().contains("小拾的数据库没有打开"));
+        assert!(p.with_db(|_| Ok(())).unwrap_err().contains("柚子的数据库没有打开"));
         assert!(p.status().error.is_some());
     }
 }

@@ -1,6 +1,6 @@
 // 年度总结 on 首页 (rules in Rust picky/yearly.rs `card`): in the new year's first week (1 月 1～7 日),
 // last year's letter above 今日简报 — its 关键词 line and opening; 看全文 opens it in a dialog, which
-// can open the conversation in 小拾. Hidden when 小拾 is hidden.
+// can open the conversation in 柚子. Hidden when 柚子 is hidden.
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Bird, X } from "lucide-react";
@@ -94,7 +94,7 @@ function LetterDialog(props: { letter: YearLetter; onClose: () => void }) {
       </div>
       <div className="flex items-center border-t px-5 py-3">
         <div className="flex-1" />
-        <Button onClick={openChat}>在小拾里打开</Button>
+        <Button onClick={openChat}>在柚子里打开</Button>
       </div>
     </dialog>
   );

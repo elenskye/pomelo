@@ -1,8 +1,8 @@
 //! 三个题库 SKILL (v0.7 阶段 ⑤): 简历题 / 通用题 / 突击题. Each has an editable workflow (Seeker
 //! rules of that 用途; none yet: the built-in `default_workflow`), reads what it
 //! needs, and only proposes: new questions (a list to tick on Rater's page, or the reply's card in a
-//! 小拾 conversation) or one new answer (a diff). Writing is the user's click (rater.rs `put`, one undo
-//! step). The page's 「让小拾补题」 / 「润色」 and 小拾's tools (skills/mod.rs) all call `generate`.
+//! 柚子 conversation) or one new answer (a diff). Writing is the user's click (rater.rs `put`, one undo
+//! step). The page's 「让柚子补题」 / 「润色」 and 柚子's tools (skills/mod.rs) all call `generate`.
 //! - Sources: 简历题: the chosen Chinese materials (none chosen: those in the Chinese draft, else every
 //!   enabled 项目 / 工作 one) with their 经历档案; 通用题: 基本信息, 已确认事实 and the experiences (each
 //!   material with its points, no 档案: a self-introduction or a STAR answer needs them); 突击题: the job,
@@ -172,7 +172,7 @@ pub struct Ask {
     pub question: Option<String>,
     /// The user's words for this time.
     pub request: String,
-    /// 润色 a question still in a 小拾 card (not in the bank yet, or its answer not saved yet): it
+    /// 润色 a question still in a 柚子 card (not in the bank yet, or its answer not saved yet): it
     /// stands in for the bank's (skills/qbank.rs `replace`).
     #[serde(skip)]
     pub pending: Option<Question>,
@@ -766,7 +766,7 @@ mod tests {
         assert_eq!(card.items.iter().map(|i| (i.checked, i.written.as_ref().map(|w| (w.kind.as_str(), w.gone)))).collect::<Vec<_>>(), [(true, Some(("rater", false))), (false, None), (true, Some(("rater", false))), (true, Some(("rater", false)))]);
         let bank = st.picky.with_db(|c| read(c)).unwrap();
         assert_eq!((bank.questions.len(), bank.questions[1].answer.as_str()), (4, "改过的"));
-        assert_eq!(crate::undo::step_back(&st, false).unwrap().label.as_deref(), Some("小拾：3 道题"));
+        assert_eq!(crate::undo::step_back(&st, false).unwrap().label.as_deref(), Some("柚子：3 道题"));
         let card = st.picky.with_db(|c| crate::picky::act::card_of(c, 1)).unwrap().unwrap();
         assert_eq!(card.items.iter().filter_map(|i| i.written.as_ref()).map(|w| w.gone).collect::<Vec<_>>(), [true, true, false]); // the edited one is still there
         assert_eq!(st.picky.with_db(|c| read(c)).unwrap().questions[1].answer, "因为……");

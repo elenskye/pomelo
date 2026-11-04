@@ -1,5 +1,5 @@
 // Pieces the 呦呦漫游 editors share: a document's load / save / ⌘S with its unsaved state (useDoc), the
-// bar above it (中文 · English · 并排, 预览, 保存, ⋯), a Markdown body with 小拾's 润色 and 按中文起草
+// bar above it (中文 · English · 并排, 预览, 保存, ⋯), a Markdown body with 柚子's 润色 and 按中文起草
 // (BodyField, useEnglishDraft), row controls (上移、下移、移出) and a list of pictures (ImageList).
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";

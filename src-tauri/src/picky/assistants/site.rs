@@ -1,7 +1,7 @@
 //! 呦呦漫游 · 按中文起草英文版 (v0.5 阶段 3): a work's Chinese title, summary and body translated into
 //! English by the 翻译 assistant's pipeline (translate.rs `translate_with`) with its model, 思考 and prompt
 //! (own paragraph + keywords), Chinese → English, plus a note on the site's Markdown (image / link
-//! addresses and Markdoc tags kept). The cloud rule is 呦呦漫游's (设置 → 小拾 → 发给云端).
+//! addresses and Markdoc tags kept). The cloud rule is 呦呦漫游's (设置 → 柚子 → 发给云端).
 //! - In memory only, for the page to take into the English version (the user edits and saves): never
 //!   in picky.db, the translate page's last result untouched. One at a time; 停止 keeps what was written.
 //! - The page polls `picky_site_draft` while it runs and clears it once taken (`picky_site_draft_clear`).

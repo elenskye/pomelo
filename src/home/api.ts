@@ -15,6 +15,7 @@ export type JobsCard = { total: number; thisWeek: number; ongoing: number; got: 
 export type CourseLine = { id: number; name: string; total: number; done: number; doing: number; next: Hit | null };
 /** at: UTC timestamp; done: a task checked off (else something added). */
 export type Recent = Hit & { at: string; done: boolean };
+export type Then = { year: string; items: Hit[] };
 export type Overview = {
   today: string;
   year: Year;
@@ -24,6 +25,8 @@ export type Overview = {
   drawing: CourseLine[] | null;
   /** 快到的日子 (days.rs soon); null = hidden. */
   days: Day[] | null;
+  /** 那年今日: earlier years on today's month-day, newest first; per year notes first. */
+  then: Then[];
   recent: Recent[];
 };
 

@@ -1,4 +1,4 @@
-// 小拾's message area (behaviour from the old Picky's transcript.js):
+// 柚子's message area (behaviour from the old Picky's transcript.js):
 // - Both sides render Markdown; the reply being written shows a caret; reasoning folds above a reply.
 // - Actions under a message: copy (Markdown source), edit (questions) / regenerate (replies), version
 //   switch "‹ 2/3 ›". The newest reply keeps its actions visible; others show them on hover. No branch
@@ -8,7 +8,7 @@
 //   the lookups returned are linked where the finished reply names them; a click opens them like 全局搜索.
 // - A question asked in the 小窗 shows 「带着：…」 (the page it went with), unfolding to what was sent.
 // - Citations (v0.4): a finished reply's [n] become chips and the sources it cites are listed under it
-//   (来源); a record opens like 全局搜索 (a past conversation opens in 小拾), a project file passage
+//   (来源); a record opens like 全局搜索 (a past conversation opens in 柚子), a project file passage
 //   shows its text with 打开文件.
 // - Cards (v0.4): a reply that proposed writes shows its card under the text: one tick per item (all on);
 //   an edit the words fit several records lists them to pick one; long text shows its changes marked.
@@ -187,6 +187,19 @@ function Reading(props: { r: ReadingProgress; onStop?: () => void }) {
         {monthly ? `第 ${current} 个月，共 ${total} 个月 · ${label}` : `第 ${current} 段，共 ${total} 段${label && ` · ${label}`}`}
       </p>
     </div>
+  );
+}
+
+/** 年度总结: Atlas's scenes, folded under the letter (until Atlas has its page). */
+function AtlasNote(props: { note: Note }) {
+  return (
+    <details className="picky-think group/atlas mt-2" data-find-skip>
+      <summary className="inline-flex cursor-default list-none items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <ChevronRight size={12} className="transition-transform duration-150 group-open/atlas:rotate-90" />
+        {props.note.label}
+      </summary>
+      <MarkdownView className="reasoning mt-1 border-l-2 pl-3" source={props.note.content} />
+    </details>
   );
 }
 
@@ -515,6 +528,7 @@ function Item(p: ItemProps) {
       )}
       {(m.content || !streaming) && <MarkdownView body source={m.content} streaming={writingNow} links={streaming ? undefined : links} cites={streaming ? undefined : m.sources} />}
       {waiting.map((a) => <AskCard key={a.id} ask={a} onFollowUp={p.onAskFollowUp} />)}
+      {!streaming && m.atlas && <AtlasNote note={m.atlas} />}
       {m.card && <ProposalCard card={m.card} streaming={streaming} onOpen={p.onOpenRecord} />}
       {m.edit && <EditCard edit={m.edit} streaming={streaming} onChanged={() => void qc.invalidateQueries({ queryKey: ["picky", "messages"] })} />}
       {!streaming && <SourceList sources={citedIn(m.content, m.sources ?? [])} onOpen={p.onOpenSource} />}
@@ -826,7 +840,7 @@ export function Transcript(props: {
     if (s.kind === "passage") return setPassage(s);
     if (s.kind === "web") return void (s.url && api.openLink(s.url).catch((e) => toast(errorText(e), "error")));
     if (!s.module || !s.recordKind || s.id == null) return;
-    // a past conversation opens in 小拾 (on the message when it is one)
+    // a past conversation opens in 柚子 (on the message when it is one)
     if (s.module === "picky") return openHit({ module: "picky", kind: "chat", id: s.recordKind === "message" ? (s.parent ?? 0) : s.id, title: s.title, parent: s.recordKind === "message" ? s.id : null });
     openHit({ module: s.module, kind: s.recordKind, id: s.id, title: s.title, parent: s.parent, day: s.day });
   };

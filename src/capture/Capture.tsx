@@ -1,12 +1,12 @@
-// 速记小窗 (requirements「界面外框」): 笔记 · 待办 · 问小拾 in a small window of its own (⌥Space). The draft
+// 速记小窗 (requirements「界面外框」): 笔记 · 待办 · 问柚子 in a small window of its own (⌥Space). The draft
 // is written as you type (a moment later) and before the window hides: Esc, ⌘W and the close button give the
 // focus back to the app that was in front; a click elsewhere hides it too unless the pin is on.
 // The note's text scrolls inside its box, its attachments stay in a row along the box's bottom edge.
-// 问小拾 chats right here (CaptureChat, loaded when first opened).
+// 问柚子 chats right here (CaptureChat, loaded when first opened).
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Paperclip, Pin, Send } from "lucide-react";
-import { Editor, type EditorHandle } from "@/modules/notes/Editor";
+import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
 import { AttachmentStrip, pickAttachments, withFiles } from "@/shared/attachments/Attachments";
 import { useAttachTarget } from "@/shared/attachments/target";
 import type { FileInfo } from "@/shared/attachments/api";
@@ -21,7 +21,7 @@ const CaptureChat = lazy(() => import("./CaptureChat"));
 const TABS: { value: CaptureTab; label: string; module: string }[] = [
   { value: "note", label: "笔记", module: "notes" },
   { value: "todo", label: "待办", module: "todo" },
-  { value: "ask", label: "问小拾", module: "picky" },
+  { value: "ask", label: "问柚子", module: "picky" },
 ];
 /** Typing settles this long before the draft is written. */
 const WRITE_MS = 400;
@@ -44,7 +44,7 @@ export function Capture() {
   /** The file picker is open: losing the focus to it doesn't hide the window. */
   const picking = useRef(false);
   const hiding = useRef(false);
-  const editor = useRef<EditorHandle>(null);
+  const editor = useRef<LiveTextHandle>(null);
   const title = useRef<HTMLInputElement>(null);
   const question = useRef<HTMLTextAreaElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -252,7 +252,7 @@ export function Capture() {
                   editor.current?.focus();
                 }}
               >
-                <Editor ref={editor} value={d.note} onChange={(note) => change({ note })} onSubmit={() => void submit()} tags={meta.tags} placeholder="现在的想法是……" minRows={2} grow autoFocus />
+                <LiteEditor ref={editor} value={d.note} onChange={(note) => change({ note })} onSubmit={() => void submit()} tags={meta.tags} placeholder="现在的想法是……" minRows={2} grow autoFocus />
               </div>
               <AttachmentStrip row files={files} onRemove={(id) => void setDraftFiles(files.filter((f) => f.id !== id))} className="shrink-0 border-t px-3 pb-2" />
             </div>

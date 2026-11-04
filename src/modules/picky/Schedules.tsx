@@ -3,7 +3,7 @@
 // 年度总结 — draws its flow instead, as the 插件库 does), saved with 保存 (one undoable step); 打开 switch, 立即运行, 删除, and
 // 下次 / 上次 (opens the conversation it wrote last). 今日简报 (brief.rs) has 打开, 模型 and 思考, its 提示词 (保存 /
 // 恢复默认; a setting, not undoable), 重写今天的. With 思考 on only models that can think are
-// listed, off only ones that can do without; a chosen one that doesn't fit goes back to 小拾现在选的.
+// listed, off only ones that can do without; a chosen one that doesn't fit goes back to 柚子现在选的.
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
@@ -21,13 +21,13 @@ type Confirm = ReturnType<typeof useConfirm>[0];
 const BLANK: ScheduleInput = { name: "", prompt: "", every: "day", day: null, month: null, at: "09:00", model: null, thinking: true, effort: null };
 const DAYS = (day: number | null) => [...Array.from({ length: 28 }, (_, i) => ({ value: i + 1, label: `${i + 1} 号` })), ...(day && day > 28 && day < 31 ? [{ value: day, label: `${day} 号` }] : []), { value: 31, label: "最后一天" }];
 
-/** The model menu: 小拾现在选的, then the local and cloud models that fit 思考 (one gone stays, marked). */
+/** The model menu: 柚子现在选的, then the local and cloud models that fit 思考 (one gone stays, marked). */
 export function useModels(current: string | null, thinking: boolean) {
   const status = usePickyStatus().data;
   const fits = (code: string) => thinkFits(thinkOf(status, code), thinking);
-  const models: DropdownOption<string | null>[] = [{ value: null, label: "小拾现在选的" }, ...modelOptions(status)].filter((m) => m.value == null || m.value === current || fits(m.value));
+  const models: DropdownOption<string | null>[] = [{ value: null, label: "柚子现在选的" }, ...modelOptions(status)].filter((m) => m.value == null || m.value === current || fits(m.value));
   if (current && !models.some((m) => m.value === current)) models.push({ value: current, label: "（已经不在了）", group: "" });
-  /** The model to keep when 思考 changes (one that no longer fits → 小拾现在选的). */
+  /** The model to keep when 思考 changes (one that no longer fits → 柚子现在选的). */
   const keep = (model: string | null, on: boolean) => (model && !thinkFits(thinkOf(status, model), on) ? null : model);
   return { models, keep };
 }

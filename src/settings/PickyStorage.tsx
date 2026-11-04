@@ -1,4 +1,4 @@
-// 设置 → 小拾 → 空间: sizes, deleting stored copies / unknown files, cleaning old empty conversations
+// 设置 → 柚子 → 空间: sizes, deleting stored copies / unknown files, cleaning old empty conversations
 // (rules in Rust picky/storage.rs).
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -31,7 +31,7 @@ function StorageDialog(props: { onClose: () => void }) {
       danger: true,
       message: (
         <ul className="space-y-1">
-          <li>删除小拾保存的这份副本，原文件不受影响。</li>
+          <li>删除柚子保存的这份副本，原文件不受影响。</li>
           {f.messages > 0 && <li>用到它的 {f.messages} 个问题会显示「文件已删除」。</li>}
           {f.projectFiles > 0 && <li>项目资料里的这一版不能再读取，索引也会删掉。</li>}
           {f.knowledge > 0 && <li>知识库里的这个网页不能再查，索引也会删掉。</li>}
@@ -110,7 +110,7 @@ export function StorageRow() {
   return (
     <Row
       label="空间"
-      help="小拾的数据库，加上小拾的附件和项目资料的副本（在数据目录的 picky-files 文件夹，不进每日备份）。和「数据 → 附件」各放各的，不重复。可以删掉不要的副本、清理 30 天没动过的空对话。"
+      help="柚子的数据库，加上柚子的附件和项目资料的副本（在数据目录的 picky-files 文件夹，不进每日备份）。和「数据 → 附件」各放各的，不重复。可以删掉不要的副本、清理 30 天没动过的空对话。"
       actions={
         <Button onClick={() => setOpen(true)}>
           <HardDrive size={14} strokeWidth={1.5} /> 管理…

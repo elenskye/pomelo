@@ -161,6 +161,48 @@ fn derive(mut x: Day, today: &str) -> Day {
     x
 }
 
+/// A day that fell in a span (年度总结, Atlas): a one-off 纪念日 / 倒数日 on its date, a yearly one or a
+/// birthday on that year's occurrence (`nth` = 第几周年 / 几岁 then). Monthly / weekly ones and 证件 don't
+/// count (they aren't the year's events).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Happened {
+    pub id: i64,
+    pub kind: Kind,
+    pub name: String,
+    pub on: String,
+    pub nth: Option<i64>,
+}
+
+/// The days that fell in [from, to] (local dates), by date.
+pub fn happened(conn: &Connection, from: &str, to: &str) -> Result<Vec<Happened>, String> {
+    let mut out = vec![];
+    let mut st = conn.prepare(&format!("SELECT {COLS} FROM days")).map_err(err)?;
+    let rows: Vec<Day> = st.query_map([], row).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    for x in rows {
+        let (y0, m, d) = parts(&x.date);
+        let mut push = |on: String, nth: Option<i64>| {
+            if on.as_str() >= from && on.as_str() <= to {
+                out.push(Happened { id: x.id, kind: x.kind, name: x.name.clone(), on, nth });
+            }
+        };
+        match (x.kind, x.repeat) {
+            (Kind::Document, _) | (Kind::Day, Repeat::Month | Repeat::Week) => {}
+            (Kind::Day, Repeat::None) => push(x.date.clone(), None),
+            (Kind::Birthday, _) | (Kind::Day, Repeat::Year) => {
+                for y in year_of(from)..=year_of(to) {
+                    let nth = y0.map(|b| y - b);
+                    if nth.is_none_or(|n| n >= 0) {
+                        push(on(y, m, d), nth);
+                    }
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.on.cmp(&b.on).then(a.id.cmp(&b.id)));
+    Ok(out)
+}
+
 /// The list's order key: expired 证件, then ahead, then past one-offs.
 fn order(x: &Day) -> (u8, i64) {
     match (x.kind == Kind::Document, x.days < 0) {

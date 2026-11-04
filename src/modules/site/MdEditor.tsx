@@ -1,21 +1,15 @@
-// The website's Markdown body, drawn while typing (念念不忘's way: the text is the model, one block per
-// line, marks kept and dimmed; shared/editable.ts maps the caret). Headings, quotes, lists, rules,
-// code fences, tables and Markdoc tags by line; **bold**, *italic*, `code`, ~~del~~, [links](…) inline;
-// a line that is only an image shows the picture under it (not part of the text). ↩ continues a list
-// or quote, Tab / ⇧Tab indent a list item, ⌘B / ⌘I bold / italic; the box keeps its own ⌘Z / ⌘⇧Z.
+// The website's Markdown body on the shared live editor (shared/editor/LiveText: the text is the model,
+// one block per line, marks kept and dimmed). This file is the Markdown flavor: headings, quotes, lists,
+// rules, code fences, tables and Markdoc tags by line; **bold**, *italic*, `code`, ~~del~~, [links](…)
+// inline; a line that is only an image shows the picture under it (not part of the text). ↩ continues
+// a list or quote, Tab / ⇧Tab indent a list item, ⌘B / ⌘I bold / italic; the box keeps its own ⌘Z / ⌘⇧Z.
 // Images dropped or pasted on it go into the work's image folder (Rust) and in as their own lines.
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type KeyboardEvent } from "react";
-import { lineStart, select, selectionIn, serialize } from "@/shared/editable";
+import { forwardRef, useImperativeHandle, useRef } from "react";
 import { useDropTarget } from "@/shared/attachments/target";
+import { LiveText, type Flavor, type LiveTextHandle } from "@/shared/editor/LiveText";
 import { siteSrc } from "./api";
 
-export type MdEditorHandle = {
-  focus: () => void;
-  insertLines: (lines: string[]) => void;
-  /** The last selection in the box (offsets in the text). */
-  selection: () => [number, number];
-  replaceRange: (start: number, end: number, text: string) => void;
-};
+export type MdEditorHandle = LiveTextHandle;
 
 const MARK = "text-muted-foreground/45";
 const LIST = /^( *)([-*+]|\d+[.)])( +)(.*)$/;
@@ -77,246 +71,62 @@ function lineHtml(line: string): { cls: string; html: string } {
   return { cls: "", html: inline(line) };
 }
 
-function docHtml(text: string): string {
+function docHtml(text: string, pending: number | null): string {
   let fence = false;
   return text
     .split("\n")
-    .map((l) => {
+    .map((l, i) => {
       if (FENCE.test(l)) {
         fence = !fence;
         return `<div class="font-mono text-[13px]">${span(MARK, l)}</div>`;
       }
       if (fence) return `<div class="bg-muted/40 px-1 font-mono text-[13px]">${l ? esc(l) : "<br>"}</div>`;
-      if (!l.trim()) return `<div class="h-[0.8em] leading-[0.8em]"><br></div>`;
+      if (!l.trim()) return i === pending ? "<div><br></div>" : `<div class="h-[0.8em] leading-[0.8em]"><br></div>`;
       const { cls: c, html } = lineHtml(l);
       return `<div class="${c}">${html}</div>`;
     })
     .join("");
 }
 
-type Snap = { text: string; sel: [number, number] };
-const HISTORY = 300;
+const FLAVOR: Flavor = {
+  draw: docHtml,
+  line: (line) => {
+    const li = LIST.exec(line);
+    if (li) {
+      const marker = /\d/.test(li[2]) ? `${Number(li[2].slice(0, -1)) + 1}${li[2].slice(-1)}` : li[2];
+      return { kind: "list", indent: li[1].length, empty: !li[4].trim(), next: li[1] + marker + li[3] };
+    }
+    const q = QUOTE.exec(line);
+    return q ? { kind: "quote", indent: 0, empty: !q[2].trim(), next: q[1] } : null;
+  },
+  wraps: [
+    { key: "b", mark: "**" },
+    { key: "i", mark: "*" },
+  ],
+};
 
 export const MdEditor = forwardRef<MdEditorHandle, { value: string; onChange: (v: string) => void; onImages: (take: { paths?: string[]; files?: File[] }) => Promise<string[]>; label: string; onError: (e: unknown) => void; readOnly?: boolean }>(function MdEditor(props, handle) {
-  const ref = useRef<HTMLDivElement>(null);
-  const doc = useRef<Snap>({ text: props.value, sel: [0, 0] });
-  const past = useRef<Snap[]>([]);
-  const future = useRef<Snap[]>([]);
-  const typed = useRef<{ at: number; kind: "insert" | "delete" | null }>({ at: 0, kind: null });
-  const composing = useRef(false);
-
-  const draw = (sel?: [number, number]) => {
-    const el = ref.current;
-    if (!el) return;
-    el.innerHTML = docHtml(doc.current.text);
-    if (sel && document.activeElement === el) select(el, sel[0], sel[1]);
-  };
-
-  const commit = (text: string, sel: [number, number], typing = false) => {
-    const now = Date.now();
-    const kind = !typing ? null : text.length >= doc.current.text.length ? "insert" : "delete";
-    if (text !== doc.current.text) {
-      if (!(kind && kind === typed.current.kind && now - typed.current.at < 1000)) {
-        past.current.push(doc.current);
-        if (past.current.length > HISTORY) past.current.shift();
-      }
-      future.current = [];
-    }
-    typed.current = { at: kind ? now : 0, kind };
-    doc.current = { text, sel };
-    draw(sel);
-    props.onChange(text);
-  };
-
-  const replace = (start: number, end: number, text: string, sel?: [number, number]) => {
-    const v = doc.current.text;
-    const at = start + text.length;
-    commit(v.slice(0, start) + text + v.slice(end), sel ?? [at, at]);
-  };
-
-  const travel = (back: boolean) => {
-    const from = back ? past.current : future.current;
-    const to = back ? future.current : past.current;
-    const snap = from.pop();
-    if (!snap) return;
-    to.push(doc.current);
-    doc.current = snap;
-    typed.current = { at: 0, kind: null };
-    draw(snap.sel);
-    props.onChange(snap.text);
-  };
-
-  const sync = () => {
-    const el = ref.current;
-    if (!el || composing.current) return;
-    const text = serialize(el);
-    commit(text, selectionIn(el) ?? [text.length, text.length], true);
-  };
-
-  // a value from outside (another work, a reload, the translation) starts afresh
-  useLayoutEffect(() => {
-    if (props.value === doc.current.text && ref.current?.childNodes.length) return;
-    doc.current = { text: props.value, sel: [0, 0] };
-    past.current = [];
-    future.current = [];
-    draw();
-  }, [props.value]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /** Lines in as their own paragraph at the caret (else at the end). */
-  const insertLines = (lines: string[]) => {
-    if (!lines.length) return;
-    const v = doc.current.text;
-    const el = ref.current;
-    const [s, e] = (el && selectionIn(el)) ?? (document.activeElement === el ? doc.current.sel : [v.length, v.length]);
-    const before = s === 0 || v[s - 1] === "\n" ? (s >= 2 && v[s - 2] !== "\n" ? "\n" : "") : "\n\n";
-    const after = e >= v.length ? "\n" : v[e] === "\n" ? (v[e + 1] === "\n" ? "" : "\n") : "\n\n";
-    const block = lines.join("\n\n");
-    const at = s + before.length + block.length;
-    el?.focus();
-    replace(s, e, before + block + after, [at, at]);
-  };
-
+  const box = useRef<HTMLDivElement>(null);
+  const live = useRef<LiveTextHandle>(null);
   useImperativeHandle(handle, () => ({
-    focus: () => {
-      const el = ref.current;
-      if (!el) return;
-      el.focus();
-      if (!selectionIn(el)) select(el, 0);
-    },
-    insertLines,
-    selection: () => doc.current.sel,
-    replaceRange: (start, end, text) => replace(start, end, text, [start, start + text.length]),
+    focus: () => live.current?.focus(),
+    insertLines: (lines) => live.current?.insertLines(lines),
+    selection: () => live.current?.selection() ?? [0, 0],
+    replaceRange: (start, end, text) => live.current?.replaceRange(start, end, text),
   }));
-
-  useEffect(() => {
-    const onSel = () => {
-      const el = ref.current;
-      const s = el && !composing.current ? selectionIn(el) : null;
-      if (s) doc.current.sel = s;
-    };
-    document.addEventListener("selectionchange", onSel);
-    return () => document.removeEventListener("selectionchange", onSel);
-  }, []);
-
-  const wrap = (mark: string) => {
-    const value = doc.current.text;
-    const [s, e] = selectionIn(ref.current!) ?? doc.current.sel;
-    const n = mark.length;
-    if (value.slice(s - n, s) === mark && value.slice(e, e + n) === mark) replace(s - n, e + n, value.slice(s, e), [s - n, e - n]);
-    else replace(s, e, mark + value.slice(s, e) + mark, [s + n, e + n]);
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229 || composing.current) return;
-    const k = e.key.toLowerCase();
-    if (e.metaKey && !e.altKey && !e.ctrlKey && k === "z") {
-      e.preventDefault();
-      e.stopPropagation();
-      travel(!e.shiftKey);
-      return;
-    }
-    if (e.metaKey && !e.altKey && !e.shiftKey && (k === "b" || k === "i")) {
-      e.preventDefault();
-      wrap(k === "b" ? "**" : "*");
-      return;
-    }
-    const value = doc.current.text;
-    const [s, end] = selectionIn(e.currentTarget) ?? doc.current.sel;
-    const ls = lineStart(value, s);
-    const le = value.indexOf("\n", ls) < 0 ? value.length : value.indexOf("\n", ls);
-    const line = value.slice(ls, le);
-    const li = LIST.exec(line);
-    const quote = QUOTE.exec(line);
-    if (e.key === "Enter" && !e.metaKey) {
-      e.preventDefault();
-      if (s === end && !e.shiftKey && (li || quote)) {
-        const rest = li ? li[4] : quote![2];
-        if (!rest.trim()) {
-          if (li && li[1].length >= 2) replace(ls, ls + 2, "", [s - 2, s - 2]); // an empty nested item: one level up
-          else replace(ls, le, ""); // empty: the list / quote ends
-        } else if (li) {
-          const marker = /\d/.test(li[2]) ? `${Number(li[2].slice(0, -1)) + 1}${li[2].slice(-1)}` : li[2];
-          replace(s, s, `\n${li[1]}${marker}${li[3]}`);
-        } else replace(s, s, `\n${quote![1]}`);
-      } else replace(s, end, "\n");
-      return;
-    }
-    if (e.key === "Tab" && li) {
-      e.preventDefault();
-      if (e.shiftKey) {
-        if (li[1].length >= 2) replace(ls, ls + 2, "", [s - 2, end - 2]);
-      } else replace(ls, ls, "  ", [s + 2, end + 2]);
-    }
-  };
-
-  const onBeforeInput = (e: InputEvent) => {
-    const el = ref.current!;
-    const [s, end] = selectionIn(el) ?? doc.current.sel;
-    switch (e.inputType) {
-      case "insertParagraph":
-      case "insertLineBreak":
-        e.preventDefault();
-        replace(s, end, "\n");
-        break;
-      case "insertFromPaste":
-      case "insertFromDrop":
-      case "insertFromYank":
-        e.preventDefault();
-        replace(s, end, (e.dataTransfer?.getData("text/plain") ?? e.data ?? "").replace(/\r\n?/g, "\n"));
-        break;
-      case "deleteByDrag":
-        e.preventDefault();
-        break;
-      case "historyUndo":
-      case "historyRedo":
-        e.preventDefault();
-        travel(e.inputType === "historyUndo");
-        break;
-      case "formatBold":
-      case "formatItalic":
-      case "formatUnderline":
-        e.preventDefault();
-        break;
-    }
-  };
-  useEffect(() => {
-    const el = ref.current!;
-    el.addEventListener("beforeinput", onBeforeInput);
-    return () => el.removeEventListener("beforeinput", onBeforeInput);
-  });
-
-  const copy = (e: ClipboardEvent<HTMLDivElement>, cut: boolean) => {
-    const [s, end] = selectionIn(e.currentTarget) ?? [0, 0];
-    if (s === end) return;
-    e.preventDefault();
-    e.clipboardData.setData("text/plain", doc.current.text.slice(s, end));
-    if (cut) replace(s, end, "");
-  };
-
-  const take = (p: Promise<string[]>) => void p.then((urls) => insertLines(urls.map((u) => `![](${u})`)), props.onError);
-  const dropping = useDropTarget(ref, { paths: (paths) => take(props.onImages({ paths })), files: (files) => take(props.onImages({ files })) }, !props.readOnly);
-
+  const take = (p: Promise<string[]>) => void p.then((urls) => live.current?.insertLines(urls.map((u) => `![](${u})`)), props.onError);
+  const dropping = useDropTarget(box, { paths: (paths) => take(props.onImages({ paths })), files: (files) => take(props.onImages({ files })) }, !props.readOnly);
   return (
-    <div
-      ref={ref}
-      role="textbox"
-      aria-multiline
-      aria-label={props.label}
-      contentEditable={props.readOnly ? false : "plaintext-only"}
-      suppressContentEditableWarning
-      spellCheck={false}
-      autoCorrect="off"
-      autoCapitalize="off"
-      onInput={sync}
-      onCompositionStart={() => (composing.current = true)}
-      onCompositionEnd={() => {
-        composing.current = false;
-        requestAnimationFrame(sync);
-      }}
-      onKeyDown={onKeyDown}
-      onCopy={(e) => copy(e, false)}
-      onCut={(e) => copy(e, true)}
-      className={`min-h-[12em] w-full rounded-control text-[15px] leading-relaxed break-words whitespace-pre-wrap outline-none ${dropping ? "ring-2 ring-primary" : ""} ${props.readOnly ? "text-muted-foreground" : ""}`}
+    <LiveText
+      ref={live}
+      boxRef={box}
+      value={props.value}
+      onChange={props.onChange}
+      flavor={FLAVOR}
+      label={props.label}
+      readOnly={props.readOnly}
+      focusAt="start"
+      className={`min-h-[12em] rounded-control text-[15px] ${dropping ? "ring-2 ring-primary" : ""} ${props.readOnly ? "text-muted-foreground" : ""}`}
     />
   );
 });

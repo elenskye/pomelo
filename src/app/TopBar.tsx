@@ -1,5 +1,5 @@
 // The top bar across the window (docs/design.md「外框」): the traffic lights (macOS draws them), the pomelo,
-// ‹ ›, the 页签 and「＋」; on the right the date, search (⌘K), 设置 and 小拾's round button (⌘J).
+// ‹ ›, the 页签 and「＋」; on the right the date, search (⌘K), 设置 and 柚子's round button (⌘J).
 // Everything sits on the traffic lights' centre line. Right-click ‹ › lists the steps that way.
 import { useState } from "react";
 import { Bird, ChevronLeft, ChevronRight, Plus, Search, Settings, X } from "lucide-react";
@@ -111,8 +111,8 @@ export function TopBar(props: {
       </button>
       <button
         type="button"
-        aria-label={props.chatOpen ? "收起小拾" : "问小拾"}
-        title={props.chatOpen ? "收起小拾" : "问小拾"}
+        aria-label={props.chatOpen ? "收起柚子" : "问柚子"}
+        title={props.chatOpen ? "收起柚子" : "问柚子"}
         aria-pressed={props.chatOpen}
         disabled={!props.onChat}
         onClick={props.onChat}

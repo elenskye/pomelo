@@ -1,4 +1,4 @@
-//! 「Seeker 资料」 (v0.7 阶段 ④): 小拾 reads Seeker and Rater, never writes them. One tool, views:
+//! 「Seeker 资料」 (v0.7 阶段 ④): 柚子 reads Seeker and Rater, never writes them. One tool, views:
 //! materials (基本信息 and 素材, by language), resume (the current drafts), exports (Word exports still
 //! on disk and the jobs they went to; no copy of their text), questions (Rater's bank,
 //! each with its practice record), practice (Rater's recent card rounds and their feedback),
@@ -32,7 +32,7 @@ pub fn tool() -> Value {
 
 pub(crate) fn blocked(module: &str, label: &str, access: &Access) -> Answer {
     let (head, text) = if access.hidden.iter().any(|h| h == module) {
-        ("已隐藏，没看", format!("没有查：{label}在模块坞里隐藏了，小拾不读它的数据。"))
+        ("已隐藏，没看", format!("没有查：{label}在模块坞里隐藏了，柚子不读它的数据。"))
     } else {
         ("不发给云端，没看", format!("没有查：Seeker 资料没允许发给云端模型（Seeker 的设置里能开）。请在回答开头写明「{label}不发给云端，这部分没看」，并提醒可以换本地模型再问。"))
     };
@@ -283,7 +283,7 @@ fn round_text(r: &practice::Round) -> String {
         lines.push(format!("  不熟：{}", unsure.join("；")));
     }
     if let Some(f) = &r.feedback {
-        lines.extend([(!f.summary.is_empty()).then(|| format!("  小拾的反馈：{}", f.summary)), (!f.good.is_empty()).then(|| format!("  说得好：{}", f.good.join("；"))), (!f.gaps.is_empty()).then(|| format!("  缺口：{}", f.gaps.join("；")))].into_iter().flatten());
+        lines.extend([(!f.summary.is_empty()).then(|| format!("  柚子的反馈：{}", f.summary)), (!f.good.is_empty()).then(|| format!("  说得好：{}", f.good.join("；"))), (!f.gaps.is_empty()).then(|| format!("  缺口：{}", f.gaps.join("；")))].into_iter().flatten());
     }
     lines.join("\n")
 }
@@ -333,7 +333,7 @@ mod tests {
         assert!(run(&c, Mode::Mock, &local, r#"{"view":"questions"}"#, 2000).text.contains("必背 · 练过：会 0 次、不熟 1 次（上次不熟），最近 20"));
         let p = run(&c, Mode::Mock, &local, r#"{"view":"practice"}"#, 2000);
         assert_eq!((p.module.as_deref(), p.label.as_str()), (Some("rater"), "Rater 题库 · 卡片练习"));
-        assert!(p.text.contains("自己挑】1 张：会 0、不熟 1\n  不熟：自我介绍\n  小拾的反馈：开头太长\n  缺口：没讲清在哪里实习"), "{}", p.text);
+        assert!(p.text.contains("自己挑】1 张：会 0、不熟 1\n  不熟：自我介绍\n  柚子的反馈：开头太长\n  缺口：没讲清在哪里实习"), "{}", p.text);
         assert!(run(&c, Mode::Mock, &Access { hidden: vec![data::RATER.into()], ..Default::default() }, r#"{"view":"practice"}"#, 2000).text.contains("隐藏"));
         assert!(run(&c, Mode::Mock, &local, r#"{"view":"resume"}"#, 2000).text.contains("中文简历：还没有草稿"));
         assert_eq!(run(&c, Mode::Mock, &local, r#"{"view":"rules"}"#, 2000).state, "failed");

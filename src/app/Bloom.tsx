@@ -1,6 +1,6 @@
 // 柚子瓣 (requirements「界面外框」): the 模块坞 opened from the pomelo like a peeled pomelo — each wedge a
 // category, its modules round the middle, names outside the rind (click to rename). The box in the centre
-// filters; ↩ opens the first match, or asks 小拾 when nothing matches. Dragging, the 「⋯」 menu, 「＋ 分类」 and
+// filters; ↩ opens the first match, or asks 柚子 when nothing matches. Dragging, the 「⋯」 menu, 「＋ 分类」 and
 // 已隐藏 work as in the 模块坞 (same layout). It grows out of the pomelo when it opens and stays put while
 // it's being edited; Esc or a click outside closes it.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -220,9 +220,9 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
                 close();
               }
             }}
-            placeholder="去哪，或问小拾"
+            placeholder="去哪，或问柚子"
             spellCheck={false}
-            aria-label="去哪，或问小拾"
+            aria-label="去哪，或问柚子"
             className="h-9 w-[196px] rounded-full border bg-background px-3.5 text-center outline-none focus:border-[color-mix(in_srgb,var(--primary)_60%,var(--border))] focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary)_14%,transparent)]"
           />
           {term && !first && props.onAsk && (
@@ -235,7 +235,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
               className="flex max-w-[220px] items-center gap-1.5 rounded-control px-2 py-1 text-sm hover:bg-muted"
             >
               <Bird size={14} className="shrink-0" style={{ color: "var(--module-picky)" }} />
-              <span className="truncate">问小拾「{q.trim()}」</span>
+              <span className="truncate">问柚子「{q.trim()}」</span>
             </button>
           )}
         </div>

@@ -5,7 +5,7 @@
 //! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
-//! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 小拾
+//! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 柚子
 //! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db); v11 = no 定时任务 (picky keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (picky `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (picky `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name).
 //! All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
@@ -25,7 +25,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 36;
+pub const FORMAT_VERSION: u32 = 37;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,7 +154,7 @@ impl Payload {
 
 struct Parsed {
     payloads: Vec<Payload>,
-    /// 小拾's part (picky.db).
+    /// 柚子's part (picky.db).
     picky: Option<crate::picky::transfer::PickyRecord>,
     /// (module key, kind names) for modules in `payloads` only.
     kinds: Vec<(&'static str, Vec<String>)>,
@@ -377,7 +377,7 @@ pub fn export(conn: &mut Connection) -> Result<(String, Vec<ModuleSummary>), Str
     export_with(conn, None)
 }
 
-/// With 小拾's part (read from picky.db by the caller).
+/// With 柚子's part (read from picky.db by the caller).
 pub fn export_with(conn: &mut Connection, picky: Option<&crate::picky::transfer::PickyRecord>) -> Result<(String, Vec<ModuleSummary>), String> {
     let tx = conn.transaction().map_err(err)?;
     let payloads = export_payloads(&tx)?;
@@ -425,7 +425,7 @@ pub fn export_to(state: State<AppState>, path: String) -> Result<ExportSummary, 
     Ok(ExportSummary { path, modules })
 }
 
-/// 小拾's line in a summary (what the file has, what picky.db has).
+/// 柚子's line in a summary (what the file has, what picky.db has).
 fn picky_summary(state: &AppState, rec: &crate::picky::transfer::PickyRecord) -> Result<ModuleSummary, String> {
     Ok(ModuleSummary {
         key: crate::picky::transfer::KEY.into(),

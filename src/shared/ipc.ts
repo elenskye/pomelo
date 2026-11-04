@@ -21,7 +21,7 @@ export type ExportSummary = {
   modules: { key: string; label: string; incoming: number }[];
 };
 
-/** `store`: pomelo (life data) | picky (小拾). `label`: daily | manual | before-import | before-restore | before-v<N>. `createdAt`: local "YYYY-MM-DD HH:MM:SS". */
+/** `store`: pomelo (life data) | picky (柚子). `label`: daily | manual | before-import | before-restore | before-v<N>. `createdAt`: local "YYYY-MM-DD HH:MM:SS". */
 export type BackupInfo = { fileName: string; store: "pomelo" | "picky"; label: string; createdAt: string; size: number };
 
 /** 开机自动启动: `registers` = this copy writes the login item (the installed app); otherwise only the setting is kept. */

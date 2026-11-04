@@ -21,7 +21,7 @@ import { TabsProvider, useTabs } from "./tabs";
 import { TopBar } from "./TopBar";
 import "./frame.css";
 
-// 小拾's 小窗 brings the Markdown / formula libraries: loaded the first time it opens
+// 柚子's 小窗 brings the Markdown / formula libraries: loaded the first time it opens
 const SideChat = lazy(() => import("@/modules/picky/SideChat").then((m) => ({ default: m.SideChat })));
 /** Below this the 小窗 floats over the page instead of making room. */
 const FLOAT_QUERY = "(max-width: 1239px)";
@@ -95,7 +95,7 @@ function useTabKeys(enabled: boolean) {
 }
 
 /** The 速记小窗 (Rust capture.rs): what it saved shows here at once; a conversation kept there and a record a
- *  reply links open here (in 小拾 / the module, as from 全局搜索). */
+ *  reply links open here (in 柚子 / the module, as from 全局搜索). */
 function useCapture(enabled: boolean) {
   const qc = useQueryClient();
   const tabs = useTabs();
@@ -265,7 +265,7 @@ function Shell() {
   useVaultIdleLock(ok);
   useSearchKey(ok, openSearch);
   useJobWatch();
-  // 小拾's 小窗: not on the 小拾 page, not when 小拾 is hidden
+  // 柚子's 小窗: not on the 柚子 page, not when 柚子 is hidden
   const [hidden] = useHiddenModules();
   const path = useLocation().pathname;
   const chatUsable = ok && !hidden.includes("picky") && !path.startsWith("/picky");

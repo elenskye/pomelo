@@ -2,7 +2,7 @@
 // Root tasks can move between groups and goals; subtasks stay under their parent. Dates per type:
 // 普通 / 打卡 / 进度条 = 时间: 不设 or a 时间段; 重复 = none to enter (Rust derives each occurrence
 // from the rule and the counts), only 完成后 takes a start date. For saved tasks the type's records
-// (skip / check-in calendar / amounts) act immediately. 小拾: 润色 on 内容; a saved 普通 task can be split
+// (skip / check-in calendar / amounts) act immediately. 柚子: 润色 on 内容; a saved 普通 task can be split
 // into subtasks to pick from (「加上」 adds them as one undo step). A task made from a note links back to it.
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
@@ -315,8 +315,8 @@ function ProgressLog(props: { task: Task }) {
   );
 }
 
-/** 小拾 splits a saved 普通 task: suggestions to pick, 「加上」 adds them under it. */
-/** 拆成子任务: the action (in 内容's label row) and, once 小拾 answered, its list (under 内容). */
+/** 柚子 splits a saved 普通 task: suggestions to pick, 「加上」 adds them under it. */
+/** 拆成子任务: the action (in 内容's label row) and, once 柚子 answered, its list (under 内容). */
 function useSplitTask(taskId: number | null) {
   const status = usePickyStatus().data;
   const m = useTodoMutations();

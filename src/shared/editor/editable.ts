@@ -1,6 +1,6 @@
 // A plain-text editable box drawn one block (div) per line: the text is the model, the DOM is redrawn
 // from it after each change and the selection put back by offsets in the text. Non-text bits inside a
-// line (an image shown under it) count for nothing. Used by 念念不忘 and 呦呦漫游's editors.
+// line (an image shown under it) count for nothing. Used by LiveText (the shared editor) and Seeker's points.
 
 /** The text of a box (or a cloned piece of it): blocks are lines; a `<br>` ending a block is only
  * its placeholder. */

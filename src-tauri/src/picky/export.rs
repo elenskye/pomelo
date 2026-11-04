@@ -182,8 +182,8 @@ fn state_label(state: &str) -> Option<&'static str> {
 fn role_label(role: &str, model: Option<&str>) -> String {
     match (role, model) {
         ("user", _) => "我".into(),
-        (_, Some(m)) => format!("小拾 · {m}"),
-        _ => "小拾".into(),
+        (_, Some(m)) => format!("柚子 · {m}"),
+        _ => "柚子".into(),
     }
 }
 
@@ -261,7 +261,7 @@ fn looked_line(queries: &[super::data::Query]) -> String {
 pub fn copy_markdown(conn: &Connection, id: i64) -> Result<String, String> {
     let mut parts = vec![format!("# {}", title(conn, id)?)];
     for m in chat::path(conn, id)? {
-        let mut lines = vec![format!("## {}", if m.role == "user" { "我" } else { "小拾" })];
+        let mut lines = vec![format!("## {}", if m.role == "user" { "我" } else { "柚子" })];
         if let Some(s) = state_label(&m.state) {
             lines.push(format!("状态：{s}"));
         }
@@ -542,10 +542,10 @@ mod tests {
         let run = crate::picky::context::begin_summary(&c, b.session_id, "local:a", "A").unwrap();
         crate::picky::context::finish_summary(&c, run, b.session_id, b.reply_id, "completed", Some("聊了向量"), None, (1, 1), 8192).unwrap();
         let copy = copy_markdown(&c, b.session_id).unwrap();
-        assert_eq!(copy, "# 什么是向量？\n\n## 我\n\n什么是向量？\n\n## 小拾\n\n状态：已停止\n\n有方向的量。\n");
+        assert_eq!(copy, "# 什么是向量？\n\n## 我\n\n什么是向量？\n\n## 柚子\n\n状态：已停止\n\n有方向的量。\n");
 
         let md = markdown(&c, b.session_id).unwrap();
-        assert!(md.contains("## 2. 小拾 · DeepSeek Flash · 版本 2/2") && !md.contains("一组数。"), "{md}");
+        assert!(md.contains("## 2. 柚子 · DeepSeek Flash · 版本 2/2") && !md.contains("一组数。"), "{md}");
         assert!(!md.contains("上下文摘要")); // its message isn't on the shown path
         // a reply's card
         let choice = crate::picky::act::Choice { title: "10/12 午饭 ¥35".into(), fields: vec![], op: crate::picky::act::Op::AddEntry { patch: serde_json::json!({}) } };

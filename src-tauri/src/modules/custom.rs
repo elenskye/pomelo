@@ -1,6 +1,6 @@
 //! 五花八门 / 循序渐进 (v0.4.5): templates, not modules. Each module made from one (`custom_modules`)
 //! is its own sidebar module with the key "list/<id>" / "progress/<id>" (also its route); sidebar
-//! order, 隐藏, 发给云端, search hits and 小拾 all go by that key. Rules (all here):
+//! order, 隐藏, 发给云端, search hits and 柚子 all go by that key. Rules (all here):
 //! - Name: 1–20 chars, unique among them and not a built-in module's. Icon: one of `ICONS`; the color
 //!   comes from the template (index.css `--module-list` / `--module-progress`).
 //! - 循序渐进 names its two levels (default 课程 / 课节, 1–6 chars each); 五花八门 has none.
@@ -32,7 +32,7 @@ pub const ICONS: &[&str] = &[
 
 /// Names a made module can't take (built-in modules, pages and the templates themselves).
 const TAKEN: &[&str] = &[
-    "首页", "设置", "一步一步", "摸鱼读读", "好奇看看", "随意画画", "出门走走", "钱来钱往", "投石问路", "念念不忘", "来日方长", "芝麻开门", "小拾", "五花八门",
+    "首页", "设置", "一步一步", "摸鱼读读", "好奇看看", "随意画画", "出门走走", "钱来钱往", "投石问路", "念念不忘", "来日方长", "芝麻开门", "柚子", "五花八门",
     "循序渐进",
 ];
 

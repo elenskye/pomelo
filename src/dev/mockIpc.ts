@@ -4,7 +4,8 @@ import type { ImportBatch, ImportRow, ImportDraft } from "@/modules/finance/impo
 // Keep in sync when adding commands. Never imported in production builds (guarded in main.tsx).
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { nextOnOrAfter } from "@/modules/finance/money";
-import { excerpt, tagSpans } from "@/modules/notes/NoteBody";
+import { excerpt } from "@/modules/notes/NoteBody";
+import { tagSpans } from "@/shared/editor/lite";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/picky/assistants/seekerApi";
 import type { SkillFlowNode } from "@/modules/picky/api";
@@ -485,7 +486,7 @@ const doneItems = (from: string, to: string) => {
   addTTask({ groupId: later.id, title: "办护照" });
 }
 // Undo / redo mock: whole-state snapshots of the module tables around each edit (a step inside
-// another one — 小拾's card — folds into it).
+// another one — 柚子's card — folds into it).
 type Snap = { label: string; before: string; after: string };
 // Maps (念念不忘's tag pins and icons) survive the round trip
 const keepMaps = (_: string, v: unknown) => (v instanceof Map ? { __map: [...v] } : v);
@@ -530,7 +531,7 @@ const undoable = (label: string, f: (a: Args) => unknown) => (a: Args) => {
   }
   return out;
 };
-/** Runs `f` and puts everything back (小拾's trial writes). */
+/** Runs `f` and puts everything back (柚子's trial writes). */
 const pTrial = <T,>(f: () => T): T => {
   const s = snapState();
   const [u, r] = [undoStack, redoStack];
@@ -906,11 +907,11 @@ const finEntry = (id: unknown) => {
   return e;
 };
 const finScreenshotPreview = "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="700"><rect width="600" height="700" fill="#f5f2eb"/><g font-family="sans-serif" font-size="24" fill="#242424"><text x="30" y="60">Screenshot preview (test)</text><text x="30" y="180">Cafe</text><text x="410" y="180">-12.50</text><text x="30" y="400">Shop</text><text x="410" y="400">-8.00</text></g></svg>');
-/** importer.rs `route`: one of 小拾's cloud models, while 钱来钱往 · 收支 may go to the cloud; its name. */
+/** importer.rs `route`: one of 柚子's cloud models, while 钱来钱往 · 收支 may go to the cloud; its name. */
 const finModel = (model: unknown) => {
   const m = pky.cloud.find((x) => `cloud:${x.id}` === model);
   if (!m) throw "先选一个云端模型";
-  if (!pDataCloud().find((x) => x.module === "finance/flow")?.allowed) throw "钱来钱往 · 收支设成了不发给云端（设置 → 小拾），用不了 Importer";
+  if (!pDataCloud().find((x) => x.module === "finance/flow")?.allowed) throw "钱来钱往 · 收支设成了不发给云端（设置 → 柚子），用不了 Importer";
   return m.name;
 };
 /** A new 账单 goes on top of the list. */
@@ -1420,7 +1421,8 @@ const attachmentHandlers: Record<string, (a: Args) => unknown> = {
 };
 
 type NRow = { id: number; content: string; pinned: boolean; refs: number[]; createdAt: string; updatedAt: string };
-let nt = { notes: [] as NRow[], meta: new Map<string, { pin: number | null; icon: string | null }>() };
+type NMeta = { pin: number | null; icon: string | null; order: number | null };
+let nt = { notes: [] as NRow[], meta: new Map<string, NMeta>() };
 const nTags = (c: string) => [...new Set(c.split("\n").flatMap((l) => tagSpans(l).map((t) => t.value)))];
 const nUnder = (t: string, root: string) => t === root || t.startsWith(`${root}/`);
 const nBrief = (n: NRow) => ({ id: n.id, createdAt: n.createdAt, excerpt: excerpt(n.content) });
@@ -1461,6 +1463,17 @@ const nClean = (c: unknown) => {
   const park = add(21, "11:20", "#生活/新加坡 植物园拍的几张，雨后的颜色特别好。");
   aSet("note", park.id, [aAdd("植物园-1.jpg", 2_400_000).id, aAdd("植物园-2.jpg", 1_900_000).id, aAdd("路线图.pdf", 380_000).id]);
   add(1, "16:20", "随手记一句，没有标签。");
+  // 那年今日: last year's and the year before's today
+  const yearsAgo = (n: number, hm: string) => {
+    const d = parseYmd(dayOffset(0));
+    d.setFullYear(d.getFullYear() - n);
+    const [h, m] = hm.split(":").map(Number);
+    d.setHours(h, m, 0);
+    return d.toISOString();
+  };
+  for (const [n, hm, content] of [[1, "19:20", "#生活 第一次自己做了红烧肉，比想象中简单。"], [1, "22:40", "#想法 慢一点也没关系，记下来就好。"], [2, "21:10", "#读书/摘抄 读完了《置身事内》第一章。"]] as const) {
+    nt.notes.push({ id: nextId++, content, pinned: false, refs: [], createdAt: yearsAgo(n, hm), updatedAt: yearsAgo(n, hm) });
+  }
   add(0, "09:05", "#生活 今天早点睡。");
 }
 const noteHandlers: Record<string, (a: Args) => unknown> = {
@@ -1493,7 +1506,7 @@ const noteHandlers: Record<string, (a: Args) => unknown> = {
     return {
       total: nt.notes.length,
       days: [...days].sort().map(([day, count]) => ({ day, count })),
-      tags: [...under].sort().map(([tag, ids]) => ({ tag, count: ids.size, icon: nt.meta.get(tag)?.icon ?? null })),
+      tags: [...under].sort().map(([tag, ids]) => ({ tag, count: ids.size, icon: nt.meta.get(tag)?.icon ?? null, order: nt.meta.get(tag)?.order ?? null })),
       pinned: [...nt.meta].filter(([t, m]) => m.pin !== null && !t.includes("/") && under.has(t)).sort((a, b) => a[1].pin! - b[1].pin!).map(([t]) => t),
     };
   },
@@ -1502,12 +1515,11 @@ const noteHandlers: Record<string, (a: Args) => unknown> = {
     if (!nt.notes.some((n) => nTags(n.content).some((t) => nUnder(t, tag)))) throw `没有笔记用到「#${tag}」`;
     const p = a.patch as { pinned?: boolean; icon?: string | null };
     if (p.pinned === true && tag.includes("/")) throw "只能置顶第一级标签";
-    const m = { ...(nt.meta.get(tag) ?? { pin: null, icon: null }) };
+    const m = { ...(nt.meta.get(tag) ?? { pin: null, icon: null, order: null }) };
     if (p.pinned === true && m.pin === null) m.pin = Math.max(0, ...[...nt.meta.values()].map((x) => x.pin ?? 0)) + 1;
     if (p.pinned === false) m.pin = null;
     if ("icon" in p) m.icon = p.icon?.trim() || null;
-    if (m.pin === null && m.icon === null) nt.meta.delete(tag);
-    else nt.meta.set(tag, m);
+    nMetaPut(tag, m);
     return null;
   }),
   note_create: undoable("添加笔记", (a) => {
@@ -1537,12 +1549,81 @@ const noteHandlers: Record<string, (a: Args) => unknown> = {
     for (const t of tTasks) if (t.fromNote === a.id) t.fromNote = null;
     return null;
   }),
-  notes_tag_rename: undoable("标签改名", (a) => {
-    const from = String(a.from).replace(/^#/, "");
-    const to = String(a.to).trim().replace(/^#/, "").replace(/\/+$/, "");
+  notes_tag_rename: undoable("标签改名", (a) => nRename(String(a.from), String(a.to))),
+  notes_tag_place: undoable("移动标签", (a) => {
+    const tag = String(a.tag).replace(/^#/, "");
+    const parent = a.parent ? String(a.parent).replace(/^#/, "") : null;
+    if (parent && nUnder(parent, tag)) throw "不能移到它自己下面";
+    const to = (parent ? `${parent}/` : "") + tag.split("/").pop();
+    const moved = to === tag ? 0 : nRename(tag, to);
+    let place = 0;
+    for (const t of new Set((a.order as string[]).map((x) => x.replace(/^#/, "")))) {
+      if ((t.includes("/") ? t.slice(0, t.lastIndexOf("/")) : null) !== parent) throw `「#${t}」不在同一层`;
+      nMetaPut(t, { ...(nt.meta.get(t) ?? { pin: null, icon: null, order: null }), order: ++place });
+    }
+    return moved;
+  }),
+  notes_tag_pins: undoable("置顶标签排序", (a) => {
+    (a.order as string[]).forEach((t, i) => {
+      const m = nt.meta.get(t);
+      if (m) m.pin = i + 1;
+    });
+    return null;
+  }),
+  notes_tag_delete: undoable("删除标签", (a) => {
+    const tag = String(a.tag).replace(/^#/, "");
+    const hit = nt.notes.filter((n) => nTags(n.content).some((t) => nUnder(t, tag)));
+    if (!hit.length) throw `没有笔记用到「#${tag}」`;
+    let kept = 0;
+    if (a.notes) {
+      const gone = new Set(hit.map((n) => n.id));
+      nt.notes = nt.notes.filter((n) => !gone.has(n.id));
+      for (const n of nt.notes) n.refs = n.refs.filter((r) => !gone.has(r));
+    } else {
+      for (const n of hit) {
+        const next = n.content
+          .split("\n")
+          .flatMap((l) => {
+            const spans = tagSpans(l).filter((t) => nUnder(t.value, tag));
+            if (!spans.length) return [l];
+            let out = "";
+            let last = 0;
+            for (const t of spans) {
+              let end = t.end;
+              while (l[end] && !/\s/.test(l[end])) end++;
+              let start = t.start;
+              if (/\s/.test(l[end] ?? "")) end++;
+              else if (start > last && /\s/.test(l[start - 1])) start--;
+              out += l.slice(last, start);
+              last = end;
+            }
+            out = (out + l.slice(last)).trimEnd();
+            return /^\s*(?:[-*]|\d+[.)])?\s*$/.test(out) ? [] : [out];
+          })
+          .join("\n")
+          .trim();
+        if (next) Object.assign(n, { content: next, updatedAt: now() });
+        else kept++;
+      }
+    }
+    const used = new Set(nt.notes.flatMap((n) => nTags(n.content).flatMap((t) => t.split("/").map((_, i, a) => a.slice(0, i + 1).join("/")))));
+    for (const t of [...nt.meta.keys()]) if (nUnder(t, tag) && !used.has(t)) nt.meta.delete(t);
+    return [hit.length - kept, kept];
+  }),
+};
+
+function nMetaPut(tag: string, m: NMeta) {
+  if (m.pin === null && m.icon === null && m.order === null) nt.meta.delete(tag);
+  else nt.meta.set(tag, m);
+}
+
+function nRename(fromRaw: string, toRaw: string): number {
+    const from = fromRaw.replace(/^#/, "");
+    const to = toRaw.trim().replace(/^#/, "").replace(/\/+$/, "");
     if (!to) throw "标签不能为空";
     if (/[\s#]/.test(to)) throw "标签里不能有空格或 #";
     if (to === from) return 0;
+    if (nUnder(to, from)) throw "不能改成它自己下面的标签";
     let k = 0;
     for (const n of nt.notes) {
       if (!nTags(n.content).some((t) => nUnder(t, from))) continue;
@@ -1562,16 +1643,17 @@ const noteHandlers: Record<string, (a: Args) => unknown> = {
       k++;
     }
     if (!k) throw `没有笔记用到「#${from}」`;
+    const parentOf = (t: string) => (t.includes("/") ? t.slice(0, t.lastIndexOf("/")) : null);
     for (const [t, m] of [...nt.meta]) {
       if (!nUnder(t, from)) continue;
       nt.meta.delete(t);
       const target = to + t.slice(from.length);
       const old = nt.meta.get(target);
-      nt.meta.set(target, { pin: target.includes("/") ? null : (old?.pin ?? m.pin), icon: old?.icon ?? m.icon });
+      const order = old?.order ?? (t === from && parentOf(from) !== parentOf(to) ? null : m.order);
+      nMetaPut(target, { pin: target.includes("/") ? null : (old?.pin ?? m.pin), icon: old?.icon ?? m.icon, order });
     }
     return k;
-  }),
-};
+}
 
 // ---- 芝麻开门 (vault): no crypto here — a known test master password and plain rows. URL:
 // `&vault=new|open` picks the start (default locked), `&touch=fail|none` how Touch ID behaves.
@@ -1830,7 +1912,7 @@ type CItem = { id: number; moduleId: number; name: string; values: Record<string
 type CCourse = { id: number; moduleId: number; name: string; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
 type CLesson = { id: number; courseId: number; code: string | null; kindId: number | null; title: string; status: string; finishedMonth: string | null; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
 let cm = { mods: [] as CMod[], fields: [] as CField[], items: [] as CItem[], courses: [] as CCourse[], lessons: [] as CLesson[], seq: 0 };
-const C_TAKEN = ["首页", "设置", "一步一步", "摸鱼读读", "好奇看看", "随意画画", "出门走走", "钱来钱往", "投石问路", "念念不忘", "来日方长", "芝麻开门", "小拾", "五花八门", "循序渐进"];
+const C_TAKEN = ["首页", "设置", "一步一步", "摸鱼读读", "好奇看看", "随意画画", "出门走走", "钱来钱往", "投石问路", "念念不忘", "来日方长", "芝麻开门", "柚子", "五花八门", "循序渐进"];
 const cKey = (m: CMod) => `${m.template}/${m.id}`;
 const cModOut = (m: CMod) => ({ ...m, key: cKey(m), count: m.template === "list" ? cm.items.filter((i) => i.moduleId === m.id).length : cm.courses.filter((c) => c.moduleId === m.id).length });
 const cCourseOut = (c: CCourse) => {
@@ -2217,11 +2299,24 @@ function homeMock(hidden: string[]) {
           })
       : null,
     days: shown("days") ? daysList().filter((d) => d.soon) : null,
+    then: (() => {
+      const md = today.slice(5);
+      const local = (iso: string) => toYmd(new Date(iso));
+      const on = (d: string | null | undefined) => !!d && d.slice(5) === md && d.slice(0, 4) < year;
+      const items = [
+        ...(shown("notes") ? nt.notes.filter((n) => on(local(n.createdAt))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((n) => ({ ...hit("notes", "note", n.id, excerpt(n.content)), day: local(n.createdAt) })) : []),
+        ...(shown("todo") ? tGoals.filter((g) => g.status === "done" && on(g.endDate)).map((g) => ({ ...hit("todo", "goal", g.id, g.name, tGroups.find((x) => x.id === g.groupId)?.name ?? null, g.groupId), day: g.endDate })) : []),
+        ...(shown("todo") ? tTasks.filter((t) => t.done && t.doneAt && on(local(t.doneAt))).map((t) => ({ ...hit("todo", "task", t.id, t.title.replace(/\*\*/g, ""), null, t.goalId ? -t.goalId : t.groupId), day: local(t.doneAt!) })) : []),
+        ...(shown("packing") ? tripRows.filter((t) => on(t.departOn)).map((t) => ({ ...hit("packing", "trip", t.id, t.name), day: t.departOn })) : []),
+      ];
+      const years = [...new Set(items.map((i) => i.day!.slice(0, 4)))].sort().reverse();
+      return years.map((y) => ({ year: y, items: items.filter((i) => i.day!.startsWith(y)) }));
+    })(),
     recent,
   };
 }
 
-// ---- 小拾 (picky): simulated models (start 0.7 s → loading → ready 1.2 s), cloud list + keys, sessions with
+// ---- 柚子 (picky): simulated models (start 0.7 s → loading → ready 1.2 s), cloud list + keys, sessions with
 // a linear path, replies streamed over the Channel. `&picky=ready` starts with a local model running.
 type PModel = { key: string; name: string; title: string; note: string | null; quant: string; alias: string; context: number; thinking: boolean; listed: boolean };
 type PIssue = { kind: string; title: string; message: string; details: string | null; actions: { kind: string; key?: string }[] };
@@ -2296,6 +2391,8 @@ const pky = {
   built: new Set<number>(),
   used: new Map<number, PUsed>(),
   notes: new Map<number, { label: string; content: string }[]>(),
+  /** 年度总结: Atlas's scenes folded under the letter (atlas.rs preview). */
+  atlas: new Map<number, { label: string; content: string }>(),
   // ---- v0.3.5: lookups in Pomelo (data.rs) ----
   queries: new Map<number, PQuery[]>(),
   /** Replies: numbered sources (picky/cite.rs). */
@@ -2553,7 +2650,7 @@ const p2Next = () => {
   } else {
     let folder = `${p2Folder()}/${w.name} · 2026-10-21`;
     for (let n = 2; p2.recent.some((r) => r.folder === folder); n++) folder = `${p2Folder()}/${w.name} · 2026-10-21 (${n})`;
-    const models = `Worker：${p2.settings.worker ?? "小拾现在选的"}（${p2.settings.workerLevel === "off" ? "不思考" : "思考"}）　Supervisor：${p2.settings.supervisor ?? "小拾现在选的"}（思考 · 高）${p2.settings.backup ? "　备用：DeepSeek Flash" : ""}`;
+    const models = `Worker：${p2.settings.worker ?? "柚子现在选的"}（${p2.settings.workerLevel === "off" ? "不思考" : "思考"}）　Supervisor：${p2.settings.supervisor ?? "柚子现在选的"}（思考 · 高）${p2.settings.backup ? "　备用：DeepSeek Flash" : ""}`;
     const text = /\.(md|mmd|txt)$/.test(w.name);
     const steps = text ? "translate" : p2.settings.steps;
     p2.current = { name: w.name.replace(/\.(md|mmd|txt)$/, ""), folder: folder.replace(/\.(md|mmd|txt) ·/, " ·"), step: "准备上传…", chunks: 0, done: 0, workerRequests: 0, supervisorRequests: 0, elapsed: 0, models: steps !== "extract" ? models : null, tick: text ? 3 : 0, steps, md: p2.settings.md || text, text, cleaned: 0, translated: 0 };
@@ -2670,7 +2767,7 @@ const pTrPreview = (s: PTrSettings) => {
     ...P_GROUPS.flatMap((g) => g.choices.filter((c) => s.keywords[g.key] === c.key).map((c) => `- ${c.says}。`)),
   ];
   if (s.prompt.trim()) lines.push(`\n另外：\n${s.prompt.trim()}`);
-  return `【小拾翻译】${lines.join("\n")}`;
+  return `【柚子翻译】${lines.join("\n")}`;
 };
 const pTrEnd = (error: string | null) => {
   clearInterval(pTr.timer);
@@ -2861,7 +2958,7 @@ const pPage = (c: PPage | null | undefined): PQuery | null => {
   }
   return { module: c.module, label: title ?? [place, c.filter].filter(Boolean).join(" · "), state: "ok", result: lines.join("\n"), records };
 };
-// ---- v0.4 phases 4–5: 小拾 proposes writes into a card (picky/act: mod.rs mock_calls, make.rs, ops.rs, card.rs) ----
+// ---- v0.4 phases 4–5: 柚子 proposes writes into a card (picky/act: mod.rs mock_calls, make.rs, ops.rs, card.rs) ----
 type PWritten = { module: string; kind: string; id: number; parent: number | null; day: string | null; gone: boolean; before?: string | null };
 type PField = { label: string; before?: string; after: string; long?: boolean };
 type POp = { op: string } & Record<string, unknown>;
@@ -3504,18 +3601,18 @@ const pCardOut = (c: PCard | undefined) =>
 // ---- v0.4 phase 6: 插件库 (skills/): switches, keys, mock lookups and web search ----
 type PSkillDef = { key: string; name: string; tool: string; flow: SkillFlowNode[]; features: string[]; keys: { account: string; label: string; required: boolean }[]; auto: boolean };
 const P_SKILLS: PSkillDef[] = [
-  { key: "books", name: "general-book-lookup", tool: "pomelo_find_book", flow: [{"kind":"step","text":"书名（和作者）"},{"kind":"step","text":"Wikidata 按书名找，作者对得上的优先"},{"kind":"check","ask":"Wikidata 没找到？","yes":"是","side":["Open Library 按书名找","也没有就说查不到，不编"],"join":"作者 · 国家 · 类型","no":"找到了"},{"kind":"step","text":"Open Library 核对作者"},{"kind":"check","ask":"作者对不上？","yes":"是","side":["以 Wikidata 为准，注明不一样"],"join":"作者 · 国家 · 类型","no":"对得上"},{"kind":"step","text":"作者 · 国家 · 类型"}], features: ["查书的作者、国家、类型，回答标出处","书影面板的「补全」「一句话填好」","小拾提议新书时补上作者、国家、类型","发出去的只有书名（和作者）"], keys: [], auto: true },
-  { key: "films", name: "general-film-lookup", tool: "pomelo_find_film", flow: [{"kind":"step","text":"名称（和导演）"},{"kind":"step","text":"Wikidata 按名称找，导演对得上的优先"},{"kind":"check","ask":"Wikidata 没找到？","yes":"是","side":["TMDb（填了 Token）或 Jikan 按名称找","也没有就说查不到，不编"],"join":"导演 · 国家 · 类型","no":"找到了"},{"kind":"check","ask":"电影、剧集，填了 TMDb Token？","yes":"是","side":["TMDb 核对导演"],"join":"导演 · 国家 · 类型","no":"否"},{"kind":"check","ask":"是动漫？","yes":"是","side":["Jikan 核对"],"join":"导演 · 国家 · 类型","no":"否"},{"kind":"step","text":"不核对，只用 Wikidata"},{"kind":"step","text":"导演 · 国家 · 类型"}], features: ["查电影、剧集、动漫的导演、国家、类型，回答标出处","书影面板的「补全」「一句话填好」，小拾提议新影视时补上","没填 TMDb Token 时电影、剧集只用 Wikidata","发出去的只有名称（和导演）"], keys: [{ account: "tmdb", label: "TMDb Read Access Token", required: false }], auto: true },
-  { key: "web", name: "general-web-search", tool: "pomelo_web_search", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"用了斜杠命令或「联网」？","yes":"是","side":["先拿问题直接搜一次，结果和问题一起给小拾"],"join":"小拾写搜索词","no":"否"},{"kind":"step","text":"小拾写搜索词"},{"kind":"step","text":"Tavily 搜索，读搜到的网页摘要"},{"kind":"again","text":"不够就换个词再搜（一条回答最多查 4 轮）","back":"小拾写搜索词"},{"kind":"step","text":"回答带来源"}], features: ["上网查新的信息，回答带来源，点了用浏览器打开","用斜杠命令时直接拿问题去搜（可能带上私人内容）","搜到的存进对话，追问还用得上","定时任务不用按「联网」，打开了、填了 Key 就能自己搜","要填 Tavily API Key"], keys: [{ account: "tavily", label: "Tavily API Key", required: true }], auto: false },
-  { key: "files", name: "general-file-reader", tool: "pomelo_file", flow: [{"kind":"step","text":"这个问题带的文件"},{"kind":"check","ask":"放得进这次的篇幅？","yes":"是","side":["全文随问题发给模型"],"join":"回答标出处","no":"放不下"},{"kind":"step","text":"先给目录和按问题挑出的段落"},{"kind":"step","text":"小拾按段号读 / 按字找"},{"kind":"again","text":"不够就再读（一条回答最多查 4 轮）","back":"小拾按段号读 / 按字找"},{"kind":"check","ask":"问到文档里的图？","yes":"是","side":["列出 Word、PowerPoint、PDF 里的图片","云端模型看一张（PDF 看整页），本地模型看不了"],"join":"回答标出处","no":"否"},{"kind":"step","text":"回答标出处"}], features: ["读附件和项目资料：看目录、按段号读、按字找","资料太长时先给目录和按问题挑出的段落，再读需要的部分","云端模型能看 Word、PowerPoint 里的图片和 PDF 的整页，一个回答最多 8 张","只读已经带上的文件，不碰别的文件","内容只随这个问题发给你选的模型"], keys: [], auto: true },
+  { key: "books", name: "general-book-lookup", tool: "pomelo_find_book", flow: [{"kind":"step","text":"书名（和作者）"},{"kind":"step","text":"Wikidata 按书名找，作者对得上的优先"},{"kind":"check","ask":"Wikidata 没找到？","yes":"是","side":["Open Library 按书名找","也没有就说查不到，不编"],"join":"作者 · 国家 · 类型","no":"找到了"},{"kind":"step","text":"Open Library 核对作者"},{"kind":"check","ask":"作者对不上？","yes":"是","side":["以 Wikidata 为准，注明不一样"],"join":"作者 · 国家 · 类型","no":"对得上"},{"kind":"step","text":"作者 · 国家 · 类型"}], features: ["查书的作者、国家、类型，回答标出处","书影面板的「补全」「一句话填好」","柚子提议新书时补上作者、国家、类型","发出去的只有书名（和作者）"], keys: [], auto: true },
+  { key: "films", name: "general-film-lookup", tool: "pomelo_find_film", flow: [{"kind":"step","text":"名称（和导演）"},{"kind":"step","text":"Wikidata 按名称找，导演对得上的优先"},{"kind":"check","ask":"Wikidata 没找到？","yes":"是","side":["TMDb（填了 Token）或 Jikan 按名称找","也没有就说查不到，不编"],"join":"导演 · 国家 · 类型","no":"找到了"},{"kind":"check","ask":"电影、剧集，填了 TMDb Token？","yes":"是","side":["TMDb 核对导演"],"join":"导演 · 国家 · 类型","no":"否"},{"kind":"check","ask":"是动漫？","yes":"是","side":["Jikan 核对"],"join":"导演 · 国家 · 类型","no":"否"},{"kind":"step","text":"不核对，只用 Wikidata"},{"kind":"step","text":"导演 · 国家 · 类型"}], features: ["查电影、剧集、动漫的导演、国家、类型，回答标出处","书影面板的「补全」「一句话填好」，柚子提议新影视时补上","没填 TMDb Token 时电影、剧集只用 Wikidata","发出去的只有名称（和导演）"], keys: [{ account: "tmdb", label: "TMDb Read Access Token", required: false }], auto: true },
+  { key: "web", name: "general-web-search", tool: "pomelo_web_search", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"用了斜杠命令或「联网」？","yes":"是","side":["先拿问题直接搜一次，结果和问题一起给柚子"],"join":"柚子写搜索词","no":"否"},{"kind":"step","text":"柚子写搜索词"},{"kind":"step","text":"Tavily 搜索，读搜到的网页摘要"},{"kind":"again","text":"不够就换个词再搜（一条回答最多查 4 轮）","back":"柚子写搜索词"},{"kind":"step","text":"回答带来源"}], features: ["上网查新的信息，回答带来源，点了用浏览器打开","用斜杠命令时直接拿问题去搜（可能带上私人内容）","搜到的存进对话，追问还用得上","定时任务不用按「联网」，打开了、填了 Key 就能自己搜","要填 Tavily API Key"], keys: [{ account: "tavily", label: "Tavily API Key", required: true }], auto: false },
+  { key: "files", name: "general-file-reader", tool: "pomelo_file", flow: [{"kind":"step","text":"这个问题带的文件"},{"kind":"check","ask":"放得进这次的篇幅？","yes":"是","side":["全文随问题发给模型"],"join":"回答标出处","no":"放不下"},{"kind":"step","text":"先给目录和按问题挑出的段落"},{"kind":"step","text":"柚子按段号读 / 按字找"},{"kind":"again","text":"不够就再读（一条回答最多查 4 轮）","back":"柚子按段号读 / 按字找"},{"kind":"check","ask":"问到文档里的图？","yes":"是","side":["列出 Word、PowerPoint、PDF 里的图片","云端模型看一张（PDF 看整页），本地模型看不了"],"join":"回答标出处","no":"否"},{"kind":"step","text":"回答标出处"}], features: ["读附件和项目资料：看目录、按段号读、按字找","资料太长时先给目录和按问题挑出的段落，再读需要的部分","云端模型能看 Word、PowerPoint 里的图片和 PDF 的整页，一个回答最多 8 张","只读已经带上的文件，不碰别的文件","内容只随这个问题发给你选的模型"], keys: [], auto: true },
   { key: "kb", name: "general-knowledge-base", tool: "pomelo_kb", flow: [{"kind":"step","text":"问题"},{"kind":"step","text":"选库：对话 → 项目 → 全部"},{"kind":"check","ask":"用的是云端模型？","yes":"是","side":["跳过设成不发给云端的文件夹"],"join":"找段落 / 列文件 / 读整篇","no":"否"},{"kind":"step","text":"找段落 / 列文件 / 读整篇"},{"kind":"check","ask":"是图片、扫描件或文档里的图？","yes":"是","side":["按意思找不到，只认文件名；云端模型能看"],"join":"回答标出处","no":"否"},{"kind":"again","text":"不够就再查（一条回答最多查 4 轮）","back":"找段落 / 列文件 / 读整篇"},{"kind":"step","text":"回答标出处"}], features: ["按问题在知识库里找相关的段落","列出库里有哪些文件，整篇读一个文件（看目录、按段读、按字找）","图片和扫描件按意思找不到，云端模型能看，Word、PowerPoint、PDF 里嵌的图片也能看","用云端模型时不查不发给云端的文件夹"], keys: [], auto: true },
-  { key: "word", name: "general-word-toolkit", tool: "pomelo_word", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Word？","yes":"是","side":["名称和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 Word，读成编号的段落"},{"kind":"step","text":"小拾提出修改"},{"kind":"check","ask":"这一段改不了（表格、域，或格式对不上）？","yes":"是","side":["不放进卡片，告诉小拾为什么"],"join":"小拾提出修改","no":"能改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（只动改了的字，不留备份）"}], features: ["改文字和格式：加粗、斜体、下划线、标题、列表","加段、删段","新建一个 Word，你点「保存」才存","只改附件和知识库里的 Word；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
-  { key: "text", name: "general-text-toolkit", tool: "pomelo_text", flow: [{"kind":"step","text":"附件或知识库里的 Markdown / 文本，读成编号的段落"},{"kind":"step","text":"小拾提出修改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（保留原来的换行和编码，不留备份）"}], features: ["改段、删段","保留原来的换行和编码","只改附件和知识库里的这类文件；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
-  { key: "excel", name: "general-excel-toolkit", tool: "pomelo_excel", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Excel？","yes":"是","side":["表和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 .xlsx，读成一行行带位置的格子"},{"kind":"step","text":"小拾提出修改：改格子、加行、删行"},{"kind":"check","ask":"改不了（合并的格子、设了保护的表，有图表的表不能加删行）？","yes":"是","side":["不放进卡片，告诉小拾为什么"],"join":"小拾提出修改：改格子、加行、删行","no":"能改"},{"kind":"step","text":"放进确认卡片（同一格再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（下面的行和公式挪好，样式不动，不留备份）"}], features: ["改格子里的数字、文字、日期和公式，空格子能填","加行、删行，下面的行和用到它们的公式跟着挪","新建一个 .xlsx，你点「保存」才存","只认 .xlsx，只改附件和知识库里的；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
-  { key: "seeker", name: "seeker-toolkit", tool: "pomelo_seeker", flow: [{"kind":"step","text":"问到求职资料"},{"kind":"check","ask":"Seeker / Rater 隐藏了，或云端模型没被允许？","yes":"是","side":["不读，告诉小拾为什么"],"join":"","no":"否"},{"kind":"step","text":"挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"},{"kind":"step","text":"只读启用的，按剩下的篇幅截短"},{"kind":"again","text":"不够就换一种查法（一条回答最多查 4 轮）","back":"挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"},{"kind":"step","text":"回答"}], features: ["Seeker：素材和基本信息、中英文简历草稿、导出过的 Word 和用在哪个岗位","cv/ 的简历（列出来、读一份正文）和 material/ 的文件名","Rater：题库和练习记录、最近几轮卡片练习、面试准备和复盘","停用的素材和规则、档案、网申不读；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
-  { key: "qbank_resume", name: "rater-qbank-resume", tool: "pomelo_qbank_resume", flow: [{"kind":"step","text":"小拾写出经历、题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"step","text":"找经历：没说就用简历草稿里的（找不到 → 问你）"},{"kind":"step","text":"读这些经历、经历档案和已有的简历题"},{"kind":"step","text":"Rater 的模型照「简历题」工作流出题（一次调用）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉小拾没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["按经历出面试官会追问的题，配口述稿答案","给已有的简历题重写答案","读选的经历（没说就是简历草稿里的）和经历档案","照 Rater 规则里「简历题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
-  { key: "qbank_general", name: "rater-qbank-general", tool: "pomelo_qbank_general", flow: [{"kind":"step","text":"小拾写出题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"step","text":"读基本信息、已确认事实、经历一览和已有的通用题"},{"kind":"step","text":"Rater 的模型照「通用题」工作流出题（一次调用）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉小拾没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["自我介绍、为什么投、优缺点、行为题、职业规划、反问","配口述稿答案","照 Rater 规则里「通用题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
-  { key: "qbank_job", name: "rater-qbank-job", tool: "pomelo_qbank_job", flow: [{"kind":"step","text":"小拾写出岗位、题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"check","ask":"投石问路里对不上一个岗位？","yes":"是","side":["没说、没找到或有几个 → 问你"],"join":"","no":"对上了"},{"kind":"step","text":"读 JD、knowledge/ 里这家公司的资料、已有的简历题和通用题"},{"kind":"step","text":"Rater 的模型照「突击题」工作流出题，也改写已有的题（记着改自哪道）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉小拾没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["按投石问路里一个岗位出突击题","把已有的简历题、通用题按这家公司改写，记着改自哪道，原题不动","照 Rater 规则里「突击题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "word", name: "general-word-toolkit", tool: "pomelo_word", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Word？","yes":"是","side":["名称和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 Word，读成编号的段落"},{"kind":"step","text":"柚子提出修改"},{"kind":"check","ask":"这一段改不了（表格、域，或格式对不上）？","yes":"是","side":["不放进卡片，告诉柚子为什么"],"join":"柚子提出修改","no":"能改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（只动改了的字，不留备份）"}], features: ["改文字和格式：加粗、斜体、下划线、标题、列表","加段、删段","新建一个 Word，你点「保存」才存","只改附件和知识库里的 Word；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
+  { key: "text", name: "general-text-toolkit", tool: "pomelo_text", flow: [{"kind":"step","text":"附件或知识库里的 Markdown / 文本，读成编号的段落"},{"kind":"step","text":"柚子提出修改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（保留原来的换行和编码，不留备份）"}], features: ["改段、删段","保留原来的换行和编码","只改附件和知识库里的这类文件；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
+  { key: "excel", name: "general-excel-toolkit", tool: "pomelo_excel", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Excel？","yes":"是","side":["表和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 .xlsx，读成一行行带位置的格子"},{"kind":"step","text":"柚子提出修改：改格子、加行、删行"},{"kind":"check","ask":"改不了（合并的格子、设了保护的表，有图表的表不能加删行）？","yes":"是","side":["不放进卡片，告诉柚子为什么"],"join":"柚子提出修改：改格子、加行、删行","no":"能改"},{"kind":"step","text":"放进确认卡片（同一格再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（下面的行和公式挪好，样式不动，不留备份）"}], features: ["改格子里的数字、文字、日期和公式，空格子能填","加行、删行，下面的行和用到它们的公式跟着挪","新建一个 .xlsx，你点「保存」才存","只认 .xlsx，只改附件和知识库里的；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
+  { key: "seeker", name: "seeker-toolkit", tool: "pomelo_seeker", flow: [{"kind":"step","text":"问到求职资料"},{"kind":"check","ask":"Seeker / Rater 隐藏了，或云端模型没被允许？","yes":"是","side":["不读，告诉柚子为什么"],"join":"","no":"否"},{"kind":"step","text":"挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"},{"kind":"step","text":"只读启用的，按剩下的篇幅截短"},{"kind":"again","text":"不够就换一种查法（一条回答最多查 4 轮）","back":"挑一种查法：素材、草稿、导出、题库、练习、面试、cv/ 的文件、一份简历的正文"},{"kind":"step","text":"回答"}], features: ["Seeker：素材和基本信息、中英文简历草稿、导出过的 Word 和用在哪个岗位","cv/ 的简历（列出来、读一份正文）和 material/ 的文件名","Rater：题库和练习记录、最近几轮卡片练习、面试准备和复盘","停用的素材和规则、档案、网申不读；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "qbank_resume", name: "rater-qbank-resume", tool: "pomelo_qbank_resume", flow: [{"kind":"step","text":"柚子写出经历、题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"step","text":"找经历：没说就用简历草稿里的（找不到 → 问你）"},{"kind":"step","text":"读这些经历、经历档案和已有的简历题"},{"kind":"step","text":"Rater 的模型照「简历题」工作流出题（一次调用）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉柚子没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["按经历出面试官会追问的题，配口述稿答案","给已有的简历题重写答案","读选的经历（没说就是简历草稿里的）和经历档案","照 Rater 规则里「简历题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "qbank_general", name: "rater-qbank-general", tool: "pomelo_qbank_general", flow: [{"kind":"step","text":"柚子写出题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"step","text":"读基本信息、已确认事实、经历一览和已有的通用题"},{"kind":"step","text":"Rater 的模型照「通用题」工作流出题（一次调用）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉柚子没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["自我介绍、为什么投、优缺点、行为题、职业规划、反问","配口述稿答案","照 Rater 规则里「通用题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
+  { key: "qbank_job", name: "rater-qbank-job", tool: "pomelo_qbank_job", flow: [{"kind":"step","text":"柚子写出岗位、题目里的字或卡片编号"},{"kind":"check","ask":"改卡片里还没确认的题？","yes":"是","side":["Rater 的模型按你的话重写那道题的答案","换掉卡片里那一条"],"join":"你勾选、确认","no":"否"},{"kind":"check","ask":"说了题库里哪道题？","yes":"是","side":["按字找那道题（没找到或有几道 → 问你）","Rater 的模型重写它的答案"],"join":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）","no":"否"},{"kind":"check","ask":"投石问路里对不上一个岗位？","yes":"是","side":["没说、没找到或有几个 → 问你"],"join":"","no":"对上了"},{"kind":"step","text":"读 JD、knowledge/ 里这家公司的资料、已有的简历题和通用题"},{"kind":"step","text":"Rater 的模型照「突击题」工作流出题，也改写已有的题（记着改自哪道）"},{"kind":"step","text":"检查模型的回答（素材、改自对得上，去掉重复，条数不超）"},{"kind":"check","ask":"回答用不了？","yes":"是","side":["告诉柚子没出成"],"join":"","no":"否"},{"kind":"step","text":"放进确认卡片"},{"kind":"step","text":"你勾选、确认"},{"kind":"step","text":"写进题库（一步撤销）"}], features: ["按投石问路里一个岗位出突击题","把已有的简历题、通用题按这家公司改写，记着改自哪道，原题不动","照 Rater 规则里「突击题」的工作流，一步撤销","用 Rater 选的模型写；云端模型要 Seeker 允许发给云端"], keys: [], auto: true },
 ];
 const pSwitch = (key: string) => pky.skills.get(key) ?? { enabled: true, auto: P_SKILLS.find((s) => s.key === key)?.auto ?? false };
 /** Mock mode: ready without keys (as in Rust). */
@@ -3549,13 +3646,13 @@ const pSkillCalls = (q: string, asked: string[], scheduled = false): [string, Re
     if (offered(tool)) out.push([tool === "films" ? "pomelo_find_film" : "pomelo_find_book", { titles: [title ?? q] }]);
   }
   // Word 工具箱 (skills/toolbox.rs): 「把简历改正式一点」 reads then proposes; 「存成 Word」 proposes a new one
-  if (offered("word") && /(存成|写成|保存成|做成|新建) ?Word/i.test(q)) out.push(["pomelo_word", { view: "create", name: "小拾的报告", content: "# 小拾的报告\n\n这是开发版的**模拟文档**。\n\n- 第一点\n- 第二点" }]);
+  if (offered("word") && /(存成|写成|保存成|做成|新建) ?Word/i.test(q)) out.push(["pomelo_word", { view: "create", name: "柚子的报告", content: "# 柚子的报告\n\n这是开发版的**模拟文档**。\n\n- 第一点\n- 第二点" }]);
   else if (offered("word") && /改|润色|加粗|标题/.test(q) && /Word|docx|简历|文档/.test(q)) {
     out.push(["pomelo_word", { view: "read", file: "简历.docx" }]);
     out.push(["pomelo_word", { view: "edit", file: "简历.docx" }]);
   }
   // Excel 工具箱 (skills/toolbox.rs): 「存成 Excel」 proposes a new one; 「改预算表」 reads then proposes
-  if (offered("excel") && /(存成|写成|保存成|做成|新建) ?Excel/i.test(q)) out.push(["pomelo_excel", { view: "create", name: "小拾的表格", sheets: [{ name: "十月", rows: [["项目", "金额", "日期"], ["房租", 3000, "2026-10-01"], ["水电", 120.5, "2026-10-05"]] }] }]);
+  if (offered("excel") && /(存成|写成|保存成|做成|新建) ?Excel/i.test(q)) out.push(["pomelo_excel", { view: "create", name: "柚子的表格", sheets: [{ name: "十月", rows: [["项目", "金额", "日期"], ["房租", 3000, "2026-10-01"], ["水电", 120.5, "2026-10-05"]] }] }]);
   else if (offered("excel") && /改|调整|加一行|删/.test(q) && /Excel|xlsx|表格|预算表/i.test(q)) {
     out.push(["pomelo_excel", { view: "read", file: "预算.xlsx" }]);
     out.push(["pomelo_excel", { view: "edit", file: "预算.xlsx" }]);
@@ -3815,7 +3912,7 @@ const pPlan = (s: PSession) => {
   const source = prefix.slice(prev ? prev.i + 1 : 0).filter(done).map((m) => (m.role === "user" ? "用户：\n" : "助手：\n") + m.content).join("\n\n");
   return { through: boundary.id, source, previous: prev?.x.content ?? null };
 };
-/** Rater 复盘 · 记录 (rater/record.rs): a review filled in a conversation of its own, kept out of 小拾's lists. */
+/** Rater 复盘 · 记录 (rater/record.rs): a review filled in a conversation of its own, kept out of 柚子's lists. */
 const pRecords = new Map<number, RaterRecord>();
 /** The 速记小窗's conversation (library.rs `capture_chat`): private and in no list until kept. */
 const pCapChat = { id: null as number | null };
@@ -3847,7 +3944,7 @@ const pSnippet = (content: string, needle: string) => {
   return (start > 0 ? "…" : "") + flat.slice(start, end) + (end < flat.length ? "…" : "");
 };
 const pDoc = (s: PSession) =>
-  [`# ${s.title}`, ...pPath(s).map((m) => [`## ${m.role === "user" ? "我" : "小拾"}`, m.content].join("\n\n"))].join("\n\n") + "\n";
+  [`# ${s.title}`, ...pPath(s).map((m) => [`## ${m.role === "user" ? "我" : "柚子"}`, m.content].join("\n\n"))].join("\n\n") + "\n";
 /** `&picky=ready`: a few finished conversations and a project to organise. */
 const pSeed = () => {
   const done = (s: PSession, q: string, a: string, model = "Qwen3.5 9B") => {
@@ -4186,7 +4283,7 @@ const pSchedules: PSchedule[] = [
   { id: nextId++, name: "年度总结", prompt: "写我这一年的年度总结：一封写给我的信，陪我回看这一年。", every: "year", month: 12, day: 31, at: "21:00", model: null, thinking: true, enabled: true, builtin: "yearly", sortOrder: 2, since: pLocalNow(), lastSlot: null },
 ];
 // 年度总结's flow (yearly.rs `FLOW`; `cargo test skill_flows_json -- --ignored --nocapture`), drawn instead of its prompt
-const pYearlyFlow = [{"kind":"step","text":"到点或立即运行（1 月运行的写刚过完的那一年）"},{"kind":"check","ask":"用的是云端模型？","yes":"是","side":["不许发给云端的模块不读，在开头说一句"],"join":"按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和小拾的对话（私密对话、隐藏的模块不读）","no":"否"},{"kind":"step","text":"按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和小拾的对话（私密对话、隐藏的模块不读）"},{"kind":"step","text":"读全年的书影、画画、求职、打卡、出行，数今年和去年同期的数字，找去年的年度总结（钱来钱往、芝麻开门从来不读）"},{"kind":"check","ask":"整年的记录放得下模型的上下文？","yes":"是","side":["一次读完"],"join":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）","no":"否"},{"kind":"step","text":"下一个有记录的月份"},{"kind":"check","ask":"记录和上次读时一样？","yes":"是","side":["用上次存的要点"],"join":"下一个有记录的月份","no":"否"},{"kind":"check","ask":"这个月的记录太多？","yes":"是","side":["分几段读，每段先记要点"],"join":"写这个月的要点，存下来","no":"否"},{"kind":"step","text":"写这个月的要点，存下来"},{"kind":"again","text":"还有月份没读（云端 4 个月一起读，本地一个一个）","back":"下一个有记录的月份"},{"kind":"check","ask":"要点加起来放不下？","yes":"是","side":["不带去年的年度总结；还放不下就停下，请你换个上下文大的模型"],"join":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）","no":"否"},{"kind":"step","text":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）"}];
+const pYearlyFlow = [{"kind":"step","text":"到点或立即运行（1 月运行的写刚过完的那一年）"},{"kind":"check","ask":"用的是云端模型？","yes":"是","side":["不许发给云端的模块不读，在开头说一句"],"join":"按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和柚子的对话（私密对话、隐藏的模块不读）","no":"否"},{"kind":"step","text":"按月读这一年的记录：笔记、做完的事和目标、画完的课、求职进展、和柚子的对话（私密对话、隐藏的模块不读）"},{"kind":"step","text":"读全年的书影、画画、求职、打卡、出行、来日方长的日子、钱来钱往（收支、资产各按「发给云端」），数今年和去年同期的数字，找去年的年度总结（芝麻开门从来不读）"},{"kind":"check","ask":"整年的记录放得下模型的上下文？","yes":"是","side":["一次读完"],"join":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）","no":"否"},{"kind":"step","text":"下一个有记录的月份"},{"kind":"check","ask":"记录和上次读时一样？","yes":"是","side":["用上次存的要点"],"join":"下一个有记录的月份","no":"否"},{"kind":"check","ask":"这个月的记录太多？","yes":"是","side":["分几段读，每段先记要点"],"join":"写这个月的要点，存下来","no":"否"},{"kind":"step","text":"写这个月的要点，存下来"},{"kind":"again","text":"还有月份没读（云端 4 个月一起读，本地一个一个）","back":"下一个有记录的月份"},{"kind":"check","ask":"要点加起来放不下？","yes":"是","side":["不带去年的年度总结；还放不下就停下，请你换个上下文大的模型"],"join":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）","no":"否"},{"kind":"step","text":"写成一封给你的信，存进「定时」的对话（用过的每月要点折叠在下面）"},{"kind":"step","text":"接着让同一个模型给 Atlas 写各幕的话、从记录里挑引用，和数字快照一起存下（这一步没写成，信照样留着）"}];
 let pScheduleRunning: number | null = null;
 const pScheduleCheck = (a: Args): PRule & { name: string; prompt: string; model: string | null; thinking: boolean; effort: string | null } => {
   const name = String(a.name ?? "").trim();
@@ -4222,7 +4319,7 @@ const pLetter = (year: number, how: string) =>
 - 笔记 312 条，共 45,213 字，有 186 天写了笔记
 - 读完 12 本书，看完 20 部电影和剧
 - 画完 18 节课，出行 3 次
-- 和小拾聊了 85 次
+- 和柚子聊了 85 次
 
 ## 读书观影
 
@@ -4255,7 +4352,19 @@ const pYearly = (s: PSession, msg: PNode, year: number, whole: boolean) => {
     clearTimeout(r.timer);
     msg.state = state === "completed" ? "complete" : state;
     msg.error = error;
-    if (state === "completed") pYearLetters.push({ year: String(year), sessionId: s.id, content: msg.content });
+    if (state === "completed") {
+      pYearLetters.push({ year: String(year), sessionId: s.id, content: msg.content });
+      pky.atlas.set(msg.id, {
+        label: "Atlas · 5 幕",
+        content: [
+          "**序章**　（模拟）这一年像一张慢慢亮起来的星图。",
+          "**留下的日子**　（模拟）你把很多小事都记了下来。\n> 每天花五分钟回看今天记下的东西，比记更多东西有用。（2026 年 9 月 23 日）",
+          "**几个具体时刻**　（模拟）有几天值得记住。\n> 东京（2026 年 11 月 8 日）",
+          "**钱**　（模拟）花在吃和住上的最多。",
+          "**终章**　（模拟）下面是给你的信。",
+        ].join("\n\n"),
+      });
+    }
     pky.runs.delete(runId);
   };
   const run: PRunState = { id: runId, session: s.id, kind: "reply", model: pModelNow(), msg, timer: 0, done };
@@ -4311,7 +4420,7 @@ const pScheduleRun = (s: PSchedule, slot?: string) => {
 // 今日简报 (brief.rs)
 type PBriefDay = { content: string; state: "writing" | "done" | "failed"; error: string | null; modelName: string | null; leftOut: string[]; doneAt?: string };
 // brief.rs `DEFAULT_PROMPT`
-const pBriefDefault = `你是小拾，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
+const pBriefDefault = `你是柚子，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
 - 根据读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。
 - 只写这几件事：今天要做的、快到期的和过期的待办（看【一步一步】）；快到的日子，还有几天或者就是今天（看【来日方长】）；该跟进的投递、正在笔试面试的（看【投石问路】）；最近两周的笔记里常在想什么，一两句，像朋友一样提一下（看【念念不忘】）。
 - 没读到的就一个字都不要提（比如没读到笔记，就不要说笔记）。
@@ -4383,7 +4492,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     return pYearLetters.filter((l) => l.year === String(Number(today.slice(0, 4)) - 1)).at(-1) ?? null;
   },
   picky_brief_write: (a) => {
-    if (a.force && !pBrief.enabled) throw "今日简报关着（小拾 → 管理 → 定时）。";
+    if (a.force && !pBrief.enabled) throw "今日简报关着（柚子 → 管理 → 定时）。";
     const today = toYmd(new Date());
     const row = pBrief.days.get(today);
     if (!pBrief.enabled || pBrief.writing || (!a.force && row && !(row.state === "failed" && row.error === "上次没写完。"))) return pBriefOut();
@@ -4550,7 +4659,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     return pPath(s).map((m) => {
       const sib = pSiblings(s, m);
       const { parent: _p, activeChild: _c, ...rest } = m;
-      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [], sources: pky.sources.get(m.id) ?? [], asks: pky.asks.get(m.id) ?? [], card: pCardOut(pky.cards.get(m.id)) ?? null, edit: pky.edits.get(m.id) ?? null, editFile: pky.editFiles.get(m.id) ?? null, page: pky.pages.get(m.id) ?? null, skills: m.role === "user" ? pAskedOf(m.id).map((k) => P_SKILLS.find((x) => x.key === k)?.name ?? k) : [] };
+      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], atlas: pky.atlas.get(m.id) ?? null, memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [], sources: pky.sources.get(m.id) ?? [], asks: pky.asks.get(m.id) ?? [], card: pCardOut(pky.cards.get(m.id)) ?? null, edit: pky.edits.get(m.id) ?? null, editFile: pky.editFiles.get(m.id) ?? null, page: pky.pages.get(m.id) ?? null, skills: m.role === "user" ? pAskedOf(m.id).map((k) => P_SKILLS.find((x) => x.key === k)?.name ?? k) : [] };
     });
   },
   picky_send: (a) => {
@@ -4627,9 +4736,9 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
   picky_word_defaults: (a) => {
     const m = pky.sessions.flatMap((s) => s.nodes).find((n) => n.id === a.messageId);
     const heading = m?.content.split("\n").find((l) => l.startsWith("#"))?.replace(/^#+\s*/, "");
-    return { folder: "/Users/me/Documents", name: `${heading || "小拾的报告"} ${pToday()}` };
+    return { folder: "/Users/me/Documents", name: `${heading || "柚子的报告"} ${pToday()}` };
   },
-  picky_save_word: (a) => `${a.folder}/${String(a.name).trim() || "小拾的报告"}.docx`,
+  picky_save_word: (a) => `${a.folder}/${String(a.name).trim() || "柚子的报告"}.docx`,
   picky_edit: (a) => {
     const text = String(a.text).trim();
     if (!text) throw "问题不能为空";
@@ -4690,7 +4799,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
   picky_rater_record_save: undoable("记复盘", (a) => {
     const r = pRecords.get(a.session as number);
     if (!r) throw new Error("这次记录已经存好或放弃了");
-    if (pBusyIn(r.session)) throw new Error("小拾还在回复，等它说完再存");
+    if (pBusyIn(r.session)) throw new Error("柚子还在回复，等它说完再存");
     const review = a.review as RaterReview;
     if (!review.items.some((x) => x.question.trim())) throw new Error("还没记下问了什么");
     const out = seekerHandlers.picky_rater_review_save({ review: { ...review, id: "" }, jobId: r.review.job.id });
@@ -4831,7 +4940,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
       if (!choice) throw "选的那条不在卡片里";
       return { it, op: choice.op, choice, k: p.option };
     });
-    const label = todo.length === 1 ? `小拾：${pActLabel(todo[0].it.tool, todo[0].it.module, todo[0].op)}` : `小拾：卡片里的 ${todo.length} 条`;
+    const label = todo.length === 1 ? `柚子：${pActLabel(todo[0].it.tool, todo[0].it.module, todo[0].op)}` : `柚子：卡片里的 ${todo.length} 条`;
     const written = undoable(label, () =>
       todo.map(({ op }) => {
         const target = actTarget(op);
@@ -5554,7 +5663,7 @@ const workHandlers: Record<string, (a: Args) => unknown> = {
   site_preview: () => null,
 };
 
-// ---- 呦呦漫游 · 小拾 (assist.rs picky_site_english, assistants/site.rs): the mock model
+// ---- 呦呦漫游 · 柚子 (assist.rs picky_site_english, assistants/site.rs): the mock model
 type MDraft = { slug: string | null; running: boolean; title: string; summary: string; body: string; status: string | null; error: string | null; modelName: string | null; note: string | null; token: number };
 const sDraft: MDraft = { slug: null, running: false, title: "", summary: "", body: "", status: null, error: null, modelName: null, note: null, token: 0 };
 const sDraftView = () => ({ ...sDraft, token: undefined });
@@ -5849,7 +5958,7 @@ const captureHandlers: Record<string, (a: Args) => unknown> = {
     return null;
   },
   capture_chat_clear: () => {
-    if (pBusyIn(pCapChat.id)) throw "小拾还在写，等它写完再开新对话。";
+    if (pBusyIn(pCapChat.id)) throw "柚子还在写，等它写完再开新对话。";
     pky.sessions = pky.sessions.filter((x) => x.id !== pCapChat.id);
     pCapChat.id = null;
     return null;
@@ -5922,7 +6031,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     startupError: null,
   }),
   reveal_data_dir: () => null,
-  // ---- v0.3.5 阶段 4: 小拾 helps in panels (assist.rs mock_reply) and the picked ones added in one step ----
+  // ---- v0.3.5 阶段 4: 柚子 helps in panels (assist.rs mock_reply) and the picked ones added in one step ----
   picky_polish: async (a) => {
     await new Promise((r) => setTimeout(r, 700));
     const label = P_MODULES.find((m) => m[0] === a.module)?.[1];
@@ -6159,7 +6268,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
       { key: "films", label: "好奇看看", incoming: handlers["films__count"]({}) },
       { key: "drawing", label: "随意画画", incoming: courses.length },
       { key: "packing", label: "出门走走", incoming: tpls.length + tripRows.length },
-      { key: "picky", label: "小拾", incoming: pky.projects.length + pky.presets.length + pky.templates.length + pky.memories.length },
+      { key: "picky", label: "柚子", incoming: pky.projects.length + pky.presets.length + pky.templates.length + pky.memories.length },
     ],
   }),
   backups_list: () => [...backups].sort((x, y) => y.createdAt.localeCompare(x.createdAt)),

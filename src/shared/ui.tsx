@@ -98,7 +98,7 @@ export function Segmented<T extends string>(props: {
 }
 
 /** Label + control. A div (not <label>) so clicks on the text don't trigger button-based controls. */
-/** A labelled field; `action` sits at the right end of the label row (小拾's 贴 JD, 拆成子任务). */
+/** A labelled field; `action` sits at the right end of the label row (柚子's 贴 JD, 拆成子任务). */
 export function Field(props: { label: string; action?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">

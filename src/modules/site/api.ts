@@ -149,7 +149,7 @@ export function siteSrc(stored: string): string {
 /** The work's page on the site. */
 export const pagePath = (slug: string, lang: Lang) => (lang === "en" ? `/en/wander/${slug}/` : `/wander/${slug}/`);
 
-// ---------- 小拾 in the editor (picky/assist.rs, picky/assistants/site.rs) ----------
+// ---------- 柚子 in the editor (picky/assist.rs, picky/assistants/site.rs) ----------
 
 export type SiteEnglish = { title: string | null; summary: string | null };
 /** 按中文起草英文版 (in memory; the page takes it into the English version and clears it). */

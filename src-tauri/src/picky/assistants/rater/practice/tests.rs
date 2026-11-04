@@ -227,7 +227,7 @@ fn each_prompt_reads_what_it_needs() {
     // feedback: each marked card with its 口述稿 / reference and what was typed
     let (system, user) = comment_prompt(&w, &bank, &r, None);
     assert!(system.contains("gaps") && system.contains("只看打了字的卡"), "{system}");
-    for part in ["卡 1【简历题】柚子笔记里你负责什么？（素材：柚子笔记） —— 会\n  题库里的口述稿：全部代码。\n  这次打的字：全部是我写的", "卡 2【追问 · 接卡 1】向量模型是你选的吗？ —— 不熟\n  小拾的参考答案：是我选的。\n  （没打字）", "经历（简历素材"] {
+    for part in ["卡 1【简历题】柚子笔记里你负责什么？（素材：柚子笔记） —— 会\n  题库里的口述稿：全部代码。\n  这次打的字：全部是我写的", "卡 2【追问 · 接卡 1】向量模型是你选的吗？ —— 不熟\n  柚子的参考答案：是我选的。\n  （没打字）", "经历（简历素材"] {
         assert!(user.contains(part), "{part}\n{user}");
     }
     let r = begin(&c, &start("自己挑", &["g2"]), None).unwrap();

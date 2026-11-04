@@ -1,4 +1,4 @@
-//! The three 题库 SKILLs in a 小拾 conversation (v0.7 阶段 ⑤): 「按柚子银行的 JD 出 5 道突击题」. The
+//! The three 题库 SKILLs in a 柚子 conversation (v0.7 阶段 ⑤): 「按柚子银行的 JD 出 5 道突击题」. The
 //! conversation's model calls the tool with words (经历、岗位、题目里的字); Rust finds the records, runs
 //! the same SKILL as Rater's page (assistants/rater/qbank.rs `generate`, with Rater's model) and puts
 //! the questions — or the new answer — into the reply's card (act/card.rs `add_rater`). Confirming

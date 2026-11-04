@@ -1,9 +1,9 @@
-// 小拾 小窗 (v0.3.5): a column on the right of any page (⌘J / the bird in the sidebar; not on the 小拾
-// page). An ordinary conversation (kept in 「最近」, continued on the 小拾 page): the header switches
+// 柚子 小窗 (v0.3.5): a column on the right of any page (⌘J / the bird in the sidebar; not on the 柚子
+// page). An ordinary conversation (kept in 「最近」, continued on the 柚子 page): the header switches
 // to a recent one or starts a new one, and uses the page's model. Above the input a pill names the
 // page (or the open / picked records); it goes with the next question unless × — ids only, Rust
 // fetches the content under its rules (芝麻开门 sends nothing). Memories and project passages are
-// chosen as on the page; attachments, 资料 and instructions stay on the 小拾 page. Skills can be asked
+// chosen as on the page; attachments, 资料 and instructions stay on the 柚子 page. Skills can be asked
 // for here too (「/名称」, 联网), and the 知识库 button works as on the page.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -157,7 +157,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
 
   return (
     <aside
-      aria-label="小拾"
+      aria-label="柚子"
       className={`flex w-[380px] shrink-0 flex-col overflow-hidden rounded-[14px] border bg-background ${props.floating ? "absolute inset-y-3.5 right-4 z-20 shadow-2xl" : "sheet relative mr-4 ml-1"}`}
     >
       <header className="flex h-14 shrink-0 items-end gap-1.5 px-4 pb-3">
@@ -179,7 +179,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
         <IconButton label="新对话" disabled={current == null && !live} onClick={() => (open(null), setTimeout(() => composer.current?.focus()))}>
           <SquarePen size={15} strokeWidth={1.5} />
         </IconButton>
-        <IconButton label="收起小拾" onClick={props.onClose}>
+        <IconButton label="收起柚子" onClick={props.onClose}>
           <X size={16} strokeWidth={1.5} />
         </IconButton>
       </header>
@@ -194,7 +194,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
             sessionKey={`side-${current}`}
             messages={shown}
             busy={busy}
-            empty={<p className="text-base">小拾在这儿，想聊点什么？</p>}
+            empty={<p className="text-base">柚子在这儿，想聊点什么？</p>}
             onEdit={(m, text) => void versionRun(m, text)}
             onRegenerate={(m) => void versionRun(m, null)}
             onSwitch={switchVersion}

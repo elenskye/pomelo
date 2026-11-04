@@ -1,7 +1,7 @@
-// 速记小窗 · 问小拾 (Rust capture.rs): chats right in the window, in a conversation of its own (out of 小拾's
-// list and searches); 新对话 throws it away, 「在 Pomelo 里继续对话」 lists it and opens it on the 小拾 page.
-// The 小拾 page's model (switched here too) and memories; 思考 as a new conversation's. Records a reply
-// links open in the main window. Loaded only when the tab is (it brings 小拾's Markdown).
+// 速记小窗 · 问柚子 (Rust capture.rs): chats right in the window, in a conversation of its own (out of 柚子's
+// list and searches); 新对话 throws it away, 「在 Pomelo 里继续对话」 lists it and opens it on the 柚子 page.
+// The 柚子 page's model (switched here too) and memories; 思考 as a new conversation's. Records a reply
+// links open in the main window. Loaded only when the tab is (it brings 柚子's Markdown).
 import { useEffect, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
@@ -37,7 +37,7 @@ export default function CaptureChat(props: Props) {
   );
 }
 
-/** A record opened from the transcript (it navigates, as on the 小拾 page) goes to the main window. */
+/** A record opened from the transcript (it navigates, as on the 柚子 page) goes to the main window. */
 function Forward() {
   const loc = useLocation();
   const navigate = useNavigate();
@@ -174,8 +174,8 @@ function Chat(props: Props) {
               void send();
             }
           }}
-          placeholder={talking ? "接着问……" : "问小拾……"}
-          aria-label="问小拾"
+          placeholder={talking ? "接着问……" : "问柚子……"}
+          aria-label="问柚子"
           rows={talking ? 2 : undefined}
           className={talking ? "max-h-28 shrink-0" : "min-h-0 flex-1"}
           autoFocus

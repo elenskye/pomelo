@@ -294,9 +294,9 @@ pub fn confirm(st: &AppState, run_id: i64, picks: &[Pick]) -> Result<Card, Strin
     let label = match todo_list.as_slice() {
         [(pos, op, _)] => {
             let (tool, module) = stored.iter().find(|x| x.0 == *pos).map(|x| (x.1.as_str(), x.2.as_str())).unwrap_or_default();
-            format!("小拾：{}", label_of(tool, module, Some(op)))
+            format!("柚子：{}", label_of(tool, module, Some(op)))
         }
-        many => format!("小拾：卡片里的 {} 条", many.len()),
+        many => format!("柚子：卡片里的 {} 条", many.len()),
     };
     let written: Vec<Written> = if todo_list.is_empty() { vec![] } else { st.with_undo(&label, |c| {
         let today = todo::today(c)?;
@@ -315,9 +315,9 @@ pub fn confirm(st: &AppState, run_id: i64, picks: &[Pick]) -> Result<Card, Strin
         vec![]
     } else {
         let label = match questions.as_slice() {
-            [(_, q)] if q.revision > 0 => "小拾：改答案".to_string(),
-            [(_, q)] => format!("小拾：新{}", q.category),
-            many => format!("小拾：{} 道题", many.len()),
+            [(_, q)] if q.revision > 0 => "柚子：改答案".to_string(),
+            [(_, q)] => format!("柚子：新{}", q.category),
+            many => format!("柚子：{} 道题", many.len()),
         };
         st.with_picky_undo(&label, |c| {
             let tx = Tx::begin(c)?;
