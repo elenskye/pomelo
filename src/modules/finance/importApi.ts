@@ -8,18 +8,18 @@ export type SourceRow = { sheet: string; rowNumber: number; raw: [string, string
 export type ImportRow = { pendingCandidates?: { id: number; batchId: number; name: string; draft: ImportDraft }[]; ai?: { model: string; noteError?: string | null; settled?: boolean; why?: string | null; duplicate: string; reason: string; duplicateRow?: number | null; target?: string | null; myCategory?: boolean } | null; fileName?: string | null; id: number; source: SourceRow; draft: ImportDraft; state: string; entryId: number | null; resolution: "new" | "linked" | null; candidates: { entry: Entry; sources: string[] }[] };
 export type BatchSummary = { id: number; name: string; title: string | null; sortOrder: number; source: string; createdAt: string; count: number; pending: number };
 export type ImportBatch = { summary: BatchSummary; rows: ImportRow[] };
-/** Importer (picky/assistants/importer.rs): the 提示词清单 and the model. */
+/** Importer (youzi/assistants/importer.rs): the 提示词清单 and the model. */
 export type ImporterPoint = { text: string; on: boolean };
 export type ImporterSettings = { model: string | null; level: string; points: ImporterPoint[] };
 export type ImporterSummary = { tidied: number; linked: number; review: number; errors: string[] };
 export const importerApi = {
-  settings: () => invoke<ImporterSettings>("picky_importer"),
-  save: (settings: ImporterSettings) => invoke<ImporterSettings>("picky_importer_save", { settings }),
+  settings: () => invoke<ImporterSettings>("youzi_importer"),
+  save: (settings: ImporterSettings) => invoke<ImporterSettings>("youzi_importer_save", { settings }),
   /** One file → one batch. */
-  extract: (path: string, model: string) => invoke<{ batch: ImportBatch; preview: string | null; errors: string[] }>("picky_importer_extract", { path, model }),
-  match: (ids: number[], model: string) => invoke<ImporterSummary>("picky_importer_match", { ids, model }),
+  extract: (path: string, model: string) => invoke<{ batch: ImportBatch; preview: string | null; errors: string[] }>("youzi_importer_extract", { path, model }),
+  match: (ids: number[], model: string) => invoke<ImporterSummary>("youzi_importer_match", { ids, model }),
   /** `rows`: only these (ticked) rows. */
-  tidy: (ids: number[], rows: number[] | null, model: string) => invoke<ImporterSummary>("picky_importer_tidy", { ids, rows, model }),
+  tidy: (ids: number[], rows: number[] | null, model: string) => invoke<ImporterSummary>("youzi_importer_tidy", { ids, rows, model }),
 };
 export const importApi = {
   linkPending: (id: number, target: number) => invoke<void>("fin_import_link_pending", { id, target }),

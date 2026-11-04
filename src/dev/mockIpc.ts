@@ -7,10 +7,10 @@ import { nextOnOrAfter } from "@/modules/finance/money";
 import { excerpt } from "@/modules/notes/NoteBody";
 import { tagSpans } from "@/shared/editor/lite";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
-import type { SeekerWorkspace } from "@/modules/picky/assistants/seekerApi";
-import type { SkillFlowNode } from "@/modules/picky/api";
+import type { SeekerWorkspace } from "@/modules/youzi/assistants/seekerApi";
+import type { SkillFlowNode } from "@/modules/youzi/api";
 import { seekerHandlers, seekerMock } from "./seekerMock";
-import type { RaterRecord, RaterReview } from "@/modules/picky/assistants/raterApi";
+import type { RaterRecord, RaterReview } from "@/modules/youzi/assistants/raterApi";
 
 type Args = Record<string, unknown>;
 type Row = Record<string, unknown> & { id: number; title: string; status: string };
@@ -187,7 +187,7 @@ const pItemHandlers = (list: "template" | "trip") => {
 };
 
 // ---- backups (file names mirror backup.rs; restore only records the safety copy) ----
-type Backup = { fileName: string; store: "pomelo" | "picky"; label: string; createdAt: string; size: number };
+type Backup = { fileName: string; store: "pomelo" | "youzi"; label: string; createdAt: string; size: number };
 const stamp = (d: Date) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
@@ -207,7 +207,7 @@ let backups: Backup[] = [
   mkBackup("before-v7", new Date(Date.now() - 2 * 86400000 + 60000)),
   mkBackup("before-import", new Date(Date.now() - 3 * 86400000 + 120000)),
   mkBackup("manual", new Date(Date.now() - 5 * 86400000 + 180000)),
-  ...Array.from({ length: 3 }, (_, i) => mkBackup("daily", new Date(Date.now() - (i + 1) * 86400000 + 1000), "picky")),
+  ...Array.from({ length: 3 }, (_, i) => mkBackup("daily", new Date(Date.now() - (i + 1) * 86400000 + 1000), "youzi")),
 ];
 const addBackup = (label: string, d = new Date(), store: Backup["store"] = "pomelo") => {
   const b = mkBackup(label, d, store);
@@ -933,14 +933,14 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
     });
     return { entries, totals };
   },
-  picky_importer: () => finImporter,
-  picky_importer_save: (a) => {
+  youzi_importer: () => finImporter,
+  youzi_importer_save: (a) => {
     const v = a.settings as typeof finImporter;
     finImporter = { model: v.model, level: v.level, points: v.points.map((p) => ({ ...p, text: p.text.trim() })).filter((p) => p.text) };
     return finImporter;
   },
   // importer.rs: a file → a batch, read by the model. A screenshot has a preview; &finance=dbs is a PDF with a same-amount entry.
-  picky_importer_extract: undoable("导入账单", (a) => {
+  youzi_importer_extract: undoable("导入账单", (a) => {
     const model = finModel(a.model);
     const dbs = new URLSearchParams(location.search).get("finance") === "dbs";
     const name = dbs ? "DBS 示例账单.pdf" : String(a.path).split("/").pop()!;
@@ -956,7 +956,7 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
     return finLater({ batch: b, preview: shot ? finScreenshotPreview : null, errors: [] });
   }),
   // candidates → 要你看; the rest 不是重复
-  picky_importer_match: undoable("Importer 查重", (a) => {
+  youzi_importer_match: undoable("Importer 查重", (a) => {
     const model = finModel(a.model);
     let review = 0;
     for (const b of fin.imports.filter((b) => (a.ids as number[]).includes(b.summary.id))) {
@@ -971,7 +971,7 @@ const finHandlers: Record<string, (a: Args) => unknown> = {
     return finLater({ tidied: 0, linked: 0, review, errors: [] });
   }),
   // 再整理 under the 清单: the points in force go into the 备注, so it shows
-  picky_importer_tidy: undoable("Importer 再整理", (a) => {
+  youzi_importer_tidy: undoable("Importer 再整理", (a) => {
     const model = finModel(a.model);
     const only = a.rows as number[] | null;
     const said = finImporter.points.filter((p) => p.on).map((p) => p.text)[0];
@@ -2316,8 +2316,8 @@ function homeMock(hidden: string[]) {
   };
 }
 
-// ---- 柚子 (picky): simulated models (start 0.7 s → loading → ready 1.2 s), cloud list + keys, sessions with
-// a linear path, replies streamed over the Channel. `&picky=ready` starts with a local model running.
+// ---- 柚子 (youzi): simulated models (start 0.7 s → loading → ready 1.2 s), cloud list + keys, sessions with
+// a linear path, replies streamed over the Channel. `&youzi=ready` starts with a local model running.
 type PModel = { key: string; name: string; title: string; note: string | null; quant: string; alias: string; context: number; thinking: boolean; listed: boolean };
 type PIssue = { kind: string; title: string; message: string; details: string | null; actions: { kind: string; key?: string }[] };
 type PMsg = { id: number; role: "user" | "assistant"; content: string; reasoning: string; reasoningMs: number | null; state: string; createdAt: string; model: string | null; error: string | null };
@@ -2348,8 +2348,8 @@ const pModels: PModel[] = (
 type PAsk = { id: number; runId: number; questions: { question: string; kind: string; options: string[] }[]; answers: { picked: string[]; other: string }[] | null; state: string };
 type PRunState = { asking?: boolean; id: number; session: number; kind: "reply" | "summary"; model: string; msg: PMsg | null; timer: number; done: (state: string, error: string | null) => void; reading?: { current: number; total: number; label: string } | null; queued?: boolean };
 const pky = {
-  active: (new URLSearchParams(location.search).get("picky") === "ready" ? pModels[1] : null) as PModel | null,
-  readiness: (new URLSearchParams(location.search).get("picky") === "ready" ? "ready" : "idle") as "idle" | "loading" | "ready",
+  active: (new URLSearchParams(location.search).get("youzi") === "ready" ? pModels[1] : null) as PModel | null,
+  readiness: (new URLSearchParams(location.search).get("youzi") === "ready" ? "ready" : "idle") as "idle" | "loading" | "ready",
   op: null as null | { kind: "starting" | "switching" | "stopping"; model: PModel | null },
   issue: null as PIssue | null,
   svc: {
@@ -2395,13 +2395,13 @@ const pky = {
   atlas: new Map<number, { label: string; content: string }>(),
   // ---- v0.3.5: lookups in Pomelo (data.rs) ----
   queries: new Map<number, PQuery[]>(),
-  /** Replies: numbered sources (picky/cite.rs). */
+  /** Replies: numbered sources (youzi/cite.rs). */
   sources: new Map<number, PSource[]>(),
   /** 插件库: switches by skill; the skills each question asked for (by user message id). */
   skills: new Map<string, { enabled: boolean; auto: boolean }>(),
   contact: null as string | null,
   asked: new Map<number, string[]>(),
-  /** Replies: proposal cards (picky/act.rs), by message id (= the card's runId here). */
+  /** Replies: proposal cards (youzi/act.rs), by message id (= the card's runId here). */
   cards: new Map<number, PCard>(),
   /** 改文件 (work.rs): a question's file, a reply's proposed changes (by message id). */
   editFiles: new Map<number, { path: string; name: string }>(),
@@ -2533,7 +2533,7 @@ const pActivate = (key: string) => {
 const MOCK_REASONING = "用户想检查排版。先列出要覆盖的格式：标题、列表、引用、表格、代码，\n再放几处不该生效的输入，比如原始 HTML。";
 const MOCK_REPLY = "## 排版自检\n\n这是开发版的**模拟回复**，用来检查消息的显示；正式版才会连接真正的模型。\n这一行紧跟在上一行后面。\n\n### 列表\n\n1. 第一项：包含 `行内代码`\n2. 第二项，下面还有子项：\n   - 子项 A\n   - 子项 B，带一个[链接](https://example.com)\n3. 第三项\n\n> 引用段落：阅读旧消息时，界面不会被拉到底部。\n\n| 模型 | 量化 | 上下文 | 适合的任务 | 备注 |\n| --- | --- | --- | --- | --- |\n| Qwen3 14B | Q4_K_M | 16K | 中文写作、日常问答 | 会先思考再回答 |\n| Qwen3.5 9B | Q8_0 | 32K | 代码解释与长资料阅读 | 源自官方权重的转换版 |\n\n```rust\nfn greet(name: &str) -> String {\n    format!(\"你好，{name}\") // 这一行故意写得很长，用来检查长代码能否横向滚动而不撑破窗口\n}\n```\n\n行内公式 $E = mc^2$，金额 $5 和 $10 不是公式。独立公式：\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n这些应该原样显示：<b>不是粗体</b>。\n\n最后一段。";
 type Emit = (e: Record<string, unknown>) => void;
-// ---- v0.4 citations (picky/cite.rs): passages, then search results, numbered ----
+// ---- v0.4 citations (youzi/cite.rs): passages, then search results, numbered ----
 type PSource = { n: number; kind: "record" | "passage" | "web"; module: string | null; recordKind: string | null; id: number | null; parent: number | null; day: string | null; artifactId: number | null; segment: number | null; title: string; detail: string | null; content: string; url?: string; kbSource?: number | null; kbPath?: string | null };
 // ---- v0.4.5 阶段 7: 知识库 (knowledge.rs): libraries of folders (made-up files) and saved pages; a build takes ~2.5 s ----
 type PKbDoc = { path: string; text: string; error?: string; image?: boolean };
@@ -2804,7 +2804,7 @@ const pSearch = (query: string, sources: PSource[]): PQuery => {
   return { module: null, label: `搜索「${query}」· ${merged.length} 条`, state: "ok", result: [merged.length ? `和「${query}」有关的记录（按相关程度排）：` : `没有找到和「${query}」有关的记录。`, ...lines].join("\n"), records: [] };
 };
 
-// ---- v0.3.5 lookups (picky/data.rs, its mock_calls / mock_answer): a few views for real, the rest generic ----
+// ---- v0.3.5 lookups (youzi/data.rs, its mock_calls / mock_answer): a few views for real, the rest generic ----
 type PQuery = { module: string | null; label: string; state: string; result: string; records: { module: string; kind: string; id: number; title: string; day?: string }[] };
 const P_MODULES: [string, string, boolean][] = [
   ["todo", "一步一步", true], ["books", "摸鱼读读", true], ["films", "好奇看看", true], ["drawing", "随意画画", true],
@@ -2929,7 +2929,7 @@ const pLookup = (module: string, args: Record<string, string>): PQuery => {
 /** data.rs page_query, roughly: 投递 in full, other records by id, the rest where only. */
 type PPage = { module: string; page: string | null; filter: string | null; record: { kind: string; id: number } | null; selected: { kind: string; id: number }[] };
 const pPage = (c: PPage | null | undefined): PQuery | null => {
-  if (!c || c.module === "vault" || c.module === "picky") return null;
+  if (!c || c.module === "vault" || c.module === "youzi") return null;
   const label = c.module === "home" ? "首页" : c.module === "settings" ? "设置" : (P_MODULES.find((m) => m[0] === c.module)?.[1] ?? null);
   if (!label) return null;
   const place = c.page ? `${label} · ${c.page}` : label;
@@ -2958,7 +2958,7 @@ const pPage = (c: PPage | null | undefined): PQuery | null => {
   }
   return { module: c.module, label: title ?? [place, c.filter].filter(Boolean).join(" · "), state: "ok", result: lines.join("\n"), records };
 };
-// ---- v0.4 phases 4–5: 柚子 proposes writes into a card (picky/act: mod.rs mock_calls, make.rs, ops.rs, card.rs) ----
+// ---- v0.4 phases 4–5: 柚子 proposes writes into a card (youzi/act: mod.rs mock_calls, make.rs, ops.rs, card.rs) ----
 type PWritten = { module: string; kind: string; id: number; parent: number | null; day: string | null; gone: boolean; before?: string | null };
 type PField = { label: string; before?: string; after: string; long?: boolean };
 type POp = { op: string } & Record<string, unknown>;
@@ -3945,7 +3945,7 @@ const pSnippet = (content: string, needle: string) => {
 };
 const pDoc = (s: PSession) =>
   [`# ${s.title}`, ...pPath(s).map((m) => [`## ${m.role === "user" ? "我" : "柚子"}`, m.content].join("\n\n"))].join("\n\n") + "\n";
-/** `&picky=ready`: a few finished conversations and a project to organise. */
+/** `&youzi=ready`: a few finished conversations and a project to organise. */
 const pSeed = () => {
   const done = (s: PSession, q: string, a: string, model = "Qwen3.5 9B") => {
     const path = pPath(s);
@@ -3979,8 +3979,8 @@ const pSeed = () => {
     { id: nextId++, content: "论文引用用 APA 格式。", projectId: proj.id, sharedProjectIds: [], enabled: true, localOnly: false, source: "command", sourceSessionId: null, notedOn: "2026-10-02", createdAt: "2026-10-02T02:00:00.000Z", updatedAt: "2026-10-02T02:00:00.000Z" },
     { id: nextId++, content: "月薪的具体数字只给本地模型看。", projectId: null, sharedProjectIds: [], enabled: true, localOnly: true, source: "manual", sourceSessionId: null, notedOn: "2026-10-05", createdAt: "2026-10-05T02:00:00.000Z", updatedAt: "2026-10-08T02:00:00.000Z" },
   );
-  const report = pickyHandlers.picky_import_file({ path: "/mock/开题报告.pdf" }) as { id: number };
-  const fid = pickyHandlers.picky_project_file_add({ projectId: proj.id, artifactId: report.id }) as number;
+  const report = youziHandlers.youzi_import_file({ path: "/mock/开题报告.pdf" }) as { id: number };
+  const fid = youziHandlers.youzi_project_file_add({ projectId: proj.id, artifactId: report.id }) as number;
   pky.files.find((f) => f.id === fid)!.indexed = true;
   pky.built.add(report.id);
   const old = pNewSession("新对话");
@@ -4254,7 +4254,7 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
 };
 
 
-// ---- v0.4 phase 7: 定时任务 (picky/schedule.rs): rules, due + catch-up (checked every 5 s here), read-only runs ----
+// ---- v0.4 phase 7: 定时任务 (youzi/schedule.rs): rules, due + catch-up (checked every 5 s here), read-only runs ----
 type PRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
 type PSchedule = PRule & { id: number; name: string; prompt: string; model: string | null; thinking: boolean; effort?: string | null; enabled: boolean; builtin: string | null; sortOrder: number; since: string; lastSlot: string | null };
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -4444,9 +4444,9 @@ window.setInterval(() => {
   pScheduleRun(due, due.lastSlot);
 }, 5000);
 
-const pickyHandlers: Record<string, (a: Args) => unknown> = {
-  picky_schedules: () => [...pSchedules].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id).map(pScheduleOut),
-  picky_schedule_save: (a) => {
+const youziHandlers: Record<string, (a: Args) => unknown> = {
+  youzi_schedules: () => [...pSchedules].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id).map(pScheduleOut),
+  youzi_schedule_save: (a) => {
     const input = pScheduleCheck(a.input as Args);
     if (input.model?.startsWith("cloud:") && !pky.cloud.some((m) => `cloud:${m.id}` === input.model)) throw "这个云端模型已经被删除了";
     pThinkFit(input.model, input.thinking);
@@ -4461,14 +4461,14 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pSchedules.push({ ...input, id, enabled: true, builtin: null, sortOrder: Math.max(-1, ...pSchedules.map((s) => s.sortOrder)) + 1, since: pLocalNow(), lastSlot: null });
     return id;
   },
-  picky_schedule_enable: (a) => {
+  youzi_schedule_enable: (a) => {
     const s = pSchedules.find((x) => x.id === a.id);
     if (!s) throw "这个定时任务已经被删除了";
     if (a.enabled && !s.enabled) s.since = pLocalNow();
     s.enabled = !!a.enabled;
     return null;
   },
-  picky_schedule_delete: (a) => {
+  youzi_schedule_delete: (a) => {
     if (pScheduleRunning === a.id) throw "这个定时任务正在运行，等它写完再删除。";
     const i = pSchedules.findIndex((x) => x.id === a.id);
     if (i < 0) throw "这个定时任务已经被删除了";
@@ -4476,22 +4476,22 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.sessions.forEach((x) => x.scheduleId === a.id && (x.scheduleId = null));
     return null;
   },
-  picky_schedule_run: (a) => {
+  youzi_schedule_run: (a) => {
     const s = pSchedules.find((x) => x.id === a.id);
     if (!s) throw "这个定时任务已经被删除了";
     if (pScheduleRunning != null) throw "有一个定时任务正在运行，等它写完再试。";
     pScheduleRun(s);
     return null;
   },
-  picky_brief: () => pBriefOut(),
+  youzi_brief: () => pBriefOut(),
   // 1 月 1～7 日: last year's whole-year letter; `&year=card` shows a sample one any day
-  picky_year_card: () => {
+  youzi_year_card: () => {
     const today = pLocalNow();
     if (new URLSearchParams(location.search).get("year") === "card") return { year: String(Number(today.slice(0, 4)) - 1), sessionId: 0, content: pLetter(Number(today.slice(0, 4)) - 1, "首页示例") };
     if (today.slice(5, 7) !== "01" || today.slice(8, 10) > "07") return null;
     return pYearLetters.filter((l) => l.year === String(Number(today.slice(0, 4)) - 1)).at(-1) ?? null;
   },
-  picky_brief_write: (a) => {
+  youzi_brief_write: (a) => {
     if (a.force && !pBrief.enabled) throw "今日简报关着（柚子 → 管理 → 定时）。";
     const today = toYmd(new Date());
     const row = pBrief.days.get(today);
@@ -4519,7 +4519,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     finish();
     return pBriefOut();
   },
-  picky_brief_set: (a) => {
+  youzi_brief_set: (a) => {
     const model = (a.model as string | null) || null;
     const thinking = a.thinking !== false;
     pThinkFit(model, thinking);
@@ -4529,24 +4529,24 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pBrief.effort = thinking ? ((a.effort as string | null) ?? null) : null;
     return pBriefOut();
   },
-  picky_assist_model: () => pBrief.assistModel,
-  picky_assist_model_set: (a) => (pBrief.assistModel = (a.model as string | null) || null),
-  picky_assist_level: () => pBrief.assistLevel,
-  picky_assist_level_set: (a) => (pBrief.assistLevel = a.level as string),
-  picky_brief_prompt: (a) => {
+  youzi_assist_model: () => pBrief.assistModel,
+  youzi_assist_model_set: (a) => (pBrief.assistModel = (a.model as string | null) || null),
+  youzi_assist_level: () => pBrief.assistLevel,
+  youzi_assist_level_set: (a) => (pBrief.assistLevel = a.level as string),
+  youzi_brief_prompt: (a) => {
     const p = a.prompt == null ? null : String(a.prompt).trim();
     if (p === "") throw "提示词不能为空";
     if (p && [...p].length > 2000) throw "提示词太长了（最多 2000 个字）";
     pBrief.prompt = p === pBriefDefault ? null : p;
     return pBriefOut();
   },
-  picky_seen: (a) => {
+  youzi_seen: (a) => {
     const s = pky.sessions.find((x) => x.id === a.sessionId);
     if (s) s.unseen = false;
     return null;
   },
-  picky_info: () => ({ mode: "mock", dbPath: "/mock/Pomelo OS Dev/picky.db", filesDir: "/mock/Pomelo OS Dev/picky-files", schemaVersion: 6, error: null }),
-  picky_storage: () => {
+  youzi_info: () => ({ mode: "mock", dbPath: "/mock/Pomelo OS Dev/youzi.db", filesDir: "/mock/Pomelo OS Dev/youzi-files", schemaVersion: 6, error: null }),
+  youzi_storage: () => {
     const files = pky.artifacts
       .filter((x) => !x.deleted)
       .map((x) => ({
@@ -4560,22 +4560,22 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     const filesBytes = pky.artifacts.filter((x) => !x.deleted).reduce((n, x) => n + x.byteCount, 0) + pky.strays.reduce((n, x) => n + x.bytes, 0);
     return { dbBytes: 1200000 + pky.sessions.length * 4000, filesBytes, files, strays: pky.strays, emptySessions: pky.sessions.filter(pOldEmpty).length };
   },
-  picky_storage_delete_file: (a) => {
+  youzi_storage_delete_file: (a) => {
     if (pky.runs.size) throw "正在生成回复，等它写完再删。";
     const x = pArt(a.id as number);
     x.deleted = true;
     pky.built.delete(x.id);
   },
-  picky_storage_delete_stray: (a) => {
+  youzi_storage_delete_stray: (a) => {
     pky.strays = pky.strays.filter((x) => x.name !== a.name);
   },
-  picky_storage_clean_empty: () => {
+  youzi_storage_clean_empty: () => {
     const n = pky.sessions.filter(pOldEmpty).length;
     pky.sessions = pky.sessions.filter((x) => !pOldEmpty(x));
     return n;
   },
-  picky_status: () => pStatus(),
-  picky_select: (a) => {
+  youzi_status: () => pStatus(),
+  youzi_select: (a) => {
     const c = a.choice as string;
     if (c.startsWith("local:")) {
       if (pky.active?.key !== c.slice(6) && pLocalBusy()) throw "本地模型正在回答，等它答完再换。";
@@ -4584,28 +4584,28 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     } else pky.selection = c;
     return null;
   },
-  picky_model_stop: () => {
+  youzi_model_stop: () => {
     if (pLocalBusy()) throw "本地模型正在回答，等它答完再停止。";
     pky.op = { kind: "stopping", model: pky.active };
     setTimeout(() => ((pky.active = null), (pky.readiness = "idle"), (pky.op = null)), 500);
     return null;
   },
-  picky_refresh: () => null,
-  picky_service_model: () => null,
-  picky_service: (a) => {
+  youzi_refresh: () => null,
+  youzi_service_model: () => null,
+  youzi_service: (a) => {
     const s = pky.svc[a.service as "embedding" | "rerank"];
     s.working = true;
     setTimeout(() => ((s.working = false), (s.state = a.action === "start" ? "running" : "stopped"), (s.ours = a.action === "start")), 600);
     return null;
   },
-  picky_issue_action: (a) => {
+  youzi_issue_action: (a) => {
     const act = a.action as { kind: string; key?: string };
     if (act.kind === "retryStart") pActivate(act.key!);
     else if (act.kind.startsWith("open")) throw "模拟模式下没有这个文件";
     return null;
   },
-  picky_issue_dismiss: () => ((pky.issue = null), null),
-  picky_cloud_model_save: (a) => {
+  youzi_issue_dismiss: () => ((pky.issue = null), null),
+  youzi_cloud_model_save: (a) => {
     const m = { thinking: "switch", efforts: [], defaultEffort: null, ...(a.model as Record<string, unknown>) } as unknown as { id: string; name: string; apiModel: string; service: string; contextWindow: number; maxOutputTokens: number; thinking: string; efforts: string[]; defaultEffort: string | null };
     m.name = m.name.trim();
     m.apiModel = m.apiModel.trim();
@@ -4616,44 +4616,44 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     else pky.cloud.push(m);
     return m;
   },
-  picky_cloud_models_reorder: (a) => {
+  youzi_cloud_models_reorder: (a) => {
     const ids = a.ids as string[];
     if (ids.length !== pky.cloud.length || !ids.every((id) => pky.cloud.some((m) => m.id === id))) throw "云端模型列表已经变了，请重新拖一次";
     pky.cloud = ids.map((id) => pky.cloud.find((m) => m.id === id)!);
     return null;
   },
-  picky_cloud_model_delete: (a) => {
+  youzi_cloud_model_delete: (a) => {
     pky.cloud.splice(pky.cloud.findIndex((x) => x.id === a.id), 1);
     if (pky.selection === `cloud:${a.id}`) pky.selection = "local";
     return null;
   },
-  picky_skills: () => pSkillsOut(),
-  picky_skill_set: (a) => {
+  youzi_skills: () => pSkillsOut(),
+  youzi_skill_set: (a) => {
     const cur = pSwitch(String(a.key));
     pky.skills.set(String(a.key), { enabled: (a.enabled as boolean | null) ?? cur.enabled, auto: (a.auto as boolean | null) ?? cur.auto });
     return pSkillsOut();
   },
-  picky_skill_key_save: (a) => {
+  youzi_skill_key_save: (a) => {
     if (!String(a.key).trim()) throw "API Key 为空或格式无效。";
     pky.keys.add(String(a.account));
     return pSkillsOut();
   },
-  picky_skill_key_remove: (a) => (pky.keys.delete(String(a.account)), pSkillsOut()),
-  picky_skill_contact_set: (a) => {
+  youzi_skill_key_remove: (a) => (pky.keys.delete(String(a.account)), pSkillsOut()),
+  youzi_skill_contact_set: (a) => {
     const v = String(a.contact).trim();
     if (v && !(v.includes("@") || /^https?:\/\//.test(v))) throw "填一个邮箱或网址";
     pky.contact = v || null;
     return pSkillsOut();
   },
-  picky_cloud_key_save: (a) => {
+  youzi_cloud_key_save: (a) => {
     const k = String(a.key).trim();
     if (!k || /[^\x21-\x7e]/.test(k)) throw "API Key 为空或格式无效。";
     pky.keys.add(a.service as string);
     return null;
   },
-  picky_cloud_key_remove: (a) => (pky.keys.delete(a.service as string), null),
-  picky_sessions: () => [...pky.sessions].filter((x) => !pUnlisted(x.id)).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt) || y.id - x.id).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
-  picky_messages: (a) => {
+  youzi_cloud_key_remove: (a) => (pky.keys.delete(a.service as string), null),
+  youzi_sessions: () => [...pky.sessions].filter((x) => !pUnlisted(x.id)).sort((x, y) => y.updatedAt.localeCompare(x.updatedAt) || y.id - x.id).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+  youzi_messages: (a) => {
     const s = pky.sessions.find((x) => x.id === a.sessionId);
     if (!s) throw "找不到这个对话，可能已经被删除了";
     return pPath(s).map((m) => {
@@ -4662,7 +4662,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
       return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], atlas: pky.atlas.get(m.id) ?? null, memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [], sources: pky.sources.get(m.id) ?? [], asks: pky.asks.get(m.id) ?? [], card: pCardOut(pky.cards.get(m.id)) ?? null, edit: pky.edits.get(m.id) ?? null, editFile: pky.editFiles.get(m.id) ?? null, page: pky.pages.get(m.id) ?? null, skills: m.role === "user" ? pAskedOf(m.id).map((k) => P_SKILLS.find((x) => x.key === k)?.name ?? k) : [] };
     });
   },
-  picky_send: (a) => {
+  youzi_send: (a) => {
     const attachments = (a.attachments as number[] | undefined) ?? [];
     const prompt = String(a.text).trim() || (attachments.length ? "请总结这些附件。" : "");
     if (!prompt) throw "问题不能为空";
@@ -4710,7 +4710,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pShow(s, msg);
     return pRun(s, user, msg, thinking, prompt, a, fit, pMaterial(s, path, used));
   },
-  picky_file_edit_confirm: (a) => {
+  youzi_file_edit_confirm: (a) => {
     const e = [...pky.edits.values()].find((x) => x.runId === a.runId)!;
     if (e.state !== "pending") throw "这些改动已经处理过了";
     const picked = a.positions as number[];
@@ -4719,7 +4719,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     e.items.forEach((i) => (i.checked = picked.includes(i.position)));
     return e;
   },
-  picky_file_create_confirm: (a) => {
+  youzi_file_create_confirm: (a) => {
     const e = [...pky.edits.values()].find((x) => x.runId === a.runId)!;
     if (e.state !== "pending") throw "这份文档已经处理过了";
     const ext = e.kind === "new-excel" ? "xlsx" : "docx";
@@ -4727,19 +4727,19 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     Object.assign(e, { state: "written", name: `${name}.${ext}`, path: `${a.folder}/${name}.${ext}` });
     return e;
   },
-  picky_file_edit_cancel: (a) => {
+  youzi_file_edit_cancel: (a) => {
     const e = [...pky.edits.values()].find((x) => x.runId === a.runId)!;
     if (e.state !== "pending") throw "这些改动已经处理过了";
     e.state = "cancelled";
     return e;
   },
-  picky_word_defaults: (a) => {
+  youzi_word_defaults: (a) => {
     const m = pky.sessions.flatMap((s) => s.nodes).find((n) => n.id === a.messageId);
     const heading = m?.content.split("\n").find((l) => l.startsWith("#"))?.replace(/^#+\s*/, "");
     return { folder: "/Users/me/Documents", name: `${heading || "柚子的报告"} ${pToday()}` };
   },
-  picky_save_word: (a) => `${a.folder}/${String(a.name).trim() || "柚子的报告"}.docx`,
-  picky_edit: (a) => {
+  youzi_save_word: (a) => `${a.folder}/${String(a.name).trim() || "柚子的报告"}.docx`,
+  youzi_edit: (a) => {
     const text = String(a.text).trim();
     if (!text) throw "问题不能为空";
     const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
@@ -4757,7 +4757,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     if (src.parent === null && s.titleSource === "auto") s.title = pTitle(text);
     return pRun(s, user, msg, thinking, text, a, fit, pMaterial(s, pAncestors(s, src.parent), used));
   },
-  picky_regenerate: (a) => {
+  youzi_regenerate: (a) => {
     const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
     const { modelName, ability } = pTarget(s.id);
     const thinking = pThinks(ability, s.thinking !== false);
@@ -4769,7 +4769,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pShow(s, msg);
     return pRun(s, q, msg, thinking, q.content, a, fit, pMaterial(s, pAncestors(s, q.parent), pky.used.get(q.id) ?? { attachments: [], files: [] }));
   },
-  picky_switch_version: (a) => {
+  youzi_switch_version: (a) => {
     const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
     if (pBusyIn(s.id)) throw "这个对话正在生成，等它写完再切换版本。";
     const m = s.nodes.find((n) => n.id === a.messageId)!;
@@ -4778,9 +4778,9 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     if (t) pShow(s, t);
     return (t ?? m).id;
   },
-  picky_rater_records: () => [...pRecords.values()].sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((r) => structuredClone(r)),
-  picky_rater_record: (a) => { const r = pRecords.get(a.session as number); if (!r) throw new Error("这次记录已经存好或放弃了"); return structuredClone(r); },
-  picky_rater_record_start: (a) => {
+  youzi_rater_records: () => [...pRecords.values()].sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((r) => structuredClone(r)),
+  youzi_rater_record: (a) => { const r = pRecords.get(a.session as number); if (!r) throw new Error("这次记录已经存好或放弃了"); return structuredClone(r); },
+  youzi_rater_record_start: (a) => {
     seekerMock.modelCheck("record");
     if (!String(a.date).trim()) throw new Error("请填写面试日期");
     const job = seekerMock.jobLink(a.job as number);
@@ -4790,29 +4790,29 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pRecords.set(sess.id, r);
     return structuredClone(r);
   },
-  picky_rater_record_edit: (a) => {
+  youzi_rater_record_edit: (a) => {
     const r = pRecords.get(a.session as number);
     if (!r) throw new Error("这次记录已经存好或放弃了");
     Object.assign(r, { review: { ...structuredClone(a.review as RaterReview), job: r.review.job }, ready: false });
     return structuredClone(r);
   },
-  picky_rater_record_save: undoable("记复盘", (a) => {
+  youzi_rater_record_save: undoable("记复盘", (a) => {
     const r = pRecords.get(a.session as number);
     if (!r) throw new Error("这次记录已经存好或放弃了");
     if (pBusyIn(r.session)) throw new Error("柚子还在回复，等它说完再存");
     const review = a.review as RaterReview;
     if (!review.items.some((x) => x.question.trim())) throw new Error("还没记下问了什么");
-    const out = seekerHandlers.picky_rater_review_save({ review: { ...review, id: "" }, jobId: r.review.job.id });
+    const out = seekerHandlers.youzi_rater_review_save({ review: { ...review, id: "" }, jobId: r.review.job.id });
     pRecords.delete(r.session);
     pky.sessions = pky.sessions.filter((x) => x.id !== r.session);
     return out;
   }),
-  picky_rater_record_discard: (a) => {
+  youzi_rater_record_discard: (a) => {
     if (!pRecords.delete(a.session as number)) throw new Error("这次记录已经存好或放弃了");
     pky.sessions = pky.sessions.filter((x) => x.id !== a.session);
     return [...pRecords.values()].map((r) => structuredClone(r));
   },
-  picky_library: () => ({
+  youzi_library: () => ({
     pinned: pMembers("pinned").map(pRow),
     projects: [...pky.projects]
       .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
@@ -4821,18 +4821,18 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     recent: pMembers("recent").map(pRow),
     archived: pMembers("archived").map(pRow),
   }),
-  picky_rename: (a) => {
+  youzi_rename: (a) => {
     const s = pFind(a.id);
     const t = String(a.title).trim();
     if (t) Object.assign(s, { title: t.slice(0, 120), titleSource: "user" });
     else Object.assign(s, { title: pTitle(pPath(s).find((m) => m.role === "user")?.content ?? ""), titleSource: "auto" });
     return null;
   },
-  picky_pin: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.pinned = !!a.pinned))), null),
-  picky_archive: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.archived = !!a.archived))), null),
-  picky_private: (a) => ((a.ids as number[]).forEach((id) => (pFind(id).private = !!a.private)), null),
-  picky_conversation_thinking: (a) => ((pFind(a.sessionId as number).thinking = !!a.on), null),
-  picky_ask_answer: (a) => {
+  youzi_pin: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.pinned = !!a.pinned))), null),
+  youzi_archive: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.archived = !!a.archived))), null),
+  youzi_private: (a) => ((a.ids as number[]).forEach((id) => (pFind(id).private = !!a.private)), null),
+  youzi_conversation_thinking: (a) => ((pFind(a.sessionId as number).thinking = !!a.on), null),
+  youzi_ask_answer: (a) => {
     const all = [...pky.asks.values()].flat();
     const q = all.find((x) => x.id === a.askId);
     if (!q || q.state !== "waiting") throw "这个问题已经结束了";
@@ -4849,32 +4849,32 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     }
     return { followUp: text };
   },
-  picky_conversation_effort: (a) => ((pFind(a.sessionId as number).effort = (a.effort as string | null) ?? null), null),
-  picky_conversation_knowledge: (a) => ((pFind(a.sessionId as number).knowledge = !!a.on), null),
-  picky_conversation_libraries: (a) => {
+  youzi_conversation_effort: (a) => ((pFind(a.sessionId as number).effort = (a.effort as string | null) ?? null), null),
+  youzi_conversation_knowledge: (a) => ((pFind(a.sessionId as number).knowledge = !!a.on), null),
+  youzi_conversation_libraries: (a) => {
     pFind(a.sessionId as number).knowledge = true;
     pkb.own.set(`s${a.sessionId}`, a.libraryIds as number[]);
     return null;
   },
-  picky_move: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.projectId = (a.projectId as number | null) ?? null))), null),
-  picky_delete: (a) => {
+  youzi_move: (a) => ((a.ids as number[]).forEach((id) => pRegroup(pFind(id), (x) => (x.projectId = (a.projectId as number | null) ?? null))), null),
+  youzi_delete: (a) => {
     if ((a.ids as number[]).some(pBusyIn)) throw "这个对话正在写回复，等它写完再删除。";
     pky.sessions = pky.sessions.filter((x) => !(a.ids as number[]).includes(x.id));
     return null;
   },
-  picky_project_create: (a) => {
+  youzi_project_create: (a) => {
     const id = nextId++;
     pky.projects.push({ id, name: String(a.name).trim().slice(0, 60) || "未命名项目", instructions: String(a.instructions).trim(), sortOrder: Math.min(0, ...pky.projects.map((p) => p.sortOrder)) - 1, includeGlobalMemories: a.includeGlobalMemories !== false });
     pkb.own.set(`p${id}`, (a.libraries as number[] | undefined) ?? []);
     return id;
   },
-  picky_project_update: (a) => {
+  youzi_project_update: (a) => {
     const p = pky.projects.find((x) => x.id === a.id)!;
     Object.assign(p, { name: String(a.name).trim().slice(0, 60) || "未命名项目", instructions: String(a.instructions).trim(), includeGlobalMemories: a.includeGlobalMemories !== false });
     pkb.own.set(`p${p.id}`, (a.libraries as number[] | undefined) ?? []);
     return null;
   },
-  picky_project_delete: (a) => {
+  youzi_project_delete: (a) => {
     pky.sessions.forEach((s) => s.projectId === a.id && pRegroup(s, (x) => (x.projectId = null)));
     pky.memories.forEach((m) => {
       m.sharedProjectIds = m.sharedProjectIds.filter((x) => x !== a.id);
@@ -4883,8 +4883,8 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.projects = pky.projects.filter((p) => p.id !== a.id);
     return null;
   },
-  picky_projects_reorder: (a) => ((a.ids as number[]).forEach((id, i) => (pky.projects.find((p) => p.id === id)!.sortOrder = i)), null),
-  picky_drop: (a) => {
+  youzi_projects_reorder: (a) => ((a.ids as number[]).forEach((id, i) => (pky.projects.find((p) => p.id === id)!.sortOrder = i)), null),
+  youzi_drop: (a) => {
     const s = pFind(a.id);
     const list = a.list as string;
     const members = pMembers(list).map((x) => x.id);
@@ -4907,7 +4907,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.manual.add(list);
     return true;
   },
-  picky_search: (a) => {
+  youzi_search: (a) => {
     const words = String(a.q).toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
     const has = (t: string) => words.every((w) => t.toLowerCase().includes(w));
@@ -4923,7 +4923,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     }
     return out;
   },
-  picky_card_confirm: (a) => {
+  youzi_card_confirm: (a) => {
     const c = pky.cards.get(a.runId as number);
     if (!c) throw "找不到这张卡片";
     if (c.state !== "pending") throw "这张卡片已经处理过了";
@@ -4956,14 +4956,14 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     });
     return pCardOut(c);
   },
-  picky_card_cancel: (a) => {
+  youzi_card_cancel: (a) => {
     const c = pky.cards.get(a.runId as number);
     if (!c) throw "找不到这张卡片";
     if (c.state !== "pending") throw "这张卡片已经处理过了";
     c.state = "cancelled";
     return pCardOut(c);
   },
-  picky_search_similar: async (a) => {
+  youzi_search_similar: async (a) => {
     await new Promise((r) => setTimeout(r, 500));
     const want = mockChars(String(a.q));
     const out: unknown[] = [];
@@ -4974,20 +4974,20 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     }
     return out.slice(0, 20);
   },
-  picky_search_models: () => [...new Set(pky.sessions.flatMap((s) => s.nodes.map((n) => n.model).filter(Boolean)))],
-  picky_reveal: (a) => {
+  youzi_search_models: () => [...new Set(pky.sessions.flatMap((s) => s.nodes.map((n) => n.model).filter(Boolean)))],
+  youzi_reveal: (a) => {
     const s = pky.sessions.find((x) => x.nodes.some((n) => n.id === a.messageId))!;
     pShow(s, s.nodes.find((n) => n.id === a.messageId)!);
     return s.id;
   },
-  picky_copy_conversation: (a) => (void navigator.clipboard?.writeText(pDoc(pFind(a.id))).catch(() => {}), null),
-  picky_export_markdown: () => null,
-  picky_export_package: (a) => a.path,
-  picky_ui_get: (a) => pky.ui.get(a.key as string) ?? null,
-  picky_ui_set: (a) => (pky.ui.set(a.key as string, a.value), null),
+  youzi_copy_conversation: (a) => (void navigator.clipboard?.writeText(pDoc(pFind(a.id))).catch(() => {}), null),
+  youzi_export_markdown: () => null,
+  youzi_export_package: (a) => a.path,
+  youzi_ui_get: (a) => pky.ui.get(a.key as string) ?? null,
+  youzi_ui_set: (a) => (pky.ui.set(a.key as string, a.value), null),
   copy_text: (a) => (void navigator.clipboard?.writeText(String(a.text)).catch(() => {}), null),
-  picky_templates: () => pTemplates(),
-  picky_template_save: (a) => {
+  youzi_templates: () => pTemplates(),
+  youzi_template_save: (a) => {
     const t = a.template as { title: string; category: string; body: string };
     const title = t.title.split(/\s+/).filter(Boolean).join(" ") || "未命名模板";
     const fields = { title, category: t.category.split(/\s+/).filter(Boolean).join(" "), body: t.body.trimEnd() };
@@ -5001,28 +5001,28 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     Object.assign(x, fields);
     return x.id;
   },
-  picky_template_pin: (a) => {
+  youzi_template_pin: (a) => {
     const x = pky.templates.find((y) => y.id === a.id)!;
     if (a.pinned && !x.pinnedAt) x.pinnedAt = now();
     if (!a.pinned) x.pinnedAt = null;
     return null;
   },
-  picky_template_delete: (a) => ((pky.templates = pky.templates.filter((y) => y.id !== a.id)), null),
-  picky_template_used: (a) => {
+  youzi_template_delete: (a) => ((pky.templates = pky.templates.filter((y) => y.id !== a.id)), null),
+  youzi_template_used: (a) => {
     const x = pky.templates.find((y) => y.id === a.id);
     if (x) x.lastUsedAt = now();
     return null;
   },
-  picky_instructions: (a) => pPreview((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, (a.draft as PSetting | null) ?? null),
-  picky_session_instructions_save: (a) => {
+  youzi_instructions: (a) => pPreview((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, (a.draft as PSetting | null) ?? null),
+  youzi_session_instructions_save: (a) => {
     const st = a.setting as PSetting;
     Object.assign(pFind(a.sessionId), { instructions: st.content.trim(), presetId: st.presetId });
     return null;
   },
-  picky_global_instructions: () => pky.global,
-  picky_global_instructions_save: (a) => ((pky.global = String(a.content).trim()), null),
-  picky_presets: () => pky.presets,
-  picky_preset_save: (a) => {
+  youzi_global_instructions: () => pky.global,
+  youzi_global_instructions_save: (a) => ((pky.global = String(a.content).trim()), null),
+  youzi_presets: () => pky.presets,
+  youzi_preset_save: (a) => {
     const name = String(a.name).split(/\s+/).filter(Boolean).join(" ");
     if (!name) throw "预设要有名称";
     if (a.id == null) {
@@ -5033,12 +5033,12 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     Object.assign(pky.presets.find((x) => x.id === a.id)!, { name, content: String(a.content).trim() });
     return a.id;
   },
-  picky_preset_delete: (a) => {
+  youzi_preset_delete: (a) => {
     pky.presets = pky.presets.filter((x) => x.id !== a.id);
     pky.sessions.forEach((x) => x.presetId === a.id && (x.presetId = null));
     return null;
   },
-  picky_context: (a) => {
+  youzi_context: (a) => {
     if (pBusyIn(a.sessionId as number)) return null;
     try {
       pTarget();
@@ -5054,7 +5054,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     const dropped = sel ? sel.dropped : r.history.length;
     return { percent, nearLimit: percent >= 85 || dropped > 0 || !sel, dropped, fits: !!sel, summarizable: shown.some((m) => m.role === "assistant" && m.state === "complete" && m.content.trim()) };
   },
-  picky_summarize: (a) => {
+  youzi_summarize: (a) => {
     pTarget(a.sessionId as number);
     const sess = pFind(a.sessionId);
     const plan = pPlan(sess);
@@ -5074,7 +5074,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.runs.set(runId, { id: runId, session: sess.id, kind: "summary", model: pModelNow(), msg: null, timer: window.setTimeout(() => done("completed", null), 1500), done });
     return runId;
   },
-  picky_import_file: (a) => {
+  youzi_import_file: (a) => {
     const path = String(a.path);
     const name = path.split("/").pop() ?? "文件";
     const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -5089,13 +5089,13 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.artifacts.push(art);
     return pInfo(art);
   },
-  picky_import_image: (a) => {
+  youzi_import_image: (a) => {
     const art: PArtifact = { id: nextId++, name: String(a.name), format: "图片", pageCount: null, byteCount: (a.bytes as number[]).length, deleted: false, path: `/mock/pasted-${nextId}`, segments: [] };
     pky.artifacts.push(art);
     return pInfo(art);
   },
   /** files.rs mock_page: a made-up page, no network. */
-  picky_import_web: async (a) => {
+  youzi_import_web: async (a) => {
     await new Promise((r) => setTimeout(r, 500));
     let url = String(a.url).trim();
     if (!url.includes("://")) url = `https://${url}`;
@@ -5105,14 +5105,14 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.artifacts.push(art);
     return pInfo(art);
   },
-  picky_attachment_library: () =>
+  youzi_attachment_library: () =>
     [...pky.artifacts]
       .reverse()
       .filter((x) => !x.deleted && ([...pky.used.values()].some((u) => u.attachments.includes(x.id)) || !pky.files.some((f) => f.versions.some((v) => v.artifact === x.id))))
       .map(pInfo),
-  picky_open_file: () => null,
-  picky_project_files: (a) => pky.files.filter((f) => f.projectId === a.projectId).map(pFileView),
-  picky_project_file_add: (a) => {
+  youzi_open_file: () => null,
+  youzi_project_files: (a) => pky.files.filter((f) => f.projectId === a.projectId).map(pFileView),
+  youzi_project_file_add: (a) => {
     const art = pArt(a.artifactId as number);
     const dup = pky.files.find((f) => f.projectId === a.projectId && f.versions.some((v) => v.artifact === art.id));
     if (dup) throw `项目里已有这份资料：${pCurrent(dup)?.name}`;
@@ -5120,7 +5120,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pky.files.push({ id, projectId: a.projectId as number, currentVersion: 1, indexed: false, versions: [{ version: 1, artifact: art.id, addedAt: now() }] });
     return id;
   },
-  picky_project_file_replace: (a) => {
+  youzi_project_file_replace: (a) => {
     const f = pky.files.find((x) => x.id === a.fileId)!;
     const art = pArt(a.artifactId as number);
     if (pCurrent(f)?.id === art.id) throw "选的文件和现在的版本一样";
@@ -5131,12 +5131,12 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     if (f.indexed) pBuild(f);
     return null;
   },
-  picky_project_file_remove: (a) => {
+  youzi_project_file_remove: (a) => {
     pky.files = pky.files.filter((x) => x.id !== a.fileId);
     pky.jobs.delete(a.fileId as number);
     return null;
   },
-  picky_project_file_index: (a) => {
+  youzi_project_file_index: (a) => {
     const f = pky.files.find((x) => x.id === a.fileId)!;
     f.indexed = !!a.indexed;
     pky.jobs.delete(f.id);
@@ -5144,9 +5144,9 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     else pky.built.delete(pCurrent(f)?.id ?? -1);
     return null;
   },
-  picky_index_rebuild: (a) => (pBuild(pky.files.find((x) => x.id === a.fileId)!), null),
-  picky_index_stop: (a) => (pky.jobs.delete(a.fileId as number), null),
-  picky_retrieval_plan: (a) => {
+  youzi_index_rebuild: (a) => (pBuild(pky.files.find((x) => x.id === a.fileId)!), null),
+  youzi_index_stop: (a) => (pky.jobs.delete(a.fileId as number), null),
+  youzi_retrieval_plan: (a) => {
     const proj = a.sessionId != null ? pFind(a.sessionId).projectId : ((a.projectId as number | null) ?? null);
     const fs_ = pky.files.filter((f) => f.projectId === proj && f.indexed && !(a.excludeFiles as number[]).includes(f.id));
     const ready = fs_.filter((f) => pky.built.has(pCurrent(f)?.id ?? -1));
@@ -5155,8 +5155,8 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     const knowledge = scope && { libraries: scope.libraries, ready: views.reduce((n, v) => n + v.ready, 0), pending: views.reduce((n, v) => n + v.pending, 0), skipped: scope.skipped };
     return { readyNames: ready.map((f) => pCurrent(f)!.name), pending: fs_.length - ready.length, knowledge };
   },
-  picky_retrieve: async (a) => {
-    const plan = pickyHandlers.picky_retrieval_plan(a) as { readyNames: string[]; knowledge: { ready: number; pending: number } | null };
+  youzi_retrieve: async (a) => {
+    const plan = youziHandlers.youzi_retrieval_plan(a) as { readyNames: string[]; knowledge: { ready: number; pending: number } | null };
     if (!plan.readyNames.length && !(plan.knowledge && plan.knowledge.ready + plan.knowledge.pending)) return [];
     await new Promise((r) => setTimeout(r, 600));
     if (String(a.question).includes("向量失败测试")) throw "模拟：8081 向量服务没有就绪。";
@@ -5182,19 +5182,19 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     }
     return out;
   },
-  picky_translate: () => pTrView(),
-  picky_translate_settings: (a) => {
+  youzi_translate: () => pTrView(),
+  youzi_translate_settings: (a) => {
     const st = a.settings as PTrSettings;
     if (st.prompt.length > 2000) throw "提示词最多 2000 字";
     pTr.saved.settings = st;
     return pTrView();
   },
-  picky_translate_input: (a) => {
+  youzi_translate_input: (a) => {
     if (!pTr.running) pTr.saved.input = String(a.input);
     return null;
   },
-  picky_translate_preview: (a) => pTrPreview(a.settings as PTrSettings),
-  picky_translate_run: (a) => {
+  youzi_translate_preview: (a) => pTrPreview(a.settings as PTrSettings),
+  youzi_translate_run: (a) => {
     const input = String(a.input);
     const st = a.settings as PTrSettings;
     if (!input.trim()) throw "先写要翻译的原文";
@@ -5223,16 +5223,16 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     }, 120);
     return pTrView();
   },
-  picky_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
+  youzi_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
   // reading, settings and the Word export itself aren't undone (as in Rust)
-  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["picky_rater", "picky_rater_interviews", "picky_rater_prep", "picky_rater_summarize", "picky_rater_prep_word_place", "picky_rater_prep_word", "picky_seeker_files", "picky_seeker_cv_text", "picky_rater_practice", "picky_rater_round", "picky_rater_pick", "picky_rater_follow", "picky_rater_comment", "picky_rater_seconds", "picky_rater_suggest", "picky_rater_defaults", "picky_rater_options", "picky_rater_options_set", "picky_seeker", "picky_seeker_folder", "picky_seeker_settings", "picky_seeker_sources", "picky_seeker_suggest", "picky_seeker_review", "picky_seeker_notes_settle", "picky_seeker_export_name", "picky_seeker_import_preview", "picky_seeker_output_save", "picky_seeker_knowledge", "picky_seeker_knowledge_add", "picky_seeker_company_names", "picky_seeker_job_company", "picky_seeker_job_resumes", "picky_seeker_prompts", "picky_rater_prompts"].includes(key) ? handler : undoable(key === "picky_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "picky_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "picky_seeker_records_delete" ? "删除 Seeker 资料" : key === "picky_rater_order" ? "调整题目顺序" : key === "picky_rater_delete_many" ? "删除题目" : key === "picky_rater_rounds_delete" ? "删除练习" : key === "picky_rater_prep_save" ? "改速查卡" : key === "picky_rater_prep_keep" ? "追问存进题库" : key === "picky_rater_review_save" ? "记复盘" : key === "picky_rater_review_keep" ? "复盘的题存进题库" : key === "picky_rater_review_rule" ? "复盘的约定加进规则" : key === "picky_rater_interview_delete" ? "删除面试记录" : key === "picky_rater_add" ? "补题" : key === "picky_rater_round_start" ? "开始练习" : key === "picky_rater_mark" ? "练习" : key === "picky_rater_stop" ? "停下练习" : key === "picky_rater_round_delete" ? "删除这一轮" : key === "picky_rater_keep" ? "追问存进题库" : key === "picky_rater_save" ? "保存题目" : key === "picky_rater_delete" ? "删除题目" : key === "picky_seeker_job_resume" ? "关联简历" : key === "picky_seeker_group_rename" ? "分组改名" : key === "picky_seeker_use_job" ? "为岗位做简历" : key === "picky_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
-  picky_pub2md: () => p2View(),
-  picky_pub2md_settings: (a) => {
+  ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["youzi_rater", "youzi_rater_interviews", "youzi_rater_prep", "youzi_rater_summarize", "youzi_rater_prep_word_place", "youzi_rater_prep_word", "youzi_seeker_files", "youzi_seeker_cv_text", "youzi_rater_practice", "youzi_rater_round", "youzi_rater_pick", "youzi_rater_follow", "youzi_rater_comment", "youzi_rater_seconds", "youzi_rater_suggest", "youzi_rater_defaults", "youzi_rater_options", "youzi_rater_options_set", "youzi_seeker", "youzi_seeker_folder", "youzi_seeker_settings", "youzi_seeker_sources", "youzi_seeker_suggest", "youzi_seeker_review", "youzi_seeker_notes_settle", "youzi_seeker_export_name", "youzi_seeker_import_preview", "youzi_seeker_output_save", "youzi_seeker_knowledge", "youzi_seeker_knowledge_add", "youzi_seeker_company_names", "youzi_seeker_job_company", "youzi_seeker_job_resumes", "youzi_seeker_prompts", "youzi_rater_prompts"].includes(key) ? handler : undoable(key === "youzi_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "youzi_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "youzi_seeker_records_delete" ? "删除 Seeker 资料" : key === "youzi_rater_order" ? "调整题目顺序" : key === "youzi_rater_delete_many" ? "删除题目" : key === "youzi_rater_rounds_delete" ? "删除练习" : key === "youzi_rater_prep_save" ? "改速查卡" : key === "youzi_rater_prep_keep" ? "追问存进题库" : key === "youzi_rater_review_save" ? "记复盘" : key === "youzi_rater_review_keep" ? "复盘的题存进题库" : key === "youzi_rater_review_rule" ? "复盘的约定加进规则" : key === "youzi_rater_interview_delete" ? "删除面试记录" : key === "youzi_rater_add" ? "补题" : key === "youzi_rater_round_start" ? "开始练习" : key === "youzi_rater_mark" ? "练习" : key === "youzi_rater_stop" ? "停下练习" : key === "youzi_rater_round_delete" ? "删除这一轮" : key === "youzi_rater_keep" ? "追问存进题库" : key === "youzi_rater_save" ? "保存题目" : key === "youzi_rater_delete" ? "删除题目" : key === "youzi_seeker_job_resume" ? "关联简历" : key === "youzi_seeker_group_rename" ? "分组改名" : key === "youzi_seeker_use_job" ? "为岗位做简历" : key === "youzi_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
+  youzi_pub2md: () => p2View(),
+  youzi_pub2md_settings: (a) => {
     p2.settings = { ...(a.settings as P2Settings), parallel: Math.min(8, Math.max(1, (a.settings as P2Settings).parallel)) };
     return p2View();
   },
-  picky_pub2md_group: (a) => p2Docs([...new Set(a.paths as string[])]).map(([name, files]) => ({ name, files })),
-  picky_pub2md_delete: (a) => {
+  youzi_pub2md_group: (a) => p2Docs([...new Set(a.paths as string[])]).map(([name, files]) => ({ name, files })),
+  youzi_pub2md_delete: (a) => {
     const folder = String(a.folder);
     const r = p2.recent.find((x) => x.folder === folder);
     if (!r) throw "找不到这份文档";
@@ -5243,7 +5243,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     p2.queue = p2.queue.filter((q) => !(q.kind === "resume" && q.folder === folder));
     return p2View();
   },
-  picky_pub2md_add: (a) => {
+  youzi_pub2md_add: (a) => {
     if (!p2Mock && !p2.mathpix) throw "先填上 Mathpix 的 App ID 和 App Key";
     const names = p2Group(a.paths as string[]);
     if (!names.length) throw "没有能处理的文件";
@@ -5251,33 +5251,33 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     p2Next();
     return p2View();
   },
-  picky_pub2md_resume: (a) => {
+  youzi_pub2md_resume: (a) => {
     const folder = String(a.folder);
     if (!p2.paused.has(folder)) throw "找不到这份文档的中间结果，没法接着做";
     if (!p2.queue.some((q) => q.kind === "resume" && q.folder === folder)) p2.queue.unshift({ kind: "resume", folder });
     p2Next();
     return p2View();
   },
-  picky_pub2md_unqueue: (a) => (p2.queue.splice(Number(a.index), 1), p2View()),
-  picky_pub2md_stop: () => (p2.current && p2End("stopped", "已停止"), p2View()),
-  picky_pub2md_open: () => null,
-  picky_pub2md_preview: (a) => {
+  youzi_pub2md_unqueue: (a) => (p2.queue.splice(Number(a.index), 1), p2View()),
+  youzi_pub2md_stop: () => (p2.current && p2End("stopped", "已停止"), p2View()),
+  youzi_pub2md_open: () => null,
+  youzi_pub2md_preview: (a) => {
     const r = p2.recent.find((x) => x.folder === a.folder);
     const file = String(a.file);
     if (!r || !r.outputs.includes(file) || !/\.(mmd|md)$/.test(file)) throw "这个文件不能预览";
     return P2_PREVIEW[file.replace(/\.(mmd|md)$/, "")] ?? `# ${file}\n\n（模拟的预览）`;
   },
-  picky_pub2md_prompts: (a) => p2Prompts(a.settings as P2Settings),
-  picky_pub2md_keys_save: (a) => {
+  youzi_pub2md_prompts: (a) => p2Prompts(a.settings as P2Settings),
+  youzi_pub2md_keys_save: (a) => {
     const ok = (v: unknown) => String(v).trim() && !/[^\x21-\x7e]/.test(String(v).trim());
     if (!ok(a.id)) throw "App ID 为空或格式不对";
     if (!ok(a.key)) throw "App Key 为空或格式不对";
     p2.mathpix = true;
     return p2View();
   },
-  picky_pub2md_keys_remove: () => ((p2.mathpix = false), p2View()),
-  picky_kb_overview: () => ({ libraries: pKbLibs().map((l) => ({ id: l.id, name: l.name, sources: pkb.sources.filter((x) => x.libraryId === l.id).map(pKbView) })), error: null }),
-  picky_kb_library_create: (a) => {
+  youzi_pub2md_keys_remove: () => ((p2.mathpix = false), p2View()),
+  youzi_kb_overview: () => ({ libraries: pKbLibs().map((l) => ({ id: l.id, name: l.name, sources: pkb.sources.filter((x) => x.libraryId === l.id).map(pKbView) })), error: null }),
+  youzi_kb_library_create: (a) => {
     const name = String(a.name).trim();
     if (!name) throw "请填写库的名称";
     if (pkb.libraries.some((l) => l.name === name)) throw `已经有叫「${name}」的库了`;
@@ -5285,20 +5285,20 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pkb.libraries.push({ id, name: name.slice(0, 30), sortOrder: Math.max(-1, ...pkb.libraries.map((l) => l.sortOrder)) + 1 });
     return id;
   },
-  picky_kb_library_rename: (a) => {
+  youzi_kb_library_rename: (a) => {
     const name = String(a.name).trim();
     if (!name) throw "请填写库的名称";
     if (pkb.libraries.some((l) => l.name === name && l.id !== a.id)) throw `已经有叫「${name}」的库了`;
     pkb.libraries.find((l) => l.id === a.id)!.name = name.slice(0, 30);
     return null;
   },
-  picky_kb_library_delete: (a) => {
+  youzi_kb_library_delete: (a) => {
     pkb.libraries = pkb.libraries.filter((l) => l.id !== a.id);
     pkb.sources = pkb.sources.filter((x) => x.libraryId !== a.id);
     return null;
   },
-  picky_kb_libraries_reorder: (a) => ((a.ids as number[]).forEach((id, i) => (pkb.libraries.find((l) => l.id === id)!.sortOrder = i)), null),
-  picky_kb_folder_add: (a) => {
+  youzi_kb_libraries_reorder: (a) => ((a.ids as number[]).forEach((id, i) => (pkb.libraries.find((l) => l.id === id)!.sortOrder = i)), null),
+  youzi_kb_folder_add: (a) => {
     const path = String(a.path);
     for (const x of pkb.sources.filter((y) => y.libraryId === a.libraryId && y.path)) {
       if (x.path === path) throw "这个库里已经有这个文件夹了";
@@ -5309,7 +5309,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pkb.sources.push(src);
     return src.id;
   },
-  picky_kb_web_add: (a) => {
+  youzi_kb_web_add: (a) => {
     if (pkb.sources.some((x) => x.libraryId === a.libraryId && x.artifactId === a.artifactId)) throw "这个库里已经有这个网页了";
     const art = pArt(a.artifactId as number);
     const src: PKbSource = { id: nextId++, libraryId: a.libraryId as number, kind: "web", path: null, artifactId: art.id, cloud: true, docs: [{ path: "", text: art.segments[0] }], buildUntil: null };
@@ -5317,13 +5317,13 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     pkb.sources.push(src);
     return src.id;
   },
-  picky_kb_source_remove: (a) => ((pkb.sources = pkb.sources.filter((x) => x.id !== a.id)), null),
-  picky_kb_source_cloud: (a) => ((pkb.sources.find((x) => x.id === a.id)!.cloud = !!a.on), null),
-  picky_kb_source_rebuild: (a) => (pKbBuild(pkb.sources.find((x) => x.id === a.id)!), null),
-  picky_kb_scan: () => null,
-  picky_kb_open: () => null,
-  picky_memories: () => [...pky.memories].reverse(),
-  picky_memory_save: (a) => {
+  youzi_kb_source_remove: (a) => ((pkb.sources = pkb.sources.filter((x) => x.id !== a.id)), null),
+  youzi_kb_source_cloud: (a) => ((pkb.sources.find((x) => x.id === a.id)!.cloud = !!a.on), null),
+  youzi_kb_source_rebuild: (a) => (pKbBuild(pkb.sources.find((x) => x.id === a.id)!), null),
+  youzi_kb_scan: () => null,
+  youzi_kb_open: () => null,
+  youzi_memories: () => [...pky.memories].reverse(),
+  youzi_memory_save: (a) => {
     const m = a.memory as { content: string; projectId: number | null; sharedProjectIds: number[]; enabled: boolean; localOnly: boolean };
     const content = pMemoryValid(m.content);
     const shared = m.projectId == null ? [] : [...new Set(m.sharedProjectIds.filter((x) => x !== m.projectId))];
@@ -5337,34 +5337,34 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
     Object.assign(x, { content, projectId: m.projectId, sharedProjectIds: shared, enabled: m.enabled, localOnly: m.localOnly, updatedAt: now() });
     return x.id;
   },
-  picky_remember: (a) => {
+  youzi_remember: (a) => {
     const contents = (a.entries as string[]).map(pMemoryValid);
     for (const content of contents)
       pky.memories.push({ id: nextId++, content, projectId: (a.projectId as number | null) ?? null, sharedProjectIds: [], enabled: true, localOnly: !!a.localOnly, source: "command", sourceSessionId: (a.sessionId as number | null) ?? null, notedOn: pToday(), createdAt: now(), updatedAt: now() });
     return null;
   },
-  picky_memory_flag: (a) => {
+  youzi_memory_flag: (a) => {
     const x = pky.memories.find((y) => y.id === a.id)!;
     if (a.flag === "enabled") x.enabled = !!a.on;
     else x.localOnly = !!a.on;
     x.updatedAt = now();
     return null;
   },
-  picky_memory_delete: (a) => ((pky.memories = pky.memories.filter((y) => y.id !== a.id)), null),
-  picky_memory_enabled: () => pky.memoryOn,
-  picky_memory_enabled_set: (a) => ((pky.memoryOn = !!a.on), null),
-  picky_data_cloud: () => pDataCloud(),
-  picky_data_cloud_set: (a) => {
+  youzi_memory_delete: (a) => ((pky.memories = pky.memories.filter((y) => y.id !== a.id)), null),
+  youzi_memory_enabled: () => pky.memoryOn,
+  youzi_memory_enabled_set: (a) => ((pky.memoryOn = !!a.on), null),
+  youzi_data_cloud: () => pDataCloud(),
+  youzi_data_cloud_set: (a) => {
     if (a.module === "finance" || !pDataCloud().some((m) => m.module === a.module)) throw `没有这个模块：${a.module}`;
     pky.dataCloud.set(a.module as string, !!a.allowed);
     return null;
   },
-  picky_conversation_memory: (a) => (a.off ? pky.memoryOffSessions.add(a.sessionId as number) : pky.memoryOffSessions.delete(a.sessionId as number), null),
-  picky_memory_plan: (a) => {
+  youzi_conversation_memory: (a) => (a.off ? pky.memoryOffSessions.add(a.sessionId as number) : pky.memoryOffSessions.delete(a.sessionId as number), null),
+  youzi_memory_plan: (a) => {
     const { candidates: _c, ...plan } = pMemoryPlan((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, !!a.draftOff, !!a.nextOff);
     return plan;
   },
-  picky_choose_memories: async (a) => {
+  youzi_choose_memories: async (a) => {
     const plan = pMemoryPlan((a.sessionId as number | null) ?? null, (a.projectId as number | null) ?? null, !!a.draftOff, !!a.nextOff);
     if (plan.off || !plan.count) return [];
     await new Promise((r) => setTimeout(r, 500));
@@ -5379,7 +5379,7 @@ const pickyHandlers: Record<string, (a: Args) => unknown> = {
       .slice(0, 6)
       .map(({ m }) => ({ memoryId: m.id, content: m.content, notedOn: m.notedOn }));
   },
-  picky_stop: (a) => {
+  youzi_stop: (a) => {
     pky.runs.get(a.runId as number)?.done("cancelled", null);
     return null;
   },
@@ -5663,7 +5663,7 @@ const workHandlers: Record<string, (a: Args) => unknown> = {
   site_preview: () => null,
 };
 
-// ---- 呦呦漫游 · 柚子 (assist.rs picky_site_english, assistants/site.rs): the mock model
+// ---- 呦呦漫游 · 柚子 (assist.rs youzi_site_english, assistants/site.rs): the mock model
 type MDraft = { slug: string | null; running: boolean; title: string; summary: string; body: string; status: string | null; error: string | null; modelName: string | null; note: string | null; token: number };
 const sDraft: MDraft = { slug: null, running: false, title: "", summary: "", body: "", status: null, error: null, modelName: null, note: null, token: 0 };
 const sDraftView = () => ({ ...sDraft, token: undefined });
@@ -5671,14 +5671,14 @@ const siteCloudCheck = () => {
   if (pky.selection.startsWith("cloud:") && !pDataCloud().find((m) => m.module === "site")!.allowed) throw "选了云端模型：呦呦漫游不发给云端。换成本地模型再用。";
 };
 const siteAssistHandlers: Record<string, (a: Args) => unknown> = {
-  picky_site_english: async (a) => {
+  youzi_site_english: async (a) => {
     await new Promise((r) => setTimeout(r, 700));
     siteCloudCheck();
     if (!String(a.title).trim() && !String(a.body).trim()) throw "先写中文的标题或正文";
     return { title: `[Mock] ${String(a.title).trim()}`, summary: "A mock summary of this piece." };
   },
-  picky_site_draft: () => sDraftView(),
-  picky_site_draft_run: (a) => {
+  youzi_site_draft: () => sDraftView(),
+  youzi_site_draft_run: (a) => {
     if (sDraft.running) throw "正在起草另一个英文版，等它写完或先停止。";
     siteCloudCheck();
     const token = ++sDraft.token;
@@ -5704,11 +5704,11 @@ const siteAssistHandlers: Record<string, (a: Args) => unknown> = {
     setTimeout(() => step(0), 300);
     return sDraftView();
   },
-  picky_site_draft_stop: () => {
+  youzi_site_draft_stop: () => {
     Object.assign(sDraft, { running: false, status: null });
     return sDraftView();
   },
-  picky_site_draft_clear: () => {
+  youzi_site_draft_clear: () => {
     if (!sDraft.running) Object.assign(sDraft, { slug: null, title: "", summary: "", body: "", error: null, note: null });
     return sDraftView();
   },
@@ -5979,7 +5979,7 @@ const captureHandlers: Record<string, (a: Args) => unknown> = {
 
 const handlers: Record<string, (a: Args) => unknown> = {
   ...captureHandlers,
-  ...pickyHandlers,
+  ...youziHandlers,
   ...siteHandlers,
   ...workHandlers,
   ...siteAssistHandlers,
@@ -6016,9 +6016,9 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
   search_all: (a) => [
     ...(searchAllMock(String(a.q)) as unknown[]),
-    ...(pickyHandlers.picky_search({ q: a.q, model: null, since: null, archived: false }) as { sessionId: number; title: string; messageId: number | null; snippet: string | null; at: string }[])
+    ...(youziHandlers.youzi_search({ q: a.q, model: null, since: null, archived: false }) as { sessionId: number; title: string; messageId: number | null; snippet: string | null; at: string }[])
       .slice(0, 6)
-      .map((h) => ({ module: "picky", kind: "chat", id: h.sessionId, title: h.title, detail: h.snippet, parent: h.messageId, day: h.at.slice(0, 10), amount: null, currency: null, flow: null })),
+      .map((h) => ({ module: "youzi", kind: "chat", id: h.sessionId, title: h.title, detail: h.snippet, parent: h.messageId, day: h.at.slice(0, 10), amount: null, currency: null, flow: null })),
   ],
   app_autostart: () => ({ on: settings.get("app.autostart") !== false, registers: false }),
   app_autostart_set: (a) => (settings.set("app.autostart", !!a.on), { on: !!a.on, registers: false }),
@@ -6032,29 +6032,29 @@ const handlers: Record<string, (a: Args) => unknown> = {
   }),
   reveal_data_dir: () => null,
   // ---- v0.3.5 阶段 4: 柚子 helps in panels (assist.rs mock_reply) and the picked ones added in one step ----
-  picky_polish: async (a) => {
+  youzi_polish: async (a) => {
     await new Promise((r) => setTimeout(r, 700));
     const label = P_MODULES.find((m) => m[0] === a.module)?.[1];
     if (label && !pSends(String(a.module))) throw `选了云端模型：${pPartLabel(String(a.module))}不发给云端。换成本地模型再用。`;
     if (!String(a.text).trim()) throw "没有可以润色的文字";
     return `${String(a.text).trim().replace(/很/g, "非常")}（模拟润色）`;
   },
-  picky_fill_work: async (a) => {
+  youzi_fill_work: async (a) => {
     await new Promise((r) => setTimeout(r, 600));
     const w = pWork(String(a.module), String(a.title)); // the lookup first (assist.rs fill_work)
     if (w) return { creator: w.creator, country: w.country, kindId: kinds.find((k) => k.module === a.module && k.name === w.kind)?.id ?? null };
     return { creator: "模拟作者", country: "美国", kindId: kinds.find((k) => k.module === a.module)?.id ?? null };
   },
-  picky_fill_job: async () => {
+  youzi_fill_job: async () => {
     await new Promise((r) => setTimeout(r, 600));
     return { company: "模拟公司", position: "产品经理", location: "上海" };
   },
-  picky_split_task: async () => {
+  youzi_split_task: async () => {
     await new Promise((r) => setTimeout(r, 600));
     return ["列出要做的步骤", "先做第一步", "检查一遍"];
   },
   /** assist.rs mock: one per line / sentence of the note, those already made left out. */
-  picky_split_note: async (a) => {
+  youzi_split_note: async (a) => {
     await new Promise((r) => setTimeout(r, 600));
     const n = nt.notes.find((x) => x.id === a.noteId);
     if (!n) throw "找不到这条笔记，可能已经被删除了";
@@ -6063,13 +6063,13 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (!items.length) throw "没拆出新的待办";
     return items;
   },
-  picky_trip_missing: async () => {
+  youzi_trip_missing: async () => {
     await new Promise((r) => setTimeout(r, 600));
     const k = kinds.find((x) => x.module === "packing")?.id ?? null;
     return ["充电宝", "雨伞", "常用药"].map((name) => ({ name, kindId: k }));
   },
   /** assist.rs 一句话填好 with its mock rules (a 分组 only when named, as `mentions`; a number is the amount, 下周X a date, names matched). */
-  picky_quick_fill: async (a) => {
+  youzi_quick_fill: async (a) => {
     await new Promise((r) => setTimeout(r, 700));
     const t = String(a.sentence).trim();
     if (!t) throw "先写一句话";
@@ -6268,7 +6268,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
       { key: "films", label: "好奇看看", incoming: handlers["films__count"]({}) },
       { key: "drawing", label: "随意画画", incoming: courses.length },
       { key: "packing", label: "出门走走", incoming: tpls.length + tripRows.length },
-      { key: "picky", label: "柚子", incoming: pky.projects.length + pky.presets.length + pky.templates.length + pky.memories.length },
+      { key: "youzi", label: "柚子", incoming: pky.projects.length + pky.presets.length + pky.templates.length + pky.memories.length },
     ],
   }),
   backups_list: () => [...backups].sort((x, y) => y.createdAt.localeCompare(x.createdAt)),
@@ -6323,7 +6323,7 @@ async function loadPrototypeNotes() {
 
 /** `label`: the window this page is (the 速记小窗 is "capture"). */
 export async function installMockIpc(label = "main") {
-  if (new URLSearchParams(location.search).get("picky") === "ready") pSeed();
+  if (new URLSearchParams(location.search).get("youzi") === "ready") pSeed();
   await loadPrototypeNotes();
   mockWindows(label);
   mockIPC((cmd, payload) => {

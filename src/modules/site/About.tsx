@@ -2,7 +2,7 @@
 // 简介), 一点故事 (the body, 润色 / 按中文起草); on the right the pictures both languages share: 肖像 (the site
 // shows one at random) and 画作 / 摄影 (in order).
 import { useState } from "react";
-import { Polish } from "@/modules/picky/Assist";
+import { Polish } from "@/modules/youzi/Assist";
 import { useConfirm } from "@/shared/feedback";
 import { useSetting } from "@/shared/settings";
 import { Field, TextArea, TextInput } from "@/shared/ui";

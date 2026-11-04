@@ -2,8 +2,8 @@
 // preview, templates, exports (no file is written), the draft's job and knowledge/'s companies
 // (matched by name). Each language has its own draft (Rust seeker.rs). Rater's question bank (rater.rs)
 // lives here too: its rules are Seeker records; 卡片练习 (practice.rs) keeps its rounds in `practice`.
-import type { RaterAsk, RaterBank, RaterBuiltin, RaterCard, RaterInterviews, RaterJob, RaterOptions, RaterPractice, RaterPrep, RaterPrepAsk, RaterQuestion, RaterReview, RaterRound, RaterStart, RaterTally } from "@/modules/picky/assistants/raterApi";
-import type { SeekerCatalog, SeekerCompany, SeekerCvFile, SeekerDesk, SeekerDraft, SeekerEntry, SeekerExport, SeekerGroupName, SeekerImport, SeekerJobCompany, SeekerLang, SeekerNote, SeekerRecord, SeekerSelection, SeekerSettings, SeekerWorkspace, SourceChange } from "@/modules/picky/assistants/seekerApi";
+import type { RaterAsk, RaterBank, RaterBuiltin, RaterCard, RaterInterviews, RaterJob, RaterOptions, RaterPractice, RaterPrep, RaterPrepAsk, RaterQuestion, RaterReview, RaterRound, RaterStart, RaterTally } from "@/modules/youzi/assistants/raterApi";
+import type { SeekerCatalog, SeekerCompany, SeekerCvFile, SeekerDesk, SeekerDraft, SeekerEntry, SeekerExport, SeekerGroupName, SeekerImport, SeekerJobCompany, SeekerLang, SeekerNote, SeekerRecord, SeekerSelection, SeekerSettings, SeekerWorkspace, SourceChange } from "@/modules/youzi/assistants/seekerApi";
 
 const HEADER = ["工作邮箱", "联系电话", "个人网站", "工作地点"];
 const HEADER_EN = ["Location", "Email", "Phone", "GitHub"];
@@ -230,8 +230,8 @@ const interviewsView = (): RaterInterviews => structuredClone({ preps: newest(se
 const analysisOf = (id: unknown) => { const sum = seekerMock.interviews.summaries.find((x) => x.id === id); if (sum) return { a: sum.analysis, job: sum.job }; const r = seekerMock.interviews.reviews.find((x) => x.id === id); return r?.analysis ? { a: r.analysis, job: r.job } : null; };
 const jobLink = (id: number) => { const j = seekerMock.job(id); if (!j) throw new Error("岗位不存在，请重新选择"); return { id: j.id, createdAt: j.createdAt, label: j.position ? `${j.company} · ${j.position}` : j.company }; };
 const interviewHandlers: Record<string, (a: Args) => unknown> = {
-  picky_rater_interviews: interviewsView,
-  picky_rater_prep: async (a) => {
+  youzi_rater_interviews: interviewsView,
+  youzi_rater_prep: async (a) => {
     modelCheck("prep");
     const ask = a.ask as RaterPrepAsk;
     const job = jobLink(ask.job);
@@ -244,7 +244,7 @@ const interviewHandlers: Record<string, (a: Args) => unknown> = {
       return interviewsView();
     });
   },
-  picky_rater_prep_save: (a) => {
+  youzi_rater_prep_save: (a) => {
     const input = a.prep as RaterPrep;
     const p = seekerMock.interviews.preps.find((x) => x.id === input.id);
     if (!p) throw new Error("这份准备已经删除了");
@@ -252,17 +252,17 @@ const interviewHandlers: Record<string, (a: Args) => unknown> = {
     p.sheet = input.sheet;
     return interviewsView();
   },
-  picky_rater_prep_keep: (a) => {
+  youzi_rater_prep_keep: (a) => {
     const p = seekerMock.interviews.preps.find((x) => x.id === a.id);
     const f = p?.follows[a.index as number];
     if (!p || !f) throw new Error("没有这道追问");
     if (f.saved) throw new Error("已经存进题库了");
     const id = crypto.randomUUID();
-    seekerHandlers.picky_rater_save({ question: question({ id, category: f.category, question: f.question, answer: f.answer, job: f.category === "突击题" ? p.job : null, revision: 0 }) });
+    seekerHandlers.youzi_rater_save({ question: question({ id, category: f.category, question: f.question, answer: f.answer, job: f.category === "突击题" ? p.job : null, revision: 0 }) });
     f.saved = id;
     return interviewsView();
   },
-  picky_rater_review_save: (a) => {
+  youzi_rater_review_save: (a) => {
     const r = structuredClone(a.review as RaterReview);
     r.items = r.items.filter((x) => x.question.trim() || x.answer.trim() || x.feedback.trim());
     if (r.items.some((x) => !x.question.trim())) throw new Error("每一条都要写问题");
@@ -277,7 +277,7 @@ const interviewHandlers: Record<string, (a: Args) => unknown> = {
     }
     return interviewsView();
   },
-  picky_rater_summarize: async (a) => {
+  youzi_rater_summarize: async (a) => {
     modelCheck("summary");
     const ids = a.reviews as string[];
     const rs = ids.map((id) => { const r = seekerMock.interviews.reviews.find((x) => x.id === id); if (!r) throw new Error("有复盘已经删除了"); return r; });
@@ -292,17 +292,17 @@ const interviewHandlers: Record<string, (a: Args) => unknown> = {
       return interviewsView();
     });
   },
-  picky_rater_review_keep: (a) => {
+  youzi_rater_review_keep: (a) => {
     const r = analysisOf(a.id);
     const f = r?.a.questions[a.index as number];
     if (!r || !f) throw new Error("没有这道题");
     if (f.saved) throw new Error("已经存进题库了");
     const id = crypto.randomUUID();
-    seekerHandlers.picky_rater_save({ question: question({ id, category: f.category, question: f.question, answer: f.answer, job: f.category === "突击题" ? r.job : null, revision: 0 }) });
+    seekerHandlers.youzi_rater_save({ question: question({ id, category: f.category, question: f.question, answer: f.answer, job: f.category === "突击题" ? r.job : null, revision: 0 }) });
     f.saved = id;
     return interviewsView();
   },
-  picky_rater_review_rule: (a) => {
+  youzi_rater_review_rule: (a) => {
     const r = analysisOf(a.id);
     const idea = r?.a.rules[a.index as number];
     if (!r || !idea) throw new Error("没有这条");
@@ -316,7 +316,7 @@ const interviewHandlers: Record<string, (a: Args) => unknown> = {
     idea.adopted = id;
     return interviewsView();
   },
-  picky_rater_interview_delete: (a) => {
+  youzi_rater_interview_delete: (a) => {
     const all = seekerMock.interviews;
     const before = all.preps.length + all.reviews.length + all.summaries.length;
     all.preps = all.preps.filter((x) => x.id !== a.id);
@@ -325,18 +325,18 @@ const interviewHandlers: Record<string, (a: Args) => unknown> = {
     if (all.preps.length + all.reviews.length + all.summaries.length === before) throw new Error("已经删除了");
     return interviewsView();
   },
-  picky_rater_prep_word_place: (a) => {
+  youzi_rater_prep_word_place: (a) => {
     const p = seekerMock.interviews.preps.find((x) => x.id === a.id);
     if (!p) throw new Error("这份准备已经删除了");
     return { folder: "/Users/mock/Documents", name: `速查卡 ${p.job.label.replace(" · ", " ")} ${new Date().toISOString().slice(0, 10)}` };
   },
-  picky_rater_prep_word: (a) => `${a.folder}/${String(a.name).replace(/\.docx$/, "")}.docx`,
+  youzi_rater_prep_word: (a) => `${a.folder}/${String(a.name).replace(/\.docx$/, "")}.docx`,
 };
 const practiceHandlers: Record<string, (a: Args) => unknown> = {
   ...interviewHandlers,
-  picky_rater_practice: practiceView,
-  picky_rater_round: (a) => structuredClone(roundOf(a.id)),
-  picky_rater_round_start: (a) => {
+  youzi_rater_practice: practiceView,
+  youzi_rater_round: (a) => structuredClone(roundOf(a.id)),
+  youzi_rater_round_start: (a) => {
     const st = a.start as RaterStart;
     if (seekerMock.practice.some((r) => !r.endedAt)) throw new Error("上一轮还没停下");
     if (!MODES.includes(st.mode)) throw new Error("未知的出卡方式");
@@ -353,7 +353,7 @@ const practiceHandlers: Record<string, (a: Args) => unknown> = {
     seekerMock.practice.push({ id: crypto.randomUUID(), mode: st.mode, job: job ? { id: job.id, createdAt: job.createdAt, label: job.position ? `${job.company} · ${job.position}` : job.company } : null, advice: st.mode === "按 JD" ? st.advice.trim() : "", cards: picked.map(card), startedAt: new Date().toISOString(), endedAt: null, feedback: null });
     return practiceView();
   },
-  picky_rater_mark: (a) => {
+  youzi_rater_mark: (a) => {
     if (a.mark !== KNOW && a.mark !== UNSURE) throw new Error("只能是「会」或「不熟」");
     const r = onScreen(a.id, a.card);
     const k = r.cards[a.card as number];
@@ -362,24 +362,24 @@ const practiceHandlers: Record<string, (a: Args) => unknown> = {
     if (currentOf(r) < 0) r.endedAt = at;
     return practiceView();
   },
-  picky_rater_stop: (a) => {
+  youzi_rater_stop: (a) => {
     const r = roundOf(a.id);
     if (r.endedAt) throw new Error("这一轮已经结束了");
     if (r.cards.every((c) => !c.mark)) seekerMock.practice = seekerMock.practice.filter((x) => x.id !== r.id);
     else r.endedAt = new Date().toISOString();
     return practiceView();
   },
-  picky_rater_rounds_delete: (a) => {
+  youzi_rater_rounds_delete: (a) => {
     const ids = a.ids as string[];
     seekerMock.practice = seekerMock.practice.filter((x) => !ids.includes(x.id));
     return practiceView();
   },
-  picky_rater_round_delete: (a) => {
+  youzi_rater_round_delete: (a) => {
     roundOf(a.id);
     seekerMock.practice = seekerMock.practice.filter((x) => x.id !== a.id);
     return practiceView();
   },
-  picky_rater_pick: async (a) => {
+  youzi_rater_pick: async (a) => {
     modelCheck("pick");
     const job = seekerMock.job(a.job as number);
     if (!job) throw new Error("岗位不存在，请重新选择");
@@ -389,7 +389,7 @@ const practiceHandlers: Record<string, (a: Args) => unknown> = {
     const of = (cat: string, n: number) => bank.filter((q) => q.category === cat && (cat !== "突击题" || sameJob(q, job))).slice(0, n).map((q) => q.id);
     return { questions: [...of("通用题", 2), ...of("简历题", 3), ...of("突击题", 3)], advice: "（模拟模型）先自我介绍，再简历题，最后突击题。", model: "模拟模型", note: "" };
   },
-  picky_rater_follow: async (a) => {
+  youzi_rater_follow: async (a) => {
     modelCheck("follow");
     const r = roundOf(a.id);
     canFollow(r, a.card as number);
@@ -404,18 +404,18 @@ const practiceHandlers: Record<string, (a: Args) => unknown> = {
       return practiceView();
     });
   },
-  picky_rater_keep: (a) => {
+  youzi_rater_keep: (a) => {
     const r = roundOf(a.id);
     const k = r.cards[a.card as number];
     if (!k?.follow) throw new Error("这不是追问卡");
     if (k.saved) throw new Error("这张追问卡已经存进题库了");
     const root = seekerMock.rater.questions.find((q) => q.id === k.question);
     const id = crypto.randomUUID();
-    seekerHandlers.picky_rater_save({ question: question({ id, category: k.category, question: k.text, answer: k.reference, material: root?.material ?? null, job: root?.job ?? (k.category === "突击题" ? r.job : null), revision: 0 }) });
+    seekerHandlers.youzi_rater_save({ question: question({ id, category: k.category, question: k.text, answer: k.reference, material: root?.material ?? null, job: root?.job ?? (k.category === "突击题" ? r.job : null), revision: 0 }) });
     k.saved = id;
     return structuredClone(r);
   },
-  picky_rater_comment: async (a) => {
+  youzi_rater_comment: async (a) => {
     modelCheck("comment");
     const r = roundOf(a.id);
     if (!r.endedAt) throw new Error("这一轮还没结束");
@@ -513,11 +513,11 @@ const draftOf = (lang: SeekerLang) => structuredClone(desk(lang).draft);
 type Args = Record<string, unknown>;
 export const seekerHandlers: Record<string, (a: Args) => unknown> = {
   ...practiceHandlers,
-  picky_rater: bankView,
-  picky_rater_options: () => structuredClone(raterOptions),
-  picky_rater_options_set: (a) => { raterOptions = structuredClone(a.options as RaterOptions); return structuredClone(raterOptions); },
-  picky_rater_defaults: () => structuredClone(BUILTINS),
-  picky_rater_suggest: (a) => {
+  youzi_rater: bankView,
+  youzi_rater_options: () => structuredClone(raterOptions),
+  youzi_rater_options_set: (a) => { raterOptions = structuredClone(a.options as RaterOptions); return structuredClone(raterOptions); },
+  youzi_rater_defaults: () => structuredClone(BUILTINS),
+  youzi_rater_suggest: (a) => {
     const ask = a.ask as RaterAsk;
     modelCheck(ask.kind === "润色" ? "polish" : "suggest");
     const bank = seekerMock.rater;
@@ -537,14 +537,14 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     });
     return { ...base, questions };
   },
-  picky_rater_add: (a) => {
+  youzi_rater_add: (a) => {
     const list = a.questions as RaterQuestion[];
     if (!list.length) throw new Error("至少勾上一道");
-    for (const q of list) seekerHandlers.picky_rater_save({ question: q });
+    for (const q of list) seekerHandlers.youzi_rater_save({ question: q });
     return bankView();
   },
-  picky_rater_seconds: (a) => seconds(String(a.text ?? "")),
-  picky_rater_save: (a) => {
+  youzi_rater_seconds: (a) => seconds(String(a.text ?? "")),
+  youzi_rater_save: (a) => {
     const input = structuredClone(a.question as RaterQuestion);
     input.question = input.question.trim();
     if (!input.question) throw new Error("请填写问题");
@@ -560,7 +560,7 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     if (index < 0) bank.questions.push(saved); else bank.questions[index] = saved;
     return bankView();
   },
-  picky_rater_order: (a) => {
+  youzi_rater_order: (a) => {
     const qs = seekerMock.rater.questions;
     const ids = a.ids as string[];
     const places = ids.map((id) => qs.findIndex((q) => q.id === id));
@@ -570,11 +570,11 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     sorted.forEach((place, i) => { qs[place] = moved[i]; });
     return bankView();
   },
-  picky_rater_delete_many: (a) => {
-    for (const id of a.ids as string[]) seekerHandlers.picky_rater_delete({ id });
+  youzi_rater_delete_many: (a) => {
+    for (const id of a.ids as string[]) seekerHandlers.youzi_rater_delete({ id });
     return bankView();
   },
-  picky_rater_delete: (a) => {
+  youzi_rater_delete: (a) => {
     const bank = seekerMock.rater;
     const prior = bank.questions.find((q) => q.id === a.id);
     if (!prior) throw new Error("这道题已经删除了");
@@ -582,8 +582,8 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     bank.questions = bank.questions.filter((q) => q.id !== a.id);
     return bankView();
   },
-  picky_seeker: view,
-  picky_seeker_records_order: (a) => {
+  youzi_seeker: view,
+  youzi_seeker_records_order: (a) => {
     const c = catalog();
     const ids = a.ids as string[];
     const places = ids.map((id) => c.records.findIndex((r) => r.id === id));
@@ -593,20 +593,20 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     sorted.forEach((place, i) => { c.records[place] = moved[i]; });
     return view();
   },
-  picky_seeker_records_enable: (a) => {
+  youzi_seeker_records_enable: (a) => {
     for (const id of a.ids as string[]) {
       const r = catalog().records.find((x) => x.id === id);
       if (!r) throw new Error("有资料已经删除了，请刷新");
-      if (r.enabled !== a.enabled) seekerHandlers.picky_seeker_record_save({ record: { ...structuredClone(r), enabled: a.enabled as boolean } });
+      if (r.enabled !== a.enabled) seekerHandlers.youzi_seeker_record_save({ record: { ...structuredClone(r), enabled: a.enabled as boolean } });
     }
     return view();
   },
-  picky_seeker_records_delete: (a) => {
-    for (const id of a.ids as string[]) seekerHandlers.picky_seeker_record_delete({ id });
+  youzi_seeker_records_delete: (a) => {
+    for (const id of a.ids as string[]) seekerHandlers.youzi_seeker_record_delete({ id });
     return view();
   },
   // 分组改名 (Rust catalog.rs `rename_group`): a built-in group only shows the new name; the user's own moves its records
-  picky_seeker_group_rename: (a) => {
+  youzi_seeker_group_rename: (a) => {
     const kind = a.kind as "material" | "rule";
     const lang = kind === "rule" ? "" : String(a.lang);
     const from = String(a.from);
@@ -625,7 +625,7 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     return view();
   },
   // 上移 / 下移 (Rust catalog.rs `order_groups`): all the page's groups in the new order
-  picky_seeker_groups_order: (a) => {
+  youzi_seeker_groups_order: (a) => {
     const kind = a.kind as SeekerGroupName["kind"];
     const lang = kind === "material" ? String(a.lang) : "";
     const categories = a.categories as string[];
@@ -639,11 +639,11 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     return view();
   },
   // 发给模型的说明 (Rust model.rs / rater.rs `previews`): the groups each function reads, a made-up system message with the rules
-  picky_seeker_prompts: (a) => {
+  youzi_seeker_prompts: (a) => {
     const lang = langOf(a);
     return [["select", "按 JD 推荐素材", "整体审查"], ["review", "审查整份简历", "整体审查"], ...(lang === "en" ? [["summary", "按 JD 改写 Summary", "整体审查"]] : []), ["polish", "润色要点", "素材润色"], ["material", "润色一条素材", "素材润色"]].map(([key, label, task]) => mockPrompt(key, label, ["写作规则", task, "豁免情况"], lang));
   },
-  picky_rater_prompts: () => [
+  youzi_rater_prompts: () => [
     ...["简历题", "通用题", "突击题"].map((c) => mockPrompt(c, `补题 · ${c}`, ["题库维护", c], "cn")),
     mockPrompt("polish", "润色答案", ["题库维护", "简历题", "通用题", "突击题"], "cn"),
     ...[["pick", "卡片练习 · 按 JD 挑卡"], ["follow", "卡片练习 · 追问"], ["comment", "卡片练习 · 点评"]].map(([k, l]) => mockPrompt(k, l, ["题库维护", "卡片练习"], "cn")),
@@ -651,9 +651,9 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     mockPrompt("record", "复盘 · 记录", ["复盘"], "cn"),
     mockPrompt("summary", "复盘 · 总结", ["题库维护", "复盘"], "cn"),
   ],
-  picky_seeker_folder: (a) => { seekerMock.workspace.folder = String(a.folder).trim(); return view(); },
-  picky_seeker_settings: (a) => { catalog().settings = structuredClone(a.settings as SeekerSettings); return view(); },
-  picky_seeker_output_save: (a) => {
+  youzi_seeker_folder: (a) => { seekerMock.workspace.folder = String(a.folder).trim(); return view(); },
+  youzi_seeker_settings: (a) => { catalog().settings = structuredClone(a.settings as SeekerSettings); return view(); },
+  youzi_seeker_output_save: (a) => {
     const w = seekerMock.workspace;
     const lang = langOf(a);
     const draft = desk(lang).draft;
@@ -672,20 +672,20 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     return { workspace: view(), export: item };
   },
   // a job's résumés: any file under cv/ by path (Rust output.rs `associate`, `job_resumes`)
-  picky_seeker_job_resume: (a) => {
+  youzi_seeker_job_resume: (a) => {
     const file = cvFiles().find((f) => f.path === a.path);
     if (!file) throw new Error("只能用 cv/ 里的简历");
     associate(file.path, "", a.jobId as number);
     return view();
   },
-  picky_seeker_job_resumes: (a) => {
+  youzi_seeker_job_resumes: (a) => {
     const job = seekerMock.job(a.jobId as number);
     if (!job) throw new Error("岗位不存在，请重新选择");
     const files = cvFiles();
     const linked = seekerMock.workspace.output.links.filter((l) => l.job.id === job.id && l.job.createdAt === job.createdAt).flatMap((l) => { const f = files.find((x) => x.path === l.path); return f ? [{ path: l.path, name: f.name, lang: f.lang, current: l.current, jd: l.jd, job: l.job, createdAt: l.createdAt, exportId: f.exportId }] : []; });
     return { linked, files, noFolder: !seekerMock.workspace.folder, error: null };
   },
-  picky_seeker_use_job: (a) => {
+  youzi_seeker_use_job: (a) => {
     const lang = langOf(a);
     const job = a.jobId == null ? null : seekerMock.job(a.jobId as number);
     if (a.jobId != null && !job) throw new Error("岗位不存在，请重新选择");
@@ -696,12 +696,12 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     if (job?.note?.trim()) draft.jd = job.note.trim();
     save(draft); if (fresh) desk(lang).baseline = structuredClone(draft); return view();
   },
-  picky_seeker_knowledge: () => {
+  youzi_seeker_knowledge: () => {
     const folder = seekerMock.workspace.folder;
     if (!folder) return { path: null, library: null, companies: [], error: null };
     return { path: `${folder}/knowledge`, library: kbAdded ? "Seeker" : null, companies: shownCompanies(), error: null, cv: `${folder}/cv`, cvLibrary: cvAdded ? "Seeker" : null };
   },
-  picky_seeker_company_names: (a) => {
+  youzi_seeker_company_names: (a) => {
     const next: Record<string, string> = {};
     for (const [folder, raw] of Object.entries(a.names as Record<string, string>)) {
       const name = raw.trim();
@@ -711,16 +711,16 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
       next[folder] = name;
     }
     companyNames = next;
-    return seekerHandlers.picky_seeker_knowledge({});
+    return seekerHandlers.youzi_seeker_knowledge({});
   },
-  picky_seeker_knowledge_add: (a) => {
+  youzi_seeker_knowledge_add: (a) => {
     const part = a.part === "cv" ? "cv" : "knowledge";
     if (!seekerMock.workspace.folder) throw new Error(`Seeker 文件夹里没有 ${part}/`);
     if (part === "cv" ? cvAdded : kbAdded) throw new Error(`${part}/ 已经在知识库里了`);
     if (part === "cv") cvAdded = true; else kbAdded = true;
-    return seekerHandlers.picky_seeker_knowledge({});
+    return seekerHandlers.youzi_seeker_knowledge({});
   },
-  picky_seeker_files: () => {
+  youzi_seeker_files: () => {
     const folder = seekerMock.workspace.folder;
     if (!folder) return { cv: [], material: [], transfer: false, error: null };
     const day = Math.floor(Date.now() / 1000);
@@ -731,13 +731,13 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
       error: null,
     };
   },
-  picky_seeker_cv_text: (a) => {
+  youzi_seeker_cv_text: (a) => {
     const name = String(a.path).split("/cv/").pop() ?? "";
     if (!CV.some((c) => c.name === name)) throw new Error("只能读 cv/ 里的简历");
     return cvText(name);
   },
-  picky_seeker_job_company: (a) => jobCompany(a.jobId as number),
-  picky_seeker_job_company_set: (a) => {
+  youzi_seeker_job_company: (a) => jobCompany(a.jobId as number),
+  youzi_seeker_job_company_set: (a) => {
     const job = seekerMock.job(a.jobId as number);
     if (!job) throw new Error("岗位不存在，请重新选择");
     const folder = a.folder as string | null;
@@ -747,10 +747,10 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     w.jobCompanies = folder == null ? rest : [...rest, { jobId: job.id, jobCreatedAt: job.createdAt, folder }];
     return jobCompany(job.id);
   },
-  picky_seeker_new: (a) => { const lang = langOf(a); const draft = initial(lang); save(draft); desk(lang).baseline = structuredClone(draft); return view(); },
+  youzi_seeker_new: (a) => { const lang = langOf(a); const draft = initial(lang); save(draft); desk(lang).baseline = structuredClone(draft); return view(); },
   // the page's copy keeps the stored 批注 (Rust seeker.rs `save_page`)
-  picky_seeker_save: (a) => { const draft = a.draft as SeekerDraft; return save({ ...draft, notes: desk(langOfDraft(draft)).draft?.notes }); },
-  picky_seeker_delete_blocks: (a) => {
+  youzi_seeker_save: (a) => { const draft = a.draft as SeekerDraft; return save({ ...draft, notes: desk(langOfDraft(draft)).draft?.notes }); },
+  youzi_seeker_delete_blocks: (a) => {
     const draft = draftOf(langOf(a));
     if (!draft) throw new Error("还没有简历草稿");
     const ids = new Set(a.ids as string[]);
@@ -759,14 +759,14 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     draft.sections.forEach((s) => { s.entries = s.entries.filter((e) => !ids.has(e.id)); s.entries.forEach((e) => { e.points = e.points.filter((p) => !ids.has(p.id)); }); });
     return save(draft);
   },
-  picky_seeker_record_save: (a) => { put(a.record as SeekerRecord); return view(); },
-  picky_seeker_record_delete: (a) => {
+  youzi_seeker_record_save: (a) => { put(a.record as SeekerRecord); return view(); },
+  youzi_seeker_record_delete: (a) => {
     const c = catalog(), prior = c.records.find((r) => r.id === a.id);
     if (!prior) throw new Error("这条资料已经删除了");
     c.revisions.unshift({ id: Math.max(0, ...c.revisions.map((r) => r.id)) + 1, recordId: prior.id, body: structuredClone(prior), savedAt: new Date().toISOString() });
     c.records = c.records.filter((r) => r.id !== a.id); return view();
   },
-  picky_seeker_import_preview: (): SeekerImport => {
+  youzi_seeker_import_preview: (): SeekerImport => {
     if (!seekerMock.workspace.folder) throw new Error("请先选择 Seeker 文件夹");
     const records = catalog().records;
     const fresh = rec({ id: crypto.randomUUID(), title: "柚子笔记 2", role: "独立开发", text: "示例：新导入的项目", time: "2026.08 - 至今", points: pts("**功能实现**：示例要点"), source: "cn-modules/4 - 项目经历.md#柚子笔记 2:1", revision: 0 });
@@ -778,15 +778,15 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     const gone = records.filter((r) => r.source?.startsWith("rules/cn-modules.md#中文素材润色规则"));
     return { items: items.filter((i) => !records.some((r) => r.source === i.incoming.source && r.id !== i.incoming.id)), gone, skipped: ["TRANSFER.md：不是要导入的资料", "en-modules/0-Archived.md：归档的不导入", "rules/qbank.md：题库和面试的规则以后和 Rater 一起导入"] };
   },
-  picky_seeker_import_confirm: (a) => {
+  youzi_seeker_import_confirm: (a) => {
     const prior = structuredClone(seekerMock.workspace);
     try {
       (a.records as SeekerRecord[]).forEach(put);
-      for (const id of (a.remove as string[] | undefined) ?? []) seekerHandlers.picky_seeker_record_delete({ id });
+      for (const id of (a.remove as string[] | undefined) ?? []) seekerHandlers.youzi_seeker_record_delete({ id });
     } catch (e) { seekerMock.workspace = prior; throw e; }
     return view();
   },
-  picky_seeker_assemble: (a) => {
+  youzi_seeker_assemble: (a) => {
     const lang = langOf(a);
     const picks = a.selections as SeekerSelection[];
     const isSummary = (id: string) => catalog().records.some((r) => r.id === id && r.category === SUMMARY);
@@ -811,19 +811,19 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     }
     save(draft); if (fresh) desk(lang).baseline = structuredClone(draft); return view();
   },
-  picky_seeker_sources: (a): SourceChange[] => (desk(langOf(a)).draft?.sections.flatMap((s) => s.entries) ?? []).flatMap((e) => {
+  youzi_seeker_sources: (a): SourceChange[] => (desk(langOf(a)).draft?.sections.flatMap((s) => s.entries) ?? []).flatMap((e) => {
     const r = catalog().records.find((r) => r.id === e.source?.recordId);
     if (!r || !e.source || r.revision === e.source.revision) return [];
     return [{ entryId: e.id, title: r.title, before: structuredClone(e), after: entry(r, e.source.pointIds.filter((id) => choosable(r).some((p) => p.id === id)), e.id) }];
   }),
-  picky_seeker_source_apply: (a) => {
+  youzi_seeker_source_apply: (a) => {
     const change = a.change as SourceChange, draft = draftOf(langOf(a));
     const section = draft?.sections.find((s) => s.entries.some((e) => e.id === change.entryId));
     const index = section?.entries.findIndex((e) => e.id === change.entryId) ?? -1;
     if (!draft || !section || index < 0 || JSON.stringify(section.entries[index]) !== JSON.stringify(change.before)) throw new Error("草稿刚刚改过，请重新看来源差异");
     section.entries[index] = structuredClone(change.after); return save(draft);
   },
-  picky_seeker_reorder: (a) => {
+  youzi_seeker_reorder: (a) => {
     const draft = draftOf(langOf(a)); if (!draft) throw new Error("还没有草稿");
     const ids = a.ids as string[];
     const rows = a.kind === "header" ? draft.header : a.kind === "section" ? draft.sections : a.kind === "entry" ? draft.sections.find((s) => s.id === a.parent)?.entries : a.kind === "point" ? draft.sections.flatMap((s) => s.entries).find((e) => e.id === a.parent)?.points : undefined;
@@ -831,7 +831,7 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     rows.sort((l, r) => ids.indexOf(l.id) - ids.indexOf(r.id)); return save(draft);
   },
   // 选材 and 润色一条素材 (shown, nothing saved); 「失败测试」 in 本次要求 fails
-  picky_seeker_suggest: async (a) => {
+  youzi_seeker_suggest: async (a) => {
     const c = catalog();
     const record = a.kind === "material" ? structuredClone(c.records.find((r) => r.id === a.recordId) ?? null) : null;
     const lang: SeekerLang = record ? (record.lang === "en" ? "en" : "cn") : langOf(a);
@@ -855,8 +855,8 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     if (record) return { ...base, advice: "（模拟）概览更具体。", afterRecord: { ...record, text: `${record.text}（模拟润色）` } };
     throw new Error("素材已不存在");
   },
-  // 审查 / 润色要点 / 改写 Summary: 批注 on the draft, one undo step when it ends (Rust model.rs `picky_seeker_review`)
-  picky_seeker_review: async (a) => {
+  // 审查 / 润色要点 / 改写 Summary: 批注 on the draft, one undo step when it ends (Rust model.rs `youzi_seeker_review`)
+  youzi_seeker_review: async (a) => {
     const c = catalog();
     const lang = langOf(a);
     const kind = a.kind as string;
@@ -890,7 +890,7 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     return { workspace, model: "模拟模型", note: "", added: fresh.length, skipped: 0 };
   },
   // 采用 (apply) and ✓ (done) (Rust seeker.rs `settle`)
-  picky_seeker_notes_settle: (a) => seekerMock.wrap((a.apply as string[]).length ? "采用简历修改" : "处理完批注", () => {
+  youzi_seeker_notes_settle: (a) => seekerMock.wrap((a.apply as string[]).length ? "采用简历修改" : "处理完批注", () => {
     const d = structuredClone(desk(langOf(a)).draft);
     if (!d) throw new Error("还没有简历草稿");
     const apply = a.apply as string[];
@@ -909,7 +909,7 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
     return save(d);
   }),
   // seek-it-<公司>[-resume|-cv]-v<N>.docx (Rust output.rs `export_name`)
-  picky_seeker_export_name: (a) => {
+  youzi_seeker_export_name: (a) => {
     const lang = langOf(a);
     const job = a.jobId != null ? seekerMock.job(a.jobId as number) : undefined;
     const folder = job && (seekerMock.workspace.jobCompanies?.find((c) => c.jobId === job.id && c.jobCreatedAt === job.createdAt)?.folder ?? matched(job.company));

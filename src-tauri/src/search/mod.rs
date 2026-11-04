@@ -6,7 +6,7 @@
 //! each word of the query appears somewhere in its text (case-insensitive substring). Per source at
 //! most `PER_SOURCE` hits; titles that start with the first word come first, then the newest.
 //! A hit carries what the UI needs to open it: module + kind + id (and parent / day where a page
-//! needs them). 柚子's conversations come from picky.db (picky/find.rs), after the rest.
+//! needs them). 柚子's conversations come from youzi.db (youzi/find.rs), after the rest.
 
 pub mod indexer;
 pub mod query;
@@ -226,8 +226,8 @@ pub fn search(conn: &Connection, q: &str) -> Result<Vec<Hit>, String> {
 #[tauri::command]
 pub fn search_all(state: State<AppState>, q: String) -> Result<Vec<Hit>, String> {
     let mut hits = state.with_db(|c| search(c, &q))?;
-    if state.picky.is_open() {
-        hits.extend(state.picky.with_db(|c| crate::picky::find::global(c, &q))?);
+    if state.youzi.is_open() {
+        hits.extend(state.youzi.with_db(|c| crate::youzi::find::global(c, &q))?);
     }
     Ok(hits)
 }

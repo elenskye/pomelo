@@ -1,4 +1,4 @@
-//! 导入账单's bookkeeping. Importer (picky/assistants/importer.rs) reads a statement and leaves it here as a batch
+//! 导入账单's bookkeeping. Importer (youzi/assistants/importer.rs) reads a statement and leaves it here as a batch
 //! of rows 待核对; only rows I confirm (入账) become ledger entries. `source` is what was read and stays as it was,
 //! `draft` is what I can change. Possible duplicates (same amount within 7 days, or the row the model points at)
 //! hold a row back until decided: the model's decision, 是这笔 or 不是重复.
@@ -486,7 +486,7 @@ pub(crate) fn read_image(path: &str) -> Result<(Vec<u8>, String), String> {
     let ext = Path::new(path).extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
     let media = match ext.as_str() { "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", _ => return Err("请选择 PNG 或 JPEG 截图".into()) };
     let bytes = std::fs::read(path).map_err(|_| "无法读取截图".to_string())?;
-    let preview = format!("data:{media};base64,{}", crate::picky::office::base64(&bytes));
+    let preview = format!("data:{media};base64,{}", crate::youzi::office::base64(&bytes));
     Ok((bytes, preview))
 }
 

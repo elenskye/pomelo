@@ -8,7 +8,7 @@ import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { DateInput } from "@/shared/DateInput";
 import { Button, Field, Segmented, TextArea, TextInput } from "@/shared/ui";
-import { Polish } from "@/modules/picky/Assist";
+import { Polish } from "@/modules/youzi/Assist";
 import { GOAL_STATUS, useTodoMutations, type Goal, type GoalStatus, type TodoGroup } from "./api";
 
 export function GroupDialog(props: { group: TodoGroup | null; goalCount: number; onClose: () => void; onCreated?: (g: TodoGroup) => void; onDeleted?: () => void }) {

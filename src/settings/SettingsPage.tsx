@@ -6,7 +6,7 @@ import { Button, PageHeader } from "@/shared/ui";
 import { AttachmentsRow } from "./Attachments";
 import { BackupsSection } from "./Backups";
 import { useHealth } from "./Health";
-import { PickySection } from "./Picky";
+import { YouziSection } from "./Youzi";
 import { Path, Row, Section } from "./layout";
 import { SiteSection } from "./Site";
 import { StartupSection } from "./Startup";
@@ -60,7 +60,7 @@ export default function SettingsPage() {
           <ImportRow />
         </Section>
         <BackupsSection />
-        <PickySection />
+        <YouziSection />
         <VaultSection />
         <Section title="关于">
           <Row label="版本">{info.appVersion}</Row>

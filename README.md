@@ -43,7 +43,7 @@
 
 ## 数据在哪里
 
-- 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`picky.db` 柚子，`attachments/` 笔记、任务、目标的附件，`picky-files/` 柚子的附件和资料，`backups/` 每日备份，`search.db` 搜索索引，删了自动重建）
+- 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`youzi.db` 柚子，`attachments/` 笔记、任务、目标的附件，`youzi-files/` 柚子的附件和资料，`backups/` 每日备份，`search.db` 搜索索引，删了自动重建）
 - 本地模型：`~/Documents/LLM`（模型、清单 `config/models.json`、脚本 `scripts/llmctl.sh`）
 - 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`
 - 原型和转换好的导入文件：`prototype/`（只在本机，不进 Git；界面原型在 `prototype/ui-r4/index.html`）
@@ -51,4 +51,4 @@
 ## 相关项目
 
 - 个人网站：`~/Documents/GitHub/personal-website`（独立项目，自己的文档和规则），在「呦呦漫游」里编辑和发布。
-- Seeker：`~/Documents/Seeker`（求职资料，不是 Git 仓库）；它的主体是柚子的助手「Seeker」（资料以 `picky.db` 为准，当初从 `transfer/` 导入，导完已删；`knowledge/` 和 `cv/` 能加进知识库「Seeker」；导出的 Word 存回 `cv/cn/`、`cv/en/`；`material/` 只列文件名），投石问路继续管投递。
+- Seeker：`~/Documents/Seeker`（求职资料，不是 Git 仓库）；它的主体是柚子的助手「Seeker」（资料以 `youzi.db` 为准，当初从 `transfer/` 导入，导完已删；`knowledge/` 和 `cv/` 能加进知识库「Seeker」；导出的 Word 存回 `cv/cn/`、`cv/en/`；`material/` 只列文件名），投石问路继续管投递。

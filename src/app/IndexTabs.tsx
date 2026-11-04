@@ -58,7 +58,7 @@ export function IndexTabs(props: { unseen: boolean }) {
           id={id}
           pinned
           on={here === id}
-          dot={id === "picky" && props.unseen}
+          dot={id === "youzi" && props.unseen}
           faded={drag?.mod === id}
           onPress={(e) => pressModule(e, id, "pinned", dock.move)}
           onMenu={(e) => menu.at(e, id)}

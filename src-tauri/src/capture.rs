@@ -3,7 +3,7 @@
 //! - Same pomelo.db, undo history and menu bar as the main window: a saved note / task is one ⌘Z step
 //!   (the main window's ⌘Z, or 撤销 right after saving); the main window is told (`capture-saved`), also
 //!   when a 柚子 card is confirmed here (act/card.rs).
-//! - 问柚子 chats right here, in a conversation of the window's own (picky.db preference `capture.chat`,
+//! - 问柚子 chats right here, in a conversation of the window's own (youzi.db preference `capture.chat`,
 //!   library.rs): private and out of 柚子's list and searches, at most one; 新对话 deletes it, 「在 Pomelo 里
 //!   继续对话」 makes it an ordinary one and opens it on the 柚子 page (event `capture-chat`). The page's
 //!   model and memories; no attachments, 知识库 or page. The window grows for a conversation and goes
@@ -18,7 +18,7 @@
 
 use crate::modules::common::{err, Tx};
 use crate::modules::{attachments, notes, todo};
-use crate::picky::library;
+use crate::youzi::library;
 use crate::{settings, AppState};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -337,7 +337,7 @@ pub struct Chat {
 /// The window's conversation, if there is one.
 #[tauri::command]
 pub fn capture_chat(state: State<AppState>) -> Result<Option<Chat>, String> {
-    state.picky.with_db(|c| {
+    state.youzi.with_db(|c| {
         let Some(id) = library::capture_chat(c)? else { return Ok(None) };
         let (thinking, effort) = c.query_row("SELECT thinking, effort FROM sessions WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?;
         Ok(Some(Chat { id, thinking, effort }))
@@ -347,7 +347,7 @@ pub fn capture_chat(state: State<AppState>) -> Result<Option<Chat>, String> {
 /// Its 思考 switch (not undoable: it isn't in the list).
 #[tauri::command]
 pub fn capture_chat_thinking(state: State<AppState>, on: bool) -> Result<(), String> {
-    state.picky.with_db(|c| match library::capture_chat(c)? {
+    state.youzi.with_db(|c| match library::capture_chat(c)? {
         Some(id) => library::set_thinking(c, id, on),
         None => Ok(()),
     })
@@ -356,7 +356,7 @@ pub fn capture_chat_thinking(state: State<AppState>, on: bool) -> Result<(), Str
 /// Its 思考强度.
 #[tauri::command]
 pub fn capture_chat_effort(state: State<AppState>, effort: Option<String>) -> Result<(), String> {
-    state.picky.with_db(|c| match library::capture_chat(c)? {
+    state.youzi.with_db(|c| match library::capture_chat(c)? {
         Some(id) => library::set_effort(c, id, effort.as_deref()),
         None => Ok(()),
     })
@@ -365,16 +365,16 @@ pub fn capture_chat_effort(state: State<AppState>, effort: Option<String>) -> Re
 /// 新对话: the conversation goes.
 #[tauri::command]
 pub fn capture_chat_clear(state: State<AppState>) -> Result<(), String> {
-    if state.picky.with_db(|c| library::capture_chat(c))?.is_some_and(|id| state.picky.runs.busy_in(id)) {
+    if state.youzi.with_db(|c| library::capture_chat(c))?.is_some_and(|id| state.youzi.runs.busy_in(id)) {
         return Err("柚子还在写，等它写完再开新对话。".into());
     }
-    state.picky.with_db(|c| library::drop_capture_chat(c))
+    state.youzi.with_db(|c| library::drop_capture_chat(c))
 }
 
 /// 「在 Pomelo 里继续对话」: an ordinary conversation now, opened on the 柚子 page; this window hides.
 #[tauri::command]
 pub fn capture_chat_keep(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    let id = state.picky.with_db(|c| library::keep_capture_chat(c))?.ok_or("这个对话已经没有了")?;
+    let id = state.youzi.with_db(|c| library::keep_capture_chat(c))?.ok_or("这个对话已经没有了")?;
     hide(&app, false)?;
     crate::tray::show_main(&app);
     app.emit_to("main", "capture-chat", id).map_err(err)
@@ -498,9 +498,9 @@ mod tests {
     fn snapshot_reads_an_old_or_odd_draft_as_empty() {
         let c = memory_db();
         settings::set(&c, DRAFT, &json!("旧格式")).unwrap();
-        settings::set(&c, HIDDEN, &json!(["picky"])).unwrap();
+        settings::set(&c, HIDDEN, &json!(["youzi"])).unwrap();
         group(&c);
         let s = snapshot(&c).unwrap();
-        assert_eq!((s.draft, s.pinned, s.hidden, s.groups.len()), (Draft::default(), false, vec!["picky".to_string()], 1));
+        assert_eq!((s.draft, s.pinned, s.hidden, s.groups.len()), (Draft::default(), false, vec!["youzi".to_string()], 1));
     }
 }

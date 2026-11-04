@@ -11,14 +11,14 @@ import { Section } from "./layout";
 const COLLAPSED = 8;
 
 export function backupLabel(label: string) {
-  const fixed: Record<string, string> = { daily: "每日自动", manual: "手动", "before-import": "导入前", "before-picky-import": "Picky 导入前", "before-restore": "恢复前" };
+  const fixed: Record<string, string> = { daily: "每日自动", manual: "手动", "before-import": "导入前", "before-restore": "恢复前" };
   const v = /^before-v(\d+)$/.exec(label);
   return fixed[label] ?? (v ? `升级前（→ 版本 ${v[1]}）` : label);
 }
 
 const minutes = (b: BackupInfo) => b.createdAt.slice(0, 16);
 
-const storeName = (b: BackupInfo) => (b.store === "picky" ? "柚子" : "生活数据");
+const storeName = (b: BackupInfo) => (b.store === "youzi" ? "柚子" : "生活数据");
 
 const size = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -56,7 +56,7 @@ export function BackupsSection() {
       message: (
         <div className="space-y-1">
           <p>
-            现在的{b.store === "picky" ? "柚子数据（对话和设置）" : "生活数据（柚子以外的全部）"}会换成 <span className="text-foreground">{minutes(b)}</span>（{backupLabel(b.label)}）这份备份里的内容。
+            现在的{b.store === "youzi" ? "柚子数据（对话和设置）" : "生活数据（柚子以外的全部）"}会换成 <span className="text-foreground">{minutes(b)}</span>（{backupLabel(b.label)}）这份备份里的内容。
           </p>
           <p>恢复前会先把现在的数据备份一份，恢复错了可以再从那份恢复回来。</p>
         </div>

@@ -1,4 +1,4 @@
-//! search.db (v0.4): everything search computes from the data, next to pomelo.db and picky.db.
+//! search.db (v0.4): everything search computes from the data, next to pomelo.db and youzi.db.
 //! Never backed up, exported or undone: a missing, broken or older-version file is deleted and
 //! created again, and the indexer refills it in the background (`meta.rebuild` = 1).
 //! - docs + docs_fts: one row per searchable record (indexer.rs, sources.rs) and its word index
@@ -7,19 +7,20 @@
 //! - vectors: per model, one vector per passage of a doc (int8, vectors.rs), with the doc's hash
 //!   when computed (a different hash = stale).
 //! - file_indexes / file_chunks: 柚子 project file passages and vectors (f32), per model and
-//!   artifact (sha256 guards against a restored picky.db reusing the id for other bytes).
+//!   artifact (sha256 guards against a restored youzi.db reusing the id for other bytes).
 //! - memory_vectors: 柚子 memory vectors (f32), with the text hash they were made from.
 //! - kb_docs / kb_chunks (v2, 知识库): every readable file a library folder holds (path relative to
 //!   the folder; a saved web page is one doc with path ""), with the size and mtime last seen and
 //!   what its passages were made from (sha256, model); its passages (label, text, int8 vector).
-//!   picky/knowledge.rs keeps them in line with the folders.
+//!   youzi/knowledge.rs keeps them in line with the folders.
+//! - v3: 柚子's docs are module `youzi` (were `picky`); nothing else changed.
 
 use crate::db;
 use crate::modules::common::err;
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
-pub const VERSION: i64 = 2;
+pub const VERSION: i64 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE meta (

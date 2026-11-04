@@ -156,7 +156,7 @@ mod tests {
     use super::*;
 
     fn cos(a: &[f32], b: &[f32]) -> f32 {
-        crate::picky::embed::cosine(a, b)
+        crate::youzi::embed::cosine(a, b)
     }
 
     #[test]
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn best_passage_per_doc_within_allowed_sources() {
-        let mv = crate::picky::embed::mock_vector;
+        let mv = crate::youzi::embed::mock_vector;
         let mut f = Flat::new("m");
         let add = |f: &mut Flat, doc: i64, ordinal: u16, source: u8, text: &str| f.add(Entry { doc, ordinal, source }, &quantize(&mv(text)));
         add(&mut f, 1, 0, 0, "周末去公园散步");

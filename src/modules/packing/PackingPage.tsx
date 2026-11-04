@@ -24,8 +24,8 @@ import {
 import { ItemPanel } from "./ItemPanel";
 import { TripDialog } from "./TripDialog";
 import { usePageContext } from "@/app/pageContext";
-import { IdeaList, assistApi, assistBusyText, useAssistOn, type ItemIdea } from "@/modules/picky/Assist";
-import { usePickyStatus } from "@/modules/picky/api";
+import { IdeaList, assistApi, assistBusyText, useAssistOn, type ItemIdea } from "@/modules/youzi/Assist";
+import { useYouziStatus } from "@/modules/youzi/api";
 
 type Tab = "trips" | "templates";
 
@@ -273,7 +273,7 @@ export default function PackingPage() {
 
   // 柚子: what this trip may have forgotten (picked ones are added in one undoable step)
   const assistOn = useAssistOn();
-  const pickyStatus = usePickyStatus().data;
+  const youziStatus = useYouziStatus().data;
   const [ideas, setIdeas] = useState<{ tripId: number; items: ItemIdea[] } | null>(null);
   const [thinking, setThinking] = useState(false);
   const kindLabel = (id: number | null) => kinds.find((k) => k.id === id)?.name ?? null;
@@ -307,7 +307,7 @@ export default function PackingPage() {
         <div className="flex shrink-0 gap-2">
           {assistOn && (
             <Button variant="ghost" disabled={thinking} onClick={() => void findMissing(t)}>
-              <Sparkles size={14} strokeWidth={1.75} /> {thinking ? assistBusyText(pickyStatus, "正在想…") : "可能漏了什么"}
+              <Sparkles size={14} strokeWidth={1.75} /> {thinking ? assistBusyText(youziStatus, "正在想…") : "可能漏了什么"}
             </Button>
           )}
           <Button variant="primary" onClick={() => void panel.request("new")}>

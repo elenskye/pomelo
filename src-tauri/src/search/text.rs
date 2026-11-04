@@ -4,7 +4,7 @@
 //!   characters is the phrase of its pairs (= the substring, like 全局搜索's instr); one character is
 //!   a prefix; other runs (Latin, digits) are word prefixes ("habit" finds "Habits", not "abits").
 //!   Every query word must match. Case and diacritics don't matter.
-//! - Passages for vectors: picky::index::split (about 240 tokens, sentence aligned), at most
+//! - Passages for vectors: youzi::index::split (about 240 tokens, sentence aligned), at most
 //!   MAX_PASSAGES per record; a later passage is prefixed with the record's title.
 //! - Fingerprint: FNV-1a over everything stored for a doc (stable across builds).
 
@@ -81,7 +81,7 @@ pub fn first_word(q: &str) -> String {
 
 /// Passages a doc's vectors are made from.
 pub fn passages(title: &str, body: &str) -> Vec<String> {
-    let mut list = crate::picky::index::split(body);
+    let mut list = crate::youzi::index::split(body);
     if list.is_empty() {
         list.push(title.to_string());
     }

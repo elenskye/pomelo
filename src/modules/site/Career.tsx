@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { FilePlus } from "lucide-react";
 import { useConfirm } from "@/shared/feedback";
-import { Polish } from "@/modules/picky/Assist";
+import { Polish } from "@/modules/youzi/Assist";
 import { useSetting } from "@/shared/settings";
 import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type Career, type CareerVersion, type Detailed, type Lang, type Section, type Simple } from "./api";

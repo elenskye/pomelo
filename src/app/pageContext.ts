@@ -3,7 +3,7 @@
 // Rust fetches the content under its rules. The innermost view publishes (usePageContext); a module
 // that publishes nothing still counts by its route (App passes the fallback).
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import type { PageContextPayload } from "@/modules/picky/api";
+import type { PageContextPayload } from "@/modules/youzi/api";
 
 export type PageContext = {
   module: string;

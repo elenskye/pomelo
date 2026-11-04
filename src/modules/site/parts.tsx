@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from
 import { useQuery } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ArrowDown, ArrowUp, ImagePlus, MoreHorizontal, X } from "lucide-react";
-import { AssistAction, PolishBox, useAssistOn } from "@/modules/picky/Assist";
+import { AssistAction, PolishBox, useAssistOn } from "@/modules/youzi/Assist";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { useDropTarget } from "@/shared/attachments/target";
 import { Button, IconButton, Segmented, fieldClass } from "@/shared/ui";
@@ -142,7 +142,7 @@ export function usePreview(onError: (e: unknown) => void) {
  * takes what is written so far, then it is cleared. */
 export function useEnglishDraft(key: string, apply: (d: Draft) => void, onError: (e: unknown) => void, ready: boolean) {
   const { data: job, refetch } = useQuery({
-    queryKey: ["picky", "site-draft"],
+    queryKey: ["youzi", "site-draft"],
     queryFn: siteAssist.draft,
     gcTime: 0,
     staleTime: 0,

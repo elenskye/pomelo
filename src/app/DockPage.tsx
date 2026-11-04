@@ -95,7 +95,7 @@ export function ModuleRow(props: { id: string; dock: Dock; live?: string; menu: 
       <ModuleIcon def={def} size={26} />
       <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
         {def.label}
-        {def.assistant && <Bird size={12} style={{ color: "var(--module-picky)" }} />}
+        {def.assistant && <Bird size={12} style={{ color: "var(--module-youzi)" }} />}
         {props.dock.layout.pinned.includes(props.id) && <Pin size={11} className="text-muted-foreground" />}
       </span>
       <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">{props.live}</span>
@@ -119,7 +119,7 @@ function Tile(props: { id: string; dock: Dock; live?: string; menu: ModuleMenu; 
       onContextMenu={(e) => props.menu.at(e, props.id)}
       className={`group/m relative flex w-[112px] cursor-default flex-col items-center gap-0.5 rounded-[14px] border bg-card px-1.5 pt-3 pb-2.5 text-center outline-none transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-sm focus-visible:ring-2 focus-visible:ring-ring max-[1099px]:w-[94px] ${drag?.mod === props.id ? "opacity-40" : ""}`}
     >
-      {def.assistant && <Bird size={12} className="absolute top-1.5 left-2" style={{ color: "var(--module-picky)" }} />}
+      {def.assistant && <Bird size={12} className="absolute top-1.5 left-2" style={{ color: "var(--module-youzi)" }} />}
       <span className="max-[1099px]:hidden">
         <ModuleIcon def={def} size={40} />
       </span>

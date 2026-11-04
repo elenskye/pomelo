@@ -15,7 +15,7 @@ use rusqlite::Connection;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Db {
     Pomelo,
-    Picky,
+    Youzi,
 }
 
 pub struct Source {
@@ -131,18 +131,18 @@ pub const SOURCES: &[Source] = &[
               FROM jobs j LEFT JOIN kinds k ON k.id = j.kind_id",
     },
     Source { module: "notes", kind: "note", label: "笔记", db: Db::Pomelo, sql: "SELECT id, content, NULL, NULL, date(created_at, 'localtime'), created_at, content FROM notes" },
-    Source { module: "picky", kind: "session", label: "柚子对话", db: Db::Picky, sql: concat!("SELECT id, title, NULL, NULL, NULL, created_at, title FROM sessions WHERE id NOT IN ", crate::picky::library::unlisted!()) },
+    Source { module: "youzi", kind: "session", label: "柚子对话", db: Db::Youzi, sql: concat!("SELECT id, title, NULL, NULL, NULL, created_at, title FROM sessions WHERE id NOT IN ", crate::youzi::library::unlisted!()) },
     Source {
-        module: "picky",
+        module: "youzi",
         kind: "message",
         label: "柚子对话",
-        db: Db::Picky,
+        db: Db::Youzi,
         // parent = the conversation; detail = who wrote it; reasoning never
         sql: concat!(
             "SELECT m.id, s.title, CASE m.role WHEN 'user' THEN '你' ELSE coalesce(r.model_name, '柚子') END, m.session_id, NULL, m.created_at, m.content
               FROM messages m JOIN sessions s ON s.id = m.session_id LEFT JOIN runs r ON r.id = m.run_id
               WHERE m.state <> 'streaming' AND trim(m.content) <> '' AND m.session_id NOT IN ",
-            crate::picky::library::unlisted!()
+            crate::youzi::library::unlisted!()
         ),
     },
     // last: a source's place numbers its vectors. 证件: the name only (never what a note might hold)
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn every_source_reads_and_the_vault_is_not_one() {
         let c = crate::db::tests::memory_db();
-        let p = crate::picky::store::tests::memory_db();
+        let p = crate::youzi::store::tests::memory_db();
         c.execute_batch(
             "INSERT INTO todo_groups (name, sort_order) VALUES ('学业', 1);
              INSERT INTO todo_tasks (group_id, title, note, sort_order) VALUES (1, '整理**时间**表', '  第一行\n\n  第二行 ', 1);

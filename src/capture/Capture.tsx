@@ -21,7 +21,7 @@ const CaptureChat = lazy(() => import("./CaptureChat"));
 const TABS: { value: CaptureTab; label: string; module: string }[] = [
   { value: "note", label: "笔记", module: "notes" },
   { value: "todo", label: "待办", module: "todo" },
-  { value: "ask", label: "问柚子", module: "picky" },
+  { value: "ask", label: "问柚子", module: "youzi" },
 ];
 /** Typing settles this long before the draft is written. */
 const WRITE_MS = 400;

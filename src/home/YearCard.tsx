@@ -1,11 +1,11 @@
-// 年度总结 on 首页 (rules in Rust picky/yearly.rs `card`): in the new year's first week (1 月 1～7 日),
+// 年度总结 on 首页 (rules in Rust youzi/yearly.rs `card`): in the new year's first week (1 月 1～7 日),
 // last year's letter above 今日简报 — its 关键词 line and opening; 看全文 opens it in a dialog, which
 // can open the conversation in 柚子. Hidden when 柚子 is hidden.
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Bird, X } from "lucide-react";
-import { MarkdownView } from "@/modules/picky/MarkdownView";
-import { useYearCard, type YearLetter } from "@/modules/picky/api";
+import { MarkdownView } from "@/modules/youzi/MarkdownView";
+import { useYearCard, type YearLetter } from "@/modules/youzi/api";
 import { InlineMd } from "@/shared/InlineMd";
 import { Button, IconButton } from "@/shared/ui";
 
@@ -29,7 +29,7 @@ export function YearCard() {
     <section className="rounded-card border bg-card px-4 py-3">
       <div className="flex items-center gap-1.5">
         <button type="button" onClick={() => setReading(true)} className="flex items-center gap-1.5 rounded-control text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Bird size={15} strokeWidth={1.75} style={{ color: "var(--module-picky)" }} />
+          <Bird size={15} strokeWidth={1.75} style={{ color: "var(--module-youzi)" }} />
           {letter.year} 年度总结
         </button>
         <div className="flex-1" />
@@ -66,8 +66,8 @@ function LetterDialog(props: { letter: YearLetter; onClose: () => void }) {
   const title = `${props.letter.year} 年度总结`;
   const openChat = () => {
     props.onClose();
-    void navigate("/picky", {
-      state: { open: { module: "picky", kind: "session", id: props.letter.sessionId, title, detail: null, parent: null, day: null, amount: null, currency: null, flow: null } },
+    void navigate("/youzi", {
+      state: { open: { module: "youzi", kind: "session", id: props.letter.sessionId, title, detail: null, parent: null, day: null, amount: null, currency: null, flow: null } },
     });
   };
   return (

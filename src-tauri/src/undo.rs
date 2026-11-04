@@ -2,7 +2,7 @@
 //! (`record`); the resulting changeset (all tables except `settings`, FK cascades included) goes
 //! on an in-memory stack. Undo applies its inverse, redo re-applies it. Stacks live only while the
 //! app runs, and import / restore clear them (their changesets would no longer match the data).
-//! Two databases: each step remembers its store (pomelo.db or 柚子's picky.db) and is replayed there.
+//! Two databases: each step remembers its store (pomelo.db or 柚子's youzi.db) and is replayed there.
 
 use crate::backup::Store;
 use crate::modules::common::err;
@@ -112,9 +112,9 @@ impl AppState {
         self.with_undo_in(Store::Pomelo, label, f)
     }
 
-    /// Same for 柚子's picky.db.
-    pub(crate) fn with_picky_undo<T>(&self, label: &str, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-        self.with_undo_in(Store::Picky, label, f)
+    /// Same for 柚子's youzi.db.
+    pub(crate) fn with_youzi_undo<T>(&self, label: &str, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+        self.with_undo_in(Store::Youzi, label, f)
     }
 
     fn with_undo_in<T>(&self, store: Store, label: &str, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
@@ -130,7 +130,7 @@ impl AppState {
     pub(crate) fn with_store<T>(&self, store: Store, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
         match store {
             Store::Pomelo => self.with_db(f),
-            Store::Picky => self.picky.with_db(f),
+            Store::Youzi => self.youzi.with_db(f),
         }
     }
 
@@ -304,10 +304,10 @@ pub(crate) mod tests {
         assert_eq!(tags, ["读书", "读书/摘抄"]);
     }
 
-    /// 柚子 steps carry their store and replay on picky.db (cascades included; preferences skipped).
+    /// 柚子 steps carry their store and replay on youzi.db (cascades included; preferences skipped).
     #[test]
-    fn picky_steps_replay_on_picky_db() {
-        use crate::picky::{chat, store};
+    fn youzi_steps_replay_on_youzi_db() {
+        use crate::youzi::{chat, store};
         let c = store::tests::memory_db();
         let mut h = History::default();
         let b = chat::begin_run(&c, None, None, "q", "local:x", "X").unwrap();
@@ -316,19 +316,19 @@ pub(crate) mod tests {
             c.execute("DELETE FROM sessions", []).map(|_| ()).map_err(err)
         })
         .unwrap();
-        h.push(Store::Picky, "删除对话", cs.unwrap());
-        assert_eq!(h.next_store(false), Some(Store::Picky));
+        h.push(Store::Youzi, "删除对话", cs.unwrap());
+        assert_eq!(h.next_store(false), Some(Store::Youzi));
         assert_eq!(n(&c, "messages"), 0);
         assert_eq!(undo(&c, &mut h).unwrap().as_deref(), Some("删除对话"));
         assert_eq!(chat::path(&c, b.session_id).unwrap().len(), 2);
         assert_eq!(store::pref_get::<String>(&c, "model.selection").unwrap().as_deref(), Some("cloud:x")); // not undone
-        assert_eq!(h.next_store(true), Some(Store::Picky));
+        assert_eq!(h.next_store(true), Some(Store::Youzi));
     }
 
     /// 柚子's list: a drop (membership + hand order) and deleting a project come back whole.
     #[test]
-    fn picky_list_changes_undo() {
-        use crate::picky::{chat, library, store};
+    fn youzi_list_changes_undo() {
+        use crate::youzi::{chat, library, store};
         let c = store::tests::memory_db();
         let mut h = History::default();
         let a = chat::begin_run(&c, None, None, "a", "local:x", "X").unwrap().session_id;
@@ -338,7 +338,7 @@ pub(crate) mod tests {
         let before = snapshot(&c);
         let step = |c: &Connection, h: &mut History, label: &str, f: &dyn Fn(&Connection) -> Result<(), String>| {
             let ((), cs) = record(c, f).unwrap();
-            h.push(Store::Picky, label, cs.unwrap());
+            h.push(Store::Youzi, label, cs.unwrap());
         };
         step(&c, &mut h, "移到项目", &|c| library::drop(c, a, library::List::Project(p), None, None).map(|_| ()));
         step(&c, &mut h, "删除项目", &|c| library::delete_project(c, p));
@@ -353,9 +353,9 @@ pub(crate) mod tests {
 
     /// 柚子's project files: add / replace / remove come back; indexes (derived) are never recorded.
     #[test]
-    fn picky_project_file_changes_undo() {
-        use crate::picky::files::{self, tests::add};
-        use crate::picky::{index, library, store};
+    fn youzi_project_file_changes_undo() {
+        use crate::youzi::files::{self, tests::add};
+        use crate::youzi::{index, library, store};
         let c = store::tests::memory_db();
         let dir = crate::db::tests::temp_dir("undo-project-files");
         let mut h = History::default();
@@ -364,7 +364,7 @@ pub(crate) mod tests {
         let v2 = add(&c, &dir, "a.md", b"two");
         let step = |c: &Connection, h: &mut History, f: &dyn Fn(&Connection) -> Result<(), String>| {
             let ((), cs) = record(c, f).unwrap();
-            h.push(Store::Picky, "资料", cs.unwrap());
+            h.push(Store::Youzi, "资料", cs.unwrap());
         };
         step(&c, &mut h, &|c| files::add_project_file(c, p, v1).map(|_| ()));
         let f = files::project_files(&c, Some(p)).unwrap()[0].id;
@@ -386,9 +386,9 @@ pub(crate) mod tests {
     /// 柚子's 知识库: deleting a library brings back its folders and the choices of it; the switch and
     /// 「发给云端」 are steps too.
     #[test]
-    fn picky_knowledge_changes_undo() {
-        use crate::picky::knowledge::{self as kb, Owner};
-        use crate::picky::{chat, library, store};
+    fn youzi_knowledge_changes_undo() {
+        use crate::youzi::knowledge::{self as kb, Owner};
+        use crate::youzi::{chat, library, store};
         let c = store::tests::memory_db();
         let dir = crate::db::tests::temp_dir("undo-knowledge");
         std::fs::create_dir_all(dir.join("资料")).unwrap();
@@ -397,7 +397,7 @@ pub(crate) mod tests {
         let s = chat::begin_run(&c, None, Some(p), "q", "local:x", "X").unwrap().session_id;
         let step = |c: &Connection, h: &mut History, f: &dyn Fn(&Connection) -> Result<(), String>| {
             let ((), cs) = record(c, f).unwrap();
-            h.push(Store::Picky, "知识库", cs.unwrap());
+            h.push(Store::Youzi, "知识库", cs.unwrap());
         };
         step(&c, &mut h, &|c| kb::create_library(c, "工作").map(|_| ()));
         let lib = kb::libraries(&c).unwrap()[0].id;
@@ -422,9 +422,9 @@ pub(crate) mod tests {
 
     /// 柚子's memories: edits come back, and deleting a project brings its memories back with it.
     #[test]
-    fn picky_memory_changes_undo() {
-        use crate::picky::memory::{self, MemoryInput};
-        use crate::picky::{library, store};
+    fn youzi_memory_changes_undo() {
+        use crate::youzi::memory::{self, MemoryInput};
+        use crate::youzi::{library, store};
         let c = store::tests::memory_db();
         let mut h = History::default();
         let p = library::create_project(&c, "P", "").unwrap();
@@ -433,7 +433,7 @@ pub(crate) mod tests {
         let before = snapshot(&c);
         let step = |c: &Connection, h: &mut History, f: &dyn Fn(&Connection) -> Result<(), String>| {
             let ((), cs) = record(c, f).unwrap();
-            h.push(Store::Picky, "记忆", cs.unwrap());
+            h.push(Store::Youzi, "记忆", cs.unwrap());
         };
         step(&c, &mut h, &|c| memory::set_flag(c, m, "localOnly", true));
         step(&c, &mut h, &|c| library::delete_project(c, p));
@@ -447,8 +447,8 @@ pub(crate) mod tests {
 
     /// 柚子's templates, presets and instructions: deleting a preset in use comes back with its sessions.
     #[test]
-    fn picky_instruction_changes_undo() {
-        use crate::picky::{chat, instructions as ins, store, templates as tpl};
+    fn youzi_instruction_changes_undo() {
+        use crate::youzi::{chat, instructions as ins, store, templates as tpl};
         let c = store::tests::memory_db();
         let mut h = History::default();
         let s = chat::begin_run(&c, None, None, "a", "local:x", "X").unwrap().session_id;
@@ -459,7 +459,7 @@ pub(crate) mod tests {
         let before = snapshot(&c);
         let step = |c: &Connection, h: &mut History, label: &str, f: &dyn Fn(&Connection) -> Result<(), String>| {
             let ((), cs) = record(c, f).unwrap();
-            h.push(Store::Picky, label, cs.unwrap());
+            h.push(Store::Youzi, label, cs.unwrap());
         };
         let t = tpl::TemplateInput { title: "润色".into(), category: "写作".into(), body: "{{原文}}".into() };
         step(&c, &mut h, "新建模板", &|c| tpl::create(c, &t).and_then(|id| tpl::set_pinned(c, id, true)));

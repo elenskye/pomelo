@@ -3,8 +3,8 @@
 // current status (last checked; none = 想投) and 投递日期 (first checked day).
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Check, ExternalLink, Settings2 } from "lucide-react";
-import { AssistAction, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/picky/Assist";
-import { usePickyStatus } from "@/modules/picky/api";
+import { AssistAction, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/youzi/Assist";
+import { useYouziStatus } from "@/modules/youzi/api";
 import { DateInput } from "@/shared/DateInput";
 import { localToday } from "@/shared/dates";
 import { Dropdown } from "@/shared/Dropdown";
@@ -112,7 +112,7 @@ function Steps(props: { statuses: Status[]; value: DraftStep[]; onChange: (v: Dr
 /** 「贴 JD」 (opened from the 公司 label row): 柚子 finds 公司、岗位、地点 in it; the panel fills the empty
  * ones and keeps the JD in 备注. */
 function JdFill(props: { onFill: (f: JobFill, jd: string) => void; onClose: () => void }) {
-  const status = usePickyStatus().data;
+  const status = useYouziStatus().data;
   const toast = useToast();
   const [jd, setJd] = useState("");
   const [busy, setBusy] = useState(false);

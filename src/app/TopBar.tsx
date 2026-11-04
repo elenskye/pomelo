@@ -117,7 +117,7 @@ export function TopBar(props: {
         disabled={!props.onChat}
         onClick={props.onChat}
         className="relative grid size-[30px] shrink-0 place-items-center rounded-full text-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
-        style={{ background: "radial-gradient(circle at 35% 30%, #f0a35c, var(--module-picky))" }}
+        style={{ background: "radial-gradient(circle at 35% 30%, #f0a35c, var(--module-youzi))" }}
       >
         <Bird size={16} strokeWidth={1.75} />
         {props.unseen && <span aria-label="有新内容" className="absolute -top-0.5 -right-0.5 size-2 rounded-full border border-sidebar bg-primary" />}

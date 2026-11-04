@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 共 44 张表，当前版本 37；柚子的数据在单独的 `picky.db`（版本 37），搜索索引在 `search.db`（版本 2）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
+`pomelo.db` 共 44 张表，当前版本 38；柚子的数据在单独的 `youzi.db`（版本 38），搜索索引在 `search.db`（版本 3）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
 
 ## 通用约定
 
@@ -168,22 +168,22 @@
 
 没有自己的表，每次打开由 `health.rs` 现算（各项的规则见它开头和 `requirements.md`），隐藏的模块不算。
 
-## 柚子（picky.db）
+## 柚子（youzi.db）
 
-- 单独一个数据库，和 `pomelo.db` 放在同一个文件夹，有自己的升级脚本（`migrations/picky/`）和版本号；`pomelo.db` 不因柚子改结构。文件副本在旁边的 `picky-files/`。
+- 单独一个数据库，和 `pomelo.db` 放在同一个文件夹，有自己的升级脚本（`migrations/youzi/`）和版本号；`pomelo.db` 不因柚子改结构。文件副本在旁边的 `youzi-files/`。
 - 撤销覆盖柚子的整理操作；发消息、生成回复、建索引、删副本、提议和写文件、定时任务和简报自己跑的都不进撤销。
 - 数据文件（导出 / 导入）带记忆、模板、用途预设、全局指令、项目和背景指令、定时任务、Seeker 工作区；对话和附件用柚子自己的导出。
 
-**Seeker**（助手；正文都是 JSON，字段见 `picky/assistants/seeker.rs` 和 `seeker/` 各文件）：
+**Seeker**（助手；正文都是 JSON，字段见 `youzi/assistants/seeker.rs` 和 `seeker/` 各文件）：
 
 - **seeker_settings**（只有一行）：记住的文件夹（只记位置，导入预览时才读）、`options`（默认的模型、思考和强度，单独选了的功能 `features`，允许发云端、页面显示的语言 `lang`、knowledge/ 公司的自定义名称 `companyNames`：文件夹 → 名称）、`template` 和 `template_en`（以前自己选的模板，现在用内置模板，这两列不再用）。不进撤销。
 - **seeker_draft**（每种语言一行，键 `lang` 是 `cn` 或 `en`）：当前草稿 `body`（语言、英文的 Resume / CV `form`、姓名、页首字段、章节 → 经历 → 要点、JD、为哪个岗位做的 `job`（编号和创建时间，可没有）；经历记着来自哪条素材的哪一版、选了哪些要点；Summary 是分类「摘要」的一节，一段经历，正文在说明里；`notes` 批注：每条记来源（审查 / 润色要点 / Summary）、对着的块（要点、经历、章节，空是整篇）、建议和可没有的改稿，那一块删了保存时跟着去掉，页面存草稿时保留库里的批注，只有审查、润色、采用、✓ 改它）和「修改差异」比较的 `baseline`。所有块的编号不空、不重复。
 - **seeker_records**：`sort` 是自己拖的顺序（一组里拖动只在这几条原来的位置之间换），资料，一条一小块：素材（`material`：分类、名称、角色、时间、地点、概览、技术栈 `stack`、要点；英文还有「摘要」「证书」两类）、基本信息（`profile`：字段）、已确认事实（`fact`：分组、事项、口径）和经历档案（`fact`，分组「经历档案」：Markdown 正文，`material`、`materialEn` 是它挂的中文、英文素材）、规则（`rule`：用途、标题、分点 `points`，每点一句，按顺序；以前的正文 `text` 和个人约定 `decision` 读的时候转成分点；用途「写作规则」页面上叫通用规则，「整体审查」叫选材和审查，「共用准则」30 起没有了）、豁免情况（`example`：名称、Markdown 正文）、网申（分组 `category` 必填；`application` 卡片：名称、Markdown 正文；`application_line` 一行：事项、内容）；`lang` 是语言（素材、基本信息：`cn` 或 `en`；规则、豁免情况还能是空 = 中英共用；事实、档案、网申总是两边共用；以前的都算中文）；`enabled` 是「用于选材 / 发给模型」；`source` 是从 `transfer/` 导入的来源（`路径#标题:第几个`，唯一），`revision` 每次保存加一，保存时要和打开时的一样。**seeker_record_history**：每次改或删之前的样子。
 - **seeker_exports**：每次成功导出的记录：文件名、位置、语言、时间和用了哪些素材（编号），不存简历的副本，不再改、不进撤销。**seeker_groups**：每一页的组：`kind` 是哪一页（`material` 素材，按语言；`rule` 规则，Seeker 和 Rater 的规则页共用，豁免情况是「豁免情况」这一组；`fact` 档案；`application` 网申，两种共用），`label` 是程序自带的组（素材的教育、技能、项目、工作、证书、摘要；规则的各用途）显示成什么名字（空 = 原名；只改显示，程序还按原名认），`sort` 是上移下移排的先后（空 = 排在有顺序的后面）。**seeker_job_resumes**：岗位用过的简历（按文件路径：Pomelo 导出的或 `cv/` 里别的；岗位按编号和创建时间认，记下当时的岗位和导出时的 JD），每个岗位只有一份「本次使用」；文件不在了只是不显示。偏好 `seeker.jobResumesAdopted` 记着 `jobs.resume` 搬过来了没有。
-- **rater_questions**（Rater 的题库，字段见 `picky/assistants/rater.rs`）：一道题一行，`sort` 是自己拖的顺序，正文是 JSON：类别（简历题 / 通用题 / 突击题）、问题、答案、标签、挂的 Seeker 素材（简历题）、岗位（突击题：编号、创建时间和当时的名字）、改自哪道题；`revision` 每次保存加一，保存时要和打开时的一样。秒数不存，读的时候算。**rater_question_history**：每次改或删之前的样子。Rater 的规则是 `seeker_records` 里用途「题库维护」「卡片练习」「面试」「复盘」的规则，三个题库 SKILL 的工作流是用途「简历题」「通用题」「突击题」的规则；程序自带的（三个工作流，面试的「速查卡」，复盘的「复盘记录」「复盘卡」）不存，组里没有我的（工作流）或没有同名的（另外三条）时发给模型。
-- **rater_rounds**（卡片练习，字段见 `picky/assistants/rater/practice.rs`）：一轮一行，正文是 JSON：出卡方式（自己挑 / 按 JD / 随机）、按 JD 的岗位和柚子的说明、开始和结束时间、柚子的点评（总评、说得好、讲不清的、每张打了字的卡一条），和每张卡：哪道题（追问卡记它追问的那道）、当时的问题、类别、是不是追问卡和参考答案、存进题库后的题目编号、会 / 不熟和时间、打的字、追问过没有。没结束的一轮只能有一个。每道题的练习记录（会几次、不熟几次、最近一次、最后连着会了几次）不存，读题库时从各轮算：上次「不熟」的排在下一轮最前，连着两次「会」的排最后。
-- **rater_interviews**（面试，字段见 `picky/assistants/rater/interview.rs`）：一份准备、一次复盘或一份总结一行，`kind` 是 `prep` / `review` / `summary`，挂在投石问路的岗位上（`job_id` + `job_created_at`，和 Seeker 记岗位一样），正文是 JSON。准备：岗位（当时的名字）、用的简历、面试语言、形式、本次要求、挑的题（题目编号）、可能的追问（参考答案，存进题库后记题目编号）、速查卡（Markdown）、柚子的说明和模型。复盘：日期、轮次、形式、结果、每个问题（我的回答、面试官的反应）、整体反馈、我的判断，和以前做的「对照」（对照的哪份准备、总评、准备到的和没准备到的（问题序号 + 说明）、建议的题、提议的规则要点和加进去的规则编号；现在不再新做）。总结：对照的哪份准备（没有 = 只对照题库）、哪几次复盘（从早到晚）和结果（同「对照」，准备到的和没准备到的多记是哪次复盘）。
-- **rater_records**（复盘 · 记录，`picky/assistants/rater/record.rs`）：没记完的复盘，一条对话一行：`session_id`（柚子的 `sessions`，删对话时一起删）、正文 JSON：这张表（岗位、日期、第几轮，模型填的形式、结果、问题、反馈、判断）、模型标的「填好了」、填过几次、开始时间。它的对话是私密的（`private`），知识库打开，不进柚子的对话列表、对话搜索、⌘K 和模块坞的对话数；存成复盘时对话和这一行一起删（一步撤销）。不在数据文件里。
+- **rater_questions**（Rater 的题库，字段见 `youzi/assistants/rater.rs`）：一道题一行，`sort` 是自己拖的顺序，正文是 JSON：类别（简历题 / 通用题 / 突击题）、问题、答案、标签、挂的 Seeker 素材（简历题）、岗位（突击题：编号、创建时间和当时的名字）、改自哪道题；`revision` 每次保存加一，保存时要和打开时的一样。秒数不存，读的时候算。**rater_question_history**：每次改或删之前的样子。Rater 的规则是 `seeker_records` 里用途「题库维护」「卡片练习」「面试」「复盘」的规则，三个题库 SKILL 的工作流是用途「简历题」「通用题」「突击题」的规则；程序自带的（三个工作流，面试的「速查卡」，复盘的「复盘记录」「复盘卡」）不存，组里没有我的（工作流）或没有同名的（另外三条）时发给模型。
+- **rater_rounds**（卡片练习，字段见 `youzi/assistants/rater/practice.rs`）：一轮一行，正文是 JSON：出卡方式（自己挑 / 按 JD / 随机）、按 JD 的岗位和柚子的说明、开始和结束时间、柚子的点评（总评、说得好、讲不清的、每张打了字的卡一条），和每张卡：哪道题（追问卡记它追问的那道）、当时的问题、类别、是不是追问卡和参考答案、存进题库后的题目编号、会 / 不熟和时间、打的字、追问过没有。没结束的一轮只能有一个。每道题的练习记录（会几次、不熟几次、最近一次、最后连着会了几次）不存，读题库时从各轮算：上次「不熟」的排在下一轮最前，连着两次「会」的排最后。
+- **rater_interviews**（面试，字段见 `youzi/assistants/rater/interview.rs`）：一份准备、一次复盘或一份总结一行，`kind` 是 `prep` / `review` / `summary`，挂在投石问路的岗位上（`job_id` + `job_created_at`，和 Seeker 记岗位一样），正文是 JSON。准备：岗位（当时的名字）、用的简历、面试语言、形式、本次要求、挑的题（题目编号）、可能的追问（参考答案，存进题库后记题目编号）、速查卡（Markdown）、柚子的说明和模型。复盘：日期、轮次、形式、结果、每个问题（我的回答、面试官的反应）、整体反馈、我的判断，和以前做的「对照」（对照的哪份准备、总评、准备到的和没准备到的（问题序号 + 说明）、建议的题、提议的规则要点和加进去的规则编号；现在不再新做）。总结：对照的哪份准备（没有 = 只对照题库）、哪几次复盘（从早到晚）和结果（同「对照」，准备到的和没准备到的多记是哪次复盘）。
+- **rater_records**（复盘 · 记录，`youzi/assistants/rater/record.rs`）：没记完的复盘，一条对话一行：`session_id`（柚子的 `sessions`，删对话时一起删）、正文 JSON：这张表（岗位、日期、第几轮，模型填的形式、结果、问题、反馈、判断）、模型标的「填好了」、填过几次、开始时间。它的对话是私密的（`private`），知识库打开，不进柚子的对话列表、对话搜索、⌘K 和模块坞的对话数；存成复盘时对话和这一行一起删（一步撤销）。不在数据文件里。
 - **seeker_job_companies**：我给岗位手动选的公司资料（`knowledge/` 下的文件夹名，空 = 不用；岗位按编号和创建时间认）；没有这一行就按公司名自动对上。能撤销。`knowledge/` 本身是知识库里的一个文件夹（`kb_sources`），不另存。
 
 **preferences**（`key`、`value` JSON，不进撤销；API Key 不在这里，只在钥匙串）：
@@ -236,7 +236,7 @@
 
 ### 附件、资料、记忆
 
-**artifacts**（文件副本，在 `picky-files/`）：`display_name`、`file_name` 随机名、`media_type`、`byte_count`、`sha256`、`page_count`（PDF 页数、PowerPoint 张数）、`text_chars`、`row_count`（表格的行数）、`source_url`（网页的网址，副本是正文 Markdown）、`source_path`（点选、拖入的原文件；后加的同样内容的文件会换成它）、`deleted_at`（副本删了，行留着）。不进撤销。
+**artifacts**（文件副本，在 `youzi-files/`）：`display_name`、`file_name` 随机名、`media_type`、`byte_count`、`sha256`、`page_count`（PDF 页数、PowerPoint 张数）、`text_chars`、`row_count`（表格的行数）、`source_url`（网页的网址，副本是正文 Markdown）、`source_path`（点选、拖入的原文件；后加的同样内容的文件会换成它）、`deleted_at`（副本删了，行留着）。不进撤销。
 
 **artifact_segments**：取出的文字：PDF、PowerPoint 每页一段，文本按 Markdown 标题分节，表格超过 200 行时只存表头和前 50 行。`page_start` / `page_end` / `heading` 用来写「第 3 页」「某一节」。
 
@@ -258,7 +258,7 @@
 
 **briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块、`mood` 当天的心情（`calm` / `busy` / `good` / `worry`，从简报最后一行「心情：…」取出来，正文里不留；没有就空）。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
 
-**month_summaries**（每月小结，只给年度总结用）：`month`、`content`、`fingerprint`（读的记录和写法的指纹，没变就直接用）、`model` · `model_name`。**run_month_notes**：一次年度总结用到的每月小结（照抄一份）。**year_runs**：一次年度总结写的是哪一年。后两张删对话时一起删。**year_atlas**（Atlas 的「呈现结果」，规则见 `picky/atlas.rs` 开头）：`run_id`（写它的那次，删对话后变空，这一行留着）、`year`、`until`（今年没过完时写到哪天，空 = 全年）、`letter` 信的一份、`snapshot`（JSON：数字和去年同期、之最、每天几条记录、打卡、钱、能引用的记录 `note:12` 这样的编号带原文、两年同一天的笔记、有内容的幕）、`scenes`（JSON：每一幕的话和引用的编号；没写成时空，原因在 `error`）、`model` · `model_name`。
+**month_summaries**（每月小结，只给年度总结用）：`month`、`content`、`fingerprint`（读的记录和写法的指纹，没变就直接用）、`model` · `model_name`。**run_month_notes**：一次年度总结用到的每月小结（照抄一份）。**year_runs**：一次年度总结写的是哪一年。后两张删对话时一起删。**year_atlas**（Atlas 的「呈现结果」，规则见 `youzi/atlas.rs` 开头）：`run_id`（写它的那次，删对话后变空，这一行留着）、`year`、`until`（今年没过完时写到哪天，空 = 全年）、`letter` 信的一份、`snapshot`（JSON：数字和去年同期、之最、每天几条记录、打卡、钱、能引用的记录 `note:12` 这样的编号带原文、两年同一天的笔记、有内容的幕）、`scenes`（JSON：每一幕的话和引用的编号；没写成时空，原因在 `error`）、`model` · `model_name`。
 
 ## 搜索索引（search.db）
 
@@ -272,14 +272,14 @@
 
 ## 数据文件（导出 / 导入）
 
-JSON，当前格式版本 37（37：念念不忘的标签设置带 `order`；36：定时任务带思考强度，Seeker 的设置改成默认 + 每个功能各自的模型；旧文件都能读，各版本读旧形状的规则在 `transfer.rs` 和各模块的 `serde` 默认值里，有测试）。
+JSON，当前格式版本 38（38：柚子的部分叫 `youzi`，以前叫 `picky`；37：念念不忘的标签设置带 `order`；36：定时任务带思考强度，Seeker 的设置改成默认 + 每个功能各自的模型；旧文件都能读，各版本读旧形状的规则在 `transfer.rs` 和各模块的 `serde` 默认值里，有测试）。
 
 | 部分 | 内容 |
 |---|---|
 | `format` · `formatVersion` · `exportedAt` · `appVersion` | `pomelo-export`、格式版本、导出时间、App 版本 |
 | `kinds` | 各模块的类型名称，按顺序 |
 | `modules` | `books` · `films`（含 `rereads`）、`drawing`（课程套课节）、`packing`（模板和出行各套物品）、`todo`（分组套目标和任务，任务套子任务和 `logs`，转自笔记的带 `fromNote`）、`finance`、`jobs`（状态列表和投递，投递套 `steps`）、`notes`（引用写成对方的 `createdAt`；`tags` 是标签设置）、`days`（生日套 `gifts`）、`custom`（每个自己建的模块：模板、名称、图标、叫法，套字段和条目（值按字段名存），或类型列表和课程、课节（课节的 `kind` 写类型名）） |
-| `picky` | `globalInstructions`、`projects`、`presets`、`templates`、`memories`（用项目名称关联）、`schedules`（不带它们写的对话）、`seeker`（Seeker 的全部：文件夹和设置、中英草稿、资料和历史、确认版本、中英模板、导出快照和岗位关联、岗位的公司资料）、`rater`（Rater 的题库、题目的历史、卡片练习的各轮、面试的准备、复盘和总结；没记完的复盘不带） |
+| `youzi` | `globalInstructions`、`projects`、`presets`、`templates`、`memories`（用项目名称关联）、`schedules`（不带它们写的对话）、`seeker`（Seeker 的全部：文件夹和设置、中英草稿、资料和历史、确认版本、中英模板、导出快照和岗位关联、岗位的公司资料）、`rater`（Rater 的题库、题目的历史、卡片练习的各轮、面试的准备、复盘和总结；没记完的复盘不带） |
 
 - 记录之间用**名称**关联，不用编号；顺序就是列表顺序；创建、修改时间都带上。笔记、任务、目标的附件写成 `attachments: [{ name, sha256 }]`：导入时有同样内容的文件就挂上，没有就记成「不在这台 Mac 上」。
 - 导入时文件里有哪个模块就替换哪个（连同它的类型），没有的不动；任何一条不合格就整个不导入。`custom` 整个替换，编号重新分配。
@@ -299,8 +299,9 @@ JSON，当前格式版本 37（37：念念不忘的标签设置带 `order`；36�
 | 31～34 | 导入账单：收支加退款、账单和每一行（31，收入分类没有「工资」就加上）；来源加 DBS、每行记关联决定（32）；来源加 Wise、工行、截图，状态加「忽略」（33）；每行记柚子做过什么（34）。以前的收支不变 |
 | 35 | 导入账单的列表能排序、改名（以前的按导入时间新的在上） |
 | 36 · 37 | 念念不忘的标签能拖动排序（`note_tag_meta.sort_order`）· 模块坞里还叫「小拾」的分类改名「柚子」 |
+| 38 | 柚子的模块键 `picky` 改成 `youzi`（模块坞、页签、隐藏的模块、上次的页面），设置 `picky.cloudGroups` 改名 `youzi.cloudGroups` |
 
-**picky.db**
+**youzi.db**
 
 | 版本 | 内容 |
 |---|---|
@@ -323,7 +324,8 @@ JSON，当前格式版本 37（37：念念不忘的标签设置带 `order`；36�
 | 33 | 问我（ASK）：`run_asks` 一条回答问我的卡片 |
 | 34 | 定时任务的思考强度：`schedules.effort`（空 = 模型的默认） |
 | 35 | Excel 工具箱：`file_edit_items.label`（在哪一格、哪几行）、`payload`（这处改动） |
-| 36 | 小拾改名柚子：记忆、全局 / 项目 / 对话指令、模板、用途预设、定时任务的提示词、简报 / Translator / Importer 的提示词、Seeker 的规则里的「小拾」换成「柚子」；对话内容、文件路径不动 |
+| 36 | 改名柚子：记忆、全局 / 项目 / 对话指令、模板、用途预设、定时任务的提示词、简报 / Translator / Importer 的提示词、Seeker 的规则里的「小拾」换成「柚子」；对话内容、文件路径不动 |
 | 37 | Atlas 的底子：`year_atlas` 每次年度总结的「呈现结果」 |
+| 38 | 出处、查过的记录、简报里的模块键 `picky` 改成 `youzi`，出处的「小拾对话」改成「柚子对话」；删掉旧 Picky App 导入时留的 `import.picky` |
 
-**search.db**：1 是搜索索引；2 加知识库（`kb_docs`、`kb_chunks`）。
+**search.db**：1 是搜索索引；2 加知识库（`kb_docs`、`kb_chunks`）；3 柚子的记录改记 `youzi`（重建一次）。

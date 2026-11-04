@@ -5,7 +5,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Plus } from "lucide-react";
-import { Polish } from "@/modules/picky/Assist";
+import { Polish } from "@/modules/youzi/Assist";
 import { useDropTarget } from "@/shared/attachments/target";
 import { errorText } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";

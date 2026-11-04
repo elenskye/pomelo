@@ -50,6 +50,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 35, name: "finance_import_order", sql: include_str!("../migrations/0035_finance_import_order.sql") },
     Migration { version: 36, name: "note_tag_order", sql: include_str!("../migrations/0036_note_tag_order.sql") },
     Migration { version: 37, name: "youzi", sql: include_str!("../migrations/0037_youzi.sql") },
+    Migration { version: 38, name: "youzi_keys", sql: include_str!("../migrations/0038_youzi_keys.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -84,7 +85,7 @@ pub fn migrate_with(conn: &mut Connection, migrations: &[Migration], backups_dir
     migrate_as(conn, migrations, backups_dir, backup::Store::Pomelo)
 }
 
-/// Same for either database; `store` names the pre-upgrade snapshot (`picky-…-before-v2.db`).
+/// Same for either database; `store` names the pre-upgrade snapshot (`youzi-…-before-v2.db`).
 pub fn migrate_as(conn: &mut Connection, migrations: &[Migration], backups_dir: Option<&Path>, store: backup::Store) -> Result<i64, String> {
     let current = user_version(conn)?;
     let latest = migrations.last().map_or(0, |m| m.version);
@@ -521,6 +522,31 @@ pub mod tests {
         assert!(draft.contains("问小拾")); // what the user typed stays
         let row: (Option<String>, Option<i64>) = c.query_row("SELECT icon, sort_order FROM note_tag_meta", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(row, (Some("📖".into()), None));
+    }
+
+    /// v38: 柚子's module key picky → youzi in the 模块坞, 页签, hidden modules, old sidebar order and
+    /// last page; picky.cloudGroups → youzi.cloudGroups. Other settings and words stay.
+    #[test]
+    fn v37_renames_the_picky_module_key() {
+        let dir = temp_dir("v37-youzi-keys");
+        let mut c = open(&dir.join("pomelo.db")).unwrap();
+        migrate(&mut c, &MIGRATIONS[..37], &dir.join("backups")).unwrap();
+        c.execute_batch(
+            r#"INSERT INTO settings (key, value) VALUES
+               ('ui.dock', '{"cats":[{"id":"c6","name":"picky 们","tone":5,"mods":["picky","translate"]}],"pinned":["todo","picky"]}'),
+               ('ui.tabs', '["/notes","/picky","/picky/x","/pickyx"]'), ('ui.last_route', '"/picky"'),
+               ('ui.module_hidden', '["picky","books"]'), ('ui.module_order', '["picky","todo"]'),
+               ('picky.cloudGroups', '["OpenRouter"]'), ('capture.draft', '{"ask":"picky"}');"#,
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut c, MIGRATIONS, &dir.join("backups")).unwrap(), MIGRATIONS.len() as i64);
+        let get = |k: &str| c.query_row("SELECT value FROM settings WHERE key = ?1", [k], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!(get("ui.dock"), r#"{"cats":[{"id":"c6","name":"picky 们","tone":5,"mods":["youzi","translate"]}],"pinned":["todo","youzi"]}"#);
+        assert_eq!(get("ui.tabs"), r#"["/notes","/youzi","/youzi/x","/youzix"]"#);
+        assert_eq!((get("ui.last_route"), get("ui.module_hidden"), get("ui.module_order")), (r#""/youzi""#.into(), r#"["youzi","books"]"#.into(), r#"["youzi","todo"]"#.into()));
+        assert_eq!((get("youzi.cloudGroups"), get("capture.draft")), (r#"["OpenRouter"]"#.into(), r#"{"ask":"picky"}"#.into()));
+        let left: i64 = c.query_row("SELECT count(*) FROM settings WHERE key = 'picky.cloudGroups'", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
     }
 
     /// v30: 五花八门 日期 fields become 年份 (values keep the year, other values as they were);

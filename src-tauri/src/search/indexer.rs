@@ -1,4 +1,4 @@
-//! Keeps search.db in line with pomelo.db and picky.db, in the background (`spawn`, every 2 s):
+//! Keeps search.db in line with pomelo.db and youzi.db, in the background (`spawn`, every 2 s):
 //! - Changes: its own read-only connections watch `PRAGMA data_version` (it moves whenever the
 //!   app's connection commits: edits, undo, import, restore, 柚子 messages). Then every source is
 //!   read again and compared by hash: new / changed docs are written with their word tokens;
@@ -8,7 +8,7 @@
 //!   search.db, other embedding model, other text rules — which starts the service and fills
 //!   everything (`meta.rebuild`), newest records first. Once complete, other models' vectors,
 //!   file indexes and memory vectors are dropped.
-//! - Project files whose index is missing for the current model are queued again (picky::index)
+//! - Project files whose index is missing for the current model are queued again (youzi::index)
 //!   on launch and when a rebuild starts; memory vectors refill when memories are next picked.
 //! - search.db deleted while running: opened again empty (= rebuild).
 
@@ -18,9 +18,9 @@ use super::text::{self, RULES};
 use super::vectors::{self, Entry, Flat, VectorIndex};
 use crate::modules::common::{err, Tx};
 use crate::paths::DataPaths;
-use crate::picky::catalog::ServiceModel;
-use crate::picky::embed::{self, EmbedError, Input};
-use crate::picky::runtime::{ServiceState, Svc};
+use crate::youzi::catalog::ServiceModel;
+use crate::youzi::embed::{self, EmbedError, Input};
+use crate::youzi::runtime::{ServiceState, Svc};
 use crate::AppState;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
@@ -54,14 +54,14 @@ pub struct IndexStatus {
 #[derive(Default)]
 struct Readers {
     pomelo: Option<Connection>,
-    picky: Option<Connection>,
+    youzi: Option<Connection>,
     versions: [Option<i64>; 2],
 }
 
 pub struct Search {
     path: PathBuf,
     pomelo_path: PathBuf,
-    picky_path: PathBuf,
+    youzi_path: PathBuf,
     conn: Mutex<Option<Connection>>,
     readers: Mutex<Readers>,
     flat: RwLock<Option<Box<dyn VectorIndex>>>,
@@ -94,7 +94,7 @@ impl Search {
         Search {
             path: paths.search_db.clone(),
             pomelo_path: paths.db.clone(),
-            picky_path: paths.picky_db.clone(),
+            youzi_path: paths.youzi_db.clone(),
             conn: Mutex::new(conn),
             readers: Mutex::new(Readers::default()),
             flat: RwLock::new(None),
@@ -156,12 +156,12 @@ impl Search {
         if r.pomelo.is_none() {
             r.pomelo = open(&self.pomelo_path);
         }
-        if r.picky.is_none() {
-            r.picky = open(&self.picky_path);
+        if r.youzi.is_none() {
+            r.youzi = open(&self.youzi_path);
         }
         let mut any = false;
-        for (i, db) in [Db::Pomelo, Db::Picky].into_iter().enumerate() {
-            let conn = if db == Db::Pomelo { r.pomelo.as_ref() } else { r.picky.as_ref() };
+        for (i, db) in [Db::Pomelo, Db::Youzi].into_iter().enumerate() {
+            let conn = if db == Db::Pomelo { r.pomelo.as_ref() } else { r.youzi.as_ref() };
             let Some(conn) = conn else { continue };
             let Ok(v) = conn.query_row("PRAGMA data_version", [], |x| x.get::<_, i64>(0)) else { continue };
             if r.versions[i] == Some(v) {
@@ -180,7 +180,7 @@ impl Search {
         for (i, s) in SOURCES.iter().enumerate().filter(|(_, s)| s.db == db) {
             let rows = match sources::read(src, s) {
                 Ok(rows) => rows,
-                Err(_) if db == Db::Picky => continue, // a picky.db that failed to open/migrate
+                Err(_) if db == Db::Youzi => continue, // a youzi.db that failed to open/migrate
                 Err(e) => return Err(e),
             };
             stale.extend(self.with_db(|c| apply(c, i, rows))?);
@@ -252,7 +252,7 @@ impl Search {
     }
 
     async fn embed_and_save(&self, app: &AppHandle, model: &ServiceModel, docs: &[Pending]) -> Result<usize, String> {
-        let rt = &app.state::<AppState>().picky.runtime;
+        let rt = &app.state::<AppState>().youzi.runtime;
         let mut texts = vec![];
         let mut owners = vec![];
         for (i, d) in docs.iter().enumerate() {
@@ -456,7 +456,7 @@ async fn tick(app: &AppHandle, first: bool) -> bool {
     let st = app.state::<AppState>();
     let s = &st.search;
     s.reopen_if_missing();
-    let Some(model) = st.picky.runtime.service_model(Svc::Embedding) else {
+    let Some(model) = st.youzi.runtime.service_model(Svc::Embedding) else {
         s.set_status(|x| x.model = None);
         return false;
     };
@@ -475,10 +475,10 @@ async fn tick(app: &AppHandle, first: bool) -> bool {
         Ok(_) => {}
     }
     if first || started {
-        crate::picky::index::requeue_missing(app);
+        crate::youzi::index::requeue_missing(app);
     }
     if first || started || synced == Ok(true) {
-        let _ = crate::picky::index::prune_with(app);
+        let _ = crate::youzi::index::prune_with(app);
         let (records, done) = s.count(&model.key).unwrap_or_default();
         s.set_status(|x| (x.records, x.done) = (records, done));
     }
@@ -488,9 +488,9 @@ async fn tick(app: &AppHandle, first: bool) -> bool {
     let waiting = s.retry_at.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| std::time::Instant::now() < t);
     let mut more = false;
     if status.done < status.records && !waiting {
-        let running = st.picky.runtime.service_status(Svc::Embedding).state == ServiceState::Running;
+        let running = st.youzi.runtime.service_status(Svc::Embedding).state == ServiceState::Running;
         // without a rebuild, vectors wait until a search needs them or the service runs anyway
-        let ready = if running || !rebuilding { Ok(running) } else { st.picky.runtime.ensure(Svc::Embedding).await.map(|_| true) };
+        let ready = if running || !rebuilding { Ok(running) } else { st.youzi.runtime.ensure(Svc::Embedding).await.map(|_| true) };
         let outcome = match ready {
             Ok(true) => s.fill(app, &model).await,
             Ok(false) => Ok(0),

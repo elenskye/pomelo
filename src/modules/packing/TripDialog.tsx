@@ -6,7 +6,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { DateInput } from "@/shared/DateInput";
 import { Button, Field, TextArea, TextInput } from "@/shared/ui";
 import { usePackingMutations, type Template, type Trip } from "./api";
-import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
+import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/youzi/Assist";
 
 export function TripDialog(props: {
   trip: Trip | null; // null = create

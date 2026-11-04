@@ -10,7 +10,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { useSources, useRefundCandidates } from "./importApi";
 import { AmountInput, CurrencyPicker, FLOW_OPTIONS, KindPicker } from "./fields";
 import { money, moneyInput, nextOnOrAfter, parseMoney, type Currency } from "./money";
-import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
+import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/youzi/Assist";
 
 type Money = { flow: Flow; amount: string; currency: Currency; kindId: number | null; note: string };
 

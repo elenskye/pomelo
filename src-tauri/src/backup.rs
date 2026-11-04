@@ -1,8 +1,8 @@
 //! Snapshot backups: `backups/<store>-YYYYMMDD-HHMMSS-<label>[-n].db`, written with `VACUUM INTO`
 //! (consistent single-file copy, WAL-safe). The file name is the only metadata (store + time + label).
-//! Stores: `pomelo` (pomelo.db, life data) and `picky` (picky.db, 柚子); each is backed up, pruned and
+//! Stores: `pomelo` (pomelo.db, life data) and `youzi` (youzi.db, 柚子); each is backed up, pruned and
 //! restored on its own. Labels: `daily` (auto, first launch/focus of the day; pruned), `manual`,
-//! `before-vN` (migration), `before-import`, `before-picky-import`, `before-restore`. `manual` is never
+//! `before-vN` (migration), `before-import`, `before-restore`. `manual` is never
 //! pruned; the safety copies (升级前 = any `before-vN`, 导入前, 恢复前) keep the newest KEEP_SAFETY of each
 //! kind per store, pruned with the daily ones.
 //! Restore copies a snapshot into the live connection via the SQLite backup API (atomic), then migrates.
@@ -25,16 +25,16 @@ pub const KEEP_SAFETY: usize = 3;
 #[serde(rename_all = "lowercase")]
 pub enum Store {
     Pomelo,
-    Picky,
+    Youzi,
 }
 
 impl Store {
-    pub const ALL: [Store; 2] = [Store::Pomelo, Store::Picky];
+    pub const ALL: [Store; 2] = [Store::Pomelo, Store::Youzi];
 
     pub fn prefix(self) -> &'static str {
         match self {
             Store::Pomelo => "pomelo",
-            Store::Picky => "picky",
+            Store::Youzi => "youzi",
         }
     }
 
@@ -42,14 +42,14 @@ impl Store {
     pub fn keep_daily(self) -> usize {
         match self {
             Store::Pomelo => 30,
-            Store::Picky => 7,
+            Store::Youzi => 7,
         }
     }
 
     pub fn migrations(self) -> &'static [db::Migration] {
         match self {
             Store::Pomelo => db::MIGRATIONS,
-            Store::Picky => crate::picky::store::MIGRATIONS,
+            Store::Youzi => crate::youzi::store::MIGRATIONS,
         }
     }
 }
@@ -115,7 +115,7 @@ fn parse_name(file: &str) -> Option<Name> {
 #[serde(rename_all = "camelCase")]
 pub struct BackupInfo {
     pub file_name: String,
-    /// Which database: `pomelo` (life data) or `picky` (柚子).
+    /// Which database: `pomelo` (life data) or `youzi` (柚子).
     pub store: Store,
     /// Raw label (`daily`, `manual`, `before-v7`, ...); UI maps to Chinese.
     pub label: String,
@@ -182,7 +182,7 @@ pub fn prune_daily(dir: &Path, store: Store, keep: usize) -> Result<Vec<PathBuf>
 /// The kind of an automatic safety copy (None: daily, manual, unknown labels).
 fn safety_kind(label: &str) -> Option<&'static str> {
     match label {
-        "before-import" | "before-picky-import" => Some("import"),
+        "before-import" => Some("import"),
         BEFORE_RESTORE => Some("restore"),
         _ => label.strip_prefix("before-v").filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).map(|_| "upgrade"),
     }
@@ -302,8 +302,8 @@ pub fn backups_list(state: State<AppState>) -> Result<Vec<BackupInfo>, String> {
 pub fn backup_now(state: State<AppState>) -> Result<BackupInfo, String> {
     let dir = state.paths.backups.clone();
     let main = info_of(&state.with_db(|c| snapshot(c, &dir, MANUAL))?)?;
-    if state.picky.is_open() {
-        state.picky.with_db(|c| snapshot_of(Store::Picky, c, &dir, MANUAL))?;
+    if state.youzi.is_open() {
+        state.youzi.with_db(|c| snapshot_of(Store::Youzi, c, &dir, MANUAL))?;
     }
     Ok(main)
 }
@@ -314,8 +314,8 @@ pub fn backup_now(state: State<AppState>) -> Result<BackupInfo, String> {
 pub fn backup_daily(state: State<AppState>) -> Result<Option<BackupInfo>, String> {
     let dir = state.paths.backups.clone();
     let main = state.with_db(|c| daily(c, &dir))?;
-    if state.picky.is_open() {
-        state.picky.with_db(|c| daily_of(Store::Picky, c, &dir))?;
+    if state.youzi.is_open() {
+        state.youzi.with_db(|c| daily_of(Store::Youzi, c, &dir))?;
     }
     main.map(|p| info_of(&p)).transpose()
 }
@@ -336,7 +336,7 @@ pub fn backup_restore(state: State<AppState>, file_name: String) -> Result<Resto
             state.vault_lock(); // the restored vault may have another master password
             s
         }
-        Store::Picky => state.picky.with_db(|c| restore(c, &dir, &file_name))?,
+        Store::Youzi => state.youzi.with_db(|c| restore(c, &dir, &file_name))?,
     };
     state.clear_history();
     Ok(RestoreResult { safety: info_of(&safety)? })
@@ -380,35 +380,35 @@ mod tests {
     }
 
     #[test]
-    fn picky_store_is_named_listed_pruned_and_restored_on_its_own() {
-        let n = parse_name("picky-20261010-090000-daily-2.db").unwrap();
-        assert_eq!((n.store, n.label.as_str(), n.n), (Store::Picky, "daily", 2));
-        assert!(parse_name("pickyx-20261010-090000-daily.db").is_none());
+    fn youzi_store_is_named_listed_pruned_and_restored_on_its_own() {
+        let n = parse_name("youzi-20261010-090000-daily-2.db").unwrap();
+        assert_eq!((n.store, n.label.as_str(), n.n), (Store::Youzi, "daily", 2));
+        assert!(parse_name("youzix-20261010-090000-daily.db").is_none());
 
         let dir = temp_dir("backup-two-stores");
         for d in 1..=10 {
             std::fs::write(dir.join(format!("pomelo-202610{d:02}-080000-daily.db")), b"x").unwrap();
-            std::fs::write(dir.join(format!("picky-202610{d:02}-080000-daily.db")), b"x").unwrap();
+            std::fs::write(dir.join(format!("youzi-202610{d:02}-080000-daily.db")), b"x").unwrap();
         }
-        prune_daily(&dir, Store::Picky, Store::Picky.keep_daily()).unwrap();
+        prune_daily(&dir, Store::Youzi, Store::Youzi.keep_daily()).unwrap();
         let l = list(&dir).unwrap();
-        assert_eq!(l.iter().filter(|b| b.store == Store::Picky).count(), 7);
+        assert_eq!(l.iter().filter(|b| b.store == Store::Youzi).count(), 7);
         assert_eq!(l.iter().filter(|b| b.store == Store::Pomelo).count(), 10); // untouched
 
-        // restore a picky snapshot into a picky connection; pomelo.db is not involved
+        // restore a youzi snapshot into a youzi connection; pomelo.db is not involved
         let b = dir.join("backups");
-        let mut c = crate::picky::store::open(&dir.join("picky.db"), &b).unwrap();
+        let mut c = crate::youzi::store::open(&dir.join("youzi.db"), &b).unwrap();
         c.execute("INSERT INTO sessions (title) VALUES ('旧')", []).unwrap();
-        let snap = snapshot_of(Store::Picky, &c, &b, MANUAL).unwrap();
+        let snap = snapshot_of(Store::Youzi, &c, &b, MANUAL).unwrap();
         c.execute("DELETE FROM sessions", []).unwrap();
         let name = snap.file_name().unwrap().to_str().unwrap();
-        assert_eq!(store_of(&b, name).unwrap(), Store::Picky);
+        assert_eq!(store_of(&b, name).unwrap(), Store::Youzi);
         let safety = restore(&mut c, &b, name).unwrap();
         let t: String = c.query_row("SELECT title FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(t, "旧");
-        assert!(safety.file_name().unwrap().to_str().unwrap().starts_with("picky-"));
-        assert!(daily_of(Store::Picky, &c, &b).unwrap().is_some());
-        assert!(daily_of(Store::Picky, &c, &b).unwrap().is_none());
+        assert!(safety.file_name().unwrap().to_str().unwrap().starts_with("youzi-"));
+        assert!(daily_of(Store::Youzi, &c, &b).unwrap().is_some());
+        assert!(daily_of(Store::Youzi, &c, &b).unwrap().is_none());
     }
 
     #[test]
@@ -458,10 +458,10 @@ mod tests {
         for d in 1..=6 {
             files.push(format!("pomelo-202610{d:02}-080000-before-v{}.db", 20 + d));
             files.push(format!("pomelo-202610{d:02}-090000-before-import.db"));
-            files.push(format!("picky-202610{d:02}-080000-before-v{d}.db"));
+            files.push(format!("youzi-202610{d:02}-080000-before-v{d}.db"));
         }
         files.extend(["pomelo-20261007-080000-before-restore.db", "pomelo-20261008-080000-before-restore.db", "pomelo-20261008-080000-before-restore-2.db", "pomelo-20261009-080000-before-restore.db"].map(String::from));
-        files.extend(["picky-20261001-080000-before-picky-import.db", "picky-20261002-080000-before-import.db"].map(String::from));
+        files.extend(["youzi-20261001-080000-before-import.db", "youzi-20261002-080000-before-import.db"].map(String::from));
         files.extend(["pomelo-20260901-080000-manual.db", "pomelo-20260901-080000-daily.db", "pomelo-20260901-080000-before-vx.db"].map(String::from));
         for f in &files {
             std::fs::write(dir.join(f), b"x").unwrap();
@@ -474,10 +474,10 @@ mod tests {
         assert!(!left.iter().any(|f| f == "pomelo-20261003-080000-before-v23.db" || f == "pomelo-20261007-080000-before-restore.db"));
         // manual, daily and labels that aren't safety copies stay; 3 + 3 + 3 + 3 = 12 left
         assert_eq!((deleted.len(), left.len()), (3 + 3 + 1, 12));
-        // picky on its own: its upgrades and its imports (both kinds of import label) are one kind each
-        assert_eq!(list(&dir).unwrap().iter().filter(|b| b.store == Store::Picky).count(), 8);
-        prune_safety(&dir, Store::Picky, KEEP_SAFETY).unwrap();
-        assert_eq!(list(&dir).unwrap().iter().filter(|b| b.store == Store::Picky).count(), 5);
+        // youzi on its own: its upgrades and its imports are one kind each
+        assert_eq!(list(&dir).unwrap().iter().filter(|b| b.store == Store::Youzi).count(), 8);
+        prune_safety(&dir, Store::Youzi, KEEP_SAFETY).unwrap();
+        assert_eq!(list(&dir).unwrap().iter().filter(|b| b.store == Store::Youzi).count(), 5);
         assert!(prune_safety(&dir, Store::Pomelo, KEEP_SAFETY).unwrap().is_empty()); // idempotent
     }
 

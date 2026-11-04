@@ -64,7 +64,7 @@ fn fitted(src: &Path, ext: &str, tmp: &Path) -> Result<(PathBuf, String), String
     if matches!(ext, "gif" | "svg" | "avif") {
         return Err(format!("这张 {} 超过了 1.5 MB，Pomelo 压缩不了这种格式，先自己缩小一下", ext.to_uppercase()));
     }
-    let long = crate::picky::office::size_of(src).map(|(w, h)| w.max(h)).unwrap_or(0);
+    let long = crate::youzi::office::size_of(src).map(|(w, h)| w.max(h)).unwrap_or(0);
     let sides = || std::iter::once(None).chain(SIDES.iter().filter(move |&&s| s < long).map(|&s| Some(s)));
     // PNG / WebP stay themselves if a smaller size is enough
     if matches!(ext, "png" | "webp") {

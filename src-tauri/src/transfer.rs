@@ -6,7 +6,7 @@
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
 //! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 柚子
-//! (module `picky`, picky/transfer.rs: it lives in picky.db, imported after pomelo.db); v11 = no 定时任务 (picky keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (picky `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (picky `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name).
+//! (module `youzi`, youzi/transfer.rs: it lives in youzi.db, imported after pomelo.db); v11 = no 定时任务 (youzi keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (youzi `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (youzi `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name); v37 = 柚子 under its old key `picky` (read as `youzi`).
 //! All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
@@ -25,7 +25,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 37;
+pub const FORMAT_VERSION: u32 = 38;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,8 +154,8 @@ impl Payload {
 
 struct Parsed {
     payloads: Vec<Payload>,
-    /// 柚子's part (picky.db).
-    picky: Option<crate::picky::transfer::PickyRecord>,
+    /// 柚子's part (youzi.db).
+    youzi: Option<crate::youzi::transfer::YouziRecord>,
     /// (module key, kind names) for modules in `payloads` only.
     kinds: Vec<(&'static str, Vec<String>)>,
     skipped: Vec<String>,
@@ -172,20 +172,21 @@ fn parse(text: &str) -> Result<Parsed, String> {
     }
     let mut payloads = Vec::new();
     let mut skipped = Vec::new();
-    let mut picky = None;
+    let mut youzi = None;
     for (key, value) in file.modules {
+        let key = if key == crate::youzi::transfer::OLD_KEY && file.format_version < 38 { crate::youzi::transfer::KEY.to_string() } else { key };
         match key.as_str() {
-            crate::picky::transfer::KEY => {
-                let mut rec: crate::picky::transfer::PickyRecord =
-                    serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", crate::picky::transfer::LABEL))?;
+            crate::youzi::transfer::KEY => {
+                let mut rec: crate::youzi::transfer::YouziRecord =
+                    serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", crate::youzi::transfer::LABEL))?;
                 if file.format_version < 22 {
-                    rec.seeker.iter_mut().for_each(crate::picky::assistants::seeker::from_before_english);
+                    rec.seeker.iter_mut().for_each(crate::youzi::assistants::seeker::from_before_english);
                 }
                 if file.format_version < 30 {
-                    rec.seeker.iter_mut().for_each(|w| crate::picky::assistants::seeker::catalog::without_shared_rules(&mut w.catalog));
+                    rec.seeker.iter_mut().for_each(|w| crate::youzi::assistants::seeker::catalog::without_shared_rules(&mut w.catalog));
                 }
-                crate::picky::transfer::validate(&rec)?;
-                picky = Some(rec);
+                crate::youzi::transfer::validate(&rec)?;
+                youzi = Some(rec);
             }
             books::KEY => {
                 let recs: Vec<books::BookRecord> = serde_json::from_value(value)
@@ -248,7 +249,7 @@ fn parse(text: &str) -> Result<Parsed, String> {
             _ => skipped.push(key),
         }
     }
-    if payloads.is_empty() && picky.is_none() {
+    if payloads.is_empty() && youzi.is_none() {
         return Err("文件里没有这个版本的 App 能导入的数据".into());
     }
     let mut kind_lists = Vec::new();
@@ -260,7 +261,7 @@ fn parse(text: &str) -> Result<Parsed, String> {
             }
         }
     }
-    Ok(Parsed { payloads, picky, kinds: kind_lists, skipped })
+    Ok(Parsed { payloads, youzi, kinds: kind_lists, skipped })
 }
 
 #[derive(Debug, Serialize)]
@@ -377,16 +378,16 @@ pub fn export(conn: &mut Connection) -> Result<(String, Vec<ModuleSummary>), Str
     export_with(conn, None)
 }
 
-/// With 柚子's part (read from picky.db by the caller).
-pub fn export_with(conn: &mut Connection, picky: Option<&crate::picky::transfer::PickyRecord>) -> Result<(String, Vec<ModuleSummary>), String> {
+/// With 柚子's part (read from youzi.db by the caller).
+pub fn export_with(conn: &mut Connection, youzi: Option<&crate::youzi::transfer::YouziRecord>) -> Result<(String, Vec<ModuleSummary>), String> {
     let tx = conn.transaction().map_err(err)?;
     let payloads = export_payloads(&tx)?;
     let mut modules = Map::new();
     for p in &payloads {
         modules.insert(p.key().into(), p.to_json()?);
     }
-    if let Some(r) = picky {
-        modules.insert(crate::picky::transfer::KEY.into(), serde_json::to_value(r).map_err(err)?);
+    if let Some(r) = youzi {
+        modules.insert(crate::youzi::transfer::KEY.into(), serde_json::to_value(r).map_err(err)?);
     }
     let out = ExportOut {
         format: FORMAT,
@@ -400,8 +401,8 @@ pub fn export_with(conn: &mut Connection, picky: Option<&crate::picky::transfer:
     };
     let text = serde_json::to_string_pretty(&out).map_err(err)?;
     let mut counts: Vec<ModuleSummary> = payloads.iter().map(|p| ModuleSummary { key: p.key().into(), label: p.label().into(), incoming: p.len(), existing: 0 }).collect();
-    if let Some(r) = picky {
-        counts.push(ModuleSummary { key: crate::picky::transfer::KEY.into(), label: crate::picky::transfer::LABEL.into(), incoming: r.len(), existing: 0 });
+    if let Some(r) = youzi {
+        counts.push(ModuleSummary { key: crate::youzi::transfer::KEY.into(), label: crate::youzi::transfer::LABEL.into(), incoming: r.len(), existing: 0 });
     }
     Ok((text, counts))
 }
@@ -419,19 +420,19 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn export_to(state: State<AppState>, path: String) -> Result<ExportSummary, String> {
-    let picky = if state.picky.is_open() { Some(state.picky.with_db(|c| crate::picky::transfer::export(c))?) } else { None };
-    let (text, modules) = state.with_db(|c| export_with(c, picky.as_ref()))?;
+    let youzi = if state.youzi.is_open() { Some(state.youzi.with_db(|c| crate::youzi::transfer::export(c))?) } else { None };
+    let (text, modules) = state.with_db(|c| export_with(c, youzi.as_ref()))?;
     write_atomic(Path::new(&path), &text)?;
     Ok(ExportSummary { path, modules })
 }
 
-/// 柚子's line in a summary (what the file has, what picky.db has).
-fn picky_summary(state: &AppState, rec: &crate::picky::transfer::PickyRecord) -> Result<ModuleSummary, String> {
+/// 柚子's line in a summary (what the file has, what youzi.db has).
+fn youzi_summary(state: &AppState, rec: &crate::youzi::transfer::YouziRecord) -> Result<ModuleSummary, String> {
     Ok(ModuleSummary {
-        key: crate::picky::transfer::KEY.into(),
-        label: crate::picky::transfer::LABEL.into(),
+        key: crate::youzi::transfer::KEY.into(),
+        label: crate::youzi::transfer::LABEL.into(),
         incoming: rec.len(),
-        existing: state.picky.with_db(|c| crate::picky::transfer::count(c))?,
+        existing: state.youzi.with_db(|c| crate::youzi::transfer::count(c))?,
     })
 }
 
@@ -439,8 +440,8 @@ fn picky_summary(state: &AppState, rec: &crate::picky::transfer::PickyRecord) ->
 pub fn import_preview(state: State<AppState>, path: String) -> Result<ImportSummary, String> {
     let text = read(&path)?;
     let mut out = state.with_db(|c| preview(c, &text))?;
-    if let Some(r) = parse(&text)?.picky {
-        out.modules.push(picky_summary(&state, &r)?);
+    if let Some(r) = parse(&text)?.youzi {
+        out.modules.push(youzi_summary(&state, &r)?);
     }
     Ok(out)
 }
@@ -449,21 +450,21 @@ pub fn import_preview(state: State<AppState>, path: String) -> Result<ImportSumm
 pub fn import_apply(state: State<AppState>, path: String, overwrite: bool) -> Result<ImportSummary, String> {
     let text = read(&path)?;
     let backups = state.paths.backups.clone();
-    let picky = parse(&text)?.picky;
-    if let Some(r) = &picky {
-        let line = picky_summary(&state, r)?;
+    let youzi = parse(&text)?.youzi;
+    if let Some(r) = &youzi {
+        let line = youzi_summary(&state, r)?;
         if line.existing > 0 && !overwrite {
             return Err(format!("{}已经有数据，需要确认覆盖后才能导入", line.label));
         }
     }
     let mut out = state.with_db(|c| apply(c, &text, overwrite, &backups))?;
-    if let Some(r) = &picky {
-        let line = picky_summary(&state, r)?;
-        state.picky.with_db(|c| {
+    if let Some(r) = &youzi {
+        let line = youzi_summary(&state, r)?;
+        state.youzi.with_db(|c| {
             if line.existing > 0 {
-                crate::backup::snapshot_of(crate::backup::Store::Picky, c, &backups, "before-import")?;
+                crate::backup::snapshot_of(crate::backup::Store::Youzi, c, &backups, "before-import")?;
             }
-            crate::picky::transfer::replace(c, r)
+            crate::youzi::transfer::replace(c, r)
         })?;
         out.modules.push(line);
     }
@@ -636,14 +637,17 @@ mod tests {
     }
 
     #[test]
-    fn a_file_with_only_picky_reads_and_leaves_pomelo_alone() {
+    fn a_file_with_only_youzi_reads_and_leaves_pomelo_alone() {
         let mut c = memory_db();
+        // files before v38 call it picky
         let text = json!({"format": FORMAT, "formatVersion": 11, "modules": {"picky": {"globalInstructions": "用中文", "projects": [{"name": "论文"}], "memories": [{"content": "住在新加坡", "project": "论文", "notedOn": "2026-10-01"}]}}}).to_string();
         let p = parse(&text).unwrap();
-        assert!(p.payloads.is_empty() && p.picky.as_ref().unwrap().len() == 2);
-        assert!(apply(&mut c, &text, false, &temp_dir("picky-only")).unwrap().modules.is_empty());
+        assert!(p.payloads.is_empty() && p.youzi.as_ref().unwrap().len() == 2);
+        assert!(apply(&mut c, &text, false, &temp_dir("youzi-only")).unwrap().modules.is_empty());
         let bad = json!({"format": FORMAT, "formatVersion": 11, "modules": {"picky": {"memories": [{"content": "x", "project": "没有", "notedOn": "2026-10-01"}]}}}).to_string();
         assert!(parse(&bad).is_err());
+        let now = json!({"format": FORMAT, "formatVersion": FORMAT_VERSION, "modules": {"youzi": {"globalInstructions": "用中文"}, "picky": {"globalInstructions": "x"}}}).to_string();
+        assert!(parse(&now).unwrap().youzi.is_some() && parse(&now).unwrap().skipped == ["picky"]);
     }
 
     #[test]

@@ -62,7 +62,7 @@ export const MODULES: ModuleDef[] = [
     ],
   },
   { id: "vault", label: "芝麻开门", icon: KeyRound, color: "var(--module-vault)" },
-  { id: "picky", label: "柚子", icon: Bird, color: "var(--module-picky)" },
+  { id: "youzi", label: "柚子", icon: Bird, color: "var(--module-youzi)" },
 ];
 
 /** 柚子's 助手 as modules (names are the user's to choose). */

@@ -285,7 +285,7 @@ fn mime(path: &str) -> &'static str {
 }
 
 fn data_url(path: &str, bytes: Vec<u8>) -> Option<String> {
-    (!bytes.is_empty() && bytes.len() as u64 <= INLINE_IMAGE).then(|| format!("data:{};base64,{}", mime(path), crate::picky::office::base64(&bytes)))
+    (!bytes.is_empty() && bytes.len() as u64 <= INLINE_IMAGE).then(|| format!("data:{};base64,{}", mime(path), crate::youzi::office::base64(&bytes)))
 }
 
 fn head_bytes(folder: &Path, path: &str) -> Option<Vec<u8>> {

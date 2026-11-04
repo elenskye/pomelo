@@ -17,7 +17,7 @@ export type Cat = { id: string; name: string; tone: number; mods: string[] };
 export type Layout = { cats: Cat[]; pinned: string[] };
 
 /** Category colors, by `tone`. */
-export const TONES = ["var(--module-todo)", "var(--module-finance)", "var(--module-books)", "var(--module-jobs)", "var(--module-site)", "var(--module-picky)", "var(--module-vault)", "var(--module-days)", "var(--module-films)", "var(--module-packing)"];
+export const TONES = ["var(--module-todo)", "var(--module-finance)", "var(--module-books)", "var(--module-jobs)", "var(--module-site)", "var(--module-youzi)", "var(--module-vault)", "var(--module-days)", "var(--module-films)", "var(--module-packing)"];
 export const toneColor = (tone: number) => TONES[((tone % TONES.length) + TONES.length) % TONES.length];
 
 const INTEREST = "c3";
@@ -28,10 +28,10 @@ export const DEFAULT: Layout = {
     { id: INTEREST, name: "兴趣", tone: 2, mods: ["books", "films", "drawing"] },
     { id: "c4", name: "求职", tone: 3, mods: ["jobs", "seeker", "rater"] },
     { id: "c5", name: "创作", tone: 4, mods: ["site"] },
-    { id: "c6", name: "柚子", tone: 5, mods: ["picky", "translate", "pub2md", "importer"] },
+    { id: "c6", name: "柚子", tone: 5, mods: ["youzi", "translate", "pub2md", "importer"] },
     { id: "c7", name: "工具", tone: 6, mods: ["vault"] },
   ],
-  pinned: ["todo", "notes", "jobs", "seeker", "picky"],
+  pinned: ["todo", "notes", "jobs", "seeker", "youzi"],
 };
 const HOME_OF: Record<string, string> = Object.fromEntries(DEFAULT.cats.flatMap((c) => c.mods.map((m) => [m, c.id])));
 
@@ -86,7 +86,7 @@ export function useDock(): Dock {
   const defs = useMemo(() => new Map([...all, ...ASSISTANT_MODULES].map((m) => [m.id, m])), [all]);
   const known = useMemo(() => [...defs.keys()], [defs]);
   const layout = useMemo(() => normalize(saved ?? DEFAULT, known), [saved, known]);
-  const isHidden = (id: string) => hidden.includes(id) || (!!defs.get(id)?.assistant && hidden.includes("picky")) || (id === "importer" && hidden.includes("finance"));
+  const isHidden = (id: string) => hidden.includes(id) || (!!defs.get(id)?.assistant && hidden.includes("youzi")) || (id === "importer" && hidden.includes("finance"));
   const save = (l: Layout) => {
     qc.setQueryData(QUERY, l);
     api.settingsSet(KEY, l).catch(() => {});

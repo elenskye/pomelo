@@ -17,9 +17,9 @@ import ListPage from "@/modules/custom/ListPage";
 import ProgressPage from "@/modules/custom/ProgressPage";
 import VaultPage from "@/modules/vault/VaultPage";
 // 柚子 brings Markdown / highlighting / formulas: loaded when first opened
-const PickyPage = lazy(() => import("@/modules/picky/PickyPage"));
+const YouziPage = lazy(() => import("@/modules/youzi/YouziPage"));
 // 柚子's 助手 as modules (v0.7)
-const AssistantModule = lazy(() => import("@/modules/picky/assistants"));
+const AssistantModule = lazy(() => import("@/modules/youzi/assistants"));
 import DockPage from "@/app/DockPage";
 import TodoPage from "@/modules/todo/TodoPage";
 import HealthPage from "@/settings/Health";
@@ -58,7 +58,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="list/:id" element={<ListPage />} />
             <Route path="progress/:id" element={<ProgressPage />} />
             <Route path="vault" element={<VaultPage />} />
-            <Route path="picky" element={<Suspense fallback={null}><PickyPage /></Suspense>} />
+            <Route path="youzi" element={<Suspense fallback={null}><YouziPage /></Suspense>} />
             <Route path="translate/:sub?" element={<Suspense fallback={null}><AssistantModule which="translate" /></Suspense>} />
             <Route path="pub2md/:sub?" element={<Suspense fallback={null}><AssistantModule which="pub2md" /></Suspense>} />
             <Route path="seeker/:sub?" element={<Suspense fallback={null}><AssistantModule which="seeker" /></Suspense>} />

@@ -1,4 +1,4 @@
-// 导入账单 (Importer: Rust picky/assistants/importer.rs; the rows finance/import.rs; requirements「记账 · 导入账单」):
+// 导入账单 (Importer: Rust youzi/assistants/importer.rs; the rows finance/import.rs; requirements「记账 · 导入账单」):
 // - 导入: the files go to the chosen model, which reads every transaction out (Excel, PDF, screenshots) and checks
 //   them against 收支 and earlier statements. It runs on while this page is closed (importJob.ts). 提示词清单: my
 //   own points, those ticked go with every request. The model, its 思考 and the 清单 are Importer's settings, kept by Rust; no
@@ -19,8 +19,8 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { KINDS_KEY, UNCATEGORIZED, useKinds } from "@/shared/kinds/api";
 import { Button, Field, IconButton, TextInput } from "@/shared/ui";
-import { pickyApi, usePickyStatus } from "@/modules/picky/api";
-import { LevelPicker } from "@/modules/picky/Thinking";
+import { youziApi, useYouziStatus } from "@/modules/youzi/api";
+import { LevelPicker } from "@/modules/youzi/Thinking";
 import { FIN_KEY, IN_KINDS, OUT_KINDS } from "./api";
 import { AmountInput, CurrencyPicker } from "./fields";
 import { importApi, importerApi, TREATMENTS, useRefundCandidates, type BatchSummary, type ImportDraft, type ImporterPoint, type ImporterSettings, type ImportRow } from "./importApi";
@@ -372,13 +372,13 @@ export function ImportPanel(props: { onClose: () => void; onPosted: (day: string
   const qc = useQueryClient();
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();
-  const cloud = usePickyStatus().data?.cloud ?? [];
+  const cloud = useYouziStatus().data?.cloud ?? [];
   const settings = useQuery({ queryKey: SETTINGS, queryFn: importerApi.settings });
   const points = settings.data?.points ?? [];
   const models = cloud.map((m) => ({ value: `cloud:${m.id}`, label: m.name }));
   const model = [settings.data?.model].find((m) => m && models.some((x) => x.value === m)) ?? models[0]?.value ?? null;
   // 收支 local only (设置 → 柚子): nothing to read with
-  const flowOut = useQuery({ queryKey: ["picky", "data-cloud"], queryFn: pickyApi.dataCloud }).data?.find((m) => m.module === "finance/flow")?.allowed !== false;
+  const flowOut = useQuery({ queryKey: ["youzi", "data-cloud"], queryFn: youziApi.dataCloud }).data?.find((m) => m.module === "finance/flow")?.allowed !== false;
   const aiOk = !!model && flowOut;
   const noAi = !flowOut ? "钱来钱往 · 收支不发给云端" : !model ? "没有云端模型" : null;
   const job = useImportJob();
@@ -575,7 +575,7 @@ export function ImportPanel(props: { onClose: () => void; onPosted: (day: string
     <section aria-label="导入账单" className="absolute inset-0 z-20 flex flex-col gap-3 bg-background px-6 pt-5 pb-4">
       <header className="flex shrink-0 flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">导入账单</h2>
-        <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手 Importer" style={{ color: "var(--module-picky)" }} />
+        <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手 Importer" style={{ color: "var(--module-youzi)" }} />
         <span className="mr-auto" />
         {noAi && <span className="text-xs text-muted-foreground">{noAi}</span>}
         <Dropdown ariaLabel="模型" value={model} options={models.length ? models : [{ value: null, label: "没有云端模型" }]} onChange={(m) => m && saveSettings({ model: m })} align="end" />

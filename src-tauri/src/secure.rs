@@ -1,9 +1,11 @@
 //! macOS pieces of 芝麻开门: the keychain copy of the vault key, Touch ID, a concealed pasteboard
 //! entry, and this build's identity. Unit tests swap all of it for in-memory fakes (no keychain
 //! writes, no prompts).
-//! Keychain: the app is ad-hoc signed, so macOS trusts an item only for the exact build that wrote it
-//! (a newer build reading it gets a system prompt; deleting it fails with errSecInvalidOwnerEdit).
-//! vault.rs therefore records which build saved the copy (`build_id`) and never reads another's.
+//! Keychain: the app is self-signed without a team id, so macOS trusts an item only for the builds
+//! the user let in (a newer build reading it gets a system prompt; changing or deleting it fails
+//! until then). vault.rs keeps one Touch ID copy, records which build saved it (`build_id`) and
+//! never reads another build's: after an update the master password comes first, then this build
+//! overwrites the copy (key_save lets itself in with a read when the plain write is refused).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bio {
@@ -30,7 +32,7 @@ mod imp {
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
     use objc2_foundation::{NSError, NSString};
     use objc2_local_authentication::{LAContext, LAPolicy};
-    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
+    use security_framework::passwords::{get_generic_password, set_generic_password};
     use std::sync::mpsc;
     use std::time::{Duration, UNIX_EPOCH};
     use zeroize::Zeroizing;
@@ -83,18 +85,21 @@ mod imp {
         }
     }
 
+    /// Adds or overwrites. An item an older build wrote refuses the write until this build is let
+    /// in: the read shows that prompt, then the write is tried once more.
     pub fn key_save(account: &str, key: &[u8]) -> Result<(), String> {
-        set_generic_password(&keychain_service(), account, key).map_err(|e| e.to_string())
+        let put = || set_generic_password(&keychain_service(), account, key);
+        if put().is_ok() {
+            return Ok(());
+        }
+        let _ = get_generic_password(&keychain_service(), account);
+        put().map_err(|e| e.to_string())
     }
 
     pub fn key_load(account: &str) -> Result<Zeroizing<Vec<u8>>, String> {
         get_generic_password(&keychain_service(), account).map(Zeroizing::new).map_err(|e| e.to_string())
     }
 
-    /// Only for copies this build wrote (others can't be deleted, see module doc).
-    pub fn key_delete(account: &str) {
-        let _ = delete_generic_password(&keychain_service(), account);
-    }
 
     /// Plain copy (message text, code, LaTeX).
     #[allow(unused_unsafe)]
@@ -168,9 +173,6 @@ pub mod fake {
     }
     pub fn key_load(account: &str) -> Result<Zeroizing<Vec<u8>>, String> {
         KEYCHAIN.with_borrow(|k| k.get(account).cloned().map(Zeroizing::new).ok_or_else(|| "not found".into()))
-    }
-    pub fn key_delete(account: &str) {
-        KEYCHAIN.with_borrow_mut(|k| k.remove(account));
     }
     pub fn copy_concealed(text: &str, _clear_after: Duration) {
         CLIPBOARD.with_borrow_mut(|c| *c = text.into());

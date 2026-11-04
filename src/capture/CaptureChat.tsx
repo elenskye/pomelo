@@ -9,13 +9,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send, Square, SquarePen } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextArea } from "@/shared/ui";
-import { pickyApi, usePickyStatus, type ChatMessage } from "@/modules/picky/api";
-import { toolClass } from "@/modules/picky/Composer";
-import { openFile } from "@/modules/picky/Files";
-import { IssueNotice, ModelMenu } from "@/modules/picky/ModelMenu";
-import { ThinkingButton } from "@/modules/picky/Thinking";
-import { Transcript, type TranscriptHandle } from "@/modules/picky/Transcript";
-import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "@/modules/picky/useChat";
+import { youziApi, useYouziStatus, type ChatMessage } from "@/modules/youzi/api";
+import { toolClass } from "@/modules/youzi/Composer";
+import { openFile } from "@/modules/youzi/Files";
+import { IssueNotice, ModelMenu } from "@/modules/youzi/ModelMenu";
+import { ThinkingButton } from "@/modules/youzi/Thinking";
+import { Transcript, type TranscriptHandle } from "@/modules/youzi/Transcript";
+import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "@/modules/youzi/useChat";
 import { captureApi } from "./api";
 
 const CHAT_KEY = ["capture", "chat"];
@@ -54,7 +54,7 @@ function Forward() {
 function Chat(props: Props) {
   const qc = useQueryClient();
   const toast = useToast();
-  const status = usePickyStatus().data;
+  const status = useYouziStatus().data;
   const chat = useQuery({ queryKey: CHAT_KEY, queryFn: captureApi.chat });
   const current = chat.data?.id ?? null;
   const [draftThinking, setDraftThinking] = useState(true);
@@ -72,7 +72,7 @@ function Chat(props: Props) {
   const activeHere = activeIn(status, current);
   const messages = useQuery({
     queryKey: messagesKey(current),
-    queryFn: () => (current == null ? Promise.resolve([] as ChatMessage[]) : pickyApi.messages(current)),
+    queryFn: () => (current == null ? Promise.resolve([] as ChatMessage[]) : youziApi.messages(current)),
     refetchInterval: activeHere && !live ? 1000 : false,
   });
   const saved = messages.data ?? [];
@@ -94,7 +94,7 @@ function Chat(props: Props) {
     if ("error" in got) return prep.failCard(got, () => void send());
     props.onText("");
     const extras = { attachments: [], files: [], passages: got.passages, memories: got.memories };
-    const sent = await run("send", text, (on) => pickyApi.send(current, null, null, false, current == null ? thinking : null, current == null ? effort : null, text, extras, null, [], null, on, true));
+    const sent = await run("send", text, (on) => youziApi.send(current, null, null, false, current == null ? thinking : null, current == null ? effort : null, text, extras, null, [], null, on, true));
     if (!sent) props.onText(text);
   };
   const versionRun = async (m: ChatMessage, text: string | null) => {
@@ -102,14 +102,14 @@ function Chat(props: Props) {
     prep.clearFail();
     const got = await prep.prepareFor(text ?? q?.content ?? "", [], false);
     if ("error" in got) return prep.failCard(got, () => void versionRun(m, text));
-    void run("version", text ?? "", (on) => (text != null ? pickyApi.edit(m.id, text, got.passages, got.memories, on) : pickyApi.regenerate(m.id, got.passages, got.memories, on)));
+    void run("version", text ?? "", (on) => (text != null ? youziApi.edit(m.id, text, got.passages, got.memories, on) : youziApi.regenerate(m.id, got.passages, got.memories, on)));
   };
   const stop = () => {
     const runId = live?.runId ?? activeHere?.run;
-    if (runId != null) void pickyApi.stop(runId).catch((e) => toast(errorText(e), "error"));
+    if (runId != null) void youziApi.stop(runId).catch((e) => toast(errorText(e), "error"));
   };
   const switchVersion = (m: ChatMessage, delta: -1 | 1) =>
-    void pickyApi.switchVersion(m.id, delta).then(
+    void youziApi.switchVersion(m.id, delta).then(
       () => qc.invalidateQueries({ queryKey: messagesKey(current) }),
       (e) => toast(errorText(e), "error"),
     );

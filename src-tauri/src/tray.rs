@@ -1,9 +1,9 @@
-//! Menu bar (v0.3, from the old Picky): Pomelo keeps running when its window closes (⌘Q quits).
+//! Menu bar (v0.3): Pomelo keeps running when its window closes (⌘Q quits).
 //! The bird icon is solid while a local model is ready, hollow otherwise. The menu shows the
 //! model status and holds the everyday controls; it is rebuilt only when what it shows changes.
 
-use crate::picky::runtime::{Dot, ServiceState, ServiceStatus, Svc};
-use crate::picky::{self, Status};
+use crate::youzi::runtime::{Dot, ServiceState, ServiceStatus, Svc};
+use crate::youzi::{self, Status};
 use crate::AppState;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
@@ -17,7 +17,7 @@ const ICON_IDLE: &[u8] = include_bytes!("../icons/tray/idle@2x.png");
 static SHOWN: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let status = app.state::<AppState>().picky.status();
+    let status = app.state::<AppState>().youzi.status();
     TrayIconBuilder::with_id(TRAY)
         .icon(icon(&status)?)
         .icon_as_template(true)
@@ -31,7 +31,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn refresh(app: &AppHandle) {
-    let status = app.state::<AppState>().picky.status();
+    let status = app.state::<AppState>().youzi.status();
     let sig = signature(&status);
     {
         let mut shown = SHOWN.lock().unwrap_or_else(|e| e.into_inner());
@@ -186,13 +186,13 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
             app.exit(0);
             Ok(())
         }
-        "stop" => picky::stop_model(app),
-        "embedding-start" => picky::service(app, Svc::Embedding, "start"),
-        "embedding-stop" => picky::service(app, Svc::Embedding, "stop"),
-        "rerank-start" => picky::service(app, Svc::Rerank, "start"),
-        "rerank-stop" => picky::service(app, Svc::Rerank, "stop"),
+        "stop" => youzi::stop_model(app),
+        "embedding-start" => youzi::service(app, Svc::Embedding, "start"),
+        "embedding-stop" => youzi::service(app, Svc::Embedding, "stop"),
+        "rerank-start" => youzi::service(app, Svc::Rerank, "start"),
+        "rerank-stop" => youzi::service(app, Svc::Rerank, "stop"),
         other => match other.strip_prefix("model:") {
-            Some(choice) => picky::select(app, choice),
+            Some(choice) => youzi::select(app, choice),
             None => Ok(()),
         },
     };

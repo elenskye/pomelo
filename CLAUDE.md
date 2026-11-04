@@ -25,12 +25,12 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## 只在主目录做
 
 - 主目录 `~/Documents/GitHub/pomelo`（main）是我日常用的，不再开 worktree。提交、合并、推送都由我来，`pnpm app:install` 只在 main 上做。`pnpm dev` 固定 1420 端口，同时只能一个。
-- 新加的 migration、`picky.db` 升级脚本、`transfer.rs` 格式版本、`search/store.rs` 版本都接着现有编号写，已有的永远不改。
+- 新加的 migration、`youzi.db` 升级脚本、`transfer.rs` 格式版本、`search/store.rs` 版本都接着现有编号写，已有的永远不改。
 
 ## 数据规则
 
 - 只有 Rust 读写 SQLite；界面和柚子只调用 Rust 命令。业务规则只写在 Rust 里。
-- **会改数据的命令都用 `state.with_undo("标签", …)`**（柚子的数据用 `with_picky_undo`），只读的用 `with_db`。例行检查（`daily_sweep`）、后台自己跑的（定时任务、今日简报）和各种设置不进撤销，可撤销的编辑也不碰它们记的东西（否则 ⌘Z 会被挡住）。
+- **会改数据的命令都用 `state.with_undo("标签", …)`**（柚子的数据用 `with_youzi_undo`），只读的用 `with_db`。例行检查（`daily_sweep`）、后台自己跑的（定时任务、今日简报）和各种设置不进撤销，可撤销的编辑也不碰它们记的东西（否则 ⌘Z 会被挡住）。
 - 一次改好几张表用 `common::Tx::begin(conn)?`（可嵌套，基于 SAVEPOINT），不用 `unchecked_transaction`。
 - 改结构只能新增 migration，已有的永远不改；重建有子表的表注意外键动作（参考 `0018`、`0019`）。每个模块导出再导入必须完全一致（有测试）；数据文件格式变了就把 `transfer.rs` 的版本加一，旧文件要能读。
 - 开发和测试只用开发数据目录或临时目录。除非我明确要求，绝不读写真实数据目录 `~/Library/Application Support/Pomelo OS/`；我允许时也只碰我说的那几块，读用只读拷贝（`sqlite3 -readonly <库> ".backup <临时文件>"`），写之前先问，绝不撤回或覆盖我在正式版里做的修改。个人数据（xlsx、数据库、备份、导出文件、`prototype/`）不进 Git。
@@ -46,16 +46,16 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## Seeker
 
-- `~/Documents/Seeker` 是我的求职资料（不是 Git 仓库，有自己的 `AGENTS.md`）。Pomelo 里的「Seeker」是柚子的助手（代码和数据在 `picky.db`），资料以 Pomelo 为准；需求见 `requirements.md` 的「Seeker」「Rater」。
+- `~/Documents/Seeker` 是我的求职资料（不是 Git 仓库，有自己的 `AGENTS.md`）。Pomelo 里的「Seeker」是柚子的助手（代码和数据在 `youzi.db`），资料以 Pomelo 为准；需求见 `requirements.md` 的「Seeker」「Rater」。
 - 真文件夹的边界：`AGENTS.md` 只读；`knowledge/` 只读文件夹、文件名和 `招聘索引.md`；`material/` 只看文件名（Pomelo 也只列文件名，不读内容、不发给模型）；`cv/` 能看文件名，两份原模板 `cv/cn/seek-it-cn-template-v1.docx`、`cv/en/seek-it-keyreply-resume-v5.docx` 只读（复制到临时文件夹里测；`cv/cn/seek-it-cn-template-v2.docx` 是用内置中文模板导出的样例，编的林小柚），别的简历要读内容先问我；原件不改、不移、不删。
 - 开发和测试只用临时目录里编的资料（照 `seeker/tests.rs`）；开发版打不开真的 Seeker 文件夹（Rust 里拦着）。简历、经历、证书这些个人资料不进 Git，文档和问卷里的例子也用编的。
 
 ## 柚子（AI）
 
-- **名字**：AI 叫柚子（顶栏的柚子就是它）。代码、文件名、`picky.db`、偏好键仍叫 picky；钥匙串的服务名「Pomelo OS 小拾」不能改（改了存过的 Key 全读不到）；Old Timer 里聊天的是另一个人设，叫小拾。
-- 数据只在 `picky.db`（自己的升级脚本和版本号），不为柚子给 `pomelo.db` 加 migration。
-- **锁不能套着用**：`with_db` / `picky.with_db` 的闭包里不能再调用会自己上同一把锁的函数（比如 `picky.selection()`），会卡死整个 App。页面反复调用、可能慢的命令写成 `async`。
-- **运行方式**由 `picky::mode` 决定：只有正式数据目录的打包版（或 `POMELO_REAL_MODELS=1`）是真实的；开发版、测试、设了 `POMELO_DATA_DIR` 的打包版都是模拟（模拟模型、假的流式服务、Key 在内存，不调 `llmctl.sh`、不连 8080 / 8081 / 8082 和云端、不碰钥匙串）。
+- **名字**：AI 叫柚子（顶栏的柚子就是它），代码、文件名、偏好键里叫 youzi；钥匙串的服务名「Pomelo OS Agent」不能改（改了存过的 Key 全读不到）；Old Timer 里聊天的是另一个人设，叫小拾。
+- 数据只在 `youzi.db`（自己的升级脚本和版本号），不为柚子给 `pomelo.db` 加 migration。
+- **锁不能套着用**：`with_db` / `youzi.with_db` 的闭包里不能再调用会自己上同一把锁的函数（比如 `youzi.selection()`），会卡死整个 App。页面反复调用、可能慢的命令写成 `async`。
+- **运行方式**由 `youzi::mode` 决定：只有正式数据目录的打包版（或 `POMELO_REAL_MODELS=1`）是真实的；开发版、测试、设了 `POMELO_DATA_DIR` 的打包版都是模拟（模拟模型、假的流式服务、Key 在内存，不调 `llmctl.sh`、不连 8080 / 8081 / 8082 和云端、不碰钥匙串）。
 - **不为本地模型让步**：做功能不用考虑本地模型的性能和上下文，把功能做好；我说要适配才适配。
 - **测试模型**：平时只用模拟的。真的本地模型和真接口照 `docs/testing.md`，用之前先问我；本地模型是云端的备用，也要测好。云端平时由我在正式版里测；我让你用云端时，Key 在我给的文件里（`POMELO_CLOUD_KEY_FILE`），测试代码从不读钥匙串。
 - **本地模型**：`~/Documents/LLM` 由你（Claude）维护：部署、整理脚本和清单、保持轻量。改之前说清楚，下载或删除模型文件先问我；只用它自己的文件夹和 launchd 标签，改完在它的 `INSTALLATION.md` 里写现状。聊天模型上下文：14B（及看不出大小的）最多 16K，9B 这样更小的最多 32K（`models.json`、`llmctl.sh`、Pomelo 都拦）。功能超出本地模型能力时以我的需求为准，不降级。
@@ -65,7 +65,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **思考**：每次调用模型都传要不要思考（`Options.thinking`）；模型能不能做到看 `cloud::Think` 和模型清单，在 `provider.rs` 里处理。思考强度：模型清单里填（`efforts`、`default_effort`），只在 `provider.rs` 的 `level_for` 决定发什么，新的调用点不用管；要让我选强度的地方用 `cloud::Level`（或存「开关 + 强度」）和 `Thinking.tsx` 的 `LevelPicker`；连续调用很多次的中间步骤不传强度（用模型的默认）；直接连接口的（`pub2md/search.rs`）照 `CloudModel::effort`。开思考时用 `Route::with_thinking` / `context::think_room` 多留回复长度。
 - **问我（ASK）**：`ask.rs`。模型停在 `Gate` 上等我回答，只给云端模型的对话；新加不能等人的后台任务不要提供它。
 - **写数据**：模型只能提议，Rust 用模块自己的校验试写（在撤回的事务里）后存成卡片，我确认后才写，整张卡片一步 `with_undo`。没确认的卡片，模型用同一个工具加 `replace`（编号）换掉其中一条（`act/card.rs`）。
-- **插件库**（`picky/skills/`）：技能是 Rust 写的固定功能。发给 Wikidata / Open Library 的请求带我填的联系邮箱（`picky.db` 偏好 `skills.contact`，不写进代码）。
+- **插件库**（`youzi/skills/`）：技能是 Rust 写的固定功能。发给 Wikidata / Open Library 的请求带我填的联系邮箱（`youzi.db` 偏好 `skills.contact`，不写进代码）。
 - **助手**（`assistants/`）：名字由我来定，新加的先问我（现在有 Translator、Pub2MD、Seeker、Rater、Importer）。
 - **定时任务、今日简报、年度总结**：Pomelo 的数据只读，不给写数据的工具；定时任务能联网搜索、用文件工具箱（只提议，卡片留在那次的对话里）；简报和年度总结也不给查数据的工具（Rust 先用 `data.rs` 读好）。开机自动启动只有正式数据目录的打包版会登记，测试不碰真实的登录项。
 - 模拟模型和 `mockIpc.ts` 都要能模拟查数据、提议写数据、定时任务、简报和年度总结；按意思搜用模拟的向量和重排，联网搜索、书单 / 影单检索用模拟的结果。
@@ -89,19 +89,19 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 | 位置 | 内容 |
 |---|---|
-| `src-tauri/src/modules/` | 每个模块一个文件（`todo` `finance` `jobs` `notes` `days` `vault` `books` `films` `drawing` `packing`），开头是规则摘要；`finance/import.rs` 导入账单的账单、行、候选和入账（读账单的是 `picky/assistants/importer.rs`）；`attachments.rs` 附件；`custom.rs` · `lists.rs` · `progress.rs` 五花八门和循序渐进；`kinds.rs` 可自定义的类型；`common.rs` 校验、日期、排序、链接、`Tx` |
+| `src-tauri/src/modules/` | 每个模块一个文件（`todo` `finance` `jobs` `notes` `days` `vault` `books` `films` `drawing` `packing`），开头是规则摘要；`finance/import.rs` 导入账单的账单、行、候选和入账（读账单的是 `youzi/assistants/importer.rs`）；`attachments.rs` 附件；`custom.rs` · `lists.rs` · `progress.rs` 五花八门和循序渐进；`kinds.rs` 可自定义的类型；`common.rs` 校验、日期、排序、链接、`Tx` |
 | `src-tauri/src/search/` | `query.rs` 唯一的搜索入口（按字 / 按意思 / 合并重排）、`mod.rs` ⌘K、`store.rs` search.db、`sources.rs` 每类记录进索引的字段、`text.rs` 分词（改了把 `RULES` 加一）、`vectors.rs`、`indexer.rs` 后台同步 |
-| `src-tauri/src/picky/` 模型 | `mod.rs` 运行方式、状态、后台循环；`runtime.rs` 本地模型和向量、重排服务；`catalog.rs` 模型清单；`cloud.rs` 云端模型、`Think`、Key；`provider.rs` 流式连接（OpenAI 兼容、Anthropic、模拟；本地模型排队）；`embed.rs` · `rerank.rs` |
-| `src-tauri/src/picky/` 对话 | `store.rs` picky.db 和升级脚本；`chat.rs` 对话和生成循环（每个对话一个 `Runs` 位置）；`context.rs` 上下文预算；`library.rs` 对话列表；`instructions.rs` · `templates.rs` · `memory.rs`；`files.rs` · `pdf.rs` · `office.rs` · `reading.rs` · `index.rs` 附件和资料；`knowledge.rs` 知识库；`work.rs` · `word.rs` 保存为 Word、改文件、照模板写简历；`excel.rs` 读写 .xlsx（Excel 工具箱）；`find.rs` · `export.rs` · `transfer.rs` · `storage.rs` |
-| `src-tauri/src/picky/` 能力 | `data.rs` 查 Pomelo 数据；`cite.rs` 出处和「搜索」「读整条」；`ask.rs` 问我（ASK）；`act/` 写数据的工具和确认卡片；`assist.rs` 润色、补全、一句话填好；`assistants/`：`seeker.rs` + `seeker/`（`catalog` 资料，规则是「标题 + 分点」、`rules_markdown` 拼给模型；`import` 从 transfer/ 导入、`workflow` 组装、`model` 模型建议、`output` Word 导出和岗位关联、`company` knowledge/ 的公司和检索、`files` cv/ 和 material/、`tests`；内置简历模板在 `src-tauri/templates/`），`rater.rs` Rater 的题库 + `rater/qbank.rs` 三个题库 SKILL、程序自带的规则和按功能选的模型 + `rater/practice.rs` 卡片练习 + `rater/interview.rs` 面试的准备、复盘和总结 + `rater/record.rs` 复盘的记录对话（借柚子的对话，不进对话列表），`translate.rs`，`importer.rs` Importer（导入账单：读文件、查重、再整理、提示词清单），`site.rs` 呦呦漫游的按中文起草，`pub2md/`（流程在 `job.rs`）；`skills/` 插件库（`mod.rs` 每个技能的流程图 `Flow`，照代码真实的判断和循环写；`seeker.rs` 只读的「Seeker 资料」，`qbank.rs` 对话里的题库 SKILL）；`schedule.rs` 定时任务；`brief.rs` 今日简报（提示词能改）；`yearly.rs` 年度总结（定时里画的流程图 `FLOW`）；`atlas.rs` 年度总结写完后给 Atlas 存的「呈现结果」（数字快照 + 各幕的话） |
+| `src-tauri/src/youzi/` 模型 | `mod.rs` 运行方式、状态、后台循环；`runtime.rs` 本地模型和向量、重排服务；`catalog.rs` 模型清单；`cloud.rs` 云端模型、`Think`、Key；`provider.rs` 流式连接（OpenAI 兼容、Anthropic、模拟；本地模型排队）；`embed.rs` · `rerank.rs` |
+| `src-tauri/src/youzi/` 对话 | `store.rs` youzi.db 和升级脚本；`chat.rs` 对话和生成循环（每个对话一个 `Runs` 位置）；`context.rs` 上下文预算；`library.rs` 对话列表；`instructions.rs` · `templates.rs` · `memory.rs`；`files.rs` · `pdf.rs` · `office.rs` · `reading.rs` · `index.rs` 附件和资料；`knowledge.rs` 知识库；`work.rs` · `word.rs` 保存为 Word、改文件、照模板写简历；`excel.rs` 读写 .xlsx（Excel 工具箱）；`find.rs` · `export.rs` · `transfer.rs` · `storage.rs` |
+| `src-tauri/src/youzi/` 能力 | `data.rs` 查 Pomelo 数据；`cite.rs` 出处和「搜索」「读整条」；`ask.rs` 问我（ASK）；`act/` 写数据的工具和确认卡片；`assist.rs` 润色、补全、一句话填好；`assistants/`：`seeker.rs` + `seeker/`（`catalog` 资料，规则是「标题 + 分点」、`rules_markdown` 拼给模型；`import` 从 transfer/ 导入、`workflow` 组装、`model` 模型建议、`output` Word 导出和岗位关联、`company` knowledge/ 的公司和检索、`files` cv/ 和 material/、`tests`；内置简历模板在 `src-tauri/templates/`），`rater.rs` Rater 的题库 + `rater/qbank.rs` 三个题库 SKILL、程序自带的规则和按功能选的模型 + `rater/practice.rs` 卡片练习 + `rater/interview.rs` 面试的准备、复盘和总结 + `rater/record.rs` 复盘的记录对话（借柚子的对话，不进对话列表），`translate.rs`，`importer.rs` Importer（导入账单：读文件、查重、再整理、提示词清单），`site.rs` 呦呦漫游的按中文起草，`pub2md/`（流程在 `job.rs`）；`skills/` 插件库（`mod.rs` 每个技能的流程图 `Flow`，照代码真实的判断和循环写；`seeker.rs` 只读的「Seeker 资料」，`qbank.rs` 对话里的题库 SKILL）；`schedule.rs` 定时任务；`brief.rs` 今日简报（提示词能改）；`yearly.rs` 年度总结（定时里画的流程图 `FLOW`）；`atlas.rs` 年度总结写完后给 Atlas 存的「呈现结果」（数字快照 + 各幕的话） |
 | `src-tauri/src/site/` | 呦呦漫游：`mod.rs` 运行方式、副本、命令；`tools.rs` git / gh / Node；`server.rs` 本地服务；`changes.rs` · `publish.rs` 改动、发布；`yaml.rs`（照 js-yaml 写，`yaml_cases.rs` 对照）· `doc.rs` 内容文件；`wander.rs` `now.rs` `about.rs` `career.rs` 各页；`registry.rs` · `images.rs` 资源库；`terms.rs` 话题、类别、外链 |
 | `src-tauri/src/` 其他 | `health.rs` 设置里的体检；`dock.rs` 模块坞的实时小字；`tray.rs` 菜单栏的小鸟；`menu.rs` Mac 菜单栏的菜单（页签快捷键）；`capture.rs` 速记小窗（窗口、⌥Space、草稿）；`autostart.rs`；`undo.rs` 撤销 / 重做（SQLite session，分两个库）；`secure.rs` 钥匙串、Touch ID、剪贴板；`transfer.rs` · `backup.rs` 导出导入、备份恢复；`db.rs` · `migrations/`；`home.rs` 首页汇总 |
 | `src/app/` | `App.tsx` 外壳、⌘Z / ⌘K / ⌘J、例行检查；`TopBar.tsx` 顶栏；`tabs.tsx` 页签和前进后退、`subpage.ts` 子页进地址；`IndexTabs.tsx` 索引签；`dock.ts` · `DockPage.tsx` 模块坞；`Bloom.tsx` 柚子瓣；`Pomelo.tsx` 柚子的表情和状态；`drag.tsx` · `Menu.tsx`；`frame.css`；`Search.tsx`；`pageContext.ts`；`hidden.ts`；`modules.ts`（模块、助手、子页） |
 | `src/home/` | 首页、`BriefCard.tsx`、`YearCard.tsx` |
 | `src/capture/` | 速记小窗的页面（`capture.html`，Vite 的第二个入口；`CaptureChat.tsx` 问柚子） |
 | `src/modules/<模块>/` | 各模块页面（`finance/ImportPanel.tsx` · `importApi.ts` · `importJob.ts` 导入账单，子页 `/finance/import`）；书影共用 `src/shared/collection/`；`custom/` 五花八门、循序渐进；`site/` 呦呦漫游（`SitePage.tsx` 入口和页签、`parts.tsx` 共用的、`MdEditor.tsx`）；`jobs/SeekerExports.tsx` · `jobs/Interviews.tsx` 岗位面板里的 Seeker 简历（从 cv/ 选）和面试 |
-| `src/modules/picky/` | `PickyPage.tsx`；`ConversationList.tsx`；`Transcript.tsx` · `markdown.ts`；`useChat.tsx`；`SideChat.tsx` 右侧小窗；`AskCard.tsx` 问我的卡片；`Composer.tsx` · `slots.ts`；`Manage.tsx` `Schedules.tsx` `Plugins.tsx` `Knowledge.tsx` `Work.tsx`；`Assist.tsx` 面板里的帮手；`Thinking.tsx` 思考和强度的按钮、下拉；`assistants/`（`ModelRow.tsx` 助手设置页的一行模型和思考；`Seeker.tsx` 和 `Seeker*.tsx`、`seekerApi.ts`、`seekerDraft.ts`、`seekerJobs.tsx`（模型调用离开页面也跑完，和按钮下的状态行）；`SeekerFiles.tsx` cv/ 和 material/；`select.tsx` 拖动排序和「选择」多选；`SeekerGroups.tsx` 分组改名删除、上移下移、规则「发给」和发给模型的说明；`Rater.tsx`（含设置页）· `RaterCards.tsx` 卡片页 · `RaterInterview.tsx` 面试页（准备、复盘对话窗、总结）· `raterApi.ts`；`Translate.tsx`；`Pub2md.tsx` · `MmdPreview.tsx`） |
-| `src/settings/` · `src/shared/` | 设置页（`Picky.tsx` 柚子、云端模型，`Health.tsx` 体检）；共用组件（`editor/` 写字的输入框：`LiveText` 底子、`LiteEditor`（念念不忘的格式）、`lite.ts`，新模块要写字就用它；`Dropdown` `PickField`（长列表的搜索小弹窗）`DateInput` `panel` `Modal` `sortable` `charts` `diff` `InlineMd` `open` `tags` `attachments/` 等） |
+| `src/modules/youzi/` | `YouziPage.tsx`；`ConversationList.tsx`；`Transcript.tsx` · `markdown.ts`；`useChat.tsx`；`SideChat.tsx` 右侧小窗；`AskCard.tsx` 问我的卡片；`Composer.tsx` · `slots.ts`；`Manage.tsx` `Schedules.tsx` `Plugins.tsx` `Knowledge.tsx` `Work.tsx`；`Assist.tsx` 面板里的帮手；`Thinking.tsx` 思考和强度的按钮、下拉；`assistants/`（`ModelRow.tsx` 助手设置页的一行模型和思考；`Seeker.tsx` 和 `Seeker*.tsx`、`seekerApi.ts`、`seekerDraft.ts`、`seekerJobs.tsx`（模型调用离开页面也跑完，和按钮下的状态行）；`SeekerFiles.tsx` cv/ 和 material/；`select.tsx` 拖动排序和「选择」多选；`SeekerGroups.tsx` 分组改名删除、上移下移、规则「发给」和发给模型的说明；`Rater.tsx`（含设置页）· `RaterCards.tsx` 卡片页 · `RaterInterview.tsx` 面试页（准备、复盘对话窗、总结）· `raterApi.ts`；`Translate.tsx`；`Pub2md.tsx` · `MmdPreview.tsx`） |
+| `src/settings/` · `src/shared/` | 设置页（`Youzi.tsx` 柚子、云端模型，`Health.tsx` 体检）；共用组件（`editor/` 写字的输入框：`LiveText` 底子、`LiteEditor`（念念不忘的格式）、`lite.ts`，新模块要写字就用它；`Dropdown` `PickField`（长列表的搜索小弹窗）`DateInput` `panel` `Modal` `sortable` `charts` `diff` `InlineMd` `open` `tags` `attachments/` 等） |
 | `src/dev/mockIpc.ts` | 浏览器测试用的模拟后端（新命令要加进来；Seeker 的在 `seekerMock.ts`） |
 | `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`resume-templates.ts`（生成 `src-tauri/templates/` 的内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
 
@@ -110,7 +110,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 1. 新增 migration，加进 `db.rs` 的 `MIGRATIONS`
 2. 写 `src-tauri/src/modules/xxx.rs`（参考 `jobs.rs`），在 `mod.rs`、`lib.rs` 注册；写导出再导入的往返测试
 3. 需要「类型」：在 `kinds.rs` 的 `TABLES` 加一行（列名必须叫 `kind_id`），默认值写进 migration
-4. `transfer.rs` 加一个 `Payload`（含 `kind_modules`），格式版本加一；`search/sources.rs` 加要搜的字段，页面用 `useOpenRequest` 打开搜到的记录；要上首页的在 `home.rs` 加一块；柚子要能查的在 `picky/data.rs` 加查询
+4. `transfer.rs` 加一个 `Payload`（含 `kind_modules`），格式版本加一；`search/sources.rs` 加要搜的字段，页面用 `useOpenRequest` 打开搜到的记录；要上首页的在 `home.rs` 加一块；柚子要能查的在 `youzi/data.rs` 加查询
 5. 前端：`src/modules/xxx/`，在 `app/modules.ts`、`main.tsx` 注册，`app/dock.ts` 的 `DEFAULT` 里定它默认在模块坞哪个分类；有子页的在 `modules.ts` 写 `subs`、页面用 `useSubPage`；模块颜色写进 `index.css`；命令和示例数据加进 `mockIpc.ts`；页面用 `usePageContext` 告诉小窗在哪、打开了哪条
 6. 更新文档
 

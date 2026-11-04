@@ -5,7 +5,7 @@
 // for an hour after it's done; otherwise a random one that isn't sad, picked each hour; late at night 困了).
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation } from "react-router";
-import { useBrief, usePickyStatus } from "@/modules/picky/api";
+import { useBrief, useYouziStatus } from "@/modules/youzi/api";
 
 const PC = { rind: "#ebb36e", flesh: "#f8d694", core: "#f0c17c", leaf: "#8da872", gold: "#dcaa52", red: "#cd7865" };
 type FaceDef = { core?: boolean; eyes: keyof typeof EYES; mouth: keyof typeof MOUTH; extra?: keyof typeof EXTRA };
@@ -202,24 +202,24 @@ function useMood(): Face {
 
 /** 柚子 writing → thinking; when it stops → success for a moment (with a line when not on 柚子's page). */
 function useWriting(): { face: Face | null; line: string | null } {
-  const status = usePickyStatus().data;
+  const status = useYouziStatus().data;
   const generating = !!status?.generating;
   const asking = !!status?.active.some((a) => a.asking);
-  const onPicky = useLocation().pathname.startsWith("/picky");
+  const onYouzi = useLocation().pathname.startsWith("/youzi");
   const [done, setDone] = useState<string | null>(null);
   const was = useRef(false);
   useEffect(() => {
     if (generating) {
       setDone(null);
     } else if (was.current) {
-      setDone(onPicky ? "" : "柚子写好了");
+      setDone(onYouzi ? "" : "柚子写好了");
       const t = setTimeout(() => setDone(null), 2800);
       was.current = false;
       return () => clearTimeout(t);
     }
     was.current = generating;
   }, [generating]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (asking) return { face: "wow", line: onPicky ? null : "柚子在等你回答" };
+  if (asking) return { face: "wow", line: onYouzi ? null : "柚子在等你回答" };
   if (generating) return { face: "thinking", line: null };
   if (done != null) return { face: "success", line: done || null };
   return { face: null, line: null };

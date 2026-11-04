@@ -7,7 +7,7 @@ import { errorText, useToast } from "@/shared/feedback";
 import { api, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
 import { IDLE_MS, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "@/modules/vault/api";
-import { LIBRARY_KEY, usePickyStatus } from "@/modules/picky/api";
+import { LIBRARY_KEY, useYouziStatus } from "@/modules/youzi/api";
 import { Bloom } from "./Bloom";
 import { useDock } from "./dock";
 import { DragChip } from "./drag";
@@ -22,7 +22,7 @@ import { TopBar } from "./TopBar";
 import "./frame.css";
 
 // 柚子's 小窗 brings the Markdown / formula libraries: loaded the first time it opens
-const SideChat = lazy(() => import("@/modules/picky/SideChat").then((m) => ({ default: m.SideChat })));
+const SideChat = lazy(() => import("@/modules/youzi/SideChat").then((m) => ({ default: m.SideChat })));
 /** Below this the 小窗 floats over the page instead of making room. */
 const FLOAT_QUERY = "(max-width: 1239px)";
 
@@ -107,7 +107,7 @@ function useCapture(enabled: boolean) {
       listen("capture-saved", () => void qc.invalidateQueries()),
       listen<number>("capture-chat", (e) =>
         void qc.invalidateQueries({ queryKey: LIBRARY_KEY }).then(() =>
-          open.current("/picky", { open: { module: "picky", kind: "session", id: e.payload, title: "", detail: null, parent: null, day: null, amount: null, currency: null, flow: null } }),
+          open.current("/youzi", { open: { module: "youzi", kind: "session", id: e.payload, title: "", detail: null, parent: null, day: null, amount: null, currency: null, flow: null } }),
         ),
       ),
       listen<{ path: string; hit: unknown }>("capture-open", (e) => open.current(e.payload.path, { open: e.payload.hit })),
@@ -268,7 +268,7 @@ function Shell() {
   // 柚子's 小窗: not on the 柚子 page, not when 柚子 is hidden
   const [hidden] = useHiddenModules();
   const path = useLocation().pathname;
-  const chatUsable = ok && !hidden.includes("picky") && !path.startsWith("/picky");
+  const chatUsable = ok && !hidden.includes("youzi") && !path.startsWith("/youzi");
   const [chatOpen, setChatOpen] = useState(false);
   const toggleChat = useCallback(() => setChatOpen((o) => !o), []);
   useChatKey(chatUsable, toggleChat);
@@ -276,7 +276,7 @@ function Shell() {
   const published = usePublishedContext();
   const context = path.startsWith("/vault") ? null : (published ?? routeContext(path));
   const chat = chatUsable && chatOpen;
-  const unseen = (usePickyStatus().data?.unseen ?? 0) > 0;
+  const unseen = (useYouziStatus().data?.unseen ?? 0) > 0;
   /** The 柚子瓣, grown from the pomelo. */
   const [bloom, setBloom] = useState<HTMLElement | null>(null);
   /** A question from the 柚子瓣 for the 小窗. */
@@ -321,7 +321,7 @@ function Shell() {
             anchor={bloom}
             onClose={() => setBloom(null)}
             onAsk={
-              ok && !hidden.includes("picky") && !path.startsWith("/picky")
+              ok && !hidden.includes("youzi") && !path.startsWith("/youzi")
                 ? askChat
                 : null
             }

@@ -158,7 +158,7 @@ pub fn store(conn: &Connection, dir: &Path, name: &str, data: &[u8]) -> Result<F
         return Err("文件太大了（超过 200 MB）".into());
     }
     let name = clean_name(name);
-    let sha = crate::picky::pdf::sha256_hex(data);
+    let sha = crate::youzi::pdf::sha256_hex(data);
     let same: Vec<i64> = {
         let mut st = conn.prepare("SELECT id FROM attachment_files WHERE sha256 = ?1 ORDER BY stored IS NULL, id").map_err(err)?;
         let rows = st.query_map([&sha], |r| r.get(0)).map_err(err)?;
@@ -166,7 +166,7 @@ pub fn store(conn: &Connection, dir: &Path, name: &str, data: &[u8]) -> Result<F
     };
     for id in &same {
         if let Ok(p) = path_of(conn, dir, *id) {
-            if std::fs::read(&p).is_ok_and(|b| crate::picky::pdf::sha256_hex(&b) == sha) {
+            if std::fs::read(&p).is_ok_and(|b| crate::youzi::pdf::sha256_hex(&b) == sha) {
                 return info(conn, *id);
             }
         }
@@ -551,7 +551,7 @@ pub(crate) mod tests {
         let a = store(&c, &dir, "a.png", b"aaa").unwrap();
         let recs = records_of(&[a.clone()], &c).unwrap();
         assert_eq!(import_records(&c, &recs).unwrap(), [a.id]);
-        let other = AttachmentRecord { name: "别处.jpg".into(), sha256: crate::picky::pdf::sha256_hex(b"elsewhere") };
+        let other = AttachmentRecord { name: "别处.jpg".into(), sha256: crate::youzi::pdf::sha256_hex(b"elsewhere") };
         let ids = import_records(&c, &[other.clone()]).unwrap();
         let f = info(&c, ids[0]).unwrap();
         assert_eq!((f.name.as_str(), f.kind.as_str(), f.missing), ("别处.jpg", "image", true));

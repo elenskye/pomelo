@@ -183,7 +183,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
                 </span>
                 <span className="text-xs leading-tight whitespace-nowrap">{def.label}</span>
                 {dock.layout.pinned.includes(m) && <Pin size={11} className="absolute -top-1.5 left-2 text-muted-foreground" />}
-                {def.assistant && <Bird size={11} className="absolute -top-1.5 right-2.5" style={{ color: "var(--module-picky)" }} />}
+                {def.assistant && <Bird size={11} className="absolute -top-1.5 right-2.5" style={{ color: "var(--module-youzi)" }} />}
                 <button
                   type="button"
                   aria-label={`${def.label}的菜单`}
@@ -234,7 +234,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
               }}
               className="flex max-w-[220px] items-center gap-1.5 rounded-control px-2 py-1 text-sm hover:bg-muted"
             >
-              <Bird size={14} className="shrink-0" style={{ color: "var(--module-picky)" }} />
+              <Bird size={14} className="shrink-0" style={{ color: "var(--module-youzi)" }} />
               <span className="truncate">问柚子「{q.trim()}」</span>
             </button>
           )}

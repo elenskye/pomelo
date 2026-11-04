@@ -11,8 +11,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Feather, X } from "lucide-react";
 import type { Note } from "@/modules/notes/api";
 import { excerpt } from "@/modules/notes/NoteBody";
-import { AssistAction, IdeaList, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
-import { usePickyStatus } from "@/modules/picky/api";
+import { AssistAction, IdeaList, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/youzi/Assist";
+import { useYouziStatus } from "@/modules/youzi/api";
 import { useAttachmentsOf, type FileInfo } from "@/shared/attachments/api";
 import { AttachmentField } from "@/shared/attachments/Attachments";
 import { DateInput } from "@/shared/DateInput";
@@ -318,7 +318,7 @@ function ProgressLog(props: { task: Task }) {
 /** 柚子 splits a saved 普通 task: suggestions to pick, 「加上」 adds them under it. */
 /** 拆成子任务: the action (in 内容's label row) and, once 柚子 answered, its list (under 内容). */
 function useSplitTask(taskId: number | null) {
-  const status = usePickyStatus().data;
+  const status = useYouziStatus().data;
   const m = useTodoMutations();
   const toast = useToast();
   const [ideas, setIdeas] = useState<string[] | null>(null);

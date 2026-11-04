@@ -8,8 +8,8 @@ import { SidePanel } from "@/shared/panel";
 import { StarRating } from "@/shared/StarRating";
 import { STATUS_ORDER, type StatusCode } from "@/shared/status";
 import { Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
-import { Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/picky/Assist";
-import { usePickyStatus } from "@/modules/picky/api";
+import { Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/youzi/Assist";
+import { useYouziStatus } from "@/modules/youzi/api";
 import { useItemMutations } from "./api";
 import type { CollectionApi, CollectionConfig, Item, ItemPatch, Reread } from "./types";
 
@@ -91,7 +91,7 @@ export function CollectionPanel(props: {
   };
   // 柚子 补全: 作者 / 导演、国家、类型 from the name (its own knowledge) into the empty fields
   const assistOn = useAssistOn();
-  const status = usePickyStatus().data;
+  const status = useYouziStatus().data;
   const [filling, setFilling] = useState(false);
   const fillIn = async () => {
     setFilling(true);

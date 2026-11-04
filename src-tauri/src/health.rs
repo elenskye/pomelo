@@ -14,7 +14,7 @@ use crate::modules::attachments;
 use crate::modules::common::err;
 use crate::modules::jobs::{self, Stage};
 use crate::modules::todo;
-use crate::picky::data;
+use crate::youzi::data;
 use crate::search::Hit;
 use crate::AppState;
 use rusqlite::Connection;

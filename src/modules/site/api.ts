@@ -149,7 +149,7 @@ export function siteSrc(stored: string): string {
 /** The work's page on the site. */
 export const pagePath = (slug: string, lang: Lang) => (lang === "en" ? `/en/wander/${slug}/` : `/wander/${slug}/`);
 
-// ---------- 柚子 in the editor (picky/assist.rs, picky/assistants/site.rs) ----------
+// ---------- 柚子 in the editor (youzi/assist.rs, youzi/assistants/site.rs) ----------
 
 export type SiteEnglish = { title: string | null; summary: string | null };
 /** 按中文起草英文版 (in memory; the page takes it into the English version and clears it). */
@@ -157,11 +157,11 @@ export type Draft = { slug: string | null; running: boolean; title: string; summ
 
 export const siteAssist = {
   /** The English stub's title and summary from the Chinese. */
-  english: (title: string, summary: string, body: string) => invoke<SiteEnglish>("picky_site_english", { title, summary, body }),
-  draft: () => invoke<Draft>("picky_site_draft"),
-  draftRun: (slug: string, title: string, summary: string, body: string) => invoke<Draft>("picky_site_draft_run", { slug, title, summary, body }),
-  draftStop: () => invoke<Draft>("picky_site_draft_stop"),
-  draftClear: () => invoke<Draft>("picky_site_draft_clear"),
+  english: (title: string, summary: string, body: string) => invoke<SiteEnglish>("youzi_site_english", { title, summary, body }),
+  draft: () => invoke<Draft>("youzi_site_draft"),
+  draftRun: (slug: string, title: string, summary: string, body: string) => invoke<Draft>("youzi_site_draft_run", { slug, title, summary, body }),
+  draftStop: () => invoke<Draft>("youzi_site_draft_stop"),
+  draftClear: () => invoke<Draft>("youzi_site_draft_clear"),
 };
 
 // ---------- Now、关于我、职业页、资源库、站点 (site/now.rs, about.rs, career.rs, registry.rs, terms.rs) ----------

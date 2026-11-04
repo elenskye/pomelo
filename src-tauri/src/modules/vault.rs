@@ -253,26 +253,19 @@ fn write_master(conn: &Connection, vault: &Key, password: &str) -> Result<(), St
     Ok(())
 }
 
-/// Saves a Touch ID copy for this build (if Touch ID exists), replacing this build's older copy.
-/// Best effort: on failure Touch ID simply stays off.
+/// The keychain account of the Touch ID copy: one item that each build overwrites when it saves
+/// (copies from before v0.8 had one account per build, `vault-…`; the user deletes those).
+pub const TOUCH_ACCOUNT: &str = "vault";
+
+/// Saves this build's Touch ID copy (if Touch ID exists). Best effort: on failure Touch ID simply
+/// stays off.
 fn save_touch_copy(conn: &Connection, vault: &Key) -> Result<(), String> {
-    if !secure::bio_available() {
+    if !secure::bio_available() || secure::key_save(TOUCH_ACCOUNT, vault.as_ref()).is_err() {
         return Ok(());
-    }
-    let build = secure::build_id();
-    let account = format!("vault-{}", random::<8>().iter().map(|b| format!("{b:02x}")).collect::<String>());
-    if secure::key_save(&account, vault.as_ref()).is_err() {
-        return Ok(());
-    }
-    let m = need_meta(conn)?;
-    if let (Some(old), Some(b)) = (&m.touch_account, &m.touch_build) {
-        if *b == build {
-            secure::key_delete(old);
-        }
     }
     conn.execute(
         &format!("UPDATE vault_meta SET touch_build = ?1, touch_account = ?2, updated_at = {NOW} WHERE id = 1"),
-        params![build, account],
+        params![secure::build_id(), TOUCH_ACCOUNT],
     )
     .map_err(err)?;
     Ok(())
@@ -959,14 +952,13 @@ mod tests {
         assert_eq!(status(&c, &mut s).unwrap().reason, Some("expired"));
         c.execute("UPDATE vault_meta SET master_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 days', '-23 hours')", []).unwrap();
         assert!(status(&c, &mut s).unwrap().touch);
-        // a new build can't use the old copy until the master password is typed, then saves its own
-        let old_account: String = c.query_row("SELECT touch_account FROM vault_meta", [], |r| r.get(0)).unwrap();
+        // a new build can't use the copy until the master password is typed, then overwrites it
         fake::BUILD.with_borrow_mut(|b| *b = "build-2".into());
         assert_eq!(status(&c, &mut s).unwrap().reason, Some("updated"));
         unlock(&c, &mut s, PW).unwrap();
         let (account, build): (String, String) = c.query_row("SELECT touch_account, touch_build FROM vault_meta", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_ne!(account, old_account);
-        assert_eq!(build, "build-2");
+        assert_eq!((account.as_str(), build.as_str()), (TOUCH_ACCOUNT, "build-2"));
+        assert_eq!(fake::KEYCHAIN.with_borrow(|k| k.len()), 1); // one item, however many builds
         s.lock();
         assert_eq!(finish_touch(&c, &mut s, Bio::Ok).unwrap().state, "open");
         // a lost keychain copy → master password, then a new copy

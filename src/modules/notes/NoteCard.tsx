@@ -5,8 +5,8 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, CornerDownRight, Ellipsis, Footprints, Pin, Quote, X } from "lucide-react";
-import { IdeaList, assistApi, assistBusyText, useAssistOn } from "@/modules/picky/Assist";
-import { usePickyStatus } from "@/modules/picky/api";
+import { IdeaList, assistApi, assistBusyText, useAssistOn } from "@/modules/youzi/Assist";
+import { useYouziStatus } from "@/modules/youzi/api";
 import { useGoals, useGroups, useTodoMutations } from "@/modules/todo/api";
 import type { FileInfo } from "@/shared/attachments/api";
 import { AttachButton, AttachmentStrip, withFiles } from "@/shared/attachments/Attachments";
@@ -134,7 +134,7 @@ export function NoteCard(props: {
   const [draft, setDraft] = useState<{ content: string; refs: Brief[]; files: FileInfo[] } | null>(null);
   const [showBack, setShowBack] = useState(!!props.focused);
   const assist = useAssistOn();
-  const status = usePickyStatus().data;
+  const status = useYouziStatus().data;
   const [ideas, setIdeas] = useState<string[] | null>(null);
   const [splitting, setSplitting] = useState(false);
   const split = async () => {

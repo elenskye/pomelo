@@ -11,7 +11,7 @@
 
 use crate::modules::common::{err, Status};
 use crate::modules::{books, custom, days, films, jobs, todo, vault};
-use crate::picky::assistants::{pub2md, translate};
+use crate::youzi::assistants::{pub2md, translate};
 use crate::AppState;
 use rusqlite::Connection;
 use std::collections::BTreeMap;
@@ -113,14 +113,14 @@ pub fn live(conn: &Connection, today: &str) -> Result<Live, String> {
     Ok(out)
 }
 
-/// picky.db's part: conversations and the 助手 (`generating` / `pub2md_busy` come from memory).
-pub fn picky_live(conn: &Connection, generating: bool, pub2md_busy: usize) -> Result<Live, String> {
+/// youzi.db's part: conversations and the 助手 (`generating` / `pub2md_busy` come from memory).
+pub fn youzi_live(conn: &Connection, generating: bool, pub2md_busy: usize) -> Result<Live, String> {
     let mut out = Live::new();
-    let sessions = count(conn, concat!("SELECT count(*) FROM sessions WHERE id NOT IN ", crate::picky::library::unlisted!()), [])?;
+    let sessions = count(conn, concat!("SELECT count(*) FROM sessions WHERE id NOT IN ", crate::youzi::library::unlisted!()), [])?;
     if generating {
-        out.insert("picky".into(), "正在写…".into());
+        out.insert("youzi".into(), "正在写…".into());
     } else if sessions > 0 {
-        out.insert("picky".into(), format!("{sessions} 个对话"));
+        out.insert("youzi".into(), format!("{sessions} 个对话"));
     }
     let target = translate::load(conn).settings.target;
     let to = if target == translate::ZH_EN { "中英互译".to_string() } else { translate::LANGS.iter().find(|l| l.code == target).map_or(String::new(), |l| format!("译成{}", l.name)) };
@@ -149,9 +149,9 @@ pub async fn dock_live(state: State<'_, AppState>) -> Result<Live, String> {
     // separate locks, one after the other (never nested)
     let open = state.with_db(|c| Ok(vault::status(c, &mut *state.vault()?)?.state == "open"))?;
     out.insert("vault".into(), if open { "已打开".into() } else { "已锁上".into() });
-    let generating = state.picky.runs.busy();
-    let busy = pub2md::busy(&state.picky.assistants.pub2md);
-    if let Ok(p) = state.picky.with_db(|c| picky_live(c, generating, busy)) {
+    let generating = state.youzi.runs.busy();
+    let busy = pub2md::busy(&state.youzi.assistants.pub2md);
+    if let Ok(p) = state.youzi.with_db(|c| youzi_live(c, generating, busy)) {
         out.extend(p);
     }
     Ok(out)
@@ -192,13 +192,13 @@ mod tests {
     }
 
     #[test]
-    fn picky_live_text() {
-        let c = crate::picky::store::tests::memory_db();
-        let l = picky_live(&c, false, 0).unwrap();
+    fn youzi_live_text() {
+        let c = crate::youzi::store::tests::memory_db();
+        let l = youzi_live(&c, false, 0).unwrap();
         assert_eq!(l.get("translate").map(String::as_str), Some("中英互译"));
-        assert!(!l.contains_key("picky") && !l.contains_key("pub2md") && !l.contains_key("seeker") && !l.contains_key("rater"));
+        assert!(!l.contains_key("youzi") && !l.contains_key("pub2md") && !l.contains_key("seeker") && !l.contains_key("rater"));
         c.execute("INSERT INTO rater_questions (id, body) VALUES ('q', '{}')", []).unwrap();
-        let l = picky_live(&c, true, 2).unwrap();
-        assert_eq!((l["picky"].as_str(), l["pub2md"].as_str(), l["rater"].as_str()), ("正在写…", "2 份在做", "1 道题"));
+        let l = youzi_live(&c, true, 2).unwrap();
+        assert_eq!((l["youzi"].as_str(), l["pub2md"].as_str(), l["rater"].as_str()), ("正在写…", "2 份在做", "1 道题"));
     }
 }

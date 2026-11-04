@@ -1,7 +1,7 @@
 //! The one search entry (⌘K, conversation search, 念念不忘 and 柚子 use it from v0.4 phase 3):
 //! a question, a scope and a way.
 //! - Scope: the modules / kinds asked for (all when empty), minus modules hidden in the 模块坞,
-//!   minus — for an answer going to a cloud model — modules not allowed there (picky/data.rs).
+//!   minus — for an answer going to a cloud model — modules not allowed there (youzi/data.rs).
 //!   芝麻开门 is never in the index.
 //! - Words: every word must appear (text.rs); best FTS5 rank first, then the newest.
 //! - Meaning: the question's vector against every allowed passage (vectors.rs), each record's
@@ -17,9 +17,9 @@ use super::indexer::Search;
 use super::sources::{self, SOURCES};
 use super::text;
 use crate::modules::common::err;
-use crate::picky::embed::{self, Input};
-use crate::picky::runtime::Svc;
-use crate::picky::{data, rerank};
+use crate::youzi::embed::{self, Input};
+use crate::youzi::runtime::Svc;
+use crate::youzi::{data, rerank};
 use crate::AppState;
 use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
@@ -104,7 +104,7 @@ pub fn allowed(modules: &[String], kinds: &[String], hidden: &[String], cloud_al
     for (i, s) in SOURCES.iter().enumerate() {
         let module = s.module.to_string();
         let ok = (s.dynamic() || !hidden.contains(&module))
-            && (s.dynamic() || cloud_allowed.is_none_or(|a| s.module == "picky" || a.iter().any(|k| k == crate::picky::data::cloud_key(s.module, s.kind))))
+            && (s.dynamic() || cloud_allowed.is_none_or(|a| s.module == "youzi" || a.iter().any(|k| k == crate::youzi::data::cloud_key(s.module, s.kind))))
             && (modules.is_empty() || modules.iter().any(|m| s.owns(m) || s.module.strip_suffix('/') == Some(m.as_str())))
             && (kinds.is_empty() || kinds.iter().any(|k| k == s.kind));
         if ok {
@@ -166,7 +166,7 @@ fn by_words(c: &Connection, q: &str, mask: u32, exclude: &[String], limit: usize
 /// Word hits as results (also what tests drive 柚子's search with).
 pub fn found_by_words(c: &Connection, q: &str, mask: u32, exclude: &[String], limit: usize) -> Result<Vec<Found>, String> {
     let first = text::first_word(q);
-    Ok(by_words(c, q, mask, exclude, limit)?.into_iter().map(|(d, score)| found(&d, crate::picky::find::snippet(&d.body, &first, SNIPPET), score, Way::Words)).collect())
+    Ok(by_words(c, q, mask, exclude, limit)?.into_iter().map(|(d, score)| found(&d, crate::youzi::find::snippet(&d.body, &first, SNIPPET), score, Way::Words)).collect())
 }
 
 fn docs_by_id(c: &Connection, ids: &[i64]) -> Result<HashMap<i64, Doc>, String> {
@@ -213,12 +213,12 @@ fn flat_snippet(p: &str) -> String {
 async fn by_meaning(app: &AppHandle, q: &str, mask: u32, exclude: &[String], limit: usize) -> Result<(Vec<(Doc, u16, f32)>, Option<String>), String> {
     let st = app.state::<AppState>();
     let s: &Search = &st.search;
-    let model = st.picky.runtime.ensure(Svc::Embedding).await?;
+    let model = st.youzi.runtime.ensure(Svc::Embedding).await?;
     let before = s.status();
     // the indexer keeps the counts; with nothing missing the (full-scan) pending query is skipped
     let filled = if before.done < before.records { s.fill(app, &model).await } else { Ok(0) };
     Search::ensure_loaded(app, &model.key).await?;
-    let qv = embed::embed(&st.picky.runtime, &model, &[q.to_string()], Input::RecordQuery).await.map_err(String::from)?.pop().ok_or("向量服务没有返回问题的向量。")?;
+    let qv = embed::embed(&st.youzi.runtime, &model, &[q.to_string()], Input::RecordQuery).await.map_err(String::from)?.pop().ok_or("向量服务没有返回问题的向量。")?;
     let hits = s.with_vectors(|v| v.map(|v| v.search(&qv, mask, limit, MIN_MEANING)).unwrap_or_default());
     let docs = s.with_db(|c| docs_by_id(c, &hits.iter().map(|h| h.doc).collect::<Vec<_>>()))?;
     let status = s.status();
@@ -272,7 +272,7 @@ pub async fn search(app: &AppHandle, req: &Request) -> Result<Answer, String> {
     }
     let limit = req.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 200);
     let (hidden, customs) = st.with_db(|c| Ok((data::hidden(c), data::custom_keys(c)))).unwrap_or_default();
-    let cloud = if req.for_cloud { Some(st.picky.with_db(|c| Ok(data::cloud_allowed(c, &customs))).unwrap_or_default()) } else { None };
+    let cloud = if req.for_cloud { Some(st.youzi.with_db(|c| Ok(data::cloud_allowed(c, &customs))).unwrap_or_default()) } else { None };
     let mask = allowed(&req.modules, &req.kinds, &hidden, cloud.as_deref());
     let exclude = excluded(&customs, &req.modules, &hidden, cloud.as_deref());
     let first = text::first_word(q);
@@ -299,7 +299,7 @@ pub async fn search(app: &AppHandle, req: &Request) -> Result<Answer, String> {
     let passages: Vec<String> = merged.iter().map(|m| passage(&m.doc, m.ordinal, &first)).collect();
     let rerank_n = RERANK.min(merged.len());
     let reranked = match rerank::prepare(app).await {
-        Ok(model) => rerank::scores(&st.picky.runtime, &model, q, &passages[..rerank_n]).await,
+        Ok(model) => rerank::scores(&st.youzi.runtime, &model, q, &passages[..rerank_n]).await,
         Err(e) => Err(e),
     };
     let scores = match reranked {
@@ -314,7 +314,7 @@ pub async fn search(app: &AppHandle, req: &Request) -> Result<Answer, String> {
         .take(limit)
         .map(|(i, score)| {
             let m = &merged[i];
-            let snippet = if m.by != Way::Meaning { crate::picky::find::snippet(&m.doc.body, &first, SNIPPET) } else { flat_snippet(&passages[i]) };
+            let snippet = if m.by != Way::Meaning { crate::youzi::find::snippet(&m.doc.body, &first, SNIPPET) } else { flat_snippet(&passages[i]) };
             found(&m.doc, snippet, score, m.by)
         })
         .collect();
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(allowed(&[], &[], &["notes".into()], None) & note, 0);
         let cloud = allowed(&[], &[], &[], Some(&["notes".to_string()]));
         assert_eq!(cloud & (1 << sources::source("finance", "entry").unwrap().0), 0); // not allowed for the cloud
-        assert_ne!(cloud & (1 << sources::source("picky", "message").unwrap().0), 0); // 柚子's own conversations
+        assert_ne!(cloud & (1 << sources::source("youzi", "message").unwrap().0), 0); // 柚子's own conversations
         assert_eq!(cloud & note, note);
         assert_eq!(source_filter(all, &[]), "");
         assert_eq!(source_filter(0, &[]), " AND 0");
@@ -555,10 +555,10 @@ mod tests {
         if std::env::var("POMELO_REAL_LLM").as_deref() != Ok("1") {
             return;
         }
-        use crate::picky::embed::EmbedError;
-        use crate::picky::runtime::{LlmPaths, Runtime};
+        use crate::youzi::embed::EmbedError;
+        use crate::youzi::runtime::{LlmPaths, Runtime};
         let home = std::env::var("HOME").unwrap();
-        let rt = Runtime::new(crate::picky::Mode::Real, LlmPaths::new(std::path::Path::new(&home)));
+        let rt = Runtime::new(crate::youzi::Mode::Real, LlmPaths::new(std::path::Path::new(&home)));
         let mut pomelo = crate::db::tests::memory_db();
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../prototype");
         let scratch = crate::db::tests::temp_dir("real-search");

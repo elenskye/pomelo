@@ -7,7 +7,7 @@ import { SidePanel } from "@/shared/panel";
 import type { StatusCode } from "@/shared/status";
 import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { DRAWING_ORDER, DRAWING_STATUS, useDrawingMutations, type Lesson, type LessonPatch } from "./api";
-import { Polish } from "@/modules/picky/Assist";
+import { Polish } from "@/modules/youzi/Assist";
 
 type Draft = {
   title: string;
