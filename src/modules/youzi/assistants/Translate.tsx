@@ -2,72 +2,21 @@
 // one row, 原文 above and 译文 below (copy; while it runs the status, after it the model it used and how it
 // ended). 提示词: the user's own paragraph, one keyword per group (click again to drop it) and what the
 // model is told. Settings are saved as they change, the 原文 as typed; only the last time is kept. A run
-// goes on in Rust when the page is left: the page polls while it runs. ⌘↩ in 原文 translates.
-import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Copy } from "lucide-react";
+// goes on in Rust when the page is left: the page polls while it runs. ⌘↩ in 原文 translates. The working
+// parts are in translator.tsx (the 速记小窗 translates too).
+import { useQuery } from "@tanstack/react-query";
 import { Dropdown } from "@/shared/Dropdown";
-import { errorText, useToast } from "@/shared/feedback";
 import { Button, Segmented, TextArea } from "@/shared/ui";
 import { youziApi, type TranslateSettings, type TranslateView } from "../api";
 import { useModels } from "../Schedules";
 import { ThinkingButton, fromLevel } from "../Thinking";
 import { useSubPage } from "@/app/subpage";
-
-export const TRANSLATE_KEY = ["youzi", "translate"];
-const AUTO = "auto";
-const ZH_EN = "zh-en";
+import { LanguagePickers, TranslateOutput, useTranslator } from "./translator";
 
 export function TranslatePage() {
-  const qc = useQueryClient();
-  const toast = useToast();
   const [tab, setTab] = useSubPage<"translate" | "prompt">("translate");
-  const view = useQuery({ queryKey: TRANSLATE_KEY, queryFn: youziApi.translate, refetchInterval: (q) => (q.state.data?.running ? 300 : false) });
-  const data = view.data;
-  const [input, setInput] = useState<string | null>(null);
-  const [settings, setSettings] = useState<TranslateSettings | null>(null);
-  // the last time comes back once; after that the page holds what is being typed
-  useEffect(() => {
-    if (!data) return;
-    setInput((x) => x ?? data.input);
-    setSettings((x) => x ?? data.settings);
-  }, [data]);
-
-  const inputTimer = useRef(0);
-  const settingsTimer = useRef(0);
-  useEffect(
-    () => () => {
-      clearTimeout(inputTimer.current);
-      clearTimeout(settingsTimer.current);
-    },
-    [],
-  );
-  const typed = (v: string) => {
-    setInput(v);
-    clearTimeout(inputTimer.current);
-    inputTimer.current = window.setTimeout(() => void youziApi.translateInput(v).catch((e) => toast(errorText(e), "error")), 500);
-  };
-  /** `later`: typing the paragraph (saved after a pause). */
-  const change = (next: TranslateSettings, later = false) => {
-    setSettings(next);
-    clearTimeout(settingsTimer.current);
-    const save = () => void youziApi.translateSettings(next).then((v) => qc.setQueryData(TRANSLATE_KEY, { ...v, input: input ?? v.input }), (e) => toast(errorText(e), "error"));
-    if (later) settingsTimer.current = window.setTimeout(save, 500);
-    else save();
-  };
-
+  const { data, input, settings, typed, change, run, stop } = useTranslator();
   if (!data || input == null || !settings) return <div className="flex-1" />;
-  const running = data.running;
-  const run = () => {
-    if (running || !input.trim()) return;
-    clearTimeout(inputTimer.current);
-    void youziApi.translateRun(input, settings).then(
-      (v) => qc.setQueryData(TRANSLATE_KEY, v),
-      (e) => toast(errorText(e), "error"),
-    );
-  };
-  const stop = () => void youziApi.translateStop().then((v) => qc.setQueryData(TRANSLATE_KEY, v), (e) => toast(errorText(e), "error"));
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col px-8 pb-1">
       <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3">
@@ -102,35 +51,11 @@ function TranslateTab(props: {
   onStop: () => void;
 }) {
   const { data, settings: s } = props;
-  const toast = useToast();
   const { models, keep } = useModels(s.model, s.thinking);
-  const [copied, setCopied] = useState(false);
-  const langs = data.lists.languages.map((l) => ({ value: l.code, label: l.name }));
-  const canSwap = s.source !== AUTO && s.target !== ZH_EN;
-  const copy = () =>
-    void youziApi.copy(data.output).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      },
-      (e) => toast(errorText(e), "error"),
-    );
-  const stopped = data.error === "已停止";
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <Dropdown<string> ariaLabel="源语言" value={s.source} options={[{ value: AUTO, label: "自动检测" }, ...langs]} onChange={(v) => props.onSettings({ ...s, source: v })} menuMaxHeight={320} />
-        <button
-          type="button"
-          aria-label="对调"
-          title="对调"
-          disabled={!canSwap}
-          onClick={() => props.onSettings({ ...s, source: s.target, target: s.source })}
-          className="rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30"
-        >
-          <ArrowLeftRight size={14} />
-        </button>
-        <Dropdown<string> ariaLabel="目标语言" value={s.target} options={[{ value: ZH_EN, label: "中英互译" }, ...langs]} onChange={(v) => props.onSettings({ ...s, target: v })} menuMaxHeight={320} />
+        <LanguagePickers data={data} settings={s} onSettings={props.onSettings} />
         <span className="mx-1 h-4 border-l" />
         <Dropdown<string | null> ariaLabel="模型" value={s.model} options={models} foldKey="models" onChange={(v) => props.onSettings({ ...s, model: v })} menuMaxHeight={360} />
         <ThinkingButton
@@ -165,33 +90,7 @@ function TranslateTab(props: {
         }}
         className="min-h-24 flex-1 font-reading text-[15px]"
       />
-      <section aria-label="译文" className="flex min-h-24 flex-1 flex-col rounded-control border bg-card">
-        <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
-          {data.running ? (
-            <span className="animate-pulse">{data.status ?? "正在翻译…"}</span>
-          ) : (
-            <>
-              {data.modelName && <span>{data.modelName}</span>}
-              {data.error && <span className={stopped ? "" : "text-destructive"}>{data.error}</span>}
-            </>
-          )}
-          {data.note && <span className="truncate">{data.note}</span>}
-          <div className="flex-1" />
-          <button
-            type="button"
-            aria-label={copied ? "已复制" : "复制"}
-            title={copied ? "已复制" : "复制"}
-            disabled={!data.output}
-            onClick={copy}
-            className="inline-flex size-7 items-center justify-center rounded-control outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30"
-          >
-            {copied ? <span className="text-xs">✓</span> : <Copy size={14} strokeWidth={1.5} />}
-          </button>
-        </div>
-        <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
-          <p className="selectable px-3 pb-3 font-reading text-[15px] leading-relaxed whitespace-pre-wrap">{data.output}</p>
-        </div>
-      </section>
+      <TranslateOutput data={data} className="min-h-24 flex-1" />
     </>
   );
 }

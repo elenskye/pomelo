@@ -6,7 +6,7 @@
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
 //! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 柚子
-//! (module `youzi`, youzi/transfer.rs: it lives in youzi.db, imported after pomelo.db); v11 = no 定时任务 (youzi keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (youzi `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (youzi `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name); v37 = 柚子 under its old key `picky` (read as `youzi`).
+//! (module `youzi`, youzi/transfer.rs: it lives in youzi.db, imported after pomelo.db); v11 = no 定时任务 (youzi keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (youzi `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (youzi `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name); v37 = 柚子 under its old key `picky` (read as `youzi`); v38 = no 一网打尽 (`bookmarks`).
 //! All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
@@ -14,7 +14,7 @@
 //! Export → import into an empty DB reproduces everything except ids (see roundtrip test).
 //! Adding a module: new `Payload` variant + arms below + `export_payloads`.
 
-use crate::modules::{books, custom, days, drawing, films, finance, jobs, kinds, notes, packing, todo};
+use crate::modules::{bookmarks, books, custom, days, drawing, films, finance, jobs, kinds, notes, packing, todo};
 use crate::modules::common::err;
 use crate::{backup, AppState};
 use rusqlite::Connection;
@@ -25,7 +25,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 38;
+pub const FORMAT_VERSION: u32 = 39;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +49,7 @@ enum Payload {
     Notes(notes::NotesRecord),
     Days(Vec<days::DayRecord>),
     Custom(Vec<custom::CustomRecord>),
+    Bookmarks(Vec<bookmarks::BookmarkRecord>),
 }
 
 impl Payload {
@@ -64,6 +65,7 @@ impl Payload {
             Payload::Notes(_) => notes::KEY,
             Payload::Days(_) => days::KEY,
             Payload::Custom(_) => custom::KEY,
+            Payload::Bookmarks(_) => bookmarks::KEY,
         }
     }
     fn label(&self) -> &'static str {
@@ -78,6 +80,7 @@ impl Payload {
             Payload::Notes(_) => notes::LABEL,
             Payload::Days(_) => days::LABEL,
             Payload::Custom(_) => custom::LABEL,
+            Payload::Bookmarks(_) => bookmarks::LABEL,
         }
     }
     fn len(&self) -> usize {
@@ -92,6 +95,7 @@ impl Payload {
             Payload::Notes(r) => r.len(),
             Payload::Days(r) => r.len(),
             Payload::Custom(r) => r.len(),
+            Payload::Bookmarks(r) => bookmarks::records_len(r),
         }
     }
     fn existing(&self, conn: &Connection) -> Result<i64, String> {
@@ -106,6 +110,7 @@ impl Payload {
             Payload::Notes(_) => notes::count(conn),
             Payload::Days(_) => days::count(conn),
             Payload::Custom(_) => custom::count(conn),
+            Payload::Bookmarks(_) => bookmarks::count(conn),
         }
     }
     fn replace(&self, conn: &Connection) -> Result<usize, String> {
@@ -120,6 +125,7 @@ impl Payload {
             Payload::Notes(r) => notes::replace_all(conn, r),
             Payload::Days(r) => days::replace_all(conn, r),
             Payload::Custom(r) => custom::replace_all(conn, r),
+            Payload::Bookmarks(r) => bookmarks::replace_all(conn, r),
         }
     }
     /// kinds.rs modules this payload's kinds lists live under.
@@ -132,7 +138,7 @@ impl Payload {
             Payload::Todo(_) => &[],
             Payload::Finance(_) => &[finance::OUT_KINDS, finance::IN_KINDS],
             Payload::Jobs(_) => &[jobs::CHANNELS],
-            Payload::Notes(_) | Payload::Days(_) | Payload::Custom(_) => &[],
+            Payload::Notes(_) | Payload::Days(_) | Payload::Custom(_) | Payload::Bookmarks(_) => &[],
         }
     }
     fn to_json(&self) -> Result<Value, String> {
@@ -147,6 +153,7 @@ impl Payload {
             Payload::Notes(r) => serde_json::to_value(r),
             Payload::Days(r) => serde_json::to_value(r),
             Payload::Custom(r) => serde_json::to_value(r),
+            Payload::Bookmarks(r) => serde_json::to_value(r),
         }
         .map_err(err)
     }
@@ -245,6 +252,11 @@ fn parse(text: &str) -> Result<Parsed, String> {
                 let rec: Vec<custom::CustomRecord> = serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", custom::LABEL))?;
                 custom::validate_records(&rec)?;
                 payloads.push(Payload::Custom(rec));
+            }
+            bookmarks::KEY => {
+                let rec: Vec<bookmarks::BookmarkRecord> = serde_json::from_value(value).map_err(|e| format!("{}的数据格式不对：{e}", bookmarks::LABEL))?;
+                bookmarks::validate_records(&rec)?;
+                payloads.push(Payload::Bookmarks(rec));
             }
             _ => skipped.push(key),
         }
@@ -350,6 +362,7 @@ fn export_payloads(conn: &Connection) -> Result<Vec<Payload>, String> {
         Payload::Notes(notes::export(conn)?),
         Payload::Days(days::export(conn)?),
         Payload::Custom(custom::export(conn)?),
+        Payload::Bookmarks(bookmarks::export(conn)?),
     ])
 }
 
@@ -575,8 +588,13 @@ mod tests {
         let little = books::list(&a).unwrap().into_iter().find(|b| b.title == "小王子").unwrap().id;
         books::update(&a, little, serde_json::from_value(json!({"rereads": [{"year": "2026", "rating": 5}]})).unwrap()).unwrap();
 
+        // 一网打尽: folders in folders, a link on 首页, an order of its own
+        let marks = bookmarks::tests::seed(&a);
+        bookmarks::update(&a, marks["GitHub"], serde_json::from_value(json!({"onHome": true})).unwrap()).unwrap();
+        bookmarks::place(&a, &[marks["Google"]], None, Some(marks["工作"])).unwrap();
+
         let (text, counts) = export(&mut a).unwrap();
-        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 7), ("finance", 4), ("jobs", 1), ("notes", 2), ("days", 1), ("custom", 2)]);
+        assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 7), ("finance", 4), ("jobs", 1), ("notes", 2), ("days", 1), ("custom", 2), ("bookmarks", 6)]);
 
         let dir = temp_dir("roundtrip");
         let mut b = memory_db();
@@ -595,6 +613,7 @@ mod tests {
         assert_eq!((v["modules"]["custom"][1]["courseWord"].as_str(), v["modules"]["custom"][1]["courses"][0]["lessons"][2]["title"].as_str()), (Some("季"), Some("告别")));
         assert!(v["modules"]["custom"][0].get("courses").is_none());
         assert_eq!(v["modules"]["days"][0]["gifts"][0]["gift"], "茶具");
+        assert_eq!((v["modules"]["bookmarks"][0]["title"].as_str(), v["modules"]["bookmarks"][1]["children"][1]["onHome"].as_bool()), (Some("Google"), Some(true)));
         assert_eq!(v["modules"]["notes"]["notes"][1]["attachments"][0]["name"], "海报.png");
         assert_eq!(v["modules"]["todo"]["groups"][0]["goals"][0]["attachments"][0]["name"], "开题报告.pdf");
         // on the other Mac they are names waiting for their files

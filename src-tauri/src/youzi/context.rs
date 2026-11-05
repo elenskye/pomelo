@@ -125,6 +125,8 @@ pub struct Turn {
     pub queries: Vec<super::data::Query>,
     /// Replies: what they asked me (ASK).
     pub asks: Vec<super::ask::Ask>,
+    /// Replies in DevJanitor's conversation: what the cards I clicked came to (agent.rs `in_history`).
+    pub cards: String,
 }
 
 /// Replies whose lookups follow-up questions still get, and how much of each result.
@@ -143,6 +145,8 @@ impl Turn {
 pub struct Request {
     /// The composed instructions.
     pub system: String,
+    /// Lookup rounds before it must answer (None: data::MAX_ROUNDS; DevJanitor's conversation takes more).
+    pub rounds: Option<usize>,
     /// The chosen memories' section (memory.rs), after the instructions in the same message.
     pub memory: String,
     /// How to look things up in Pomelo (data.rs), last in the system message; set by chat.rs.
@@ -246,7 +250,7 @@ pub fn request(conn: &Connection, session_id: i64, turns: &[Turn], prompt: &str)
         if t.role == "assistant" && !t.queries.is_empty() && history.last().is_some_and(|m: &Msg| m.role == "user") {
             looked.push((history.len() - 1, t.queries.clone()));
         }
-        history.push(Msg::new(&t.role, &super::ask::in_history(&t.content, &t.asks)));
+        history.push(Msg::new(&t.role, &format!("{}{}", super::ask::in_history(&t.content, &t.asks), t.cards)));
     }
     let (thinking, effort) = conn.query_row("SELECT thinking, effort FROM sessions WHERE id = ?1", [session_id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(super::super::modules::common::err)?;
     Ok(Request { system, summary: summary.map(|s| format!("{SUMMARY_PREFIX}{}", s.content)), history, prompt: prompt.to_string(), looked, thinking, effort, ..Default::default() })
@@ -581,7 +585,7 @@ pub async fn youzi_context(app: AppHandle, session_id: i64, prompt: String) -> R
         let mut turns = vec![];
         for m in &shown {
             let queries = if m.role == "assistant" { super::data::queries_of_message(c, m.id)? } else { vec![] };
-            turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries, asks: m.asks.clone() });
+            turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries, asks: m.asks.clone(), cards: super::assistants::janitor::agent::in_history(&m.janitor) });
         }
         let summarizable = shown.iter().any(|m| m.role == "assistant" && m.state == "complete" && !m.content.trim().is_empty());
         Ok((request(c, session_id, &turns, prompt.trim())?, summarizable))

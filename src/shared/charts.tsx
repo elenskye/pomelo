@@ -384,6 +384,79 @@ export function Donut(props: { slices: { key: string; label: string; value: numb
   );
 }
 
+/** A ring of the sunburst: one node, its children drawn on the next ring out. */
+export type SunNode = { key: string; label: string; value: number; color?: string; children?: SunNode[] };
+
+const arc = (c: number, r0: number, r1: number, a0: number, a1: number) => {
+  const pt = (rad: number, ang: number) => `${(c + rad * Math.cos(ang)).toFixed(2)},${(c + rad * Math.sin(ang)).toFixed(2)}`;
+  if (a1 - a0 >= Math.PI * 2 - 1e-6) {
+    const m = a0 + Math.PI;
+    return `M${pt(r1, a0)}A${r1},${r1} 0 1 1 ${pt(r1, m)}A${r1},${r1} 0 1 1 ${pt(r1, a0)}ZM${pt(r0, a0)}A${r0},${r0} 0 1 0 ${pt(r0, m)}A${r0},${r0} 0 1 0 ${pt(r0, a0)}Z`;
+  }
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M${pt(r1, a0)}A${r1},${r1} 0 ${large} 1 ${pt(r1, a1)}L${pt(r0, a1)}A${r0},${r0} 0 ${large} 0 ${pt(r0, a0)}Z`;
+};
+
+/** Sunburst (DevJanitor's 磁盘): the center is `root`, each ring one level down, angles by size (a child's
+ * share of its parent; what's too small to draw is left empty). The first ring takes `color` or the chart
+ * colors in order; deeper rings are their first-ring ancestor's color, lighter. Hover names a segment in the
+ * middle; clicking one calls `onPick`. The page lists the same nodes beside it. */
+export function Sunburst(props: { root: SunNode; format: Fmt; size?: number; rings?: number; onPick?: (n: SunNode) => void; center?: ReactNode }) {
+  const size = props.size ?? 320;
+  const rings = props.rings ?? 3;
+  const c = size / 2;
+  const hole = size * 0.2;
+  const band = (c - hole - 2) / rings;
+  const [hover, setHover] = useState<SunNode | null>(null);
+  const segs: { n: SunNode; d: string; color: string; depth: number; top: number }[] = [];
+  const walk = (n: SunNode, a0: number, a1: number, depth: number, color: string | null, top: number) => {
+    if (depth >= rings || !n.children?.length || n.value <= 0) return;
+    let a = a0;
+    n.children.forEach((k, i) => {
+      const span = (k.value / n.value) * (a1 - a0);
+      const b0 = a;
+      a += span;
+      if (span < 0.006 || k.value <= 0) return;
+      const own = color ?? k.color ?? (i < 6 ? `var(--chart-${i + 1})` : "var(--chart-other)");
+      const t = depth === 0 ? i : top;
+      const gap = span > 0.02 ? 0.0035 : 0;
+      segs.push({ n: k, d: arc(c, hole + depth * band + 1, hole + (depth + 1) * band - 1, b0 + gap, b0 + span - gap), color: own, depth, top: t });
+      walk(k, b0, b0 + span, depth + 1, own, t);
+    });
+  };
+  walk(props.root, -Math.PI / 2, Math.PI * 1.5, 0, null, 0);
+  const total = props.root.value;
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }} onPointerLeave={() => setHover(null)}>
+      <svg width={size} height={size} role="img" aria-label={(props.root.children ?? []).map((s) => s.label).join("、")}>
+        <circle cx={c} cy={c} r={hole + band / 2} fill="none" stroke="var(--chart-grid)" strokeWidth={band - 2} />
+        {segs.map((s) => (
+          <path
+            key={s.n.key}
+            d={s.d}
+            fill={s.color}
+            fillOpacity={hover === null ? 1 - s.depth * 0.28 : hover === s.n ? 1 : 0.35 - s.depth * 0.08}
+            className={`transition-[fill-opacity] duration-150 ${props.onPick ? "cursor-pointer" : ""}`}
+            onPointerEnter={() => setHover(s.n)}
+            onClick={() => props.onPick?.(s.n)}
+          />
+        ))}
+      </svg>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-[22%] text-center">
+        {hover ? (
+          <>
+            <span className="max-w-full truncate text-xs text-muted-foreground">{hover.label}</span>
+            <span className="text-base font-bold tabular-nums">{props.format(hover.value)}</span>
+            <span className="text-xs text-muted-foreground tabular-nums">{total > 0 ? Math.round((hover.value / total) * 100) : 0}%</span>
+          </>
+        ) : (
+          props.center
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Ranked rows: label · thin bar · value (also the table view of a chart). */
 export function BarList(props: {
   rows: { key: string; label: ReactNode; value: number; color?: string; detail?: ReactNode }[];
@@ -409,6 +482,46 @@ export function BarList(props: {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** One horizontal bar split into parts of a whole (`total`; what's left stays empty); hover a part for its
+ * value, and the legend below lists every part with its value (nothing hover-only). */
+export function StackBar(props: { segments: { key: string; label: string; value: number; color: string }[]; total: number; format: Fmt; label: string }) {
+  const [ref, w] = useWidth();
+  const [hover, setHover] = useState<number | null>(null);
+  const total = Math.max(props.total, props.segments.reduce((a, s) => a + s.value, 0), 1);
+  let at = 0;
+  const parts = props.segments.map((s) => {
+    const p = { ...s, left: at / total, width: s.value / total };
+    at += s.value;
+    return p;
+  });
+  const h = hover == null ? null : parts[hover];
+  return (
+    <div>
+      <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
+        <div role="img" aria-label={`${props.label}：${props.segments.map((s) => `${s.label} ${props.format(s.value)}`).join("、")}`} className="flex h-2.5 gap-px overflow-hidden rounded-full bg-muted">
+          {parts.map((p, i) => (
+            <div key={p.key} className="h-full shrink-0 transition-opacity" style={{ width: `${p.width * 100}%`, background: p.color, opacity: hover == null || hover === i ? 1 : 0.5 }} onMouseEnter={() => setHover(i)} />
+          ))}
+        </div>
+        {h && w > 0 && (
+          <Tip x={(h.left + h.width / 2) * w} width={w}>
+            <TipRow color={h.color} value={props.format(h.value)} name={h.label} />
+          </Tip>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {props.segments.map((s) => (
+          <span key={s.key} className="flex items-center gap-1.5">
+            <span className="size-2.5 rounded-sm" style={{ background: s.color }} />
+            {s.label}
+            <span className="text-foreground tabular-nums">{props.format(s.value)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

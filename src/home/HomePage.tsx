@@ -7,6 +7,8 @@ import { useNavigate } from "react-router";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import { useHiddenModules } from "@/app/hidden";
 import { moduleById } from "@/app/modules";
+import { useSiteIcons, type Bookmark } from "@/modules/bookmarks/api";
+import { SiteIcon } from "@/modules/bookmarks/SiteIcon";
 import { countText, type Day } from "@/modules/days/api";
 import { money, moneyShort, dayTick, dayTitle, type Currency } from "@/modules/finance/money";
 import { STAGE_STYLE } from "@/modules/jobs/api";
@@ -15,6 +17,8 @@ import { PlacedList } from "@/modules/todo/TaskList";
 import { LineChart } from "@/shared/charts";
 import { formatDay, toYmd, weekday } from "@/shared/dates";
 import type { Hit } from "@/shared/open";
+import { errorText, useToast } from "@/shared/feedback";
+import { api as ipc } from "@/shared/ipc";
 import { PageHeader, ProgressBar } from "@/shared/ui";
 import { useOverview, type CourseLine, type JobsCard, type Point, type Recent, type Then, type Year } from "./api";
 import { BriefCard } from "./BriefCard";
@@ -416,6 +420,31 @@ function DrawingBlock(props: { courses: CourseLine[]; open: (h: Hit) => void; go
   );
 }
 
+/** 一网打尽's links marked 放首页 (none: no block); a click opens the site in the browser. */
+function LinksBlock(props: { links: Bookmark[]; go: () => void }) {
+  const icons = useSiteIcons();
+  const toast = useToast();
+  if (props.links.length === 0) return null;
+  return (
+    <Block title="一网打尽" icons={[icon("bookmarks")]} onTitle={props.go}>
+      <div className="flex flex-wrap gap-2">
+        {props.links.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            title={b.url}
+            onClick={() => void ipc.openLink(b.url).catch((e) => toast(errorText(e), "error"))}
+            className="flex max-w-full min-w-0 items-center gap-2 rounded-control border bg-card px-2.5 py-1.5 text-sm transition-colors duration-150 outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <SiteIcon url={b.url} icons={icons} />
+            <span className="truncate">{b.title}</span>
+          </button>
+        ))}
+      </div>
+    </Block>
+  );
+}
+
 export default function HomePage() {
   const now = useNow();
   const today = toYmd(now);
@@ -444,6 +473,7 @@ export default function HomePage() {
         data.jobs && <JobsBlock key="jobs" card={data.jobs} open={open.record} go={() => open.module("jobs")} />,
         data.reading && <ReadingBlock key="reading" items={data.reading} hidden={hidden} open={open.record} go={() => open.module(shown("books") ? "books" : "films")} />,
         data.drawing && <DrawingBlock key="drawing" courses={data.drawing} open={open.record} go={() => open.module("drawing")} />,
+        data.bookmarks && <LinksBlock key="bookmarks" links={data.bookmarks} go={() => open.module("bookmarks")} />,
       ]
     : [];
 

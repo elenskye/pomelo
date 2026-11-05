@@ -2,7 +2,7 @@
 // is written as you type (a moment later) and before the window hides: Esc, ⌘W and the close button give the
 // focus back to the app that was in front; a click elsewhere hides it too unless the pin is on.
 // The note's text scrolls inside its box, its attachments stay in a row along the box's bottom edge.
-// 问柚子 chats right here (CaptureChat, loaded when first opened).
+// 问柚子 chats right here, 翻译 is 柚子's Translator (CaptureChat, CaptureTranslate; loaded when first opened).
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Paperclip, Pin, Send } from "lucide-react";
@@ -17,12 +17,16 @@ import { Button, Segmented, TextInput } from "@/shared/ui";
 import { EMPTY, captureApi, type CaptureTab, type Draft, type Snapshot } from "./api";
 
 const CaptureChat = lazy(() => import("./CaptureChat"));
+const CaptureTranslate = lazy(() => import("./CaptureTranslate"));
 
-const TABS: { value: CaptureTab; label: string; module: string }[] = [
-  { value: "note", label: "笔记", module: "notes" },
-  { value: "todo", label: "待办", module: "todo" },
-  { value: "ask", label: "问柚子", module: "youzi" },
+/** `modules`: hiding any of them takes the tab away (助手 go with 柚子). */
+const TABS: { value: CaptureTab; label: string; modules: string[] }[] = [
+  { value: "note", label: "笔记", modules: ["notes"] },
+  { value: "todo", label: "待办", modules: ["todo"] },
+  { value: "ask", label: "问柚子", modules: ["youzi"] },
+  { value: "translate", label: "翻译", modules: ["youzi", "translate"] },
 ];
+const offered = (hidden: string[] | undefined) => TABS.filter((t) => !t.modules.some((m) => hidden?.includes(m)));
 /** Typing settles this long before the draft is written. */
 const WRITE_MS = 400;
 /** 「已记下 · 撤销」 stays this long. */
@@ -51,7 +55,7 @@ export function Capture() {
   /** The header's place for the chat's model menu. */
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
 
-  const tabs = TABS.filter((t) => !meta?.hidden.includes(t.module));
+  const tabs = offered(meta?.hidden);
   const tab: CaptureTab | null = tabs.find((t) => t.value === d.tab)?.value ?? tabs[0]?.value ?? null;
 
   const say = (text: string, more: { undo?: boolean; error?: boolean } = {}) => {
@@ -84,6 +88,10 @@ export function Capture() {
       if (t === "note") editor.current?.focus();
       else if (t === "todo") title.current?.focus();
       else if (t === "ask") question.current?.focus();
+      else if (t === "translate") {
+        question.current?.focus();
+        question.current?.select(); // the next paste replaces the last text
+      }
     });
   }, []);
 
@@ -116,7 +124,7 @@ export function Capture() {
         setD(draft);
         setFiles(fs);
       }
-      const shown = TABS.filter((t) => !rest.hidden.includes(t.module));
+      const shown = offered(rest.hidden);
       focus(shown.find((t) => t.value === (first ? draft.tab : latest.current.tab))?.value ?? shown[0]?.value ?? null);
     } catch (e) {
       fail(e);
@@ -238,6 +246,10 @@ export function Capture() {
       {tab === "ask" && meta ? (
         <Suspense fallback={<div className="flex-1" />}>
           <CaptureChat text={d.ask} onText={(ask) => change({ ask })} inputRef={question} slot={slot} />
+        </Suspense>
+      ) : tab === "translate" && meta ? (
+        <Suspense fallback={<div className="flex-1" />}>
+          <CaptureTranslate inputRef={question} slot={slot} />
         </Suspense>
       ) : (
         <>

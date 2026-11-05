@@ -155,6 +155,12 @@ const SOURCES: &[Source] = &[
         sql: "SELECT id, name, CASE kind WHEN 'birthday' THEN '生日' WHEN 'document' THEN '证件' ELSE '纪念日' END, NULL, NULL, NULL, NULL, NULL,
                 name || ' ' || coalesce(note, '') || ' ' || coalesce(ideas, ''), id FROM days",
     },
+    // 一网打尽: name and address (a folder: its name); parent = the folder the page opens
+    Source {
+        module: "bookmarks",
+        kind: "bookmark",
+        sql: "SELECT id, title, CASE kind WHEN 'folder' THEN '文件夹' ELSE url END, parent_id, NULL, NULL, NULL, NULL, title || ' ' || url, id FROM bookmarks",
+    },
     // 五花八门 / 循序渐进 (search/sources.rs has the same text)
     Source {
         module: "list/",

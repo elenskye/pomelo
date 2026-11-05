@@ -460,6 +460,8 @@ type ItemProps = {
   onOpenRecord: (r: QueryRecord) => void;
   onAskFollowUp?: (text: string) => void;
   onStop?: () => void;
+  /** More under a reply (DevJanitor's cards). */
+  extra?: (m: ChatMessage, streaming: boolean) => ReactNode;
 };
 
 function Item(p: ItemProps) {
@@ -531,6 +533,7 @@ function Item(p: ItemProps) {
       {!streaming && m.atlas && <AtlasNote note={m.atlas} />}
       {m.card && <ProposalCard card={m.card} streaming={streaming} onOpen={p.onOpenRecord} />}
       {m.edit && <EditCard edit={m.edit} streaming={streaming} onChanged={() => void qc.invalidateQueries({ queryKey: ["youzi", "messages"] })} />}
+      {p.extra?.(m, streaming)}
       {!streaming && <SourceList sources={citedIn(m.content, m.sources ?? [])} onOpen={p.onOpenSource} />}
       {writingNow && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">{m.queued ? (m.model?.startsWith("cloud:") ? "云端模型忙，等一下再试…" : "排队中（本地模型正在回答别的）") : "正在生成…"}</p>}
       {!streaming && <UsedMemories memories={m.memories ?? []} />}
@@ -689,6 +692,8 @@ export function Transcript(props: {
   reveal?: { id: number; query: string; key: number } | null;
   /** The 小窗's narrow column. */
   compact?: boolean;
+  /** More under each reply (DevJanitor's cards). */
+  extra?: (m: ChatMessage, streaming: boolean) => ReactNode;
 }) {
   const { messages, busy } = props;
   const toast = useToast();
@@ -958,6 +963,7 @@ export function Transcript(props: {
                 onOpenSource={openSource}
                 onOpenRecord={openHit}
                 onAskFollowUp={props.onAskFollowUp}
+                extra={props.extra}
                 onStop={props.onStop}
               />
             ))}

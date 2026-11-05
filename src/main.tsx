@@ -16,6 +16,7 @@ import SitePage from "@/modules/site/SitePage";
 import ListPage from "@/modules/custom/ListPage";
 import ProgressPage from "@/modules/custom/ProgressPage";
 import VaultPage from "@/modules/vault/VaultPage";
+import BookmarksPage from "@/modules/bookmarks/BookmarksPage";
 // 柚子 brings Markdown / highlighting / formulas: loaded when first opened
 const YouziPage = lazy(() => import("@/modules/youzi/YouziPage"));
 // 柚子's 助手 as modules (v0.7)
@@ -58,11 +59,13 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="list/:id" element={<ListPage />} />
             <Route path="progress/:id" element={<ProgressPage />} />
             <Route path="vault" element={<VaultPage />} />
+            <Route path="bookmarks" element={<BookmarksPage />} />
             <Route path="youzi" element={<Suspense fallback={null}><YouziPage /></Suspense>} />
             <Route path="translate/:sub?" element={<Suspense fallback={null}><AssistantModule which="translate" /></Suspense>} />
             <Route path="pub2md/:sub?" element={<Suspense fallback={null}><AssistantModule which="pub2md" /></Suspense>} />
             <Route path="seeker/:sub?" element={<Suspense fallback={null}><AssistantModule which="seeker" /></Suspense>} />
             <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
+            <Route path="janitor/:sub?" element={<Suspense fallback={null}><AssistantModule which="janitor" /></Suspense>} />
             <Route path="importer" element={<Navigate to="/finance/import" replace />} />
             <Route path="dock" element={<DockPage />} />
             <Route path="settings" element={<SettingsPage />} />

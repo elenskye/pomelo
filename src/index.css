@@ -78,6 +78,8 @@
   --module-pub2md: #6f62a8;
   --module-rater: #b0414e;
   --module-importer: #27726c;
+  --module-janitor: #35538c;
+  --module-bookmarks: #9b4fb5;
 
   /* Charts: categorical slots in fixed order (validated: dataviz validate_palette.js, light on #ffffff,
      dark on #292724); single-series charts use --chart-1. Text never wears these colors. */

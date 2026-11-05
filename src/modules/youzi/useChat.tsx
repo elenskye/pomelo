@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
+import type { JanitorCard } from "./assistants/janitorApi";
 import { LIBRARY_KEY, STATUS_KEY, youziApi, type ActiveRun, type Ask, type KbDraft, type ChatMessage, type MessageFile, type Note, type Passage, type YouziStatus, type Query, type ReadingProgress, type Sent, type Source, type StreamEvent, type Card, type FileEdit, type UsedMemory } from "./api";
 
 export const messagesKey = (id: number | null) => ["youzi", "messages", id];
@@ -43,6 +44,8 @@ type Live = {
   edit: FileEdit | null;
   /** ASK: what it asked me. */
   asks: Ask[];
+  /** DevJanitor: its cards so far. */
+  janitor: JanitorCard[] | null;
 };
 
 /** What the status says is being written in `session` (a reply or a summary). */
@@ -124,6 +127,8 @@ export function useLiveReply(opts: { current: number | null; status: YouziStatus
       l.edit = e.edit;
     } else if (e.kind === "ask") {
       l.asks = [...l.asks.filter((a) => a.id !== e.ask.id), e.ask];
+    } else if (e.kind === "janitor") {
+      l.janitor = e.cards;
     } else {
       l.done = true;
       l.queued = false;
@@ -141,7 +146,7 @@ export function useLiveReply(opts: { current: number | null; status: YouziStatus
   /** Starts a reply (send / edit / regenerate) and lays it over the path as it streams. */
   const run = async (kind: Live["kind"], prompt: string, call: (on: (e: StreamEvent) => void) => Promise<Sent>, files: MessageFile[] = [], page: Query | null = null): Promise<Sent | null> => {
     if (livesRef.current.some((l) => l.sessionId === current) || activeIn(status, current)) return null;
-    const l: Live = { kind, prompt, sessionId: current, messageId: null, runId: null, asks: [], content: "", reasoning: "", reasoningStart: null, reasoningMs: null, done: false, queued: false, files, page, reading: null, notes: [], queries: [], sources: [], card: null, edit: null };
+    const l: Live = { kind, prompt, sessionId: current, messageId: null, runId: null, asks: [], janitor: null, content: "", reasoning: "", reasoningStart: null, reasoningMs: null, done: false, queued: false, files, page, reading: null, notes: [], queries: [], sources: [], card: null, edit: null };
     livesRef.current = [...livesRef.current, l];
     repaint();
     opts.onStart?.();
@@ -182,6 +187,7 @@ export function useLiveReply(opts: { current: number | null; status: YouziStatus
         card: live.card ?? m.card,
         edit: live.edit ?? m.edit,
         asks: live.asks.length ? live.asks : m.asks,
+        janitor: live.janitor ?? m.janitor,
       });
       if (live.messageId != null && saved.some((m) => m.id === live.messageId)) shown = saved.map((m) => (m.id === live.messageId ? overlay(m) : m));
       else if (live.kind === "send") {

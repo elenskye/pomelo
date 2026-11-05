@@ -23,7 +23,7 @@ use crate::modules::common::{self, Status as Mark};
 use crate::modules::finance::{self, AccountKind, Currency, Flow};
 use crate::modules::jobs::{self, Stage};
 use crate::modules::custom::{self, Template};
-use crate::modules::{books, days, drawing, films, kinds, lists, notes, packing, progress, todo};
+use crate::modules::{bookmarks, books, days, drawing, films, kinds, lists, notes, packing, progress, todo};
 use crate::AppState;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -55,10 +55,11 @@ pub const MODULES: &[Module] = &[
     Module { key: "jobs", label: "投石问路", tool: "pomelo_jobs", cloud: true },
     Module { key: "notes", label: "念念不忘", tool: "pomelo_notes", cloud: true },
     Module { key: "days", label: "来日方长", tool: "pomelo_days", cloud: true },
+    Module { key: "bookmarks", label: "一网打尽", tool: "pomelo_bookmarks", cloud: true },
 ];
 
 /// Modules 柚子 only helps in (assist.rs), never reads: no tool, only a 「发给云端」 switch.
-pub const HELP_ONLY: &[Module] = &[Module { key: "site", label: "呦呦漫游", tool: "", cloud: true }];
+pub const HELP_ONLY: &[Module] = &[Module { key: "site", label: "呦呦漫游", tool: "", cloud: true }, Module { key: "janitor", label: "DevJanitor", tool: "", cloud: true }];
 
 /// 钱来钱往's two parts for the cloud (keys in `data.cloud` and `cloud_allowed`, never "finance").
 pub const FIN_FLOW: &str = "finance/flow";
@@ -365,6 +366,12 @@ fn definition(m: &Module) -> Value {
             &["soon", "list"],
             json!({ "kind": { "type": "string", "enum": ["day", "birthday", "document"], "description": "list：day 纪念日和倒数日，birthday 生日，document 证件" }, "keyword": text("list：名称、备注或礼物里的字") }),
         ),
+        "bookmarks" => tool(
+            m.tool,
+            "一网打尽（网址收藏夹：文件夹里套文件夹，里面是网址）。view：tree 全部文件夹和网址（按文件夹分层：名称、网址、放没放首页）；search 找网址（keyword 必填：名称、网址或所在文件夹里的字，空格隔开的都要有）。",
+            &["tree", "search"],
+            json!({ "keyword": text("search：名称、网址或文件夹名里的字") }),
+        ),
         _ => Value::Null,
     }
 }
@@ -550,6 +557,7 @@ pub fn run(conn: &Connection, access: &Access, name: &str, arguments: &str, toda
         "packing" => packing_view(conn, &args, today),
         "notes" => notes_view(conn, &args, today),
         "days" => days_view(conn, &args, today),
+        "bookmarks" => bookmarks_view(conn, &args),
         _ => Err("没有这个模块".into()),
     };
     match found {
@@ -1836,6 +1844,42 @@ fn days_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String> 
     }
 }
 
+// ---------- 一网打尽 ----------
+
+fn bookmark_row(b: &bookmarks::Bookmark, path: &[&str], indent: bool) -> Row {
+    let at = if indent || path.is_empty() { String::new() } else { format!("（在 {}）", path.join(" / ")) };
+    let pad = if indent { "  ".repeat(path.len()) } else { String::new() };
+    if b.is_folder() {
+        row(format!("{pad}- 文件夹「{}」{at}", b.title))
+    } else {
+        Row { text: format!("{pad}- {}：{}{at}{}", b.title, b.url, if b.on_home { "（放首页）" } else { "" }), rec: Some(rec("bookmarks", "bookmark", b.id, &b.title)) }
+    }
+}
+
+fn bookmarks_view(conn: &Connection, a: &Args) -> Result<Found, String> {
+    let all = bookmarks::list(conn)?;
+    let rows = bookmarks::in_order(&all);
+    let links = all.iter().filter(|b| !b.is_folder()).count();
+    match a.view(&["tree", "search"])? {
+        "search" => {
+            let words: Vec<String> = a.str("keyword").ok_or("search 要写 keyword")?.to_lowercase().split_whitespace().map(str::to_string).collect();
+            let hits: Vec<Row> = rows
+                .iter()
+                .filter(|(b, p)| {
+                    let hay = format!("{} {} {}", b.title, b.url, p.join(" ")).to_lowercase();
+                    words.iter().all(|w| hay.contains(w.as_str()))
+                })
+                .map(|(b, p)| bookmark_row(b, p, false))
+                .collect();
+            Ok(Found::new(format!("找网址（{} 条）", hits.len()), vec![format!("名称、网址或所在文件夹里有「{}」的，按收藏夹里的顺序：", words.join(" "))]).rows(hits))
+        }
+        _ => {
+            let head = vec![format!("{} 个文件夹、{links} 个网址，按文件夹分层（缩进是在上面那个文件夹里）：", all.len() - links)];
+            Ok(Found::new(format!("全部网址（{links} 个）"), head).rows(rows.iter().map(|(b, p)| bookmark_row(b, p, true)).collect()))
+        }
+    }
+}
+
 // ---------- 五花八门 · 循序渐进 ----------
 
 /// One tool over every made module of `t`: hidden ones aren't there, ones this cloud model may not
@@ -2204,6 +2248,7 @@ fn kind_module(kind: &str) -> Option<&'static str> {
         "course" | "lesson" => "drawing",
         "trip" | "template" => "packing",
         "day" => "days",
+        "bookmark" => "bookmarks",
         "entry" | "account" | "fixed" => "finance",
         "job" => "jobs",
         "note" => "notes",
@@ -2228,6 +2273,7 @@ pub(crate) fn kind_label(kind: &str) -> &'static str {
         "job" => "投递",
         "note" => "笔记",
         "day" => "日子",
+        "bookmark" => "网址",
         "list_item" => "条目",
         "progress_course" => "一项进度",
         "progress_lesson" => "一节",
@@ -2473,6 +2519,17 @@ pub(crate) fn record_text(conn: &Connection, today: &str, r: &PageRef) -> Result
         "day" => {
             let d = days::get(conn, today, r.id)?;
             (d.name.clone(), vec![line("日子", Some(d.name.clone())), Some(join_bits(day_bits(&d)))], rec(module, "day", d.id, &d.name))
+        }
+        "bookmark" => {
+            let all = bookmarks::list(conn)?;
+            let (b, path) = bookmarks::in_order(&all).into_iter().find(|(b, _)| b.id == r.id).ok_or("找不到这一条，可能已经被删除了")?;
+            let folder = (!path.is_empty()).then(|| path.join(" / "));
+            let lines = if b.is_folder() {
+                vec![line("文件夹", Some(b.title.clone())), line("在", folder), line("里面", Some(format!("{} 条", all.iter().filter(|x| x.parent_id == Some(b.id)).count())))]
+            } else {
+                vec![line("名称", Some(b.title.clone())), line("网址", Some(b.url.clone())), line("在", folder), b.on_home.then(|| "放在首页".to_string())]
+            };
+            (b.title.clone(), lines, rec(module, "bookmark", b.id, &b.title))
         }
         _ => return Err("不认识这种记录".into()),
     };
@@ -3292,7 +3349,7 @@ pub mod tests {
     fn tools_follow_hidden_modules_and_cloud_rules() {
         let c = memory_db();
         let names = |a: &Access| tools(a).iter().map(|t| t["function"]["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-        assert_eq!(names(&all()).len(), 25); // 9 modules + search + read (cite.rs) + 14 writes (act.rs)
+        assert_eq!(names(&all()).len(), 26); // 10 modules + search + read (cite.rs) + 14 writes (act.rs)
         assert!(names(&all()).contains(&super::super::cite::SEARCH.to_string()));
         assert!(!names(&all()).iter().any(|n| n.contains("vault")));
         assert!(names(&Access { hidden: MODULES.iter().map(|m| m.key.to_string()).collect(), ..all() }).is_empty()); // nothing to read: no search either
@@ -3303,7 +3360,7 @@ pub mod tests {
 
         // a cloud model: 钱来钱往 is offered (to say so) but refused, with the sentence to start with
         let cloud = Access { cloud: true, cloud_allowed: MODULES.iter().filter(|m| m.key != "finance").map(|m| m.key.to_string()).collect(), ..all() };
-        assert_eq!(names(&cloud).len(), 25); // refused writes are offered too, to say so
+        assert_eq!(names(&cloud).len(), 26); // refused writes are offered too, to say so
         assert!(cloud.allows("notes") && cloud.allows("youzi") && !cloud.allows("finance") && !hidden.allows("jobs"));
         let a = ask(&c, &cloud, "pomelo_finance", json!({ "view": "assets" }));
         assert_eq!((a.state, a.label.as_str()), ("blocked", "钱来钱往 · 不发给云端，没看"));
@@ -3322,11 +3379,28 @@ pub mod tests {
     }
 
     #[test]
+    fn bookmarks_in_a_tree_found_and_read() {
+        let c = memory_db();
+        let ids = crate::modules::bookmarks::tests::seed(&c);
+        let a = ask(&c, &all(), "pomelo_bookmarks", json!({ "view": "tree" }));
+        assert_eq!((a.state, a.label.as_str()), ("ok", "一网打尽 · 全部网址（3 个）"));
+        assert!(a.text.contains("- 文件夹「工作」\n  - 文件夹「邮箱」\n    - Gmail：https://mail.google.com"), "{}", a.text);
+        let a = ask(&c, &all(), "pomelo_bookmarks", json!({ "view": "search", "keyword": "邮箱 mail" }));
+        assert!(a.text.contains("Gmail：https://mail.google.com（在 工作 / 邮箱）") && !a.text.contains("GitHub"), "{}", a.text);
+        assert_eq!(a.records.iter().map(|r| r.id).collect::<Vec<_>>(), [ids["Gmail"]]);
+        assert!(ask(&c, &all(), "pomelo_bookmarks", json!({ "view": "search" })).text.contains("keyword"));
+        let q = page_query(&c, &all(), TODAY, &page("bookmarks", Some("工作"), Some(("bookmark", ids["GitHub"])), &[])).unwrap();
+        assert!(q.result.contains("网址：https://github.com/") && q.result.contains("在：工作"), "{}", q.result);
+        let hidden = Access { hidden: vec!["bookmarks".into()], ..all() };
+        assert_eq!(ask(&c, &hidden, "pomelo_bookmarks", json!({ "view": "tree" })).state, "blocked");
+    }
+
+    #[test]
     fn cloud_settings_default_to_finance_assets_local_only() {
         let p = crate::youzi::store::tests::memory_db();
         let made = [Made { key: "list/3".into(), name: "游戏".into(), template: Template::List }, Made { key: "progress/4".into(), name: "日语".into(), template: Template::Progress }];
         let allowed = |p: &Connection| cloud_settings(p, &made).unwrap().into_iter().filter(|s| s.allowed).map(|s| s.module).collect::<Vec<_>>();
-        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", FIN_FLOW, "jobs", "notes", "days", "site", "list/3", "progress/4"]);
+        assert_eq!(allowed(&p), ["todo", "books", "films", "drawing", "packing", FIN_FLOW, "jobs", "notes", "days", "bookmarks", "site", "janitor", "list/3", "progress/4"]);
         // the one 钱来钱往 switch from before goes on as 资产's; it can't be set any more
         pref_set(&p, CLOUD_KEY, &HashMap::from([("finance".to_string(), true)])).unwrap();
         assert!(allowed(&p).contains(&FIN_ASSETS.to_string()));
@@ -3335,7 +3409,7 @@ pub mod tests {
         set_cloud(&p, "notes", false, &made).unwrap();
         set_cloud(&p, "list/3", false, &made).unwrap();
         set_cloud(&p, "site", false, &made).unwrap();
-        assert_eq!(cloud_allowed(&p, &["list/3".into(), "progress/4".into(), "list/9".into()]), ["todo", "books", "films", "drawing", "packing", FIN_ASSETS, "jobs", "days", "progress/4", "list/9"]);
+        assert_eq!(cloud_allowed(&p, &["list/3".into(), "progress/4".into(), "list/9".into()]), ["todo", "books", "films", "drawing", "packing", FIN_ASSETS, "jobs", "days", "bookmarks", "janitor", "progress/4", "list/9"]);
         // 呦呦漫游 has a switch but never a tool
         assert!(!tools(&all()).iter().any(|t| t.to_string().contains("site")));
         assert_eq!(cloud_settings(&p, &made).unwrap().last().unwrap().label, "日语");

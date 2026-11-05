@@ -9,6 +9,8 @@ import { tagSpans } from "@/shared/editor/lite";
 import { addDays, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/youzi/assistants/seekerApi";
 import type { SkillFlowNode } from "@/modules/youzi/api";
+import { janitorCards, janitorChat, janitorHandlers, janitorLive, janitorReply } from "./janitorMock";
+import { bm, bookmarkHandlers, bookmarksHome } from "./bookmarksMock";
 import { seekerHandlers, seekerMock } from "./seekerMock";
 import type { RaterRecord, RaterReview } from "@/modules/youzi/assistants/raterApi";
 
@@ -492,7 +494,7 @@ type Snap = { label: string; before: string; after: string };
 const keepMaps = (_: string, v: unknown) => (v instanceof Map ? { __map: [...v] } : v);
 const readMaps = (_: string, v: unknown) => (v && typeof v === "object" && "__map" in v ? new Map((v as { __map: [unknown, unknown][] }).__map) : v);
 const snapState = () =>
-  JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker: seekerMock.workspace, rater: seekerMock.rater, practice: seekerMock.practice, interviews: seekerMock.interviews, vItems: vt.items, vCats: vt.cats, courses, lessons, tpls, tripRows, tplItems, tripItems, books: colls.books?.rows(), films: colls.films?.rows() }, keepMaps);
+  JSON.stringify({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker: seekerMock.workspace, rater: seekerMock.rater, practice: seekerMock.practice, interviews: seekerMock.interviews, vItems: vt.items, vCats: vt.cats, courses, lessons, tpls, tripRows, tplItems, tripItems, books: colls.books?.rows(), films: colls.films?.rows(), bookmarks: bm.rows }, keepMaps);
 const loadState = (s: string) => {
   let seeker: SeekerWorkspace;
   let rater: typeof seekerMock.rater;
@@ -502,7 +504,9 @@ const loadState = (s: string) => {
   let vCats: VCat[];
   let books: Row[] | undefined;
   let films: Row[] | undefined;
-  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker, rater, practice, interviews, vItems, vCats, courses, lessons, tpls, tripRows, tplItems, tripItems, books, films } = JSON.parse(s, readMaps));
+  let bookmarks: typeof bm.rows | undefined;
+  ({ tGroups, tGoals, tTasks, tLogs, fin, jb, nt, dy, cm, aLinks, seeker, rater, practice, interviews, vItems, vCats, courses, lessons, tpls, tripRows, tplItems, tripItems, books, films, bookmarks } = JSON.parse(s, readMaps));
+  if (bookmarks) bm.rows = bookmarks;
   seekerMock.workspace = seeker;
   seekerMock.rater = rater;
   seekerMock.practice = practice ?? [];
@@ -2159,6 +2163,7 @@ function mockDocs(): MDoc[] {
     }
   }
   add("days", "day", dy.map((r) => ({ hay: r.kind === "document" ? r.name : t(r.name, r.note, r.ideas), hit: { id: r.id, title: r.name, detail: { day: "纪念日", birthday: "生日", document: "证件" }[r.kind] } })));
+  add("bookmarks", "bookmark", bm.rows.map((b) => ({ hay: t(b.title, b.url), hit: { id: b.id, title: b.title, detail: b.kind === "folder" ? "文件夹" : b.url, parent: b.parentId } })));
   return out;
 }
 
@@ -2221,6 +2226,10 @@ function dockLiveMock() {
   out.translate = "中英互译";
   if (seekerMock.workspace.draft || seekerMock.workspace.en?.draft) out.seeker = "有草稿";
   if (seekerMock.rater.questions.length) out.rater = `${seekerMock.rater.questions.length} 道题`;
+  const janitor = janitorLive();
+  if (janitor) out.janitor = janitor;
+  const links = bm.rows.filter((b) => b.kind === "link").length;
+  if (links) out.bookmarks = `${links} 个网址`;
   return out;
 }
 
@@ -2299,6 +2308,7 @@ function homeMock(hidden: string[]) {
           })
       : null,
     days: shown("days") ? daysList().filter((d) => d.soon) : null,
+    bookmarks: shown("bookmarks") ? bookmarksHome() : null,
     then: (() => {
       const md = today.slice(5);
       const local = (iso: string) => toYmd(new Date(iso));
@@ -2809,7 +2819,7 @@ type PQuery = { module: string | null; label: string; state: string; result: str
 const P_MODULES: [string, string, boolean][] = [
   ["todo", "一步一步", true], ["books", "摸鱼读读", true], ["films", "好奇看看", true], ["drawing", "随意画画", true],
   ["packing", "出门走走", true], ["finance", "钱来钱往", false], ["jobs", "投石问路", true], ["notes", "念念不忘", true],
-  ["days", "来日方长", true], ["site", "呦呦漫游", true],
+  ["days", "来日方长", true], ["bookmarks", "一网打尽", true], ["site", "呦呦漫游", true], ["janitor", "DevJanitor", true],
 ];
 /** assist.rs mentions: two characters in a row of the name (emoji, spaces left out). */
 const mentions = (sentence: string, name: string) => {
@@ -3916,7 +3926,7 @@ const pPlan = (s: PSession) => {
 const pRecords = new Map<number, RaterRecord>();
 /** The 速记小窗's conversation (library.rs `capture_chat`): private and in no list until kept. */
 const pCapChat = { id: null as number | null };
-const pUnlisted = (id: number) => pRecords.has(id) || pCapChat.id === id;
+const pUnlisted = (id: number) => pRecords.has(id) || pCapChat.id === id || janitorChat.id === id;
 /** library.rs: which list a session shows in (a 复盘 · 记录, the 速记小窗's: none). */
 const pListOf = (s: PSession) =>
   pUnlisted(s.id) ? "unlisted" : s.archived ? "archived" : s.pinned ? "pinned" : s.projectId != null && pky.projects.some((p) => p.id === s.projectId) ? `project:${s.projectId}` : s.scheduled ? "scheduled" : "recent";
@@ -4028,6 +4038,8 @@ const pLocalBusy = () => [...pky.runs.values()].some((r) => r.model.startsWith("
 const pTarget = (session: number | null = null) => {
   if (pBusyIn(session)) throw "这个对话正在生成回复，等它写完或先停止。";
   // a Rater 复盘 · 记录: Rater's model (chat.rs `prepare`)
+  // DevJanitor's conversation: its model (janitor/agent.rs `route`)
+  if (session != null && janitorChat.id === session) return { modelName: "模拟模型（DevJanitor）", ability: "switch" };
   if (session != null && pRecords.has(session)) {
     seekerMock.modelCheck("record");
     return { modelName: "模拟模型（Rater）", ability: "switch" };
@@ -4126,6 +4138,14 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
         run.timer = window.setTimeout(step, 400);
       };
       run.timer = window.setTimeout(step, 400);
+    } else if (janitorChat.id === s.id) {
+      // DevJanitor's Agent (agent.rs `mock_calls`): a look, then cards by what's asked
+      const { queries, text } = janitorReply(prompt, msg.id);
+      pky.queries.set(msg.id, queries);
+      run.timer = window.setTimeout(() => {
+        queries.forEach((q) => emit({ kind: "query", ...q }));
+        run.timer = pStream(msg, thinking, prompt, emit, done, text);
+      }, 450);
     } else if (pRecords.has(s.id)) {
       // 复盘 · 记录 (record.rs `mock_fill`): what the user said becomes a question; 「就这些」 marks it filled
       const d = pRecords.get(s.id)!;
@@ -4659,7 +4679,7 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
     return pPath(s).map((m) => {
       const sib = pSiblings(s, m);
       const { parent: _p, activeChild: _c, ...rest } = m;
-      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], atlas: pky.atlas.get(m.id) ?? null, memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [], sources: pky.sources.get(m.id) ?? [], asks: pky.asks.get(m.id) ?? [], card: pCardOut(pky.cards.get(m.id)) ?? null, edit: pky.edits.get(m.id) ?? null, editFile: pky.editFiles.get(m.id) ?? null, page: pky.pages.get(m.id) ?? null, skills: m.role === "user" ? pAskedOf(m.id).map((k) => P_SKILLS.find((x) => x.key === k)?.name ?? k) : [] };
+      return { ...rest, versionIndex: sib.indexOf(m) + 1, versionCount: sib.length, files: m.role === "user" ? pMessageFiles(m) : [], notes: pky.notes.get(m.id) ?? [], atlas: pky.atlas.get(m.id) ?? null, memories: pky.runMemories.get(m.id) ?? [], queries: pky.queries.get(m.id) ?? [], sources: pky.sources.get(m.id) ?? [], asks: pky.asks.get(m.id) ?? [], janitor: structuredClone(janitorCards.get(m.id) ?? []), card: pCardOut(pky.cards.get(m.id)) ?? null, edit: pky.edits.get(m.id) ?? null, editFile: pky.editFiles.get(m.id) ?? null, page: pky.pages.get(m.id) ?? null, skills: m.role === "user" ? pAskedOf(m.id).map((k) => P_SKILLS.find((x) => x.key === k)?.name ?? k) : [] };
     });
   },
   youzi_send: (a) => {
@@ -4780,6 +4800,24 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
   },
   youzi_rater_records: () => [...pRecords.values()].sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((r) => structuredClone(r)),
   youzi_rater_record: (a) => { const r = pRecords.get(a.session as number); if (!r) throw new Error("这次记录已经存好或放弃了"); return structuredClone(r); },
+  // DevJanitor's conversation: made when missing (private, unlisted); 新对话 drops the old one
+  janitor_agent: () => {
+    if (janitorChat.id == null || !pky.sessions.some((x) => x.id === janitorChat.id)) {
+      const sess = Object.assign(pNewSession("DevJanitor"), { titleSource: "user" as const, private: true });
+      pky.sessions.push(sess);
+      janitorChat.id = sess.id;
+    }
+    return { session: janitorChat.id, choice: janitorChat.choice };
+  },
+  janitor_agent_new: () => {
+    pky.sessions = pky.sessions.filter((x) => x.id !== janitorChat.id);
+    janitorChat.id = null;
+    return handlers.janitor_agent({});
+  },
+  janitor_agent_set: (a) => {
+    janitorChat.choice = a.choice as typeof janitorChat.choice;
+    return handlers.janitor_agent({});
+  },
   youzi_rater_record_start: (a) => {
     seekerMock.modelCheck("record");
     if (!String(a.date).trim()) throw new Error("请填写面试日期");
@@ -5225,6 +5263,7 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
   },
   youzi_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
   // reading, settings and the Word export itself aren't undone (as in Rust)
+  ...janitorHandlers,
   ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["youzi_rater", "youzi_rater_interviews", "youzi_rater_prep", "youzi_rater_summarize", "youzi_rater_prep_word_place", "youzi_rater_prep_word", "youzi_seeker_files", "youzi_seeker_cv_text", "youzi_rater_practice", "youzi_rater_round", "youzi_rater_pick", "youzi_rater_follow", "youzi_rater_comment", "youzi_rater_seconds", "youzi_rater_suggest", "youzi_rater_defaults", "youzi_rater_options", "youzi_rater_options_set", "youzi_seeker", "youzi_seeker_folder", "youzi_seeker_settings", "youzi_seeker_sources", "youzi_seeker_suggest", "youzi_seeker_review", "youzi_seeker_notes_settle", "youzi_seeker_export_name", "youzi_seeker_import_preview", "youzi_seeker_output_save", "youzi_seeker_knowledge", "youzi_seeker_knowledge_add", "youzi_seeker_company_names", "youzi_seeker_job_company", "youzi_seeker_job_resumes", "youzi_seeker_prompts", "youzi_rater_prompts"].includes(key) ? handler : undoable(key === "youzi_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "youzi_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "youzi_seeker_records_delete" ? "删除 Seeker 资料" : key === "youzi_rater_order" ? "调整题目顺序" : key === "youzi_rater_delete_many" ? "删除题目" : key === "youzi_rater_rounds_delete" ? "删除练习" : key === "youzi_rater_prep_save" ? "改速查卡" : key === "youzi_rater_prep_keep" ? "追问存进题库" : key === "youzi_rater_review_save" ? "记复盘" : key === "youzi_rater_review_keep" ? "复盘的题存进题库" : key === "youzi_rater_review_rule" ? "复盘的约定加进规则" : key === "youzi_rater_interview_delete" ? "删除面试记录" : key === "youzi_rater_add" ? "补题" : key === "youzi_rater_round_start" ? "开始练习" : key === "youzi_rater_mark" ? "练习" : key === "youzi_rater_stop" ? "停下练习" : key === "youzi_rater_round_delete" ? "删除这一轮" : key === "youzi_rater_keep" ? "追问存进题库" : key === "youzi_rater_save" ? "保存题目" : key === "youzi_rater_delete" ? "删除题目" : key === "youzi_seeker_job_resume" ? "关联简历" : key === "youzi_seeker_group_rename" ? "分组改名" : key === "youzi_seeker_use_job" ? "为岗位做简历" : key === "youzi_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
   youzi_pub2md: () => p2View(),
   youzi_pub2md_settings: (a) => {
@@ -6119,6 +6158,12 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...jobHandlers,
   ...noteHandlers,
   ...dayHandlers,
+  bookmarks_list: bookmarkHandlers.bookmarks_list,
+  bookmarks_create: undoable("添加网址", bookmarkHandlers.bookmarks_create),
+  bookmarks_update: undoable("修改网址", bookmarkHandlers.bookmarks_update),
+  bookmarks_place: undoable("移动网址", bookmarkHandlers.bookmarks_place),
+  bookmarks_delete: undoable("删除网址", bookmarkHandlers.bookmarks_delete),
+  bookmarks_icons: bookmarkHandlers.bookmarks_icons,
   ...customHandlers,
   ...vaultHandlers,
   ...attachmentHandlers,

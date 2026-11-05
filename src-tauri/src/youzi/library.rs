@@ -281,7 +281,7 @@ pub fn set_archived(conn: &Connection, ids: &[i64], archived: bool) -> Result<()
 /// Sessions kept out of the lists and searches (see the top), as SQL: `id NOT IN unlisted!()`.
 macro_rules! unlisted {
     () => {
-        "(SELECT session_id FROM rater_records UNION ALL SELECT CAST(value AS INTEGER) FROM preferences WHERE key = 'capture.chat')"
+        "(SELECT session_id FROM rater_records UNION ALL SELECT CAST(value AS INTEGER) FROM preferences WHERE key IN ('capture.chat', 'janitor.chat'))"
     };
 }
 pub(crate) use unlisted;

@@ -51,6 +51,7 @@
 
 use super::act;
 use super::ask;
+use super::assistants::janitor::agent as janitor;
 use super::assistants::rater::record;
 use super::knowledge;
 use super::work;
@@ -149,6 +150,8 @@ pub struct Message {
     pub edit: Option<work::FileEdit>,
     /// Replies: what they asked me (ASK).
     pub asks: Vec<ask::Ask>,
+    /// Replies in DevJanitor's conversation: its cards (移到废纸篓、跑命令、加进一键清理).
+    pub janitor: Vec<janitor::Card>,
     #[serde(skip)]
     active_child: Option<i64>,
     #[serde(skip)]
@@ -194,6 +197,7 @@ fn message_row(r: &rusqlite::Row) -> rusqlite::Result<Message> {
         skills: vec![],
         edit_file: None,
         asks: vec![],
+        janitor: vec![],
         edit: None,
     })
 }
@@ -255,6 +259,7 @@ pub fn path(conn: &Connection, session_id: i64) -> Result<Vec<Message>, String> 
             m.card = act::card_of(conn, run)?;
             m.edit = work::edit_of(conn, run)?;
             m.asks = ask::of_run(conn, run)?;
+            m.janitor = janitor::cards_of(conn, run)?;
         }
     }
     Ok(out)
@@ -345,7 +350,7 @@ pub fn begin_run_in(conn: &Connection, session: Option<i64>, new: &NewSession, p
     let mut turns = vec![];
     for m in &shown {
         let queries = if m.role == "assistant" { data::queries_of_message(&tx, m.id)? } else { vec![] };
-        turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries, asks: m.asks.clone() });
+        turns.push(Turn { id: m.id, role: m.role.clone(), content: m.content.clone(), state: m.state.clone(), queries, asks: m.asks.clone(), cards: janitor::in_history(&m.janitor) });
     }
     let mut request = context::request(&tx, session_id, &turns, prompt)?;
     let leaf = shown.last().map(|m| m.id);
@@ -502,7 +507,8 @@ pub fn begin_version(conn: &Connection, source: i64, edited: Option<&str>, model
     for m in chain {
         let queries = if m.role == "assistant" { data::queries_of_message(&tx, m.id)? } else { vec![] };
         let asks = if m.role == "assistant" { ask::of_message(&tx, m.id)? } else { vec![] };
-        turns.push(Turn { id: m.id, role: m.role, content: m.content, state: m.state, queries, asks });
+        let cards = if m.role == "assistant" { janitor::in_history(&janitor::of_message(&tx, m.id)?) } else { String::new() };
+        turns.push(Turn { id: m.id, role: m.role, content: m.content, state: m.state, queries, asks, cards });
     }
     ask::cancel_in_session(&tx, src.session_id)?;
     let mut request = context::request(&tx, src.session_id, &turns, &prompt)?;
@@ -613,6 +619,8 @@ pub enum StreamEvent {
     Edit { edit: work::FileEdit },
     /// ASK: a card of questions, then again once answered.
     Ask { ask: ask::Ask },
+    /// DevJanitor: the reply's cards so far, after each proposal.
+    Janitor { cards: Vec<janitor::Card> },
     /// Waiting for the local model (it is answering something else) / its turn now.
     Queued { on: bool },
     #[serde(rename_all = "camelCase")]
@@ -984,12 +992,15 @@ pub(crate) struct Lookup {
     cost: i64,
     /// 读文件 is offered: long material goes as an outline and excerpts (skills/files.rs).
     reads_files: bool,
+    /// DevJanitor's conversation: its own tools, no Pomelo data.
+    own: bool,
 }
 
 impl Lookup {
     /// The lookup part of the system message.
     pub(crate) fn instructions(&self) -> String {
-        [data::instructions(&self.today, &self.access, self.verify), self.writing.clone(), self.skilled.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
+        let data = if self.own { String::new() } else { data::instructions(&self.today, &self.access, self.verify) };
+        [data, self.writing.clone(), self.skilled.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
     }
     /// Room kept in the window: the definitions and the results.
     pub(crate) fn kept(&self, window: i64) -> i64 {
@@ -1031,6 +1042,10 @@ pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: St
     offered.retain(|s| skills::qbank::category(s.tool).is_none() || !access.hidden.iter().any(|h| h == data::RATER));
     let reads_files = offered.iter().any(|s| s.key == skills::FILES);
     let mut tools = data::tools(&access);
+    // DevJanitor's results (read only): not when hidden, to the cloud only when allowed
+    if !access.hidden.iter().any(|h| h == janitor::MODULE) && (!access.cloud || access.cloud_allowed.iter().any(|a| a == janitor::MODULE)) {
+        tools.push(janitor::info_tool());
+    }
     tools.extend(extra);
     if read_only {
         tools.retain(|t| !t["function"]["name"].as_str().is_some_and(act::is_act));
@@ -1043,7 +1058,24 @@ pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: St
     let forced: Vec<String> = offered.iter().filter(|s| asked.iter().any(|a| a == s.key)).map(|s| s.tool.to_string()).collect();
     let skilled = skills::instructions(&offered, asked);
     let cost = counter.count(&serde_json::to_string(&tools).unwrap_or_default()).await + TOOLS_OVERHEAD;
-    Some(Lookup { access, today, writing, skilled, verify: skills::verifies(&offered), forced, tools, cost, reads_files })
+    Some(Lookup { access, today, writing, skilled, verify: skills::verifies(&offered), forced, tools, cost, reads_files, own: false })
+}
+
+/// DevJanitor's conversation: its tools (look, the three proposals), 联网搜索 on its own judgment (on and
+/// with its Key) and 问我 for a cloud model; no Pomelo data.
+async fn janitor_plan(app: &AppHandle, access: data::Access, today: String, counter: &Counter, cloud: bool) -> Option<Lookup> {
+    let st = app.state::<AppState>();
+    let ctx = skills::Ctx { files: false, kb: false, text: false, scheduled: true };
+    let mut web = st.youzi.with_db(|c| Ok(skills::offered(c, &st.youzi, &[], ctx))).unwrap_or_default();
+    web.retain(|s| s.key == skills::WEB);
+    let mut tools = janitor::tools();
+    tools.extend(skills::tools(&web));
+    if cloud {
+        tools.push(ask::tool());
+    }
+    let skilled = skills::instructions(&web, &[]);
+    let cost = counter.count(&serde_json::to_string(&tools).unwrap_or_default()).await + TOOLS_OVERHEAD;
+    Some(Lookup { access, today, writing: String::new(), skilled, verify: false, forced: vec![], tools, cost, reads_files: false, own: true })
 }
 
 /// What one request streamed besides the shared buffer.
@@ -1388,6 +1420,26 @@ impl Host for AppHost<'_> {
                 }
                 a
             }
+            janitor::LOOK => {
+                let (app, args) = (self.app.clone(), call.arguments.clone());
+                tauri::async_runtime::spawn_blocking(move || janitor::look(&app, &args, budget)).await.unwrap_or_else(|e| data::Answer { module: None, label: "DevJanitor · 没看成".into(), state: "failed", text: e.to_string(), records: vec![] })
+            }
+            janitor::RUN => {
+                let (app, args) = (self.app.clone(), call.arguments.clone());
+                tauri::async_runtime::spawn_blocking(move || janitor::run_readonly(&app, &args, budget)).await.unwrap_or_else(|e| data::Answer { module: None, label: "DevJanitor · 没跑成".into(), state: "failed", text: e.to_string(), records: vec![] })
+            }
+            name if janitor::is_proposal(name) => {
+                let (app, name, args, run) = (self.app.clone(), name.to_string(), call.arguments.clone(), self.shared.run_id);
+                let a = tauri::async_runtime::spawn_blocking(move || janitor::propose(&app, run, &name, &args)).await.unwrap_or_else(|e| data::Answer { module: None, label: "DevJanitor · 没提议成".into(), state: "failed", text: e.to_string(), records: vec![] });
+                // the cards show while the reply goes on (and while it waits on 问我)
+                if a.state == "ok" {
+                    if let Ok(cards) = self.app.state::<AppState>().youzi.with_db(|c| janitor::cards_of(c, run)) {
+                        let _ = self.shared.channel.send(StreamEvent::Janitor { cards });
+                    }
+                }
+                a
+            }
+            janitor::INFO => janitor::info(self.app, &call.arguments, budget),
             name if act::is_act(name) => self.propose(call).await,
             ask::TOOL => self.ask_me(call).await,
             name if skills::qbank::category(name).is_some() => {
@@ -1422,8 +1474,8 @@ impl Host for AppHost<'_> {
         }
     }
     fn record(&self, position: usize, round: usize, call: &ToolCall, q: Query) {
-        if act::is_act(&call.name) || call.name == ask::TOOL {
-            return; // proposals and questions show as their cards, not as 「查了」
+        if act::is_act(&call.name) || call.name == ask::TOOL || (janitor::is_proposal(&call.name) && q.state == "ok") {
+            return; // proposals and questions show as their cards, not as 「查了」 (a proposal that didn't make it does)
         }
         let _ = self.app.state::<AppState>().youzi.with_db(|c| data::save_query(c, self.shared.run_id, position, round, call, &q));
         let _ = self.shared.channel.send(StreamEvent::Query(q));
@@ -1445,7 +1497,8 @@ impl Host for AppHost<'_> {
 #[allow(clippy::too_many_arguments)]
 async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], forced: &[String], question: &str, cost: i64, counter: &Counter, request: &Request, mut messages: Vec<Msg>, window: i64, mut used: i64) -> Result<(), String> {
     let (mut round, mut position) = (0usize, 0usize);
-    let writes: Vec<serde_json::Value> = tools.iter().filter(|t| t["function"]["name"].as_str().is_some_and(|n| act::is_act(n) || skills::toolbox::is_tool(n) || skills::qbank::category(n).is_some() || n == record::TOOL)).cloned().collect();
+    let writes: Vec<serde_json::Value> = tools.iter().filter(|t| t["function"]["name"].as_str().is_some_and(|n| act::is_act(n) || skills::toolbox::is_tool(n) || skills::qbank::category(n).is_some() || n == record::TOOL || janitor::is_proposal(n))).cloned().collect();
+    let max_rounds = request.rounds.unwrap_or(data::MAX_ROUNDS);
     // 联网 asked for: the question searched first, the results after it
     if forced.iter().any(|f| f == skills::WEB_TOOL) {
         let q: String = question.trim().chars().take(300).collect();
@@ -1462,8 +1515,8 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
     loop {
         // lookups and writes, then writes only, then the answer
         let (answer_now, offered) = match round {
-            r if r < data::MAX_ROUNDS => (false, tools.to_vec()),
-            r if r == data::MAX_ROUNDS && !writes.is_empty() => (false, writes.clone()),
+            r if r < max_rounds => (false, tools.to_vec()),
+            r if r == max_rounds && !writes.is_empty() => (false, writes.clone()),
             _ => (true, tools.to_vec()),
         };
         let names: Vec<&str> = offered.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
@@ -1520,7 +1573,7 @@ async fn answer_with_lookups(host: &mut impl Host, tools: &[serde_json::Value], 
             spent += n * IMAGE_TOKENS;
         }
         if room - spent < MIN_ROOM {
-            round = data::MAX_ROUNDS + 1;
+            round = max_rounds + 1;
         }
     }
 }
@@ -1564,6 +1617,16 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     if let Some((_, task)) = &rec {
         request.system = [request.system.as_str(), task.as_str()].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n\n");
     }
+    // DevJanitor's conversation: its SKILL and the scan's situation, more rounds to look a folder at a time
+    let jan = app.state::<AppState>().youzi.with_db(|c| {
+        let session: i64 = c.query_row("SELECT session_id FROM runs WHERE id = ?1", [shared.run_id], |r| r.get(0)).map_err(err)?;
+        janitor::is_chat(c, session)
+    }).unwrap_or(false);
+    if jan {
+        let task = janitor::system(&app.state::<AppState>(), &app.state::<super::assistants::janitor::Janitor>());
+        request.system = [request.system.as_str(), task.as_str()].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n\n");
+        request.rounds = Some(janitor::ROUNDS);
+    }
     let tables = app.state::<AppState>().youzi.with_db(|c| Ok(big_tables(c, &request.sources))).unwrap_or_default();
     // 读文件: the question's files; 查知识库: the conversation's libraries under this model's rules
     let materials = skills::files::materials(&request.sources);
@@ -1592,6 +1655,10 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     let ctx = skills::Ctx { files: !materials.is_empty(), kb: kb.is_some(), text: !text_files.is_empty(), scheduled: request.read_only };
     // earlier lookups go with their questions only where this model may still see them
     let mut lookup = match access_for(&app, &route) {
+        Some((access, today)) if jan => {
+            request.with_page(|_| false);
+            janitor_plan(&app, access, today, &counter, route.model.starts_with("cloud:")).await
+        }
         Some((access, today)) => {
             request.with_lookups(|q| access.may_send(q));
             request.with_page(|q| access.may_send(q));
@@ -1757,6 +1824,9 @@ async fn prepare(app: &AppHandle, session_id: Option<i64>) -> Result<Route, Stri
     let st = app.state::<AppState>();
     if session_id.is_some_and(|s| st.youzi.runs.busy_in(s)) {
         return Err(BUSY_HERE.into());
+    }
+    if let Some(s) = session_id.filter(|s| st.youzi.with_db(|c| janitor::is_chat(c, *s)).unwrap_or(false)) {
+        return janitor::route(app, s).await;
     }
     if let Some(s) = session_id.filter(|s| st.youzi.with_db(|c| record::is_record(c, *s)).unwrap_or(false)) {
         return record::route(app, s).await;

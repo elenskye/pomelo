@@ -2,6 +2,7 @@
 //! Register new commands in lib.rs and new import payloads in transfer.rs.
 
 pub mod attachments;
+pub mod bookmarks;
 pub mod books;
 pub mod common;
 pub mod custom;

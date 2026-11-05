@@ -2,6 +2,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { JanitorCard } from "./assistants/janitorApi";
 
 export type Mode = "real" | "mock";
 export type Readiness = "idle" | "loading" | "ready";
@@ -127,6 +128,8 @@ export type ChatMessage = {
   edit?: FileEdit | null;
   /** Replies: what they asked me. */
   asks?: Ask[];
+  /** Replies in DevJanitor's conversation: its cards (janitor/agent.rs). */
+  janitor?: JanitorCard[];
   /** Page only: a reply reading material right now. */
   reading?: ReadingProgress | null;
   /** Being written, waiting for the local model. */
@@ -323,6 +326,8 @@ export type StreamEvent =
   | { kind: "earlierCard"; card: Card }
   | { kind: "edit"; edit: FileEdit }
   | { kind: "ask"; ask: Ask }
+  /** DevJanitor: the reply's cards so far, after each proposal. */
+  | { kind: "janitor"; cards: JanitorCard[] }
   | { kind: "queued"; on: boolean }
   | { kind: "done"; state: string; error: string | null; reasoningMs: number | null };
 

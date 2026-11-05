@@ -2,6 +2,7 @@
 // null / are left out. 今天的待办 comes from todo_agenda instead.
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
+import type { Bookmark } from "@/modules/bookmarks/api";
 import type { Day } from "@/modules/days/api";
 import type { Stage } from "@/modules/jobs/api";
 import type { Hit } from "@/shared/open";
@@ -25,6 +26,8 @@ export type Overview = {
   drawing: CourseLine[] | null;
   /** 快到的日子 (days.rs soon); null = hidden. */
   days: Day[] | null;
+  /** 一网打尽's links marked 放首页, in the tree's order; null = hidden. */
+  bookmarks: Bookmark[] | null;
   /** 那年今日: earlier years on today's month-day, newest first; per year notes first. */
   then: Then[];
   recent: Recent[];

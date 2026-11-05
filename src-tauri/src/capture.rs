@@ -14,7 +14,8 @@
 //! - The window is made on first use, then only hidden. Esc / ⌘W / its close button hide it (the page
 //!   writes the draft first) and give the focus back to the app that was in front; losing the focus hides
 //!   it too unless pinned. It floats on every desktop, also over full-screen apps.
-//! - A tab whose module is hidden (念念不忘, 一步一步, 柚子) is not offered.
+//! - A tab whose module is hidden (念念不忘, 一步一步, 柚子; 翻译 also with Translator) is not offered.
+//! - 翻译 is 柚子's Translator (assistants/translate.rs, its own commands and 上一次): nothing of it in the draft.
 
 use crate::modules::common::{err, Tx};
 use crate::modules::{attachments, notes, todo};

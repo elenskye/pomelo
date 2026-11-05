@@ -183,6 +183,14 @@ pub const SOURCES: &[Source] = &[
                 'progress/' || c.module_id
               FROM progress_lessons l JOIN progress_courses c ON c.id = l.course_id LEFT JOIN kinds k ON k.id = l.kind_id",
     },
+    // 一网打尽 (last: the places above number their vectors): name and address; a folder its name
+    Source {
+        module: "bookmarks",
+        kind: "bookmark",
+        label: "网址",
+        db: Db::Pomelo,
+        sql: "SELECT id, title, CASE kind WHEN 'folder' THEN '文件夹' ELSE url END, parent_id, NULL, created_at, concat_ws(char(10), title, nullif(url, '')) FROM bookmarks",
+    },
 ];
 
 pub fn source(module: &str, kind: &str) -> Option<(usize, &'static Source)> {

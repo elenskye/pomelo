@@ -629,7 +629,7 @@ fn to_trash(path: &Path) -> Result<(), String> {
     move_to_trash(path)
 }
 
-fn move_to_trash(path: &Path) -> Result<(), String> {
+pub(crate) fn move_to_trash(path: &Path) -> Result<(), String> {
     use objc2::rc::{autoreleasepool, Retained};
     use objc2::runtime::{AnyClass, AnyObject};
     use objc2::msg_send;

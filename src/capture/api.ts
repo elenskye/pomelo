@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { FileInfo } from "@/shared/attachments/api";
 
-export type CaptureTab = "note" | "todo" | "ask";
+export type CaptureTab = "note" | "todo" | "ask" | "translate";
 /** tab "" until one was picked; due null: today; group null: the first. */
 export type Draft = { tab: CaptureTab | ""; note: string; todo: string; due: string | null; group: number | null; ask: string };
 export type Snapshot = {

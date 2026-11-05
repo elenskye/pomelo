@@ -8,6 +8,7 @@
 //! - Seeker keeps its workspace in its own youzi.db tables, with undo and data-file export.
 
 pub mod importer;
+pub mod janitor;
 pub mod pub2md;
 pub mod rater;
 pub mod seeker;

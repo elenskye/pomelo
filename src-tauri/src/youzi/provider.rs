@@ -1135,7 +1135,13 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
     let tools = !opts.tools.is_empty();
     if tools && !opts.no_calls && last_msg.is_some_and(|m| m.role == "user") {
         let named: Vec<&str> = opts.tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
-        let calls = if named.contains(&super::ask::TOOL) && last.contains("问我测试") { vec![super::ask::mock_call()] } else { super::data::mock_calls(last, system, &named) };
+        let calls = if named.contains(&super::ask::TOOL) && last.contains("问我测试") {
+            vec![super::ask::mock_call()]
+        } else if named.contains(&super::assistants::janitor::agent::LOOK) {
+            super::assistants::janitor::agent::mock_calls(last)
+        } else {
+            super::data::mock_calls(last, system, &named)
+        };
         if !calls.is_empty() {
             if thinking {
                 on(Event::Reasoning("先查一下相关的数据。".into()));
@@ -1154,6 +1160,8 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
         super::assistants::pub2md::prompts::mock_reply(system, last)
     } else if tools && last_msg.is_some_and(|m| m.role == "tool") && last.starts_with(super::ask::ANSWER_HEAD) {
         super::ask::mock_reply(last)
+    } else if tools && last_msg.is_some_and(|m| m.role == "tool") && system.contains(super::assistants::janitor::agent::MARK) {
+        super::assistants::janitor::agent::mock_answer(messages)
     } else if tools && last_msg.is_some_and(|m| m.role == "tool") {
         super::data::mock_answer(messages)
     } else if let Some(page) = last.split("【我正在看的页面】\n").nth(1).filter(|_| last_msg.is_some_and(|m| m.role == "user")) {

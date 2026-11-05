@@ -9,6 +9,7 @@ mod db;
 mod dock;
 mod health;
 mod home;
+mod icons;
 mod menu;
 mod modules;
 mod paths;
@@ -170,6 +171,9 @@ pub fn run() {
             let root = paths::resolve_root(&base, overridden.map(Into::into));
             let home = app.path().home_dir()?;
             app.manage(site::Site::new(site::mode(scratch), &home, &root));
+            app.manage(youzi::assistants::janitor::Janitor::new(youzi::assistants::janitor::mode(scratch), &home, &root));
+            // 一网打尽's site icons: fetched only by the real app (dev, tests and scratch data dirs stay offline)
+            app.manage(icons::Icons::new(root.join("icons"), !cfg!(debug_assertions) && !scratch));
             app.manage(AppState::init(DataPaths::new(root), &home, mode));
             let handle = app.handle().clone();
             app.state::<AppState>().youzi.set_app(handle.clone());
@@ -488,6 +492,12 @@ pub fn run() {
             modules::books::books_create,
             modules::books::books_update,
             modules::books::books_delete,
+            modules::bookmarks::bookmarks_list,
+            modules::bookmarks::bookmarks_create,
+            modules::bookmarks::bookmarks_update,
+            modules::bookmarks::bookmarks_place,
+            modules::bookmarks::bookmarks_delete,
+            icons::bookmarks_icons,
             modules::films::films_list,
             modules::films::films_create,
             modules::films::films_update,
@@ -644,6 +654,33 @@ pub fn run() {
             health::health_check,
             home::home_overview,
             dock::dock_live,
+            youzi::assistants::janitor::janitor_overview,
+            youzi::assistants::janitor::janitor_scan,
+            youzi::assistants::janitor::janitor_status,
+            youzi::assistants::janitor::janitor_stop,
+            youzi::assistants::janitor::janitor_ring,
+            youzi::assistants::janitor::janitor_clean,
+            youzi::assistants::janitor::janitor_trash,
+            youzi::assistants::janitor::janitor_empty_trash,
+            youzi::assistants::janitor::janitor_memory,
+            youzi::assistants::janitor::janitor_reveal,
+            youzi::assistants::janitor::janitor_settings,
+            youzi::assistants::janitor::janitor_settings_set,
+            youzi::assistants::janitor::janitor_open_privacy,
+            youzi::assistants::janitor::janitor_envs,
+            youzi::assistants::janitor::janitor_rule_delete,
+            youzi::assistants::janitor::janitor_rule_rename,
+            youzi::assistants::janitor::janitor_agent,
+            youzi::assistants::janitor::janitor_agent_new,
+            youzi::assistants::janitor::janitor_agent_set,
+            youzi::assistants::janitor::janitor_agent_prompt,
+            youzi::assistants::janitor::janitor_agent_skill,
+            youzi::assistants::janitor::janitor_card,
+            youzi::assistants::janitor::janitor_card_trash,
+            youzi::assistants::janitor::janitor_card_run,
+            youzi::assistants::janitor::janitor_card_stop,
+            youzi::assistants::janitor::janitor_card_rule,
+            youzi::assistants::janitor::janitor_card_cancel,
             site::site_overview,
             site::site_changes,
             site::site_diff,

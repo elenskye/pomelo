@@ -29,7 +29,7 @@ export const DEFAULT: Layout = {
     { id: "c4", name: "求职", tone: 3, mods: ["jobs", "seeker", "rater"] },
     { id: "c5", name: "创作", tone: 4, mods: ["site"] },
     { id: "c6", name: "柚子", tone: 5, mods: ["youzi", "translate", "pub2md", "importer"] },
-    { id: "c7", name: "工具", tone: 6, mods: ["vault"] },
+    { id: "c7", name: "工具", tone: 6, mods: ["vault", "bookmarks", "janitor"] },
   ],
   pinned: ["todo", "notes", "jobs", "seeker", "youzi"],
 };

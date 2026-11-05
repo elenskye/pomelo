@@ -5,12 +5,13 @@
 //! - 一步一步: due today + overdue (as 柚子's 「今天」); 念念不忘: written today, else all; 来日方长: the
 //!   nearest coming day; 钱来钱往: entries this month; 出门走走: the next trip with a date; 书影: in progress,
 //!   else wanted; 随意画画: lessons done / all; 投石问路: to follow up, else active, else all; 芝麻开门:
-//!   locked / open; made modules: items (五花八门) or lessons done / all (循序渐进).
+//!   locked / open; 一网打尽: how many links; made modules: items (五花八门) or lessons done / all (循序渐进).
 //! - 柚子: writing, else conversations; Translator: its target; Pub2MD: being done + waiting; Seeker: a
-//!   draft. 呦呦漫游 says nothing (its changes need git).
+//!   draft; DevJanitor: what 一键清理 could free (janitor.db). 呦呦漫游 says nothing (its changes need git).
 
 use crate::modules::common::{err, Status};
-use crate::modules::{books, custom, days, films, jobs, todo, vault};
+use crate::modules::{bookmarks, books, custom, days, films, jobs, todo, vault};
+use crate::youzi::assistants::janitor::{self, Janitor};
 use crate::youzi::assistants::{pub2md, translate};
 use crate::AppState;
 use rusqlite::Connection;
@@ -95,6 +96,10 @@ pub fn live(conn: &Connection, today: &str) -> Result<Live, String> {
     } else if !js.is_empty() {
         put("jobs", format!("共 {} 个", js.len()));
     }
+    let links = bookmarks::links(conn)?;
+    if links > 0 {
+        put("bookmarks", format!("{links} 个网址"));
+    }
     for m in custom::all(conn)? {
         match m.template {
             custom::Template::List => put(&m.key, format!("{} 条", m.count)),
@@ -141,7 +146,7 @@ pub fn youzi_live(conn: &Connection, generating: bool, pub2md_busy: usize) -> Re
 }
 
 #[tauri::command]
-pub async fn dock_live(state: State<'_, AppState>) -> Result<Live, String> {
+pub async fn dock_live(state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Live, String> {
     let mut out = state.with_db(|c| {
         let today = todo::today(c)?;
         live(c, &today)
@@ -153,6 +158,11 @@ pub async fn dock_live(state: State<'_, AppState>) -> Result<Live, String> {
     let busy = pub2md::busy(&state.youzi.assistants.pub2md);
     if let Ok(p) = state.youzi.with_db(|c| youzi_live(c, generating, busy)) {
         out.extend(p);
+    }
+    // DevJanitor: what 一键清理 could free (its settings from youzi.db, then janitor.db)
+    let (settings, rules) = state.youzi.with_db(|c| Ok((janitor::settings(c), janitor::agent::rules(c)?))).unwrap_or_default();
+    if let Some(t) = janitor::live_text(janitor.cleanable(&settings, &rules)) {
+        out.insert("janitor".into(), t);
     }
     Ok(out)
 }

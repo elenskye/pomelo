@@ -11,6 +11,7 @@
 //! - 绘画: unfinished courses (with lessons) in order, each with its next lesson (one in progress,
 //!   else the first not done).
 //! - 快到的日子 (来日方长): what days.rs marks `soon` (a reminder's window, expired 证件), in its order.
+//! - 一网打尽: the links marked 放首页, in the tree's order.
 //! - 最近: the newest `RECENT` of notes, books, films, courses, lessons, trips, jobs and 收支 added,
 //!   and tasks checked off (books / lessons keep no finish time, so they count when added).
 //! - 那年今日: earlier years' records on today's month-day (local): notes written, goals done (their
@@ -19,7 +20,7 @@
 
 use crate::modules::common::{self, err};
 use crate::modules::jobs::{self, Stage};
-use crate::modules::{days, drawing, finance, notes, todo};
+use crate::modules::{bookmarks, days, drawing, finance, notes, todo};
 use crate::search::Hit;
 use crate::AppState;
 use rusqlite::Connection;
@@ -111,6 +112,8 @@ pub struct Overview {
     pub drawing: Option<Vec<CourseLine>>,
     /// 快到的日子; None = 来日方长 hidden.
     pub days: Option<Vec<days::Day>>,
+    /// 一网打尽's links on 首页; None = hidden.
+    pub bookmarks: Option<Vec<bookmarks::Bookmark>>,
     /// 那年今日 (empty: nothing on this day before).
     pub then: Vec<Then>,
     pub recent: Vec<Recent>,
@@ -361,6 +364,7 @@ pub fn overview(conn: &Connection, today: &str, hidden: &[String]) -> Result<Ove
         reading: if shown("books") || shown("films") { Some(reading(conn, &shown)?) } else { None },
         drawing: if shown("drawing") { Some(drawing_card(conn)?) } else { None },
         days: if shown("days") { Some(days::soon(conn, today)?) } else { None },
+        bookmarks: if shown("bookmarks") { Some(bookmarks::home(conn)?) } else { None },
         then: then(conn, today, &shown)?,
         recent: recent(conn, &shown)?,
     })
