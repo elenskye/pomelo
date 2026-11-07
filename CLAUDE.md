@@ -22,11 +22,12 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **Git**：我说了才提交；提交信息一行，照我的写法（`v0.7: merge seeklo`、`v0.6 refined`）。不推送。
 - **代码格式**：没有格式化配置，照周围的写法手动排（长行）；不跑 prettier 这类工具。
 
-## v0.9 视觉
+## v0.9 视觉 · Dawn Plan
 
-- 方案和资产在 `~/Documents/GitHub/visual-atelier`，这边不改那边。那边做完单向同步过来，每次同步我按文件授权。同步来的文件连 `VERSION` 和校验和一起放，不手改；要改回那边改，发版后再同步。
-- 那边的 Agent 能改这边的文档（`README.md`、`CLAUDE.md`、`AGENTS.md`、`docs/`），不碰代码、`package.json`、版本号，也不提交。
-- 排期和对应关系见 `docs/roadmap.md`，已定的要求见 `docs/requirements.md`「以后」，开发指南是 `docs/v0.9-guide.md`（同步时才有）。
+- 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。2026-11-07 起同一个 Agent 两边一起做，计划在 `docs/roadmap.md`「Dawn Plan」，和那边的 `ROADMAP.md` 里的一模一样（两个仓库唯一允许重复的内容，改要一起改）。那边的规矩在它的 `CLAUDE.md`。
+- 资产单向同步过来（那边打 tag 后 `sync`，每个 Phase 一次）：同步来的文件连 `VERSION` 和校验和一起放，不手改；要改回那边改。
+- 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push、`pnpm app:install` 仍由我做。
+- 已定的要求见 `docs/requirements.md`「以后」；`docs/design.md` 到 Dawn Plan · Phase 9 重写（开发指南并进去，不再单独写 `v0.9-guide.md`）。
 
 ## 只在主目录做
 
