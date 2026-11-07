@@ -77,6 +77,4 @@
 }
 
 .paper, .sheet { box-shadow: 0 8px 24px rgba(43, 40, 36, 0.12); }
-@media (prefers-color-scheme: dark) {
-  .paper, .sheet { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
-}
+[data-theme="dark"] .paper, [data-theme="dark"] .sheet { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }

@@ -25,6 +25,7 @@ import DockPage from "@/app/DockPage";
 import TodoPage from "@/modules/todo/TodoPage";
 import HealthPage from "@/settings/Health";
 import SettingsPage from "@/settings/SettingsPage";
+import { startAppearance } from "@/shared/appearance";
 import { ToastProvider } from "@/shared/feedback";
 import "./index.css";
 
@@ -32,6 +33,8 @@ import "./index.css";
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   await (await import("./dev/mockIpc")).installMockIpc();
 }
+// the palette and light / dark chosen in 设置, before the first paint
+startAppearance();
 
 // Local IPC: no network retries / refetch-on-focus noise.
 const queryClient = new QueryClient({

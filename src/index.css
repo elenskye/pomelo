@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./vendor/pomelo/pomelo.css";
 
 /* 手札体: both of its faces say weight 400 in the font file, so asking the family for bold gets the
    regular face drawn thicker by WebKit (smeared). Name the faces explicitly so bold is the real W7. */
@@ -13,144 +14,13 @@
   font-weight: 700;
 }
 
-/* Theme tokens — source of truth: docs/design.md. Names follow shadcn/ui conventions. */
-:root {
-  --background: #faf8f4;
-  --foreground: #2b2824;
-  --sidebar: #f3f0e9;
-  --card: #ffffff;
-  --popover: #ffffff;
-  --border: #e8e3d9;
-  --input: #e8e3d9;
-  --muted: #f3f0e9;
-  --muted-foreground: #6f685f;
-  --primary: #c4503b;
-  --primary-foreground: #ffffff;
-  --accent: #fbe6e0;
-  --accent-foreground: #2b2824;
-  --destructive: #b8322f;
-  --ring: #c4503b;
-  --star: #e9a825;
+/* Colours (shadcn names, --status-*, --tag-*, --module-*, --chart-*, the hand-drawn --pm-*): all from
+   src/vendor/pomelo/pomelo.css, synced from visual-atelier's schemes/pomelo (never edited here). 5 palettes, each
+   light and dark: the root's data-palette picks one, data-theme forces light or dark (shared/appearance.ts). */
 
-  --status-unmarked-bg: #efece6;
-  --status-unmarked-fg: #6f685f;
-  --status-todo-bg: #e3edf8;
-  --status-todo-fg: #33628f;
-  --status-doing-bg: #fbefc8;
-  --status-doing-fg: #855c00;
-  --status-done-bg: #e2f0d6;
-  --status-done-fg: #3f6d27;
-
-  /* option / 类型 tags (五花八门 单选多选, 循序渐进 类型): by position, blue orange green yellow pink purple teal gray */
-  --tag-1-bg: #e3edf8;
-  --tag-1-fg: #33628f;
-  --tag-2-bg: #fce8dc;
-  --tag-2-fg: #a4471a;
-  --tag-3-bg: #e2f0d6;
-  --tag-3-fg: #3f6d27;
-  --tag-4-bg: #fbefc8;
-  --tag-4-fg: #855c00;
-  --tag-5-bg: #fbe4ee;
-  --tag-5-fg: #a3375f;
-  --tag-6-bg: #ece6f7;
-  --tag-6-fg: #6a4fa8;
-  --tag-7-bg: #dcf0ec;
-  --tag-7-fg: #22706a;
-  --tag-8-bg: #efece6;
-  --tag-8-fg: #6f685f;
-
-  --module-books: #3a7fba;
-  --module-films: #8466c4;
-  --module-drawing: #cc5540;
-  --module-packing: #588a2c;
-  --module-todo: #b07a10;
-  --module-finance: #2e8b80;
-  --module-jobs: #9c5b8f;
-  --module-notes: #9a6b4a;
-  --module-days: #c2547a;
-  --module-site: #3a8a5c;
-  --module-list: #4e5fb0;
-  --module-progress: #7d7a2a;
-  --module-vault: #64748b;
-  --module-youzi: #c96e28;
-  --module-seeker: #b5527a;
-  --module-translate: #3b8fb0;
-  --module-pub2md: #6f62a8;
-  --module-rater: #b0414e;
-  --module-importer: #27726c;
-  --module-janitor: #35538c;
-  --module-bookmarks: #9b4fb5;
-
-  /* Charts: categorical slots in fixed order (validated: dataviz validate_palette.js, light on #ffffff,
-     dark on #292724); single-series charts use --chart-1. Text never wears these colors. */
-  --chart-1: #2a78d6;
-  --chart-2: #eb6834;
-  --chart-3: #1baf7a;
-  --chart-4: #eda100;
-  --chart-5: #e87ba4;
-  --chart-6: #008300;
-  --chart-other: #c3c0b8;
-  --chart-grid: #ece8df;
-  --chart-axis: #d6d0c4;
-
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #1c1b19;
-    --foreground: #ece8e1;
-    --sidebar: #232120;
-    --card: #292724;
-    --popover: #292724;
-    --border: #3a3734;
-    --input: #3a3734;
-    --muted: #232120;
-    --muted-foreground: #a29b91;
-    --primary: #ee7b66;
-    --primary-foreground: #1c1b19;
-    --accent: #3d2621;
-    --accent-foreground: #ece8e1;
-    --destructive: #f07167;
-    --ring: #ee7b66;
-
-    --status-unmarked-bg: #34322f;
-    --status-unmarked-fg: #b3aca2;
-    --status-todo-bg: #22303f;
-    --status-todo-fg: #8db8e6;
-    --status-doing-bg: #3a3120;
-    --status-doing-fg: #e8c063;
-    --status-done-bg: #25341e;
-    --status-done-fg: #93c77a;
-
-    --tag-1-bg: #22303f;
-    --tag-1-fg: #8db8e6;
-    --tag-2-bg: #3d2a1f;
-    --tag-2-fg: #f0a37a;
-    --tag-3-bg: #25341e;
-    --tag-3-fg: #93c77a;
-    --tag-4-bg: #3a3120;
-    --tag-4-fg: #e8c063;
-    --tag-5-bg: #3d2430;
-    --tag-5-fg: #ec96b8;
-    --tag-6-bg: #2e2740;
-    --tag-6-fg: #b9a3ec;
-    --tag-7-bg: #1e3532;
-    --tag-7-fg: #7ccdc2;
-    --tag-8-bg: #34322f;
-    --tag-8-fg: #b3aca2;
-
-    --chart-1: #3987e5;
-    --chart-2: #d95926;
-    --chart-3: #199e70;
-    --chart-4: #c98500;
-    --chart-5: #d55181;
-    --chart-6: #008300;
-    --chart-other: #5a5650;
-    --chart-grid: #34312e;
-    --chart-axis: #4a4642;
-  }
-}
+/* shared/appearance.ts always writes the mode in effect on the root (following the system when 跟随系统),
+   so dark: looks at data-theme only. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme inline {
   --font-sans: "Pomelo Hand", "Hannotate SC", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;

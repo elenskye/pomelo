@@ -25,7 +25,7 @@
 
 **kinds**（能自己增删改的类型）：`module`、`name`（同模块不重名，最多 20 字）、`sort_order`。记录里只存 `kind_id`，删类型后记录变「未分类」。各模块：`books`（虚构、非虚构、漫画、其他）、`films`（电影、剧集、动漫）、`drawing`（正课、DLC 跟画、LIVE 辅导）、`packing`（重要物品、随身、护理、兴趣）、`fin_out` 支出分类、`fin_in` 收入分类、`job_channel` 投递渠道；每个循序渐进模块一组（`progress/编号`，一开始是空的）。
 
-**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和柚子也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页、`bookmarks.at` 一网打尽上次看的文件夹等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）。不进撤销。
+**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和柚子也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页、`bookmarks.at` 一网打尽上次看的文件夹等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）；`appearance` 外观（`{ palette: blue|purple|kraft|yellow|mint, theme: system|light|dark }`，没设是蓝笔、跟随系统；界面另在 localStorage 留一份，打开窗口时先用它）。不进撤销，不进导出。
 
 ## 附件
 
@@ -170,9 +170,9 @@
 - **vault_categories**：`data`（分类名，加密，不重名，最多 20 字）、`sort_order`。能撤销。
 - 密码库钥匙以后不变，改主密码只换锁。不进数据文件；备份里是密文，恢复较早的备份后要用那时的主密码。
 
-## 首页
+## 首页、月历
 
-没有自己的表，每次打开由 `home.rs` 现算（各块怎么算见它开头），隐藏的模块不算。
+都没有自己的表，每次打开现算，隐藏的模块不算：首页由 `home.rs`（各块怎么算见它开头，v0.9 加了本月、今年按月、念念不忘一条），月历由 `calendar.rs`（待办、日子、出行、面试放进一段日子，一次最多 62 天；规则见它开头）。
 
 ## 体检
 

@@ -203,6 +203,61 @@ pub fn happened(conn: &Connection, from: &str, to: &str) -> Result<Vec<Happened>
     Ok(out)
 }
 
+/// Every day that lands in [from, to] (月历): one-offs and 证件 on their date; yearly ones and birthdays
+/// on each year's date (`nth` = 第几周年 / 几岁 when the year is known, never before it); monthly ones on
+/// their day of each month (a month's end when shorter) and weekly ones on their weekday, both from the
+/// date on. By date.
+pub fn on_calendar(conn: &Connection, from: &str, to: &str) -> Result<Vec<Happened>, String> {
+    common::check_date(&Some(from.to_string()), "开始日期")?;
+    common::check_date(&Some(to.to_string()), "结束日期")?;
+    let mut out = vec![];
+    let mut st = conn.prepare(&format!("SELECT {COLS} FROM days")).map_err(err)?;
+    let rows: Vec<Day> = st.query_map([], row).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
+    for x in rows {
+        let (y0, m, d) = parts(&x.date);
+        let inside = |on: &str| on >= from && on <= to;
+        let mut push = |on: String, nth: Option<i64>| out.push(Happened { id: x.id, kind: x.kind, name: x.name.clone(), on, nth });
+        match (x.kind, x.repeat) {
+            (Kind::Birthday, _) | (Kind::Day, Repeat::Year) => {
+                for y in year_of(from)..=year_of(to) {
+                    let nth = y0.map(|b| y - b);
+                    let on = on(y, m, d);
+                    if inside(&on) && nth.is_none_or(|n| n >= 0) {
+                        push(on, nth.filter(|n| *n > 0 || x.kind == Kind::Birthday));
+                    }
+                }
+            }
+            (Kind::Day, Repeat::Month) => {
+                let mut first = format!("{}-01", &from[..7]);
+                while first.as_str() <= to {
+                    let on = on(year_of(&first), first[5..7].parse().unwrap_or(1), d);
+                    if inside(&on) && on >= x.date {
+                        push(on, None);
+                    }
+                    first = common::add_months(&first, 1);
+                }
+            }
+            (Kind::Day, Repeat::Week) => {
+                let ahead = (common::weekday(&x.date) as i64 - common::weekday(from) as i64).rem_euclid(7);
+                let mut on = common::add_days(from, ahead);
+                while on.as_str() <= to {
+                    if on >= x.date {
+                        push(on.clone(), None);
+                    }
+                    on = common::add_days(&on, 7);
+                }
+            }
+            _ => {
+                if inside(&x.date) {
+                    push(x.date.clone(), None);
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.on.cmp(&b.on).then(a.id.cmp(&b.id)));
+    Ok(out)
+}
+
 /// The list's order key: expired 证件, then ahead, then past one-offs.
 fn order(x: &Day) -> (u8, i64) {
     match (x.kind == Kind::Document, x.days < 0) {

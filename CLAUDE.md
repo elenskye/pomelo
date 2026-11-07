@@ -25,7 +25,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## v0.9 视觉 · Dawn Plan
 
 - 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。2026-11-07 起同一个 Agent 两边一起做，计划在 `docs/roadmap.md`「Dawn Plan」，和那边的 `ROADMAP.md` 里的一模一样（两个仓库唯一允许重复的内容，改要一起改）。那边的规矩在它的 `CLAUDE.md`。
-- 资产单向同步过来（那边打 tag 后 `sync`，每个 Phase 一次）：同步来的文件连 `VERSION` 和校验和一起放，不手改；要改回那边改。
+- 资产单向同步过来（那边打 tag 后 `sync`，每个 Phase 一次），放在 `src/vendor/pomelo/`：颜色变量 `pomelo.css`、颜色常量 `tokens.ts`、手画零件的画法 `handmade.js`，连 `VERSION` 和 `SHA256SUMS` 一起，不手改；要改回那边改。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
 - 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push、`pnpm app:install` 仍由我做。
 - 已定的要求见 `docs/requirements.md`「以后」；`docs/design.md` 到 Dawn Plan · Phase 9 重写（开发指南并进去，不再单独写 `v0.9-guide.md`）。
 

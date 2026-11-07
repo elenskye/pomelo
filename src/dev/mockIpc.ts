@@ -2234,6 +2234,63 @@ function dockLiveMock() {
 }
 
 // ---- 首页: mirrors home.rs loosely ----
+// 月历 (calendar.rs): the same rules on the mock's data — 待办 from todo_month (a range on its due date only,
+// daily repeats and check-ins left out), 来日方长 every occurrence, 出行 on departure, 进行中 / 拿到 steps checked.
+function calendarMock(from: string, to: string, hidden: string[]) {
+  const shown = (m: string) => !hidden.includes(m);
+  const inside = (d: string | null | undefined) => !!d && d >= from && d <= to;
+  const hit = (module: string, kind: string, id: number, title: string, detail: string | null, parent: number | null, day: string) =>
+    ({ module, kind, id, title, detail, parent, day, amount: null, currency: null, flow: null });
+  const out: (ReturnType<typeof hit> & { source: string; state: string; note: string | null })[] = [];
+  const md = (d: string) => `${d.slice(5, 7)}/${d.slice(8, 10)}`;
+  if (shown("todo")) {
+    type Item = { day: string; what: string; detail: string | null; id: number; title: string; groupId: number; goalId: number | null; groupName: string; goalName: string | null; taskType: string; repeatRule: string | null; startDate: string | null; dueDate: string | null };
+    for (const x of handlers.todo_month({ from, to }) as Item[]) {
+      if (x.taskType === "checkin") continue;
+      let state = x.what, note = x.detail;
+      if (x.what === "range") {
+        if (x.dueDate !== x.day) continue;
+        state = "due";
+        note = x.taskType !== "repeat" && x.startDate ? `${md(x.startDate)} 起` : null;
+      } else if (x.what === "next" && (x.repeatRule === "daily" || x.repeatRule === "every:1d")) continue;
+      else if (x.what === "done" && note === "全部完成") note = null;
+      out.push({ source: "todo", state, note, ...hit("todo", "task", x.id, x.title.replace(/\*\*/g, ""), x.goalName ?? x.groupName, x.goalId ? -x.goalId : x.groupId, x.day) });
+    }
+  }
+  if (shown("days")) {
+    const days: typeof out = [];
+    for (const r of dy) {
+      const known = !r.date.startsWith("--");
+      const [m, d] = (known ? r.date.slice(5) : r.date.slice(2)).split("-").map(Number);
+      const push = (on: string, state: string, note: string | null) => inside(on) && days.push({ source: "day", state, note, ...hit("days", "day", r.id, r.name, null, null, on) });
+      if (r.kind === "birthday" || r.repeat === "year") {
+        for (let y = Number(from.slice(0, 4)); y <= Number(to.slice(0, 4)); y++) {
+          const nth = known ? y - Number(r.date.slice(0, 4)) : null;
+          if (nth !== null && nth < 0) continue;
+          push(dOn(y, m, d), r.kind === "birthday" ? "birthday" : "day", r.kind === "birthday" ? (nth === null ? null : `${nth} 岁`) : nth ? `第 ${nth} 周年` : null);
+        }
+      } else if (r.repeat === "month") {
+        for (let f = `${from.slice(0, 7)}-01`; f <= to; f = toYmd(new Date(Number(f.slice(0, 4)), Number(f.slice(5, 7)), 1))) {
+          const on = dOn(Number(f.slice(0, 4)), Number(f.slice(5, 7)), d);
+          if (on >= r.date) push(on, "day", null);
+        }
+      } else if (r.repeat === "week") {
+        for (let on = addDays(from, (isoWeekday(r.date) - isoWeekday(from) + 7) % 7); on <= to; on = addDays(on, 7)) if (on >= r.date) push(on, "day", null);
+      } else push(r.date, r.kind === "document" ? "document" : "day", r.kind === "document" ? "证件到期" : null);
+    }
+    out.push(...days.sort((a, b) => a.day.localeCompare(b.day)));
+  }
+  if (shown("packing")) for (const t of tripRows.filter((t) => inside(t.departOn)).sort((a, b) => a.departOn!.localeCompare(b.departOn!) || a.id - b.id)) out.push({ source: "trip", state: "depart", note: null, ...hit("packing", "trip", t.id, t.name, null, null, t.departOn!) });
+  if (shown("jobs"))
+    for (const j of jb.jobs)
+      for (const st of j.steps.filter((s) => s.done && inside(s.doneOn))) {
+        const status = jStatus(st.statusId);
+        if (status.stage !== "active" && status.stage !== "got") continue;
+        out.push({ source: "job", state: status.stage, note: status.name, ...hit("jobs", "job", j.id, j.position ? `${j.company} · ${j.position}` : j.company, j.location, null, st.doneOn!) });
+      }
+  return out.sort((a, b) => a.day.localeCompare(b.day));
+}
+
 function homeMock(hidden: string[]) {
   const shown = (m: string) => !hidden.includes(m);
   const today = mockToday();
@@ -2323,6 +2380,27 @@ function homeMock(hidden: string[]) {
       return years.map((y) => ({ year: y, items: items.filter((i) => i.day!.startsWith(y)) }));
     })(),
     recent,
+    month: calendarMock(`${today.slice(0, 7)}-01`, toYmd(new Date(Number(year), Number(today.slice(5, 7)), 0)), hidden),
+    months: (() => {
+      const per = (days: (string | null | undefined)[]) => Array.from({ length: 12 }, (_, i) => days.filter((d) => d?.startsWith(`${year}-${String(i + 1).padStart(2, "0")}`)).length);
+      const local = (iso: string) => toYmd(new Date(iso));
+      return {
+        lessons: shown("drawing") ? per(lessons.filter((l) => l.status === "done").map((l) => l.finishedMonth as string | null)) : null,
+        todos: shown("todo") ? per([...tTasks.filter((t) => t.done && t.doneAt).map((t) => local(t.doneAt!)), ...tLogs.map((l) => l.day)]) : null,
+        notes: shown("notes") ? per(nt.notes.map((n) => local(n.createdAt))) : null,
+        jobs: shown("jobs") ? per(jobs.map((j) => j.appliedOn)) : null,
+      };
+    })(),
+    note: (() => {
+      if (!shown("notes")) return null;
+      const out = (n: NRow) => ({ id: n.id, content: n.content, day: toYmd(new Date(n.createdAt)), pinned: n.pinned });
+      const pinned = nt.notes.filter((n) => n.pinned).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (pinned) return out(pinned);
+      const older = nt.notes.filter((n) => toYmd(new Date(n.createdAt)) < today).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      if (!older.length) return null;
+      const k = Math.floor(parseYmd(today).getTime() / 86400000);
+      return out(older[(k * 2654435761) % older.length]);
+    })(),
   };
 }
 
@@ -6033,6 +6111,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...siteAssistHandlers,
   ...pageHandlers,
   home_overview: (a) => homeMock((a.hidden as string[]) ?? []),
+  calendar_span: (a) => calendarMock(String(a.from), String(a.to), (a.hidden as string[]) ?? []),
   // 体检 (health.rs): samples on records that exist; `&health=clean` finds nothing
   health_check: () => {
     const clean = new URLSearchParams(location.search).get("health") === "clean";

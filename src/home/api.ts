@@ -1,7 +1,8 @@
-// 首页 summary (src-tauri/src/home.rs → home_overview). Rules live in Rust; hidden modules come back as
+// 首页 summary (src-tauri/src/home.rs → home_overview); month / months / note feed the full version's desk (Dawn Plan · Phase 6). Rules live in Rust; hidden modules come back as
 // null / are left out. 今天的待办 comes from todo_agenda instead.
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
+import type { CalendarEntry } from "@/calendar/api";
 import type { Bookmark } from "@/modules/bookmarks/api";
 import type { Day } from "@/modules/days/api";
 import type { Stage } from "@/modules/jobs/api";
@@ -17,6 +18,10 @@ export type CourseLine = { id: number; name: string; total: number; done: number
 /** at: UTC timestamp; done: a task checked off (else something added). */
 export type Recent = Hit & { at: string; done: boolean };
 export type Then = { year: string; items: Hit[] };
+/** This year per month (index 0 = January); null = module hidden. Books and films keep only the year. */
+export type Months = { lessons: number[] | null; todos: number[] | null; notes: number[] | null; jobs: number[] | null };
+/** 念念不忘一条 on the desk: the newest pinned note, else an older one picked by the day. */
+export type DeskNote = { id: number; content: string; day: string; pinned: boolean };
 export type Overview = {
   today: string;
   year: Year;
@@ -31,6 +36,11 @@ export type Overview = {
   /** 那年今日: earlier years on today's month-day, newest first; per year notes first. */
   then: Then[];
   recent: Recent[];
+  /** 本月 on the desk (calendar.rs), by day. */
+  month: CalendarEntry[];
+  months: Months;
+  /** null = 念念不忘 hidden or no notes yet. */
+  note: DeskNote | null;
 };
 
 export const HOME_KEY = ["home"];

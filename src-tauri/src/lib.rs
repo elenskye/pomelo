@@ -4,6 +4,7 @@
 
 mod autostart;
 mod backup;
+mod calendar;
 mod capture;
 mod db;
 mod dock;
@@ -654,6 +655,7 @@ pub fn run() {
             search::query::search_index_status,
             health::health_check,
             home::home_overview,
+            calendar::calendar_span,
             dock::dock_live,
             youzi::assistants::janitor::janitor_overview,
             youzi::assistants::janitor::janitor_scan,

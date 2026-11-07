@@ -2,6 +2,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { startAppearance } from "@/shared/appearance";
 import { ToastProvider } from "@/shared/feedback";
 import { Capture } from "./Capture";
 import "@/index.css";
@@ -10,6 +11,8 @@ import "@/index.css";
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   await (await import("@/dev/mockIpc")).installMockIpc("capture");
 }
+// the palette and light / dark chosen in 设置 (re-read whenever the window comes back)
+startAppearance();
 
 // as the main window's (问柚子 uses 柚子's queries)
 const queryClient = new QueryClient({

@@ -1,6 +1,6 @@
 # 视觉规范
 
-> 这是现在的样子，v0.9 的 Design System 定下来后整份重写。要改视觉，先改这份文档，再改主题变量（`src/index.css`）。
+> 2026-11-07 起颜色换成 visual-atelier 的 Pomelo 方案：变量都在同步来的 `src/vendor/pomelo/pomelo.css`（不手改），5 套配色各有明暗，在设置 › 外观里换。下面的颜色表是 v0.8 的旧样子，只当对照；这份文档到 Dawn Plan · Phase 9 整份重写。气质、字体、间距这些还没换的部分照旧。
 
 ## 气质
 

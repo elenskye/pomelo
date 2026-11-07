@@ -120,13 +120,12 @@
 .hljs-deletion { color: #b8322f; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
-@media (prefers-color-scheme: dark) {
-  .hljs-comment, .hljs-quote { color: #8f887e; }
-  .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-literal, .hljs-type { color: #ee8b78; }
-  .hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-template-tag { color: #93c77a; }
-  .hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable { color: #e8c063; }
-  .hljs-title, .hljs-section, .hljs-function .hljs-title, .hljs-title.function_, .hljs-title.class_ { color: #8db8e6; }
-  .hljs-meta, .hljs-name, .hljs-selector-id, .hljs-selector-class, .hljs-attr, .hljs-property { color: #b9a3ec; }
-  .hljs-deletion { color: #f07167; }
-  ::highlight(youzi-find-current) { background-color: #c99a2e; color: #1c1b19; }
-}
+/* dark: shared/appearance.ts writes the mode in effect as data-theme */
+[data-theme="dark"] .hljs-comment, [data-theme="dark"] .hljs-quote { color: #8f887e; }
+[data-theme="dark"] .hljs-keyword, [data-theme="dark"] .hljs-selector-tag, [data-theme="dark"] .hljs-built_in, [data-theme="dark"] .hljs-literal, [data-theme="dark"] .hljs-type { color: #ee8b78; }
+[data-theme="dark"] .hljs-string, [data-theme="dark"] .hljs-regexp, [data-theme="dark"] .hljs-addition, [data-theme="dark"] .hljs-attribute, [data-theme="dark"] .hljs-template-tag { color: #93c77a; }
+[data-theme="dark"] .hljs-number, [data-theme="dark"] .hljs-symbol, [data-theme="dark"] .hljs-bullet, [data-theme="dark"] .hljs-variable, [data-theme="dark"] .hljs-template-variable { color: #e8c063; }
+[data-theme="dark"] .hljs-title, [data-theme="dark"] .hljs-section, [data-theme="dark"] .hljs-function .hljs-title, [data-theme="dark"] .hljs-title.function_, [data-theme="dark"] .hljs-title.class_ { color: #8db8e6; }
+[data-theme="dark"] .hljs-meta, [data-theme="dark"] .hljs-name, [data-theme="dark"] .hljs-selector-id, [data-theme="dark"] .hljs-selector-class, [data-theme="dark"] .hljs-attr, [data-theme="dark"] .hljs-property { color: #b9a3ec; }
+[data-theme="dark"] .hljs-deletion { color: #f07167; }
+[data-theme="dark"] ::highlight(youzi-find-current) { background-color: #c99a2e; color: #1c1b19; }

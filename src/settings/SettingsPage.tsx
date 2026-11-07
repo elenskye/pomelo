@@ -3,6 +3,7 @@ import { FolderOpen, Settings } from "lucide-react";
 import { useTabs } from "@/app/tabs";
 import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";
+import { AppearanceSection } from "./Appearance";
 import { AttachmentsRow } from "./Attachments";
 import { BackupsSection } from "./Backups";
 import { useHealth } from "./Health";
@@ -32,6 +33,7 @@ export default function SettingsPage() {
     <div className="flex h-full flex-col overflow-y-auto">
       <PageHeader icon={Settings} color="var(--muted-foreground)" title="设置" />
       <div className="px-8 py-4">
+        <AppearanceSection />
         <Section title="数据">
           <Row
             label="数据目录"

@@ -17,7 +17,14 @@
 //! - 那年今日: earlier years' records on today's month-day (local): notes written, goals done (their
 //!   end date), tasks checked off, trips leaving; per year notes first, newest year first. The page shows
 //!   one per year (换一条 = the next); no year with any → no card. 02-29 only matches 02-29.
+//! Full version (v0.9, the desk; 站主 2026-11-07):
+//! - 本月: this month's 月历 (calendar.rs, same rules and hidden modules).
+//! - 今年按月: lessons, tasks done, notes and 投递 per month of this year (12 numbers each, the same
+//!   counting as 今年的数字). Books and films keep only the year they were finished, so they have none.
+//! - 念念不忘一条: the newest pinned note; with none pinned, one older note (written before today)
+//!   picked by the day, so it stays the same all day and changes tomorrow.
 
+use crate::calendar;
 use crate::modules::common::{self, err};
 use crate::modules::jobs::{self, Stage};
 use crate::modules::{bookmarks, days, drawing, finance, notes, todo};
@@ -117,6 +124,33 @@ pub struct Overview {
     /// 那年今日 (empty: nothing on this day before).
     pub then: Vec<Then>,
     pub recent: Vec<Recent>,
+    /// 本月 (calendar.rs), by day; empty when every module on it is hidden.
+    pub month: Vec<calendar::Entry>,
+    /// 今年按月.
+    pub months: Months,
+    /// 念念不忘一条; None = hidden or no notes yet.
+    pub note: Option<DeskNote>,
+}
+
+/// This year's numbers per month (index 0 = January); None = module hidden.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Months {
+    pub lessons: Option<Vec<i64>>,
+    pub todos: Option<Vec<i64>>,
+    pub notes: Option<Vec<i64>>,
+    pub jobs: Option<Vec<i64>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeskNote {
+    pub id: i64,
+    /// The note as written (Markdown and #tags).
+    pub content: String,
+    /// Local date it was written.
+    pub day: String,
+    pub pinned: bool,
 }
 
 fn count(conn: &Connection, sql: &str, year: &str) -> Result<i64, String> {
@@ -347,6 +381,67 @@ fn then(conn: &Connection, today: &str, shown: &impl Fn(&str) -> bool) -> Result
     Ok(by_year.into_iter().rev().map(|(year, items)| Then { year, items }).collect())
 }
 
+/// (month 1–12, count) rows → 12 numbers.
+fn by_month(conn: &Connection, sqls: &[&str], year: &str) -> Result<Vec<i64>, String> {
+    let mut out = vec![0; 12];
+    for sql in sqls {
+        let mut st = conn.prepare(sql).map_err(err)?;
+        let rows = st.query_map([year], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).map_err(err)?;
+        for row in rows {
+            let (m, n) = row.map_err(err)?;
+            if (1..=12).contains(&m) {
+                out[m as usize - 1] += n;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn months(conn: &Connection, year: &str, shown: &impl Fn(&str) -> bool, job_list: Option<&[jobs::Job]>) -> Result<Months, String> {
+    let when = |module: &str, sqls: &[&str]| -> Result<Option<Vec<i64>>, String> { if shown(module) { by_month(conn, sqls, year).map(Some) } else { Ok(None) } };
+    Ok(Months {
+        lessons: when("drawing", &["SELECT CAST(substr(finished_month, 6, 2) AS INTEGER), count(*) FROM drawing_lessons WHERE status = 'done' AND substr(finished_month, 1, 4) = ?1 GROUP BY 1"])?,
+        todos: when(
+            "todo",
+            &[
+                "SELECT CAST(strftime('%m', done_at, 'localtime') AS INTEGER), count(*) FROM todo_tasks WHERE done = 1 AND strftime('%Y', done_at, 'localtime') = ?1 GROUP BY 1",
+                "SELECT CAST(substr(day, 6, 2) AS INTEGER), count(*) FROM todo_logs WHERE substr(day, 1, 4) = ?1 GROUP BY 1",
+            ],
+        )?,
+        notes: when("notes", &["SELECT CAST(strftime('%m', created_at, 'localtime') AS INTEGER), count(*) FROM notes WHERE strftime('%Y', created_at, 'localtime') = ?1 GROUP BY 1"])?,
+        jobs: job_list.map(|js| {
+            let mut out = vec![0; 12];
+            for d in js.iter().filter_map(|j| j.applied_on.as_deref()).filter(|d| d.starts_with(year)) {
+                if let Ok(m) = d[5..7].parse::<usize>() {
+                    if (1..=12).contains(&m) {
+                        out[m - 1] += 1;
+                    }
+                }
+            }
+            out
+        }),
+    })
+}
+
+fn desk_note(conn: &Connection, today: &str) -> Result<Option<DeskNote>, String> {
+    let row = |r: &rusqlite::Row| Ok(DeskNote { id: r.get(0)?, content: r.get(1)?, day: r.get(2)?, pinned: r.get(3)? });
+    let cols = "id, content, date(created_at, 'localtime'), pinned";
+    let pinned = conn.prepare(&format!("SELECT {cols} FROM notes WHERE pinned = 1 ORDER BY created_at DESC, id DESC LIMIT 1")).map_err(err)?.query_map([], row).map_err(err)?.next();
+    if let Some(n) = pinned {
+        return n.map(Some).map_err(err);
+    }
+    let older = "FROM notes WHERE date(created_at, 'localtime') < ?1";
+    let n: i64 = conn.query_row(&format!("SELECT count(*) {older}"), [today], |r| r.get(0)).map_err(err)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    // the same one all day, another tomorrow
+    let k = (common::day_number(today).unsigned_abs().wrapping_mul(2654435761) % n as u64) as i64;
+    let mut st = conn.prepare(&format!("SELECT {cols} {older} ORDER BY created_at, id LIMIT 1 OFFSET ?2")).map_err(err)?;
+    let picked = st.query_map(rusqlite::params![today, k], row).map_err(err)?.next().transpose().map_err(err)?;
+    Ok(picked)
+}
+
 pub fn overview(conn: &Connection, today: &str, hidden: &[String]) -> Result<Overview, String> {
     common::check_date(&Some(today.to_string()), "日期")?;
     let shown = |m: &str| !hidden.iter().any(|h| h == m);
@@ -367,6 +462,12 @@ pub fn overview(conn: &Connection, today: &str, hidden: &[String]) -> Result<Ove
         bookmarks: if shown("bookmarks") { Some(bookmarks::home(conn)?) } else { None },
         then: then(conn, today, &shown)?,
         recent: recent(conn, &shown)?,
+        month: {
+            let (from, to) = calendar::month_of(today);
+            calendar::span(conn, &from, &to, hidden)?
+        },
+        months: months(conn, &today[..4], &shown, job_list.as_deref())?,
+        note: if shown("notes") { desk_note(conn, today)? } else { None },
     })
 }
 
@@ -513,6 +614,45 @@ mod tests {
     }
 
     #[test]
+    fn the_desk_has_this_month_the_year_by_month_and_one_note() {
+        let c = memory_db();
+        seed(&c);
+        let o = overview(&c, TODAY, &[]).unwrap();
+        let m = &o.months;
+        // 透视 done in March and 唯一 in September; the 2025-12 one is last year's
+        let lessons = m.lessons.as_ref().unwrap();
+        assert_eq!((lessons[2], lessons[8], lessons.iter().sum::<i64>()), (1, 1, 2));
+        // the checked task in October, the log on 10-07 too (as 今年的数字 counts them)
+        assert_eq!(m.todos.as_ref().unwrap()[9], 2);
+        assert_eq!(m.todos.as_ref().unwrap().iter().sum::<i64>(), o.year.todos.unwrap());
+        assert_eq!(m.notes.as_ref().unwrap()[9], 1);
+        let jobs = m.jobs.as_ref().unwrap();
+        assert_eq!((jobs[8], jobs[9]), (1, 1)); // 字节 applied 09-10, 腾讯 10-06
+        assert_eq!(jobs.iter().sum::<i64>(), o.year.jobs.unwrap());
+        // 本月 = calendar.rs for October: 腾讯's 面试 on 10-07
+        assert!(o.month.iter().any(|e| e.source == "job" && e.day == "2026-10-07" && e.note.as_deref() == Some("面试")));
+        assert!(o.month.iter().all(|e| e.day.starts_with("2026-10")));
+        // no note pinned: an older one, the same all day
+        let n = o.note.unwrap();
+        assert_eq!((n.content.as_str(), n.day.as_str(), n.pinned), ("旧笔记", "2025-02-01", false));
+
+        c.execute_batch("INSERT INTO notes (content, created_at) VALUES ('另一条旧的', '2024-03-01T05:00:00.000Z');").unwrap();
+        let picks: std::collections::HashSet<i64> =
+            (1..=10).map(|d| overview(&c, &format!("2026-10-{:02}", d + 10), &[]).unwrap().note.unwrap().id).collect();
+        // on 10-11…10-20 three notes are older than the day (today's 10-08 one too): more than one gets picked
+        assert!(picks.len() > 1, "different days pick different notes: {picks:?}");
+        assert_eq!(overview(&c, TODAY, &[]).unwrap().note, overview(&c, TODAY, &[]).unwrap().note);
+        // a pinned note wins, even today's
+        c.execute("UPDATE notes SET pinned = 1 WHERE content LIKE '#读书%'", []).unwrap();
+        assert!(overview(&c, TODAY, &[]).unwrap().note.unwrap().pinned);
+
+        let hidden: Vec<String> = ["drawing", "todo", "notes", "jobs", "days", "packing"].map(String::from).to_vec();
+        let o = overview(&c, TODAY, &hidden).unwrap();
+        assert_eq!(o.months, Months { lessons: None, todos: None, notes: None, jobs: None });
+        assert!(o.month.is_empty() && o.note.is_none());
+    }
+
+    #[test]
     fn empty_database() {
         let c = memory_db();
         let o = overview(&c, TODAY, &[]).unwrap();
@@ -520,6 +660,8 @@ mod tests {
         assert_eq!(o.assets, Some(vec![]));
         assert_eq!(o.jobs.unwrap().total, 0);
         assert!(o.reading.unwrap().is_empty() && o.drawing.unwrap().is_empty() && o.recent.is_empty() && o.days.unwrap().is_empty());
+        assert!(o.month.is_empty() && o.note.is_none());
+        assert_eq!(o.months.notes, Some(vec![0; 12]));
         assert!(overview(&c, "2026-13-01", &[]).is_err());
     }
 }
