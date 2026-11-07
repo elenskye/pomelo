@@ -4,14 +4,13 @@
 
 **v0.8 验收完毕**（2026-11-05，版本号 0.8.0），已装进正式版：`pomelo.db` 39、`youzi.db` 39、`search.db` 3、`janitor.db` 1、数据文件格式 39。
 
-**v0.9 视觉在做**：目标是 2027 年元旦前全部做完并装进正式版，不因时间压力降低完成度。2026-11-07 起按下面的 Dawn Plan 走：visual-atelier 的视觉和这边的代码由同一个 Agent 一起做。Phase 1 我 11-07 验收了；**Phase 2 地基做完，等我验收**（数据库和数据文件的版本都没变）：
+**v0.9 视觉在做**：目标是 2027 年元旦前全部做完并装进正式版，不因时间压力降低完成度。2026-11-07 起按下面的 Dawn Plan 走：visual-atelier 的视觉和这边的代码由同一个 Agent 一起做。Phase 1、2 我 11-07 验收了（Phase 2：颜色换成 visual-atelier 的 Pomelo 方案、设置 › 外观选配色和明暗、月历和首页完整版的数据，界面在 Phase 6）。**Phase 3 柚子与模块图标在做**：
 
-- 颜色换成 visual-atelier 的 Pomelo 方案：`src/vendor/pomelo/` 是同步来的副本（`pomelo.css`、`tokens.ts`、`handmade.js`），`src/index.css` 只留字体、圆角和动画。旧界面先换了颜色，样子要到 Phase 4 外框才换。
-- 设置最上面多了「外观」：5 套配色、明暗（跟随系统 / 浅色 / 深色），速记小窗跟着换。
-- 月历的数据（`calendar.rs`、`calendar_span`）和首页完整版的数据（`home_overview` 加了本月、今年按月、念念不忘一条），界面在 Phase 6。规则见 `requirements.md`「以后」的「日历视图」「首页完整版」。
-- 不读 macOS 日历（我定的）。
+- 图标在 visual-atelier 画好了，我在 bench 里批了（柚子 8 个表情、「问柚子」按钮、菜单栏实心和空心、20 个模块贴纸；模块的颜色跟模块坞的分类走，兴趣和工具互换过；App 图标用方格纸）。
+- 这边：`pomelo-v0.3.0` 同步进 `src/vendor/pomelo/`（加了 `marks/`）。模块坞、柚子瓣、拖动的小条、顶栏的「问柚子」用同步来的贴纸（`src/shared/marks.tsx`），助手旁的小鸟换成小柚子；菜单栏换成单色的柚子；App 图标换成方格纸那张（`src-tauri/icons/` 由同步来的 1024 源图生成）。
+- 11-07 21:12 装进了正式版（升级测试：没有新的数据库改动，临时数据目录里新版打开后版本号和数据都没变）。**等我验收**：在正式版里看菜单栏的柚子（16 号，实心 / 空心）、程序坞和启动台里的 App 图标（macOS 26 起的图标网格）、模块坞和「问柚子」。
 
-**v0.9 支线 · Small Improve 做完**（2026-11-07，版本号改成 0.9.0），还没装进正式版：`pomelo.db` 40（一网打尽最外层的网址收进「未分类」），其余版本不变。装之前照 `testing.md` 做升级测试。
+**v0.9 支线 · Small Improve 做完**（2026-11-07，版本号改成 0.9.0），11-07 14:30 装进正式版（带 0040），21:12 又连 Phase 2、3 一起装了一次：`pomelo.db` 40（一网打尽最外层的网址收进「未分类」），其余版本不变。Phase 2、3 都没动数据库和数据文件的版本。
 
 - 速记小窗的笔记能「存为 .md」（不记进念念不忘）。
 - 一网打尽没有「一网打尽」这一层了：第一层就是文件夹，网址都在文件夹里。
@@ -29,7 +28,7 @@
 - 一个 Agent（Claude Code，现用账号）两边一起做：不再分账号一、账号二，也不再分 VL 线、VW 线。Pomelo v1.0 正式发布前不换账号。
 - 每个 Phase 先在 visual-atelier 出资产和原型（站主目视批准），再接进 Pomelo（`?mock` 自验，站主在 App 里看）；两边都过了才算这个 Phase 验收。上一个 Phase 验收后下一个直接开工，不另等开工指令（站主 2026-11-07 定）；Phase 里要站主拍板的事用提问功能问。
 - 资产到 Pomelo 照旧单向同步（visual-atelier 的 `docs/adoption.md`）：一个 Phase 的资产批准后，站主给 `schemes/pomelo/` 打一次 tag，Agent 核对 tag 再 `sync`；同步来的文件带 `VERSION` 和校验和，不手改。每个 Phase 同步一次，不等到最后。
-- Git：两边的 commit、push、tag 都由站主做；Agent 改任何文件但不提交；`pnpm app:install` 只在站主同意时做。
+- Git：两边的 commit、push、tag 都由站主做；Agent 改任何文件但不提交。每个 Phase 做完，Agent 直接做升级测试、装 Pomelo 正式版（`pnpm app:install`），方便站主在 App 里验收（站主 2026-11-07 定）。
 - 验证：Pomelo 的代码照 Pomelo 的 `CLAUDE.md` 和 `docs/testing.md`；visual-atelier 的照它的 `CLAUDE.md`「验证」。
 - 云端：Design System「Pomelo 柚儿园」用现用账号的那份 https://claude.ai/artifact/5uaouHwXAXihjxhh9g4vb3 ；画布要给站主在 Claude 里看时，在现用账号里新建（visual-atelier 的 `docs/cloud.md`）。旧账号的画布和 Design System 只看不动。
 - 目标日期是排期，不是验收标准；顺序比日期重要。

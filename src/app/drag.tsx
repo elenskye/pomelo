@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { moduleById } from "./modules";
+import { Mark, moduleMark } from "@/shared/marks";
 
 export type Over = { zone: string; before?: string };
 export type DragNow = { mod: string; from: string; x: number; y: number; over: Over | null };
@@ -87,9 +88,10 @@ export function DragChip() {
   if (!d) return null;
   const m = moduleById(d.mod);
   const Icon = m.icon;
+  const mark = moduleMark(d.mod);
   return createPortal(
     <div style={{ left: d.x + 10, top: d.y + 8 }} className="pointer-events-none fixed z-[70] flex items-center gap-1.5 rounded-control border bg-popover px-2 py-1 text-sm shadow-lg">
-      <Icon size={14} strokeWidth={1.75} style={{ color: m.color }} />
+      {mark ? <Mark svg={mark} size={22} className="-my-1" /> : <Icon size={14} strokeWidth={1.75} style={{ color: m.color }} />}
       {m.label}
     </div>,
     document.body,

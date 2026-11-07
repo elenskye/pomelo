@@ -3,6 +3,7 @@
 // Everything sits on the traffic lights' centre line. Right-click ‹ › lists the steps that way.
 import { useState } from "react";
 import { Bird, ChevronLeft, ChevronRight, Plus, Search, Settings, X } from "lucide-react";
+import { Mark, markSvg } from "@/shared/marks";
 import { Menu, type MenuAt } from "./Menu";
 import { moduleById, pageName, splitPath } from "./modules";
 import { PomeloButton } from "./Pomelo";
@@ -109,20 +110,45 @@ export function TopBar(props: {
       <button type="button" aria-label="设置" title="设置" onClick={() => tabs.open("/settings")} className={iconButton}>
         <Settings size={16} strokeWidth={1.75} />
       </button>
+      <AskButton open={props.chatOpen} onClick={props.onChat} unseen={props.unseen} />
+      {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
+    </header>
+  );
+}
+
+/** 柚子's button (⌘J): 柚子 peeking out with a speech bubble, synced from visual-atelier (the bird until the sync). */
+function AskButton(props: { open: boolean; onClick?: () => void; unseen: boolean }) {
+  const ai = markSvg("ai-button");
+  const label = props.open ? "收起柚子" : "问柚子";
+  const dot = props.unseen && <span aria-label="有新内容" className="absolute -top-0.5 -right-0.5 size-2 rounded-full border border-sidebar bg-primary" />;
+  if (!ai)
+    return (
       <button
         type="button"
-        aria-label={props.chatOpen ? "收起柚子" : "问柚子"}
-        title={props.chatOpen ? "收起柚子" : "问柚子"}
-        aria-pressed={props.chatOpen}
-        disabled={!props.onChat}
-        onClick={props.onChat}
+        aria-label={label}
+        title={label}
+        aria-pressed={props.open}
+        disabled={!props.onClick}
+        onClick={props.onClick}
         className="relative grid size-[30px] shrink-0 place-items-center rounded-full text-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
         style={{ background: "radial-gradient(circle at 35% 30%, #f0a35c, var(--module-youzi))" }}
       >
         <Bird size={16} strokeWidth={1.75} />
-        {props.unseen && <span aria-label="有新内容" className="absolute -top-0.5 -right-0.5 size-2 rounded-full border border-sidebar bg-primary" />}
+        {dot}
       </button>
-      {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
-    </header>
+    );
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={props.open}
+      disabled={!props.onClick}
+      onClick={props.onClick}
+      className={`relative grid size-[38px] shrink-0 place-items-center rounded-[10px] outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-90 disabled:opacity-40 ${props.open ? "bg-black/[0.06] dark:bg-white/[0.08]" : "hover:bg-black/[0.045] dark:hover:bg-white/[0.06]"}`}
+    >
+      <Mark svg={ai} size={34} />
+      {dot}
+    </button>
   );
 }

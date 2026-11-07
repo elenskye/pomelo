@@ -1,5 +1,6 @@
 //! Menu bar (v0.3): Pomelo keeps running when its window closes (⌘Q quits).
-//! The bird icon is solid while a local model is ready, hollow otherwise. The menu shows the
+//! The 柚子 icon (template images synced from visual-atelier, src/vendor/pomelo/marks/) is solid while a
+//! local model is ready, hollow otherwise. The menu shows the
 //! model status and holds the everyday controls; it is rebuilt only when what it shows changes.
 
 use crate::youzi::runtime::{Dot, ServiceState, ServiceStatus, Svc};
@@ -11,8 +12,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Wry};
 
 const TRAY: &str = "pomelo";
-const ICON_READY: &[u8] = include_bytes!("../icons/tray/ready@2x.png");
-const ICON_IDLE: &[u8] = include_bytes!("../icons/tray/idle@2x.png");
+const ICON_READY: &[u8] = include_bytes!("../../src/vendor/pomelo/marks/menu-solid.png");
+const ICON_IDLE: &[u8] = include_bytes!("../../src/vendor/pomelo/marks/menu-hollow.png");
 
 static SHOWN: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 

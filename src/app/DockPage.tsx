@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Bird, ChevronDown, ChevronUp, Ellipsis, Eye, EyeOff, LayoutGrid, ListChecks, Pin, PinOff, Plus, TrendingUp, X } from "lucide-react";
 import { CustomDialog } from "@/modules/custom/CustomDialog";
 import type { Template } from "@/modules/custom/api";
+import { Mark, markSvg, moduleMark, YouziBadge } from "@/shared/marks";
 import { PageHeader } from "@/shared/ui";
 import { toneColor, useDock, type Dock } from "./dock";
 import { pressModule, useDragNow } from "./drag";
@@ -19,8 +20,10 @@ import { useTabs } from "./tabs";
 export const liveKey = ["dock_live"];
 export const liveText = () => invoke<Record<string, string>>("dock_live");
 
-/** A module's colored square with its white icon. */
+/** A module's sticker (synced from visual-atelier); made modules keep their colored square with a white icon. */
 export function ModuleIcon(props: { def: ModuleDef; size: number }) {
+  const mark = moduleMark(props.def.id);
+  if (mark) return <Mark svg={mark} size={props.size} />;
   const Icon = props.def.icon;
   return (
     <span className="grid shrink-0 place-items-center text-white" style={{ width: props.size, height: props.size, borderRadius: Math.round(props.size * 0.3), background: props.def.color }}>
@@ -95,7 +98,7 @@ export function ModuleRow(props: { id: string; dock: Dock; live?: string; menu: 
       <ModuleIcon def={def} size={26} />
       <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
         {def.label}
-        {def.assistant && <Bird size={12} style={{ color: "var(--module-youzi)" }} />}
+        {def.assistant && (markSvg("pomelo-normal") ? <YouziBadge size={14} /> : <Bird size={12} style={{ color: "var(--module-youzi)" }} />)}
         {props.dock.layout.pinned.includes(props.id) && <Pin size={11} className="text-muted-foreground" />}
       </span>
       <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">{props.live}</span>
@@ -119,7 +122,7 @@ function Tile(props: { id: string; dock: Dock; live?: string; menu: ModuleMenu; 
       onContextMenu={(e) => props.menu.at(e, props.id)}
       className={`group/m relative flex w-[112px] cursor-default flex-col items-center gap-0.5 rounded-[14px] border bg-card px-1.5 pt-3 pb-2.5 text-center outline-none transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-sm focus-visible:ring-2 focus-visible:ring-ring max-[1099px]:w-[94px] ${drag?.mod === props.id ? "opacity-40" : ""}`}
     >
-      {def.assistant && <Bird size={12} className="absolute top-1.5 left-2" style={{ color: "var(--module-youzi)" }} />}
+      {def.assistant && (markSvg("pomelo-normal") ? <YouziBadge size={16} className="absolute top-1 left-1.5" /> : <Bird size={12} className="absolute top-1.5 left-2" style={{ color: "var(--module-youzi)" }} />)}
       <span className="max-[1099px]:hidden">
         <ModuleIcon def={def} size={40} />
       </span>

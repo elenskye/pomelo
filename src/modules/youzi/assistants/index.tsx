@@ -4,6 +4,7 @@
 // 柚子's left column. Importer has no page: it is 钱来钱往 · 导入账单 (`to` in modules.ts).
 import { Bird } from "lucide-react";
 import { moduleById } from "@/app/modules";
+import { markSvg, YouziBadge } from "@/shared/marks";
 import { PageHeader } from "@/shared/ui";
 import { JanitorPage } from "./Janitor";
 import { Pub2mdPage } from "./Pub2md";
@@ -21,7 +22,7 @@ export default function AssistantModule(props: { which: "translate" | "pub2md" |
   const m = moduleById(props.which);
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} badge={<Bird size={14} strokeWidth={1.75} aria-label="柚子的助手" style={{ color: "var(--module-youzi)" }} />} />
+      <PageHeader icon={m.icon} color={m.color} title={m.label} badge={markSvg("pomelo-normal") ? <YouziBadge size={18} /> : <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手" style={{ color: "var(--module-youzi)" }} />} />
       {props.which === "translate" ? <TranslatePage /> : props.which === "pub2md" ? <Pub2mdPage /> : props.which === "rater" ? <RaterPage /> : props.which === "janitor" ? <JanitorPage /> : <SeekerPage />}
     </div>
   );

@@ -18,7 +18,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 - **优化清单**：我写在 `docs/pomelo-improve-N.rtf`（`textutil -convert txt -stdout` 读），也可能直接在对话里给。逐条做完后移到 `docs/archive/`，更新 `roadmap.md`。
 - **汇报**：中文、简洁：每条改了什么、我自己选的地方、旧数据会怎么变、怎么验证的。
-- **正式版**：`pnpm app:install` 只在我同意时执行，装之前先做升级测试（`docs/testing.md`）。版本号（设置「关于」里显示的）跟着在做的版本走，开新版本时把 `package.json`、`src-tauri/Cargo.toml`、`tauri.conf.json` 三处一起改。
+- **正式版**：`pnpm app:install` 只在我同意时执行，装之前先做升级测试（`docs/testing.md`）。Dawn Plan 里每个 Phase 做完算我同意：直接做升级测试再装（2026-11-07 我定）。版本号（设置「关于」里显示的）跟着在做的版本走，开新版本时把 `package.json`、`src-tauri/Cargo.toml`、`tauri.conf.json` 三处一起改。
 - **Git**：我说了才提交；提交信息一行，照我的写法（`v0.7: merge seeklo`、`v0.6 refined`）。不推送。
 - **代码格式**：没有格式化配置，照周围的写法手动排（长行）；不跑 prettier 这类工具。
 
@@ -26,7 +26,8 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 - 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。2026-11-07 起同一个 Agent 两边一起做，计划在 `docs/roadmap.md`「Dawn Plan」，和那边的 `ROADMAP.md` 里的一模一样（两个仓库唯一允许重复的内容，改要一起改）。那边的规矩在它的 `CLAUDE.md`。
 - 资产单向同步过来（那边打 tag 后 `sync`，每个 Phase 一次），放在 `src/vendor/pomelo/`：颜色变量 `pomelo.css`、颜色常量 `tokens.ts`、手画零件的画法 `handmade.js`，连 `VERSION` 和 `SHA256SUMS` 一起，不手改；要改回那边改。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
-- 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push、`pnpm app:install` 仍由我做。
+- 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push 仍由我做；每个 Phase 做完 Agent 直接做升级测试并 `pnpm app:install`。
+- 图标：柚子的表情、「问柚子」按钮、模块贴纸在 `src/vendor/pomelo/marks/`，用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark` 画（每次换一套 id，同一张能放很多次）；菜单栏的模板图和 App 图标也从那里来。
 - 已定的要求见 `docs/requirements.md`「以后」；`docs/design.md` 到 Dawn Plan · Phase 9 重写（开发指南并进去，不再单独写 `v0.9-guide.md`）。
 
 ## 只在主目录做
@@ -112,7 +113,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `src-tauri/src/youzi/` 对话 | `store.rs` youzi.db 和升级脚本；`chat.rs` 对话和生成循环（每个对话一个 `Runs` 位置）；`context.rs` 上下文预算；`library.rs` 对话列表；`instructions.rs` · `templates.rs` · `memory.rs`；`files.rs` · `pdf.rs` · `office.rs` · `reading.rs` · `index.rs` 附件和资料；`knowledge.rs` 知识库；`work.rs` · `word.rs` 保存为 Word、改文件、照模板写简历；`excel.rs` 读写 .xlsx（Excel 工具箱）；`find.rs` · `export.rs` · `transfer.rs` · `storage.rs` |
 | `src-tauri/src/youzi/` 能力 | `data.rs` 查 Pomelo 数据；`cite.rs` 出处和「搜索」「读整条」；`ask.rs` 问我（ASK）；`act/` 写数据的工具和确认卡片；`assist.rs` 润色、补全、一句话填好 / 改好、柚子转为待办；`assistants/`：`seeker.rs` + `seeker/`（`catalog` 资料，规则是「标题 + 分点」、`rules_markdown` 拼给模型；`import` 从 transfer/ 导入、`workflow` 组装、`model` 模型建议、`output` Word 导出和岗位关联、`company` knowledge/ 的公司和检索、`files` cv/ 和 material/、`tests`；内置简历模板在 `src-tauri/templates/`），`rater.rs` Rater 的题库 + `rater/qbank.rs` 三个题库 SKILL、程序自带的规则和按功能选的模型 + `rater/practice.rs` 卡片练习 + `rater/interview.rs` 面试的准备、复盘和总结 + `rater/record.rs` 复盘的记录对话（借柚子的对话，不进对话列表），`translate.rs`，`importer.rs` Importer（导入账单：读文件、查重、再整理、提示词清单），`janitor/` DevJanitor（`rules.rs` 类别和受保护的地方、`scan.rs` 扫描和整理、`store.rs` janitor.db、`system.rs` 问系统的（df、ps、lsof、plutil、mdls）、`env.rs` 开发环境、`agent.rs` Agent（对话、SKILL、工具、三种卡片和执行、规则、柚子的只读工具）、`readonly.rs` Agent 自己跑的只读命令、`fake.rs` 假 Mac、`mod.rs` 运行方式、清理和命令），`site.rs` 呦呦漫游的按中文起草，`pub2md/`（流程在 `job.rs`）；`skills/` 插件库（`mod.rs` 每个技能的流程图 `Flow`，照代码真实的判断和循环写；`seeker.rs` 只读的「Seeker 资料」，`qbank.rs` 对话里的题库 SKILL）；`schedule.rs` 定时任务；`brief.rs` 今日简报（提示词能改）；`yearly.rs` 年度总结（定时里画的流程图 `FLOW`）；`atlas.rs` 年度总结写完后给 Atlas 存的「呈现结果」（数字快照 + 各幕的话） |
 | `src-tauri/src/site/` | 呦呦漫游：`mod.rs` 运行方式、副本、命令；`tools.rs` git / gh / Node；`server.rs` 本地服务；`changes.rs` · `publish.rs` 改动、发布；`yaml.rs`（照 js-yaml 写，`yaml_cases.rs` 对照）· `doc.rs` 内容文件；`wander.rs` `now.rs` `about.rs` `career.rs` 各页；`registry.rs` · `images.rs` 资源库；`terms.rs` 话题、类别、外链 |
-| `src-tauri/src/` 其他 | `icons.rs` 一网打尽的网站图标；`health.rs` 设置里的体检；`dock.rs` 模块坞的实时小字；`tray.rs` 菜单栏的小鸟；`menu.rs` Mac 菜单栏的菜单（页签快捷键）；`capture.rs` 速记小窗（窗口、⌥Space、草稿）；`autostart.rs`；`undo.rs` 撤销 / 重做（SQLite session，分两个库）；`secure.rs` 钥匙串、Touch ID、剪贴板；`transfer.rs` · `backup.rs` 导出导入、备份恢复；`db.rs` · `migrations/`；`home.rs` 首页汇总 |
+| `src-tauri/src/` 其他 | `icons.rs` 一网打尽的网站图标；`health.rs` 设置里的体检；`dock.rs` 模块坞的实时小字；`tray.rs` 菜单栏的柚子（图在 `src/vendor/pomelo/marks/`）；`menu.rs` Mac 菜单栏的菜单（页签快捷键）；`capture.rs` 速记小窗（窗口、⌥Space、草稿）；`autostart.rs`；`undo.rs` 撤销 / 重做（SQLite session，分两个库）；`secure.rs` 钥匙串、Touch ID、剪贴板；`transfer.rs` · `backup.rs` 导出导入、备份恢复；`db.rs` · `migrations/`；`home.rs` 首页汇总 |
 | `src/app/` | `App.tsx` 外壳、⌘Z / ⌘K / ⌘J、例行检查；`TopBar.tsx` 顶栏；`tabs.tsx` 页签和前进后退、`subpage.ts` 子页进地址；`IndexTabs.tsx` 索引签；`dock.ts` · `DockPage.tsx` 模块坞；`Bloom.tsx` 柚子瓣；`Pomelo.tsx` 柚子的表情和状态；`drag.tsx` · `Menu.tsx`；`frame.css`；`Search.tsx`；`pageContext.ts`；`hidden.ts`；`modules.ts`（模块、助手、子页） |
 | `src/home/` | 首页、`BriefCard.tsx`、`YearCard.tsx` |
 | `src/capture/` | 速记小窗的页面（`capture.html`，Vite 的第二个入口；`CaptureChat.tsx` 问柚子，`CaptureTranslate.tsx` 翻译） |

@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Bird, ChevronDown, ChevronUp, Ellipsis, EyeOff, Pin, Plus, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { markSvg, moduleMark, YouziBadge } from "@/shared/marks";
 import { CatName, liveKey, liveText, useModuleMenu, ModuleIcon, ModuleRow } from "./DockPage";
 import { toneColor, useDock } from "./dock";
 import { pressModule, radialDrop, useDragNow, type Over } from "./drag";
@@ -178,12 +179,12 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
                 className={`group/node absolute -mt-[31px] -ml-[38px] flex w-[76px] cursor-default flex-col items-center gap-1 transition-[opacity,transform] duration-150 hover:scale-110 ${dim ? "opacity-15" : ""} ${drag?.mod === m ? "opacity-40" : ""}`}
                 style={{ left: x, top: y }}
               >
-                <span className={`rounded-[13px] shadow-sm ${term && !dim ? "ring-[3px] ring-[color-mix(in_srgb,var(--primary)_55%,transparent)]" : ""}`}>
+                <span className={`rounded-[13px] ${moduleMark(m) ? "" : "shadow-sm"} ${term && !dim ? "ring-[3px] ring-[color-mix(in_srgb,var(--primary)_55%,transparent)]" : ""}`}>
                   <ModuleIcon def={def} size={42} />
                 </span>
                 <span className="text-xs leading-tight whitespace-nowrap">{def.label}</span>
                 {dock.layout.pinned.includes(m) && <Pin size={11} className="absolute -top-1.5 left-2 text-muted-foreground" />}
-                {def.assistant && <Bird size={11} className="absolute -top-1.5 right-2.5" style={{ color: "var(--module-youzi)" }} />}
+                {def.assistant && (markSvg("pomelo-normal") ? <YouziBadge size={15} className="absolute -top-2 right-2" /> : <Bird size={11} className="absolute -top-1.5 right-2.5" style={{ color: "var(--module-youzi)" }} />)}
                 <button
                   type="button"
                   aria-label={`${def.label}的菜单`}
@@ -234,7 +235,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
               }}
               className="flex max-w-[220px] items-center gap-1.5 rounded-control px-2 py-1 text-sm hover:bg-muted"
             >
-              <Bird size={14} className="shrink-0" style={{ color: "var(--module-youzi)" }} />
+              {markSvg("pomelo-normal") ? <YouziBadge size={18} className="-my-0.5" /> : <Bird size={14} className="shrink-0" style={{ color: "var(--module-youzi)" }} />}
               <span className="truncate">问柚子「{q.trim()}」</span>
             </button>
           )}
