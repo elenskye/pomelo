@@ -67,7 +67,7 @@ fn dates(a: &Value, keys: &[&str], question: &str, today: &str) -> Vec<Option<St
 }
 
 fn quick(c: &Connection, module: &str, a: &Value, question: &str, today: &str) -> Result<QuickFill, String> {
-    let (_, read) = assist::quick_fields(c, module, today)?;
+    let (_, read) = assist::quick_fields(c, module, today, false)?;
     Ok(read(a, question))
 }
 

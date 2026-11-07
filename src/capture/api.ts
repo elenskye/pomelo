@@ -25,6 +25,8 @@ export const captureApi = {
   files: (ids: number[]) => invoke<FileInfo[]>("capture_files", { ids }),
   pin: (on: boolean) => invoke<void>("capture_pin", { on }),
   note: (content: string) => invoke<void>("capture_note", { content }),
+  /** 存为 .md (not a note; the draft stays): the file's name. */
+  saveMarkdown: (path: string, markdown: string) => invoke<string>("capture_save_markdown", { path, markdown }),
   todo: (title: string, due: string | null, group: number) => invoke<void>("capture_todo", { title, due, group }),
   undo: () => invoke<{ label: string | null }>("capture_undo"),
   /** The window's conversation (out of 柚子's list), if any. */

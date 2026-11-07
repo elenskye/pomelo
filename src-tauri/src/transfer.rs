@@ -574,7 +574,7 @@ mod tests {
         notes::create(&a, serde_json::from_value(json!({"content": "批注 **加粗**", "pinned": true, "refs": [first_note], "attachments": [pic]})).unwrap()).unwrap();
         notes::set_tag(&a, "读书", serde_json::from_value(json!({"pinned": true, "icon": "i:book-open"})).unwrap()).unwrap();
         // 笔记转待办: a task made from the first note (linked by its createdAt)
-        todo::create_from_note(&a, first_note, Some(tg), None, &["整理摘抄".into()], "2026-10-17").unwrap();
+        todo::create_from_note(&a, first_note, vec![serde_json::from_value(json!({"groupId": tg, "title": "整理摘抄"})).unwrap()], "2026-10-17").unwrap();
         notes::set_tag(&a, "读书/摘抄", serde_json::from_value(json!({"icon": "📖"})).unwrap()).unwrap();
         // 来日方长: a birthday with a gift, pinned
         days::create(&a, serde_json::from_value(json!({"kind": "birthday", "name": "妈妈", "date": "1966-11-02", "remind": [7], "pinned": true, "gifts": [{"year": "2025", "gift": "茶具"}]})).unwrap(), "2026-10-17").unwrap();
@@ -591,7 +591,7 @@ mod tests {
         // 一网打尽: folders in folders, a link on 首页, an order of its own
         let marks = bookmarks::tests::seed(&a);
         bookmarks::update(&a, marks["GitHub"], serde_json::from_value(json!({"onHome": true})).unwrap()).unwrap();
-        bookmarks::place(&a, &[marks["Google"]], None, Some(marks["工作"])).unwrap();
+        bookmarks::place(&a, &[marks["读书"]], None, Some(marks["工作"])).unwrap();
 
         let (text, counts) = export(&mut a).unwrap();
         assert_eq!(counts.iter().map(|m| (m.key.as_str(), m.incoming)).collect::<Vec<_>>(), [("books", 2), ("films", 1), ("drawing", 2), ("packing", 4), ("todo", 7), ("finance", 4), ("jobs", 1), ("notes", 2), ("days", 1), ("custom", 2), ("bookmarks", 6)]);
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!((v["modules"]["custom"][1]["courseWord"].as_str(), v["modules"]["custom"][1]["courses"][0]["lessons"][2]["title"].as_str()), (Some("季"), Some("告别")));
         assert!(v["modules"]["custom"][0].get("courses").is_none());
         assert_eq!(v["modules"]["days"][0]["gifts"][0]["gift"], "茶具");
-        assert_eq!((v["modules"]["bookmarks"][0]["title"].as_str(), v["modules"]["bookmarks"][1]["children"][1]["onHome"].as_bool()), (Some("Google"), Some(true)));
+        assert_eq!((v["modules"]["bookmarks"][0]["title"].as_str(), v["modules"]["bookmarks"][1]["children"][1]["onHome"].as_bool()), (Some("读书"), Some(true)));
         assert_eq!(v["modules"]["notes"]["notes"][1]["attachments"][0]["name"], "海报.png");
         assert_eq!(v["modules"]["todo"]["groups"][0]["goals"][0]["attachments"][0]["name"], "开题报告.pdf");
         // on the other Mac they are names waiting for their files

@@ -4,9 +4,10 @@ import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { errorText } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
-import { Field, Switch, TextArea, TextInput } from "@/shared/ui";
+import { Field, Switch, TextInput } from "@/shared/ui";
 import { INSTRUCTIONS_KEY, LIBRARY_KEY, youziApi, type ProjectRow } from "./api";
 import { ProjectLibraries } from "./Knowledge";
+import { MdField } from "@/shared/editor/MdField";
 
 export function ProjectDialog(props: { project: ProjectRow | null; onClose: () => void; onCreated?: (id: number) => void }) {
   const [name, setName] = useState(props.project?.name ?? "");
@@ -36,7 +37,7 @@ export function ProjectDialog(props: { project: ProjectRow | null; onClose: () =
         <TextInput autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
       </Field>
       <Field label="背景指令">
-        <TextArea rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)} className="font-reading" />
+        <MdField label="背景指令" rows={6} value={instructions} onChange={setInstructions} className="font-reading" />
       </Field>
       <span className="flex items-center gap-2 text-sm">
         同时使用全局记忆 <Switch label="同时使用全局记忆" checked={globalMemories} onChange={setGlobalMemories} />

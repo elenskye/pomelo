@@ -8,9 +8,9 @@ import { SlidersHorizontal } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
-import { TextArea } from "@/shared/ui";
 import { INSTRUCTIONS_KEY, youziApi, usePresets, type RetrievalPlan, type SessionSetting } from "./api";
 import { toolClass } from "./Composer";
+import { MdField } from "@/shared/editor/MdField";
 
 export const NO_SETTING: SessionSetting = { content: "", presetId: null };
 
@@ -204,7 +204,7 @@ function SessionDialog(props: { content: string; onClose: () => void; onSave: (c
   };
   return (
     <Modal title="会话指令" onClose={props.onClose} onSubmit={submit} error={null} submitLabel="保存" wide>
-      <TextArea autoFocus rows={8} value={text} onChange={(e) => setText(e.target.value)} className="font-reading" aria-label="会话指令" />
+      <MdField autoFocus label="会话指令" rows={8} value={text} onChange={setText} className="font-reading" />
     </Modal>
   );
 }

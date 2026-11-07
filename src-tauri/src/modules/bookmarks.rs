@@ -1,9 +1,11 @@
 //! 一网打尽 (网址收藏夹; requirements「一网打尽」): folders and links in one tree (table bookmarks, 0039).
-//! - parent_id None = the top level; folders nest to any depth. sort_order = place among its siblings,
+//! - parent_id None = the top level, which holds folders only (0040: links left there went into 「未分类」);
+//!   a link is always in a folder. Folders nest to any depth. sort_order = place among its siblings,
 //!   folders and links mixed (as dragged); new ones go last.
 //! - A link's url: http(s) only; a bare address gets https://. No name: the host.
-//! - Placing (drag, 移到…): several at once, into a folder (or the top level) before one of its rows or
-//!   last, in the order given; never a folder into itself or under it. One undo step.
+//! - Placing (drag, 移到…): several at once, into a folder (or the top level, folders only) before one of its
+//!   rows or last, in the order given; never a folder into itself or under it. One undo step.
+//! - A data file from before 0040 with links at the top level: they go into a 「未分类」 folder, last.
 //! - Deleting a folder deletes what's in it (FK cascade). Every edit is one undo step (commands).
 //! - on_home: the link shows on 首页 (home.rs), in the tree's order.
 //! - Site icons: icons.rs (a cache, not data). Search: search/sources.rs; 柚子: youzi/data.rs (read only).
@@ -20,6 +22,9 @@ pub const LABEL: &str = "一网打尽";
 const NOT_FOUND: &str = "找不到这一条，可能已经被删除了";
 const FOLDER: &str = "folder";
 const LINK: &str = "link";
+/// Where links left at the top level go (0040, old data files).
+pub const LOOSE: &str = "未分类";
+const NO_LOOSE: &str = "网址要放在文件夹里";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -192,6 +197,9 @@ pub fn create(conn: &Connection, input: NewBookmark) -> Result<Bookmark, String>
         _ => return Err("只能是文件夹或网址".into()),
     };
     let title = clean_title(&input.title, kind, &url)?;
+    if kind == LINK && input.parent_id.is_none() {
+        return Err(NO_LOOSE.into());
+    }
     check_parent(conn, input.parent_id)?;
     let order = next_order(conn, input.parent_id)?;
     conn.execute(
@@ -236,8 +244,10 @@ pub fn place(conn: &Connection, ids: &[i64], parent: Option<i64>, before: Option
     let by_id: HashMap<i64, &Bookmark> = all.iter().map(|b| (b.id, b)).collect();
     let mut moving: Vec<i64> = Vec::new();
     for id in ids {
-        if !by_id.contains_key(id) {
-            return Err(NOT_FOUND.into());
+        match by_id.get(id) {
+            None => return Err(NOT_FOUND.into()),
+            Some(b) if parent.is_none() && !b.is_folder() => return Err(NO_LOOSE.into()),
+            _ => {}
         }
         if !moving.contains(id) {
             moving.push(*id);
@@ -373,9 +383,15 @@ pub fn export(conn: &Connection) -> Result<Vec<BookmarkRecord>, String> {
     Ok(build(None, &kids))
 }
 
-/// Replaces the whole tree with `records` (as-is). Caller owns the transaction.
+/// Replaces the whole tree with `records` (as-is; links at the top level, from before 0040, into a 「未分类」
+/// folder last). Caller owns the transaction.
 pub fn replace_all(conn: &Connection, records: &[BookmarkRecord]) -> Result<usize, String> {
     conn.execute("DELETE FROM bookmarks", []).map_err(err)?;
+    let (loose, mut top): (Vec<BookmarkRecord>, Vec<BookmarkRecord>) = records.iter().cloned().partition(|r| r.kind == LINK);
+    if !loose.is_empty() {
+        top.push(BookmarkRecord { kind: FOLDER.into(), title: LOOSE.into(), url: String::new(), on_home: false, children: loose, created_at: None, updated_at: None });
+    }
+    let records = top.as_slice();
     fn put(conn: &Connection, parent: Option<i64>, rs: &[BookmarkRecord]) -> Result<(), String> {
         for (i, r) in rs.iter().enumerate() {
             let (title, url) = check_record(r).map_err(|e| format!("{LABEL}「{}」：{e}", r.title.trim()))?;
@@ -432,7 +448,7 @@ pub(crate) mod tests {
         serde_json::from_value(v).unwrap()
     }
 
-    /// A small tree: 工作 { 邮箱 { Gmail }, GitHub }, 读书 (empty), Google; ids by title.
+    /// A small tree: 工作 { 邮箱 { Gmail }, GitHub }, 读书 { Google }; ids by title.
     pub(crate) fn seed(c: &Connection) -> HashMap<String, i64> {
         let mut ids = HashMap::new();
         let mut add = |parent: Option<&str>, kind: &str, title: &str, url: &str| {
@@ -445,7 +461,7 @@ pub(crate) mod tests {
         add(Some("邮箱"), LINK, "Gmail", "mail.google.com");
         add(Some("工作"), LINK, "GitHub", "https://github.com/");
         add(None, FOLDER, "读书", "");
-        add(None, LINK, "Google", "https://www.google.com/");
+        add(Some("读书"), LINK, "Google", "https://www.google.com/");
         ids
     }
 
@@ -468,10 +484,11 @@ pub(crate) mod tests {
     fn creates_in_order_with_defaults() {
         let c = memory_db();
         let ids = seed(&c);
-        assert_eq!(titles(&c, None), ["工作", "读书", "Google"]);
+        assert_eq!(titles(&c, None), ["工作", "读书"]);
         let gmail = get(&c, ids["Gmail"]).unwrap();
         assert_eq!((gmail.url.as_str(), gmail.parent_id), ("https://mail.google.com", Some(ids["邮箱"])));
-        let bare = create(&c, new(json!({ "kind": "link", "url": "openrouter.ai/" }))).unwrap();
+        assert_eq!(create(&c, new(json!({ "kind": "link", "url": "openrouter.ai/" }))).unwrap_err(), NO_LOOSE, "a link is always in a folder");
+        let bare = create(&c, new(json!({ "kind": "link", "url": "openrouter.ai/", "parentId": ids["读书"] }))).unwrap();
         assert_eq!(bare.title, "openrouter.ai", "no name: the host");
         assert!(create(&c, new(json!({ "kind": "folder" }))).is_err());
         assert!(create(&c, new(json!({ "kind": "link", "url": "x.com", "parentId": ids["Google"] }))).is_err(), "only into a folder");
@@ -487,11 +504,16 @@ pub(crate) mod tests {
     fn placing_moves_and_orders() {
         let c = memory_db();
         let ids = seed(&c);
-        // reorder at the top level: Google first
-        place(&c, &[ids["Google"]], None, Some(ids["工作"])).unwrap();
-        assert_eq!(titles(&c, None), ["Google", "工作", "读书"]);
+        // reorder at the top level (folders only there): 读书 first
+        place(&c, &[ids["读书"]], None, Some(ids["工作"])).unwrap();
+        assert_eq!(titles(&c, None), ["读书", "工作"]);
+        assert_eq!(place(&c, &[ids["读书"], ids["Gmail"]], None, None).unwrap_err(), NO_LOOSE);
+        assert_eq!(titles(&c, None), ["读书", "工作"]);
+        place(&c, &[ids["工作"]], None, Some(ids["读书"])).unwrap();
         // several into a folder, last there, in the order given
-        place(&c, &[ids["Google"], ids["GitHub"]], Some(ids["读书"]), None).unwrap();
+        place(&c, &[ids["GitHub"], ids["Google"]], Some(ids["读书"]), None).unwrap();
+        assert_eq!(titles(&c, Some(ids["读书"])), ["GitHub", "Google"]);
+        place(&c, &[ids["Google"]], Some(ids["读书"]), Some(ids["GitHub"])).unwrap();
         assert_eq!(titles(&c, Some(ids["读书"])), ["Google", "GitHub"]);
         assert_eq!(titles(&c, Some(ids["工作"])), ["邮箱"]);
         // a folder never into itself or under it
@@ -521,7 +543,7 @@ pub(crate) mod tests {
         let v = serde_json::to_value(&recs).unwrap();
         assert_eq!(v[0]["children"][0]["children"][0]["url"], "https://mail.google.com");
         assert_eq!(v[0]["children"][1]["onHome"], true);
-        assert!(v[1].get("children").is_none() && v[1].get("url").is_none());
+        assert!(v[1]["children"][0].get("children").is_none() && v[1].get("url").is_none()); // a link has no children, a folder no url
         let d = memory_db();
         validate_records(&recs).unwrap();
         assert_eq!(replace_all(&d, &recs).unwrap(), 6);
@@ -530,5 +552,29 @@ pub(crate) mod tests {
         assert!(validate_records(&bad).is_err());
         let bad: Vec<BookmarkRecord> = serde_json::from_value(json!([{ "kind": "link", "title": "x", "url": "x.com", "children": [{ "kind": "folder", "title": "y" }] }])).unwrap();
         assert!(validate_records(&bad).is_err());
+        // a file from before 0040: its top-level links go into 「未分类」, last
+        let old: Vec<BookmarkRecord> = serde_json::from_value(json!([{ "kind": "link", "title": "A", "url": "a.com" }, { "kind": "folder", "title": "F" }, { "kind": "link", "title": "B", "url": "b.com" }])).unwrap();
+        validate_records(&old).unwrap();
+        let e = memory_db();
+        replace_all(&e, &old).unwrap();
+        let v = serde_json::to_value(export(&e).unwrap()).unwrap();
+        assert_eq!((v[0]["title"].as_str(), v[1]["title"].as_str(), v[1]["children"][0]["title"].as_str(), v[1]["children"][1]["title"].as_str()), (Some("F"), Some(LOOSE), Some("A"), Some("B")));
+    }
+
+    #[test]
+    fn migration_puts_top_level_links_in_a_folder() {
+        let c = memory_db();
+        let ids = seed(&c);
+        // as before 0040: links straight at the top level
+        c.execute("UPDATE bookmarks SET parent_id = NULL, sort_order = 10 WHERE id = ?1", [ids["Google"]]).unwrap();
+        c.execute("UPDATE bookmarks SET parent_id = NULL, sort_order = 11 WHERE id = ?1", [ids["GitHub"]]).unwrap();
+        let m = crate::db::MIGRATIONS.iter().find(|m| m.version == 40).unwrap();
+        c.execute_batch(m.sql).unwrap();
+        assert_eq!(titles(&c, None), ["工作", "读书", LOOSE]);
+        let loose = list(&c).unwrap().into_iter().find(|b| b.title == LOOSE).unwrap().id;
+        assert_eq!(titles(&c, Some(loose)), ["Google", "GitHub"]);
+        // nothing loose: no folder
+        c.execute_batch(m.sql).unwrap();
+        assert_eq!(titles(&c, None), ["工作", "读书", LOOSE]);
     }
 }

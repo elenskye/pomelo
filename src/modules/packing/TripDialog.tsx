@@ -41,15 +41,18 @@ export function TripDialog(props: {
     setSource(v);
     if (!nameTouched) setName(sourceName(v));
   };
-  // 一句话填好 (new trips): 名称、出发日期 and the template that fits best
-  const filled = useFilled<"name" | "departOn" | "source">();
+  // 一句话填好 (new trips): 名称、出发日期、备注 and the template that fits best; 改好 (editing): 名称、出发日期、备注
+  const filled = useFilled<"name" | "departOn" | "source" | "note">();
   const assistOn = useAssistOn();
-  const quick = !trip && assistOn;
+  const quick = assistOn;
   const fill = (f: QuickFillResult) => {
-    const keys: ("name" | "departOn" | "source")[] = [];
-    if (f.templateId != null && templates.some((t) => t.id === f.templateId)) setSource(`t:${f.templateId}`), keys.push("source");
+    const keys: ("name" | "departOn" | "source" | "note")[] = [];
+    if (!trip && f.templateId != null && templates.some((t) => t.id === f.templateId)) setSource(`t:${f.templateId}`), keys.push("source");
     if (f.name) setName(f.name), setNameTouched(true), keys.push("name");
     if (f.departOn) setDepartOn(f.departOn), keys.push("departOn");
+    if (f.note) setNote(f.note), keys.push("note");
+    if (f.clear.includes("depart_on")) setDepartOn(""), keys.push("departOn");
+    if (f.clear.includes("note")) setNote(""), keys.push("note");
     filled.mark(keys);
   };
 
@@ -103,7 +106,7 @@ export function TripDialog(props: {
     >
       <form onSubmit={save} className="space-y-4">
         <p className="text-base font-bold">{trip ? "编辑出行" : "新出行"}</p>
-        {quick && <QuickFill module="packing" onFill={fill} autoFocus />}
+        {quick && <QuickFill module="packing" record={trip?.id} onFill={fill} autoFocus={!trip} />}
         {!trip && (
           <Field label="清单从哪来">
             <div className={filled.halo("source")}>
@@ -123,7 +126,7 @@ export function TripDialog(props: {
         )}
         <Field label="名称">
           <TextInput
-            autoFocus={!quick}
+            autoFocus={!quick || !!trip}
             value={name}
             onChange={(e) => {
               filled.clear("name");
@@ -147,8 +150,8 @@ export function TripDialog(props: {
           </div>
         </Field>
         <Field label="备注">
-          <Polish module="packing" value={note} onChange={setNote}>
-            <TextArea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+          <Polish module="packing" value={note} onChange={(v) => (filled.clear("note"), setNote(v))}>
+            <TextArea rows={2} value={note} onChange={(e) => (filled.clear("note"), setNote(e.target.value))} className={filled.cls("note")} />
           </Polish>
         </Field>
         {trip?.templateName && <p className="text-xs text-muted-foreground">清单来自模板「{trip.templateName}」</p>}

@@ -275,7 +275,7 @@ pub struct Note {
     /// Notes quoting this one, oldest first.
     pub backrefs: Vec<Brief>,
     pub attachments: Vec<FileInfo>,
-    /// Tasks made from it (转成待办 / 拆成待办), oldest first.
+    /// Tasks made from it (转成待办 / 柚子转为待办), oldest first.
     pub tasks: Vec<NoteTask>,
 }
 

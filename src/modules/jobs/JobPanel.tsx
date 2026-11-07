@@ -31,12 +31,12 @@ type Draft = {
 };
 
 /** URL input with 打开. */
-function OpenableInput(props: { label: string; value: string; onChange: (v: string) => void }) {
+function OpenableInput(props: { label: string; value: string; onChange: (v: string) => void; className?: string }) {
   const toast = useToast();
   return (
     <Field label={props.label}>
       <div className="flex items-center gap-1">
-        <TextInput aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} maxLength={1000} />
+        <TextInput aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} maxLength={1000} className={props.className} />
         <IconButton label={`打开${props.label}`} disabled={!props.value.trim()} onClick={() => void ipc.openLink(props.value).catch((e) => toast(errorText(e), "error"))}>
           <ExternalLink size={14} />
         </IconButton>
@@ -204,9 +204,9 @@ export function JobPanel(props: {
     setD(next);
     filled.mark(keys);
   };
-  // 一句话填好 (new applications): 公司、岗位、地点、渠道, and the step it reached (checked on its day)
+  // 一句话填好 (new) / 改好 (editing): 公司、岗位、地点、渠道、JD 链接、备注, and the step it reached (checked on its day)
   const assistOn = useAssistOn();
-  const quick = !j && assistOn;
+  const quick = assistOn;
   const [jdOpen, setJdOpen] = useState(false);
   const fill = (f: QuickFillResult) => {
     const next = { ...d };
@@ -216,6 +216,12 @@ export function JobPanel(props: {
       if (v) (next[k] = v), keys.push(k);
     }
     if (f.kindId != null) (next.kindId = f.kindId), keys.push("kindId");
+    if (f.link) (next.link = f.link), keys.push("link");
+    if (f.note) (next.note = f.note), keys.push("note");
+    for (const k of f.clear) {
+      if (k === "position" || k === "location" || k === "link" || k === "note") (next[k] = ""), keys.push(k);
+      else if (k === "channel") (next.kindId = null), keys.push("kindId");
+    }
     if (f.statusId != null) {
       const step = { statusId: f.statusId, done: true, doneOn: f.day ?? localToday() };
       const order = (id: number) => statuses.findIndex((x) => x.id === id);
@@ -278,10 +284,10 @@ export function JobPanel(props: {
       meta={j?.followedOn ? `${j.followedOn.split("-").join(" / ")} 跟进过` : undefined}
       extra={confirmDialog}
     >
-      {quick && <QuickFill module="jobs" onFill={fill} autoFocus />}
+      {quick && <QuickFill module="jobs" record={j?.id} onFill={fill} autoFocus={!j} />}
       <Field label="公司" action={assistOn && !jdOpen && <AssistAction onClick={() => setJdOpen(true)}>贴 JD</AssistAction>}>
         {jdOpen && <JdFill onFill={fromJd} onClose={() => setJdOpen(false)} />}
-        <TextInput autoFocus={!quick} value={d.company} onChange={(e) => set("company", e.target.value)} placeholder="必填" maxLength={100} className={filled.cls("company")} />
+        <TextInput autoFocus={!quick || !!j} value={d.company} onChange={(e) => set("company", e.target.value)} placeholder="必填" maxLength={100} className={filled.cls("company")} />
       </Field>
       <div className="grid grid-cols-[1fr_8rem] gap-3">
         <Field label="岗位">
@@ -309,7 +315,7 @@ export function JobPanel(props: {
           </div>
         </div>
       </Field>
-      <OpenableInput label="JD 链接" value={d.link} onChange={(v) => set("link", v)} />
+      <OpenableInput label="JD 链接" value={d.link} onChange={(v) => set("link", v)} className={filled.cls("link")} />
       {j && <JobSeekerExports job={j} disabled={dirty} />}
       {j && <JobInterviews job={j} disabled={dirty} />}
       <Field label="备注">

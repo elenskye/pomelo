@@ -4437,15 +4437,18 @@ const pScheduleRun = (s: PSchedule, slot?: string) => {
   };
   go();
 };
+// assist.rs QuickFill with nothing filled
+const pQuickEmpty = { flow: null, amount: null, currency: null, day: null, kindId: null, note: null, refund: null, title: null, startDate: null, dueDate: null, groupId: null, goalId: null, taskType: null as string | null, rule: null as string | null, repeatTotal: null, target: null, unit: null, link: null as string | null, company: null, position: null, location: null, statusId: null, creator: null, country: null, status: null as string | null, rating: null as number | null, finishedYear: null, name: null, departOn: null as string | null, templateId: null, clear: [] as string[] };
 // 今日简报 (brief.rs)
 type PBriefDay = { content: string; state: "writing" | "done" | "failed"; error: string | null; modelName: string | null; leftOut: string[]; doneAt?: string };
 // brief.rs `DEFAULT_PROMPT`
 const pBriefDefault = `你是柚子，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
 - 根据读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。
 - 只写这几件事：今天要做的、快到期的和过期的待办（看【一步一步】）；快到的日子，还有几天或者就是今天（看【来日方长】）；该跟进的投递、正在笔试面试的（看【投石问路】）；最近两周的笔记里常在想什么，一两句，像朋友一样提一下（看【念念不忘】）。
+- 笔记都带着日期，写的是记下那天的想法和心情，不代表今天。几天前的笔记里有低落、烦心的情绪，之后好几天没再记，不要当成用户现在还不开心；可以轻轻问一句最近心境有没有变化。
 - 没读到的就一个字都不要提（比如没读到笔记，就不要说笔记）。
 - 提到具体的事照抄它的名称；不要编，也不要建议用户去记录什么。
-- 最后单独一行写今天的心情，只能是这四个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事（看今天的事多不多、有没有好消息或烦心的事）。`;
+- 最后单独一行写今天的心情，只能是这五个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事 / 心情：一般（看今天的事多不多、有没有好消息或烦心的事；烦心事只看今天和最近一两天的；没什么特别的就写「一般」）。`;
 const pBrief = { enabled: new URLSearchParams(location.search).get("brief") !== "off", model: null as string | null, thinking: true, effort: null as string | null, assistModel: null as string | null, assistLevel: "on", prompt: null as string | null, writing: false, phase: null as null | "starting" | "writing", days: new Map<string, PBriefDay>() };
 const pBriefOut = () => {
   const day = toYmd(new Date());
@@ -5975,6 +5978,12 @@ const captureHandlers: Record<string, (a: Args) => unknown> = {
     capClear({ note: "" });
     return null;
   },
+  // capture.rs save_markdown: the file's name; nothing kept, the draft stays
+  capture_save_markdown: (a) => {
+    if (!String(a.markdown).trim()) throw "先写点什么";
+    const name = String(a.path).split("/").pop()!;
+    return name.toLowerCase().endsWith(".md") ? name : `${name}.md`;
+  },
   capture_todo: (a) => {
     const due = (a.due as string | null) ?? toYmd(new Date());
     handlers.todo_task_create({ patch: { groupId: a.group, title: a.title, dueDate: due } });
@@ -6092,22 +6101,36 @@ const handlers: Record<string, (a: Args) => unknown> = {
     await new Promise((r) => setTimeout(r, 600));
     return ["列出要做的步骤", "先做第一步", "检查一遍"];
   },
-  /** assist.rs mock: one per line / sentence of the note, those already made left out. */
-  youzi_split_note: async (a) => {
+  /** assist.rs mock (柚子转为待办): a card per line / sentence of the note (those already made left out); what follows
+   * 「：」 is its 内容, 每天 a daily check-in, 下周X its day; the first card goes to the first group. */
+  youzi_note_tasks: async (a) => {
     await new Promise((r) => setTimeout(r, 600));
     const n = nt.notes.find((x) => x.id === a.noteId);
     if (!n) throw "找不到这条笔记，可能已经被删除了";
     const have = tTasks.filter((t) => t.fromNote === n.id).map((t) => t.title);
-    const items = n.content.split(/[\n；。]/).map((l) => l.trim().replace(/^(-|\d+\.)\s*/, "").replace(/(^|\s)#[^\s#]+/g, "").replace(/\*\*|==|\+\+/g, "").trim()).filter((l) => l && !have.includes(l)).slice(0, 5);
-    if (!items.length) throw "没拆出新的待办";
-    return items;
+    const today = mockToday();
+    const monday = addDays(today, 1 - isoWeekday(today));
+    const lines = n.content.split(/[\n；。]/).map((l) => l.trim().replace(/^(-|\d+\.)\s*/, "").replace(/(^|\s)#[^\s#]+/g, "").replace(/\*\*|==|\+\+/g, "").trim()).filter(Boolean);
+    const cards = lines
+      .map((l, i) => {
+        const [title, note = null] = l.split("：");
+        const wd = "一二三四五六日".split("").findIndex((d) => l.includes(`下周${d}`));
+        const daily = l.includes("每天");
+        return { ...pQuickEmpty, title: title.trim(), note: note?.trim() || null, taskType: daily ? "checkin" : null, rule: daily ? "daily" : null, dueDate: wd >= 0 ? addDays(monday, 7 + wd) : null, groupId: i === 0 ? (tGroups[0]?.id ?? null) : null };
+      })
+      .filter((c) => c.title && !have.includes(c.title))
+      .slice(0, 5);
+    if (!cards.length) throw "这条笔记里没看出要做的事";
+    return cards;
   },
   youzi_trip_missing: async () => {
     await new Promise((r) => setTimeout(r, 600));
     const k = kinds.find((x) => x.module === "packing")?.id ?? null;
     return ["充电宝", "雨伞", "常用药"].map((name) => ({ name, kindId: k }));
   },
-  /** assist.rs 一句话填好 with its mock rules (a 分组 only when named, as `mentions`; a number is the amount, 下周X a date, names matched). */
+  /** assist.rs 一句话填好 / 改好 (`record`) with its mock rules (a 分组 only when named, as `mentions`; a number is the amount,
+   * 下周X a date, names matched; what follows 「：」 the 内容 / 备注, a word starting http the link, 每天 a daily rule). 改好
+   * writes only what it finds; 「不要链接」 empties the link. */
   youzi_quick_fill: async (a) => {
     await new Promise((r) => setTimeout(r, 700));
     const t = String(a.sentence).trim();
@@ -6120,7 +6143,16 @@ const handlers: Record<string, (a: Args) => unknown> = {
     const wd = "一二三四五六日".split("").findIndex((d) => t.includes(`下周${d}`));
     const nextWeek = wd >= 0 ? addDays(monday, 7 + wd) : null;
     const num = t.match(/\d+(\.\d+)?/)?.[0];
-    const empty = { flow: null, amount: null, currency: null, day: null, kindId: null, note: null, title: null, startDate: null, dueDate: null, groupId: null, goalId: null, company: null, position: null, location: null, statusId: null, creator: null, country: null, status: null, rating: null, finishedYear: null, name: null, departOn: null, templateId: null };
+    const url = t.split(/\s+/).find((w) => w.startsWith("http")) ?? null;
+    const plain = url ? t.replace(url, "").trim() : t;
+    const [head, said = null] = plain.includes("：") ? [plain.slice(0, plain.indexOf("：")), plain.slice(plain.indexOf("：") + 1).trim() || null] : [plain, null];
+    if (a.record != null) {
+      const date = nextWeek ?? (t.includes("明天") ? addDays(today, 1) : t.includes("昨天") ? addDays(today, -1) : null);
+      const clear = /不要链接|删掉链接/.test(t) ? ["link"] : [];
+      const rating = { 五星: 5, 四星: 4, 三星: 3, 两星: 2, 一星: 1 }[t.match(/[一两三四五]星/)?.[0] ?? ""] ?? null;
+      return { ...pQuickEmpty, note: said, link: url, clear, amount: module === "finance" && num ? Math.round(Number(num) * 100) : null, day: module === "finance" ? date : null, dueDate: module === "todo" ? date : null, departOn: module === "packing" ? date : null, rating: module === "books" || module === "films" ? rating : null, status: (module === "books" || module === "films") && t.includes("完") ? "done" : null };
+    }
+    const empty = { ...pQuickEmpty, note: said, link: url };
     if (module === "finance")
       return {
         ...empty,
@@ -6130,22 +6162,26 @@ const handlers: Record<string, (a: Args) => unknown> = {
         day: t.includes("昨天") ? addDays(today, -1) : today,
         kindId: kinds.find((k) => k.module === "fin_out")?.id ?? null,
         note: t.split(/[\d\s]/)[0] || null,
+        refund: t.includes("退款") ? true : null,
       };
-    if (module === "todo") return { ...empty, title: t.replace(/^(下周.前?|明天|今天)/, "").trim(), dueDate: nextWeek ?? (t.includes("明天") ? addDays(today, 1) : null), groupId: tGroups.find((g) => mentions(t, g.name))?.id ?? null };
+    if (module === "todo") {
+      const daily = t.includes("每天");
+      return { ...empty, title: head.replace(/^(下周.前?|明天|今天|每天)/, "").trim(), dueDate: nextWeek ?? (t.includes("明天") ? addDays(today, 1) : null), groupId: tGroups.find((g) => mentions(t, g.name))?.id ?? null, taskType: daily ? (t.includes("打卡") ? "checkin" : "repeat") : null, rule: daily ? "daily" : null };
+    }
     if (module === "jobs") {
-      const [head = "", location = null, channel = ""] = t.replace(/^投了/, "").split(/[，,]/);
-      const [company, position = null] = head.split("的");
+      const [first = "", location = null, channel = ""] = head.replace(/^投了/, "").split(/[，,]/);
+      const [company, position = null] = first.split("的");
       return { ...empty, company, position, location, kindId: kinds.find((k) => k.module === "job_channel" && k.name === channel.trim())?.id ?? null, statusId: jStatusNamed("已投递").id, day: today };
     }
-    if (module === "packing") return { ...empty, name: t.replace(/^(下周.)?去/, "").trim(), departOn: nextWeek, templateId: [...tpls].sort((x, y) => x.sortOrder - y.sortOrder)[0]?.id ?? null };
+    if (module === "packing") return { ...empty, name: head.replace(/^(下周.)?去/, "").trim(), departOn: nextWeek, templateId: [...tpls].sort((x, y) => x.sortOrder - y.sortOrder)[0]?.id ?? null };
     const done = t.includes("完");
-    const title = t.split(/[，,]/)[0].replace(/^(看完了|读完了|想读|想看)/, "").replace(/[《》]/g, "");
+    const title = head.split(/[，,]/)[0].replace(/^(看完了|读完了|想读|想看)/, "").replace(/[《》]/g, "");
     const w = pWork(module, title); // 书单 / 影单检索 (assist.rs quick_fill)
     const looked = w ? { creator: w.creator, country: w.country, kindId: kinds.find((k) => k.module === module && k.name === w.kind)?.id ?? null } : {};
     return { ...empty, ...looked, title, status: done ? "done" : t.startsWith("想") ? "todo" : null, rating: { 五星: 5, 四星: 4, 三星: 3, 两星: 2, 一星: 1 }[t.match(/[一两三四五]星/)?.[0] ?? ""] ?? null, finishedYear: done ? today.slice(0, 4) : null };
   },
   todo_tasks_from_note: undoable("加上待办", (a) =>
-    (a.titles as string[]).map((title) => (todoHandlers.todo_task_create as (x: Args) => unknown)({ patch: a.goalId ? { goalId: a.goalId, title, fromNote: a.noteId } : { groupId: a.groupId, title, fromNote: a.noteId } })),
+    (a.tasks as Args[]).map((patch) => (todoHandlers.todo_task_create as (x: Args) => unknown)({ patch: { ...patch, fromNote: a.noteId } })),
   ),
   todo_subtasks_create: undoable("加上子任务", (a) =>
     (a.titles as string[]).map((title) => (todoHandlers.todo_task_create as (x: Args) => unknown)({ patch: { parentId: a.parentId, title } })),
@@ -6305,7 +6341,10 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (o.multiple && pPickCount === 2) return ["/mock/销售大表格.xlsx", "/mock/周报.pptx", "/mock/截图.png"];
     return o.multiple ? [`/mock/论文初稿${pPickCount > 1 ? pPickCount : ""}.pdf`, `/mock/读书笔记${pPickCount > 1 ? pPickCount : ""}.md`] : `/mock/提纲-第${pPickCount}版.md`;
   },
-  "plugin:dialog|save": () => "/mock/pomelo-export.json",
+  "plugin:dialog|save": (a) => {
+    const name = ((a.options as { defaultPath?: string } | undefined)?.defaultPath ?? "").split("/").pop();
+    return name?.endsWith(".md") ? `/mock/${name}` : "/mock/pomelo-export.json";
+  },
   export_to: (a) => ({
     path: a.path,
     modules: [

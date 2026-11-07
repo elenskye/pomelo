@@ -658,7 +658,7 @@ export type Brief = {
   modelName: string | null;
   leftOut: string[];
   phase: "starting" | "writing" | null;
-  /** calm | busy | good | worry: the pomelo's face for an hour after `moodAt` (the brief done, UTC). */
+  /** calm | busy | good | worry | plain: the pomelo's face for an hour after `moodAt` (the brief done, UTC). */
   mood: string | null;
   moodAt: string | null;
 };

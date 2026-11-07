@@ -14,13 +14,14 @@ import { MmdPreview } from "./MmdPreview";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { useDropTarget } from "@/shared/attachments/target";
-import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
+import { Button, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
 import { youziApi, useYouziStatus, type Level, type Pub2mdFormat, type Pub2mdPart, type Pub2mdRecent, type Pub2mdSettings, type Pub2mdStaged, type Pub2mdView } from "../api";
 import { modelOptions } from "../ModelMenu";
 import { useModels } from "../Schedules";
 import { LevelPicker } from "../Thinking";
 import { useSubPage } from "@/app/subpage";
 import { watchJob } from "@/app/Pomelo";
+import { MdField } from "@/shared/editor/MdField";
 
 export const PUB2MD_KEY = ["youzi", "pub2md"];
 const EXTENSIONS = ["pdf", "docx", "doc", "png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif", "md", "mmd", "txt", "markdown"];
@@ -484,7 +485,7 @@ function PromptTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChange
     <div className="-m-1 mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-4 overflow-y-auto p-1 pb-6 text-sm">
       <div className="flex flex-col gap-1.5">
         <span>自己写的要求</span>
-        <TextArea aria-label="自己写的要求" rows={5} maxLength={2000} value={s.prompt} onChange={(e) => props.onChange({ ...s, prompt: e.target.value }, true)} className="font-reading" />
+        <MdField label="自己写的要求" rows={5} value={s.prompt} onChange={(prompt) => props.onChange({ ...s, prompt }, true)} className="font-reading" />
       </div>
       <div className="flex flex-col gap-2.5">
         {rows.map((g) => (

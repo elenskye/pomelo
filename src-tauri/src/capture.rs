@@ -14,6 +14,8 @@
 //! - The window is made on first use, then only hidden. Esc / ⌘W / its close button hide it (the page
 //!   writes the draft first) and give the focus back to the app that was in front; losing the focus hides
 //!   it too unless pinned. It floats on every desktop, also over full-screen apps.
+//! - 存为 .md (`save_markdown`): the note to a Markdown file I pick, its attachments copied beside it; not a note,
+//!   not undoable, the draft stays.
 //! - A tab whose module is hidden (念念不忘, 一步一步, 柚子; 翻译 also with Translator) is not offered.
 //! - 翻译 is 柚子's Translator (assistants/translate.rs, its own commands and 上一次): nothing of it in the draft.
 
@@ -24,6 +26,7 @@ use crate::{settings, AppState};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -125,6 +128,46 @@ pub fn save_note(conn: &Connection, content: &str) -> Result<notes::Note, String
     clear(&tx, |d| d.note.clear())?;
     tx.commit()?;
     Ok(note)
+}
+
+/// 存为 .md: the note as a Markdown file at `path` (the page turned it into Markdown, lite.ts `liteMarkdown`; the save
+/// panel asked before replacing a file). The draft's attachments are copied next to it (never over a file already
+/// there) and linked at the end. Not a 念念不忘 note, not undoable, and the draft stays. Returns the file's name.
+pub fn save_markdown(conn: &Connection, files_dir: &Path, path: &Path, markdown: &str) -> Result<String, String> {
+    let text = markdown.trim_end();
+    if text.trim().is_empty() {
+        return Err("先写点什么".into());
+    }
+    let path = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")) { path.to_path_buf() } else { path.with_extension("md") };
+    let folder = path.parent().filter(|p| p.is_dir()).ok_or("存不了：这个文件夹不在了")?;
+    let mut taken: Vec<String> = vec![];
+    let mut links = vec![];
+    for id in draft_files(conn)? {
+        let (Ok(info), Ok(from)) = (attachments::info(conn, id), attachments::path_of(conn, files_dir, id)) else { continue };
+        let clean: String = info.name.chars().map(|c| if c == '/' || c == ':' || c.is_control() { '-' } else { c }).collect();
+        let clean = clean.trim_start_matches('.').trim();
+        let clean = if clean.is_empty() { "附件" } else { clean };
+        let (stem, ext) = match clean.rfind('.') {
+            Some(i) if i > 0 => (&clean[..i], &clean[i..]),
+            _ => (clean, ""),
+        };
+        // the same file already there (saved before) is used again
+        let same = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.len() == info.bytes as u64) && std::fs::read(p).ok() == std::fs::read(&from).ok();
+        let mut name = clean.to_string();
+        let mut n = 1;
+        while taken.iter().any(|t| t.eq_ignore_ascii_case(&name)) || (folder.join(&name).exists() && !same(&folder.join(&name))) {
+            n += 1;
+            name = format!("{stem} ({n}){ext}");
+        }
+        if !folder.join(&name).exists() {
+            std::fs::copy(&from, folder.join(&name)).map_err(|e| format!("附件「{}」没能复制过去：{e}", info.name))?;
+        }
+        links.push(format!("{}[{name}](<{name}>)", if info.kind == "image" { "!" } else { "" }));
+        taken.push(name);
+    }
+    let body = if links.is_empty() { format!("{text}\n") } else { format!("{text}\n\n{}\n", links.join("\n\n")) };
+    std::fs::write(&path, body).map_err(|e| format!("没能存下：{e}"))?;
+    Ok(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
 }
 
 /// A plain task due `due` (None: today) in `group`; the title empties, the group is remembered.
@@ -312,6 +355,13 @@ pub fn capture_note(app: AppHandle, state: State<AppState>, content: String) -> 
     Ok(())
 }
 
+/// 存为 .md: `markdown` (the note, already Markdown) to `path`, the draft's attachments beside it.
+#[tauri::command]
+pub fn capture_save_markdown(state: State<AppState>, path: String, markdown: String) -> Result<String, String> {
+    let files = attachments::folder_of(&state.paths.root);
+    state.with_db(|c| save_markdown(c, &files, Path::new(&path), &markdown))
+}
+
 #[tauri::command]
 pub fn capture_todo(app: AppHandle, state: State<AppState>, title: String, due: Option<String>, group: i64) -> Result<(), String> {
     state.with_undo("添加任务", |c| save_todo(c, &title, due.as_deref(), group))?;
@@ -465,6 +515,35 @@ mod tests {
         assert_eq!(draft(&c).unwrap().note, "keep");
         assert_eq!(notes::count(&c).unwrap(), 0);
         assert!(set_files(&c, &[999]).is_err());
+    }
+
+    #[test]
+    fn markdown_file_takes_copies_of_the_files_and_leaves_the_draft() {
+        let c = memory_db();
+        let dir = temp_dir("capture-md");
+        let files = attachments::folder_of(&dir);
+        let shot = attachments::store(&c, &files, "截图.png", b"png bytes").unwrap();
+        let doc = attachments::store(&c, &files, "a b.txt", b"text").unwrap();
+        settings::set(&c, DRAFT, &json!(Draft { tab: "note".into(), note: "想到 #灵感".into(), ..Default::default() })).unwrap();
+        set_files(&c, &[shot.id, doc.id]).unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("截图.png"), b"already here").unwrap();
+        // no .md on the name: added
+        assert_eq!(save_markdown(&c, &files, &out.join("想到"), "想到 #灵感\n").unwrap(), "想到.md");
+        let md = std::fs::read_to_string(out.join("想到.md")).unwrap();
+        assert_eq!(md, "想到 #灵感\n\n![截图 (2).png](<截图 (2).png>)\n\n[a b.txt](<a b.txt>)\n");
+        assert_eq!(std::fs::read(out.join("截图.png")).unwrap(), b"already here");
+        assert_eq!(std::fs::read(out.join("截图 (2).png")).unwrap(), b"png bytes");
+        // not a note; the draft and its files stay
+        assert_eq!(notes::count(&c).unwrap(), 0);
+        assert_eq!((draft(&c).unwrap().note.as_str(), snapshot(&c).unwrap().files.len()), ("想到 #灵感", 2));
+        // saved again over the same file: the text is replaced, the copies already there used again
+        save_markdown(&c, &files, &out.join("想到.md"), "改过了").unwrap();
+        assert!(std::fs::read_to_string(out.join("想到.md")).unwrap().starts_with("改过了\n\n![截图 (2).png]"));
+        assert!(!out.join("截图 (3).png").exists() && !out.join("a b (2).txt").exists());
+        assert!(save_markdown(&c, &files, &out.join("空.md"), " \n").is_err());
+        assert!(save_markdown(&c, &files, &dir.join("没有/x.md"), "x").is_err());
     }
 
     #[test]

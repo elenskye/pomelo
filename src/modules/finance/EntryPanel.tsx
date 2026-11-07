@@ -87,9 +87,9 @@ export function EntryPanel(props: {
     [e, props.defaultDay, props.defaultCurrency],
   );
   const [d, setRaw, dirty, setD] = useDraft(initial, props.onDirtyChange);
-  // 一句话填好 (new entries): filled fields show until edited by hand
+  // 一句话填好 (new) / 改好 (editing): filled fields show until edited by hand
   const assistOn = useAssistOn();
-  const quick = !e && assistOn;
+  const quick = assistOn;
   const filled = useFilled<string>();
   const set = <K extends keyof typeof d>(k: K, v: (typeof d)[K]) => {
     filled.clear(k);
@@ -105,6 +105,9 @@ export function EntryPanel(props: {
     if (f.day) (next.day = f.day), keys.push("day");
     if (f.kindId != null) (next.kindId = f.kindId), keys.push("kindId");
     if (f.note) (next.note = f.note), keys.push("note");
+    if (f.refund && next.flow === "out" && !e?.fixedId && !next.endDay) (next.isRefund = true), keys.push("isRefund");
+    if (f.clear.includes("note")) (next.note = ""), keys.push("note");
+    if (f.clear.includes("kind")) (next.kindId = null), keys.push("kindId");
     setD(next);
     filled.mark(keys);
   };
@@ -156,9 +159,9 @@ export function EntryPanel(props: {
       meta={from ? `由固定支出「${from.name}」自动记上` : undefined}
       extra={confirmDialog}
     >
-      {quick && <QuickFill module="finance" onFill={fill} autoFocus />}
-      <MoneyFields d={d} set={set} onManageKinds={() => props.onManageKinds(d.flow)} autoFocus={!quick} filled={filled} />
-      {d.flow === "out" && !from && <Field label="退款"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={d.isRefund} onChange={(ev) => { set("isRefund", ev.target.checked); set("refundOf", null); if (ev.target.checked) set("endDay", ""); }} />冲减支出</label></Field>}
+      {quick && <QuickFill module="finance" record={e?.id} onFill={fill} autoFocus={!e} />}
+      <MoneyFields d={d} set={set} onManageKinds={() => props.onManageKinds(d.flow)} autoFocus={!quick || !!e} filled={filled} />
+      {d.flow === "out" && !from && <Field label="退款"><label className={`flex items-center gap-2 text-sm ${filled.halo("isRefund")}`}><input type="checkbox" checked={d.isRefund} onChange={(ev) => { set("isRefund", ev.target.checked); set("refundOf", null); if (ev.target.checked) set("endDay", ""); }} />冲减支出</label></Field>}
       {d.isRefund && <Field label="原支出"><Dropdown ariaLabel="原支出" value={d.refundOf} options={[{ value: null as number | null, label: "未关联" }, ...(candidates.data ?? []).filter((x) => x.id !== e?.id).map((x) => ({ value: x.id as number | null, label: `${x.day} ${money(x.amount, x.currency)} ${x.note ?? ""}` }))]} onChange={(refundOf) => { set("refundOf", refundOf); if (refundOf) set("kindId", candidates.data?.find((x) => x.id === refundOf)?.kindId ?? null); }} />{candidates.error && <p className="text-sm text-destructive">{errorText(candidates.error)}</p>}</Field>}
       {initial.endDay && !d.isRefund ? (
         <Field label="时间段">

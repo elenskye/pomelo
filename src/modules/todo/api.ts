@@ -61,7 +61,7 @@ export type Task = {
   totalAmount: number; // progress
   loggedToday: boolean;
   streak: number; // checkin
-  /** The note it was made from (念念不忘 转成待办 / 拆成待办). */
+  /** The note it was made from (念念不忘 转成待办 / 柚子转为待办). */
   fromNote: number | null;
 };
 
@@ -110,8 +110,8 @@ const api = {
   deleteTask: (id: number) => invoke<void>("todo_task_delete", { id }),
   /** Several subtasks at once (柚子's 拆成子任务), one undo step. */
   addSubtasks: (v: { parentId: number; titles: string[] }) => invoke<Task[]>("todo_subtasks_create", v),
-  /** Root tasks from a note (柚子's 拆成待办), one undo step. */
-  fromNote: (v: { noteId: number; groupId: number | null; goalId: number | null; titles: string[] }) => invoke<Task[]>("todo_tasks_from_note", v),
+  /** Root tasks from a note (柚子转为待办: the cards picked, each with its place and fields), one undo step. */
+  fromNote: (v: { noteId: number; tasks: TaskPatch[] }) => invoke<Task[]>("todo_tasks_from_note", v),
   agenda: (today: string) => invoke<Agenda>("todo_agenda", { today }),
   doneBetween: (from: string, to: string) => invoke<DoneItem[]>("todo_done_between", { from, to }),
   month: (from: string, to: string) => invoke<CalItem[]>("todo_month", { from, to }),

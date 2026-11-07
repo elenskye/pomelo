@@ -309,7 +309,7 @@ async fn fill_job(app: &AppHandle, jd: &str) -> Result<JobFill, String> {
 
 pub const SPLIT: &str = "把用户的任务拆成 3～8 个具体、一次能做完的子任务，按先后顺序，避开已经有的子任务。只输出一个 JSON 数组，每项是一个子任务标题（20 字以内，不要编号），比如 [\"查资料\", \"写提纲\"]。";
 
-pub const NOTE_SPLIT: &str = "用户的一条笔记里写了几件要做的事。把它们拆成待办，每件一个，按笔记里的顺序；笔记里没提到的不要加，已经转成待办的不要再列。只输出一个 JSON 数组，每项是一个待办标题（20 字以内，动词开头，不要编号），比如 [\"给房东打电话\", \"交水电费\"]。";
+pub const NOTE_TASKS: &str = "用户要把一条笔记转成待办。先看笔记里有几件要做的事：可能只有一件（整条笔记说的是一件事，就写一张），也可能有好几件（每件一张，按笔记里的顺序）；笔记里没提到的事不要加，已经转成待办的不要再写。每张待办卡片照下面的字段写，只写能从笔记里确定的；笔记里的日期词按笔记记下的那天算。只输出一个 JSON 数组，每项是一个对象，比如 [{\"title\": \"交水电费\", \"due_date\": \"2026-10-20\"}]；没有要做的事就输出 []。";
 
 /// A reply's list: its JSON array, else one item per line (small models sometimes write `[一项]` lines).
 fn list_in(reply: &str) -> Vec<Value> {
@@ -373,21 +373,52 @@ async fn split_task(app: &AppHandle, task_id: i64) -> Result<Vec<String>, String
     parse_list(&ask(&route, &level_now(p), SPLIT, &user, 1024).await?, 8, &have)
 }
 
-/// 念念不忘 让柚子拆成待办: the things to do a note mentions (those already made into tasks left out).
-async fn split_note(app: &AppHandle, note_id: i64) -> Result<Vec<String>, String> {
+/// The cards the model wrote for a note: each read like 一句话填好's task (the model's 分组 / 目标 kept), without a
+/// title or already made from it left out; at most 12.
+pub fn parse_note_tasks(reply: &str, places: &TaskPlaces, note: &str, have: &[String]) -> Result<Vec<QuickFill>, String> {
+    let items = match json_in(reply) {
+        Some(Value::Array(a)) => a,
+        Some(v @ Value::Object(_)) => vec![v],
+        _ => return Err("模型的回答看不懂，再试一次吧".into()),
+    };
+    let norm = |s: &str| s.replace("**", "").trim().to_lowercase();
+    let mut out: Vec<QuickFill> = vec![];
+    for it in items.iter().filter(|v| v.is_object()) {
+        let f = places.read(it, note, false, false);
+        let Some(title) = f.title.as_deref().map(norm) else { continue };
+        if have.iter().any(|h| norm(h) == title) || out.iter().any(|o| o.title.as_deref().map(norm).as_deref() == Some(title.as_str())) {
+            continue;
+        }
+        out.push(f);
+    }
+    out.truncate(12);
+    if out.is_empty() {
+        return Err("这条笔记里没看出要做的事".into());
+    }
+    Ok(out)
+}
+
+/// 念念不忘 柚子转为待办: the model decides how many tasks a note holds and writes each card (内容, 类型, 规则,
+/// 时间, 位置…); those already made from it are left out. Nothing is added until the user picks.
+async fn note_tasks(app: &AppHandle, note_id: i64) -> Result<Vec<QuickFill>, String> {
     let p = &app.state::<AppState>().youzi;
     let route = route(p).await?;
     check(p, &route, "notes")?;
-    let (user, have) = app.state::<AppState>().with_db(|c| {
+    check(p, &route, "todo")?;
+    let (system, user, places, content, have) = app.state::<AppState>().with_db(|c| {
+        let today = todo::today(c)?;
         let n = crate::modules::notes::get(c, note_id)?;
         let have: Vec<String> = n.tasks.iter().map(|t| t.title.replace("**", "")).collect();
-        let mut user = format!("笔记：\n{}", n.content.trim());
+        let written: String = c.query_row("SELECT strftime('%Y-%m-%d', ?1, 'localtime')", [&n.created_at], |r| r.get(0)).unwrap_or_else(|_| today.clone());
+        let places = TaskPlaces::of(c)?;
+        let system = format!("{NOTE_TASKS}\n{}\n每项的字段：{}", calendar(&today), places.fields(false));
+        let mut user = format!("笔记（记于 {written}）：\n{}", n.content.trim());
         if !have.is_empty() {
             user.push_str(&format!("\n\n已经转成的待办：{}", have.join("、")));
         }
-        Ok((user, have))
+        Ok((system, user, places, n.content, have))
     })?;
-    parse_list(&ask(&route, &level_now(p), NOTE_SPLIT, &user, 1024).await?, 12, &have)
+    parse_note_tasks(&ask(&route, &level_now(p), &system, &user, 2048).await?, &places, &content, &have)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -565,13 +596,27 @@ pub struct QuickFill {
     pub currency: Option<String>,
     pub day: Option<String>,
     pub kind_id: Option<i64>,
+    /// 收支 / 投递 / 书影 / 出行的备注, a task's 内容 (改好: the whole new text).
     pub note: Option<String>,
+    /// 退款 (冲减支出).
+    pub refund: Option<bool>,
     // 任务
     pub title: Option<String>,
     pub start_date: Option<String>,
     pub due_date: Option<String>,
     pub group_id: Option<i64>,
     pub goal_id: Option<i64>,
+    /// normal | repeat | checkin | progress
+    pub task_type: Option<String>,
+    /// todo.rs `Rule` (checked; a check-in's only daily / weekly).
+    pub rule: Option<String>,
+    /// 一共几次 (重复).
+    pub repeat_total: Option<i64>,
+    /// 进度条: 目标数量 and 单位.
+    pub target: Option<i64>,
+    pub unit: Option<String>,
+    /// A task's 链接, an application's JD 链接: only one written in the sentence.
+    pub link: Option<String>,
     // 投递
     pub company: Option<String>,
     pub position: Option<String>,
@@ -588,6 +633,113 @@ pub struct QuickFill {
     pub name: Option<String>,
     pub depart_on: Option<String>,
     pub template_id: Option<i64>,
+    /// 一句话改好: the fields the sentence empties (keys as in the prompt: note, link, due_date, …).
+    pub clear: Vec<String>,
+}
+
+/// Which fields 改好 may empty, by module (the prompt's keys).
+fn clearable(module: &str) -> &'static [&'static str] {
+    match module {
+        "finance" => &["note", "kind"],
+        "todo" => &["note", "link", "due_date", "times", "unit"],
+        "jobs" => &["position", "location", "channel", "link", "note"],
+        "books" | "films" => &["creator", "country", "kind", "rating", "year", "note"],
+        "packing" => &["depart_on", "note"],
+        _ => &[],
+    }
+}
+
+/// The keys of `"clear"` this module allows.
+fn cleared(v: &Value, module: &str) -> Vec<String> {
+    let ok = clearable(module);
+    let mut out: Vec<String> = v.get("clear").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|k| ok.contains(k)).map(String::from).collect();
+    out.dedup();
+    out
+}
+
+/// A link the model wrote, only when the sentence has it (with or without its https://).
+fn said_link(v: &Value, said: &str) -> Option<String> {
+    field(v, "link", 1000).filter(|l| {
+        let bare = l.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+        !bare.is_empty() && said.contains(bare)
+    })
+}
+
+/// A whole number in [min, max] (a numeral string too).
+fn int(v: &Value, k: &str, max: i64) -> Option<i64> {
+    v.get(k).and_then(|x| x.as_i64().or_else(|| x.as_f64().map(|f| f.round() as i64)).or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))).filter(|n| (1..=max).contains(n))
+}
+
+/// 一步一步's 分组 and the 进行中 目标 (with their 分组), for the prompt and to read names back.
+pub(crate) struct TaskPlaces {
+    groups: Vec<(i64, String)>,
+    goals: Vec<(i64, String, i64)>,
+}
+
+impl TaskPlaces {
+    pub(crate) fn of(c: &rusqlite::Connection) -> Result<Self, String> {
+        Ok(Self {
+            groups: todo::groups(c)?.into_iter().map(|g| (g.id, g.name)).collect(),
+            goals: todo::goals(c)?.into_iter().filter(|g| g.status == todo::GoalStatus::Active).map(|g| (g.id, g.name, g.group_id)).collect(),
+        })
+    }
+
+    fn goal_names(&self) -> Vec<(i64, String)> {
+        self.goals.iter().map(|(id, n, _)| (*id, n.clone())).collect()
+    }
+
+    /// The task card's fields for a prompt (`editing`: what can be emptied too).
+    fn fields(&self, editing: bool) -> String {
+        let goals = self.goals.iter().map(|(_, n, g)| format!("{n}（{}）", self.groups.iter().find(|x| x.0 == *g).map_or("", |x| x.1.as_str()))).collect::<Vec<_>>().join("、");
+        let mut s = format!(
+            "{{\"title\": \"任务标题（简短，去掉时间词）\", \"note\": \"内容：标题之外的细节、要点、步骤（有才写，照原意，不要编）\", \"type\": \"类型之一：普通 / 重复 / 打卡 / 进度条（按时重复做的事是重复；说了打卡、每天坚持是打卡；有要完成的总数量（读 300 页、跑 100 公里）是进度条；其他都是普通，没提到就不写）\", \"rule\": \"重复和打卡的规则：daily（每天）、weekly:1,3,5（每周哪几天，周一是 1、周日是 7）、monthly:1,15（每月几号）、yearly:03-08（每年几月几号）、every:3d（每隔 3 天）、every:2w（每隔 2 周）、after:1w（做完后隔多久再做一次，单位 d 天、w 周、m 月、y 年）；打卡只能用 daily 或 weekly\", \"times\": 重复一共几次（说了才写，整数）, \"target\": 进度条的目标数量（整数）, \"unit\": \"进度条的单位（页、公里……，10 字以内）\", \"start_date\": \"开始日期（说了从哪天到哪天才写）\", \"due_date\": \"截止日期或要做的那天（只说了一天就写这里；打卡、进度条是到哪天为止）\", \"link\": \"链接（句子里有网址才写，照抄）\", \"group\": \"分组之一：{}（说到了才写）\", \"goal\": \"进行中的目标之一：{goals}（说到了才写）\"}}",
+            joined(&self.groups)
+        );
+        if editing {
+            s.push_str("；能清空的：note、link、due_date（不设时间）、times、unit");
+        }
+        s
+    }
+
+    /// One task card the model wrote, every value checked. `named`: a 分组 / 目标 only when `said` names it
+    /// (一句话填好: the panel keeps where it was opened), else the model's pick (柚子转为待办).
+    fn read(&self, v: &Value, said: &str, named: bool, editing: bool) -> QuickFill {
+        let goal_names = self.goal_names();
+        let keep = |id: Option<i64>, list: &[(i64, String)]| id.filter(|id| !named || list.iter().any(|(x, n)| x == id && mentions(said, n)));
+        let goal_id = keep(pick(field(v, "goal", 60), &goal_names), &goal_names);
+        let group_id = goal_id.and_then(|g| self.goals.iter().find(|x| x.0 == g).map(|x| x.2)).or_else(|| keep(pick(field(v, "group", 60), &self.groups), &self.groups));
+        let (start, due) = match (date(v, "start_date"), date(v, "due_date")) {
+            (Some(s), None) => (None, Some(s)), // one day said: that's the day it's due
+            (s, d) => (s.filter(|s| d.as_ref().is_some_and(|d| s < d)), d), // a start only before an end
+        };
+        let rule = field(v, "rule", 40).map(|r| r.to_lowercase().replace(' ', "")).filter(|r| todo::Rule::parse(r).is_ok());
+        let task_type = field(v, "type", 10).and_then(|t| match t.as_str() {
+            "normal" | "普通" => Some("normal"),
+            "repeat" | "重复" => Some("repeat"),
+            "checkin" | "打卡" => Some("checkin"),
+            "progress" | "进度条" | "进度" => Some("progress"),
+            _ => None,
+        });
+        // a rule alone is a 重复 one (a new task; an edit keeps its type)
+        let task_type = task_type.or_else(|| (rule.is_some() && !editing).then_some("repeat"));
+        let rule = rule.filter(|r| task_type != Some("checkin") || r == "daily" || r.starts_with("weekly:"));
+        QuickFill {
+            title: field(v, "title", 200),
+            note: field(v, "note", 5000),
+            task_type: task_type.map(String::from),
+            rule,
+            repeat_total: int(v, "times", 10000),
+            target: int(v, "target", 100000),
+            unit: field(v, "unit", 10),
+            link: said_link(v, said),
+            start_date: start,
+            due_date: due,
+            group_id,
+            goal_id,
+            clear: if editing { cleared(v, "todo") } else { vec![] },
+            ..Default::default()
+        }
+    }
 }
 
 /// By name: exact, else the one name that contains it (or it contains).
@@ -636,9 +788,12 @@ fn joined(list: &[(i64, String)]) -> String {
     if list.is_empty() { "（没有）".into() } else { list.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join("、") }
 }
 
-/// The module's fields for the prompt, and how to read the answer back (with the sentence).
-pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) -> Result<(String, Box<dyn Fn(&Value, &str) -> QuickFill + Send + Sync>), String> {
+/// The module's fields for the prompt, and how to read the answer back (with the sentence). `editing`
+/// (一句话改好): nothing defaults (no today, no usual currency), and `"clear"` empties fields.
+pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str, editing: bool) -> Result<(String, Box<dyn Fn(&Value, &str) -> QuickFill + Send + Sync>), String> {
     let text = |v: &Value, k: &str, n: usize| field(v, k, n);
+    let clears = move |v: &Value, m: &str| if editing { cleared(v, m) } else { vec![] };
+    let can_clear = |m: &str| if editing { format!("；能清空的：{}", clearable(m).join("、")) } else { String::new() };
     match module {
         "finance" => {
             let outs = names(kinds::list(c, crate::modules::finance::OUT_KINDS)?.into_iter().map(|k| (k.id, k.name)));
@@ -648,9 +803,11 @@ pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) 
                 .query_row("SELECT currency FROM fin_entries WHERE day >= date(?1, '-60 days') GROUP BY currency ORDER BY count(*) DESC LIMIT 1", [today], |r| r.get(0))
                 .ok();
             let fields = format!(
-                "字段：{{\"flow\": \"out（支出）或 in（收入）\", \"amount\": 金额数字（单位元）, \"currency\": \"CNY / SGD / HKD / USD（人民币、新币、港币、美元；没说就不写）\", \"day\": \"日期（没说就是今天）\", \"kind\": \"支出分类之一：{}；或收入分类之一：{}\", \"note\": \"备注（吃了什么、买了什么、在哪，简短）\"}}",
+                "字段：{{\"flow\": \"out（支出）或 in（收入）\", \"amount\": 金额数字（单位元）, \"currency\": \"CNY / SGD / HKD / USD（人民币、新币、港币、美元；没说就不写）\", \"day\": \"日期{}\", \"kind\": \"支出分类之一：{}；或收入分类之一：{}\", \"refund\": true（是退款、退回来的钱才写，冲减支出）, \"note\": \"备注（吃了什么、买了什么、在哪，简短）\"}}{}",
+                if editing { "" } else { "（没说就是今天）" },
                 joined(&outs),
-                joined(&ins)
+                joined(&ins),
+                can_clear("finance")
             );
             let today = today.to_string();
             Ok((
@@ -659,68 +816,50 @@ pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) 
                     let kind = text(v, "kind", 20);
                     let out_kind = pick(kind.clone(), &outs);
                     let in_kind = pick(kind, &ins);
+                    let refund = v.get("refund").and_then(Value::as_bool).filter(|r| *r);
+                    // said, else what its 分类 is, else (new) a 支出
                     let flow = match text(v, "flow", 10).as_deref() {
-                        Some("in" | "收入") => "in",
-                        Some("out" | "支出") => "out",
-                        _ if in_kind.is_some() && out_kind.is_none() => "in",
-                        _ => "out",
+                        _ if refund.is_some() => Some("out"),
+                        Some("in" | "收入") => Some("in"),
+                        Some("out" | "支出") => Some("out"),
+                        _ if in_kind.is_some() && out_kind.is_none() => Some("in"),
+                        _ if out_kind.is_some() || !editing => Some("out"),
+                        _ => None,
                     };
                     let amount = v.get("amount").and_then(|a| a.as_f64().or_else(|| a.as_str().and_then(|s| s.trim().trim_start_matches(['¥', '$']).parse().ok())));
                     QuickFill {
-                        flow: Some(flow.into()),
+                        flow: flow.map(String::from),
                         amount: amount.filter(|a| a.is_finite() && *a > 0.0 && *a < 1e10).map(|a| (a * 100.0).round() as i64),
-                        currency: text(v, "currency", 10).and_then(|s| currency_code(&s).map(String::from)).or(usual.clone()),
-                        day: date(v, "day").or(Some(today.clone())),
-                        kind_id: if flow == "in" { in_kind } else { out_kind },
-                        note: text(v, "note", 200),
+                        currency: text(v, "currency", 10).and_then(|s| currency_code(&s).map(String::from)).or_else(|| (!editing).then(|| usual.clone()).flatten()),
+                        day: date(v, "day").or_else(|| (!editing).then(|| today.clone())),
+                        kind_id: if flow == Some("in") { in_kind } else { out_kind },
+                        note: text(v, "note", 1000),
+                        refund,
+                        clear: clears(v, "finance"),
                         ..Default::default()
                     }
                 }),
             ))
         }
         "todo" => {
-            let groups = names(todo::groups(c)?.into_iter().map(|g| (g.id, g.name)));
-            let goals: Vec<(i64, String, i64)> = todo::goals(c)?.into_iter().filter(|g| g.status == todo::GoalStatus::Active).map(|g| (g.id, g.name, g.group_id)).collect();
-            let goal_names: Vec<(i64, String)> = goals.iter().map(|(id, n, _)| (*id, n.clone())).collect();
-            let fields = format!(
-                "字段：{{\"title\": \"任务标题（去掉时间词，简短）\", \"start_date\": \"开始日期（说了从哪天到哪天才写）\", \"due_date\": \"截止日期或要做的那天（只说了一天就写这里）\", \"group\": \"分组之一：{}（说到了才写）\", \"goal\": \"进行中的目标之一：{}（说到了才写）\"}}",
-                joined(&groups),
-                goals.iter().map(|(_, n, g)| format!("{n}（{}）", groups.iter().find(|x| x.0 == *g).map_or("", |x| x.1.as_str()))).collect::<Vec<_>>().join("、")
-            );
-            Ok((
-                fields,
-                Box::new(move |v, said| {
-                    // a 分组 / 目标 only when the sentence names it (else the panel keeps where it was opened)
-                    let named = |id: Option<i64>, list: &[(i64, String)]| id.filter(|id| list.iter().any(|(x, n)| x == id && mentions(said, n)));
-                    let goal_id = named(pick(text(v, "goal", 60), &goal_names), &goal_names);
-                    let group_id = goal_id.and_then(|g| goals.iter().find(|x| x.0 == g).map(|x| x.2)).or_else(|| named(pick(text(v, "group", 60), &groups), &groups));
-                    let (start, due) = match (date(v, "start_date"), date(v, "due_date")) {
-                        (Some(s), None) => (None, Some(s)), // one day said: that's the day it's due
-                        (s, d) => (s.filter(|s| d.as_ref().is_some_and(|d| s < d)), d), // a start only before an end
-                    };
-                    QuickFill {
-                        title: text(v, "title", 200),
-                        start_date: start,
-                        due_date: due,
-                        group_id,
-                        goal_id,
-                        ..Default::default()
-                    }
-                }),
-            ))
+            let places = TaskPlaces::of(c)?;
+            let fields = format!("字段：{}", places.fields(editing));
+            // a 分组 / 目标 only when the sentence names it (else the panel keeps where it was opened)
+            Ok((fields, Box::new(move |v, said| places.read(v, said, true, editing))))
         }
         "jobs" => {
             let channels = names(kinds::list(c, crate::modules::jobs::CHANNELS)?.into_iter().map(|k| (k.id, k.name)));
             let statuses = names(crate::modules::jobs::statuses(c)?.into_iter().filter(|s| s.stage != crate::modules::jobs::Stage::Wish).map(|s| (s.id, s.name)));
             let fields = format!(
-                "字段：{{\"company\": \"公司\", \"position\": \"岗位\", \"location\": \"城市\", \"channel\": \"渠道之一：{}（说了才写）\", \"status\": \"走到了哪一步，状态之一：{}（说投了就是第一个；只是想投就不写）\", \"day\": \"那一步的日期（没说就是今天）\"}}",
+                "字段：{{\"company\": \"公司\", \"position\": \"岗位\", \"location\": \"城市\", \"channel\": \"渠道之一：{}（说了才写）\", \"status\": \"走到了哪一步，状态之一：{}（说投了就是第一个；只是想投就不写）\", \"day\": \"那一步的日期（没说就是今天）\", \"link\": \"JD 链接（句子里有网址才写，照抄）\", \"note\": \"备注（JD 要点、联系人、要准备的，有才写）\"}}{}",
                 joined(&channels),
-                joined(&statuses)
+                joined(&statuses),
+                can_clear("jobs")
             );
             let today = today.to_string();
             Ok((
                 fields,
-                Box::new(move |v, _| {
+                Box::new(move |v, said| {
                     let status_id = pick(text(v, "status", 20), &statuses);
                     QuickFill {
                         company: text(v, "company", 100),
@@ -729,6 +868,9 @@ pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) 
                         kind_id: pick(text(v, "channel", 20), &channels),
                         status_id,
                         day: status_id.map(|_| date(v, "day").unwrap_or_else(|| today.clone())),
+                        link: said_link(v, said),
+                        note: text(v, "note", 5000),
+                        clear: clears(v, "jobs"),
                         ..Default::default()
                     }
                 }),
@@ -738,10 +880,12 @@ pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) 
             let kinds_list = names(kinds::list(c, module)?.into_iter().map(|k| (k.id, k.name)));
             let (verb, who) = if module == "books" { ("读", "作者") } else { ("看", "导演") };
             let fields = format!(
-                "字段：{{\"title\": \"名称（不要书名号）\", \"creator\": \"{who}（你确定才写，常见中文译名）\", \"country\": \"国家（你确定才写，中文）\", \"kind\": \"类型之一：{}\", \"status\": \"todo（想{verb}）/ doing（在{verb}）/ done（{verb}完了）\", \"rating\": 星级 1～5 的整数（说了几星、几分才写）, \"year\": \"{verb}完的年份（{verb}完了没说哪年就是今年）\"}}",
-                joined(&kinds_list)
+                "字段：{{\"title\": \"名称（不要书名号）\", \"creator\": \"{who}（你确定才写，常见中文译名）\", \"country\": \"国家（你确定才写，中文）\", \"kind\": \"类型之一：{}\", \"status\": \"todo（想{verb}）/ doing（在{verb}）/ done（{verb}完了）\", \"rating\": 星级 1～5 的整数（说了几星、几分才写）, \"year\": \"{verb}完的年份（{verb}完了没说哪年就是今年）\", \"note\": \"备注（感想、谁推荐的，有才写）\"}}{}",
+                joined(&kinds_list),
+                can_clear(module)
             );
             let year = today[..4].to_string();
+            let module = module.to_string();
             Ok((
                 fields,
                 Box::new(move |v, _| {
@@ -760,6 +904,8 @@ pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) 
                         status: status.map(String::from),
                         rating: v.get("rating").and_then(|r| r.as_i64().or_else(|| r.as_f64().map(|f| f.round() as i64))).filter(|r| (1..=5).contains(r)),
                         finished_year: if matches!(status, Some("todo" | "doing")) { None } else { finished.or_else(|| (status == Some("done")).then(|| year.clone())) },
+                        note: text(v, "note", 5000),
+                        clear: clears(v, &module),
                         ..Default::default()
                     }
                 }),
@@ -767,20 +913,42 @@ pub(crate) fn quick_fields(c: &rusqlite::Connection, module: &str, today: &str) 
         }
         "packing" => {
             let templates = names(packing::templates(c)?.into_iter().map(|t| (t.id, t.name)));
-            let fields = format!(
-                "字段：{{\"name\": \"出行名称（目的地加天数，比如 东京五天）\", \"depart_on\": \"出发日期\", \"template\": \"最合适的场景模板之一：{}（都不合适就不写）\"}}",
-                joined(&templates)
-            );
+            let template = if editing { String::new() } else { format!(", \"template\": \"最合适的场景模板之一：{}（都不合适就不写）\"", joined(&templates)) };
+            let fields = format!("字段：{{\"name\": \"出行名称（目的地加天数，比如 东京五天）\", \"depart_on\": \"出发日期\"{template}, \"note\": \"备注（同行的人、住哪、要办的事，有才写）\"}}{}", can_clear("packing"));
             Ok((
                 fields,
-                Box::new(move |v, _| QuickFill { name: text(v, "name", 100), depart_on: date(v, "depart_on"), template_id: pick(text(v, "template", 60), &templates), ..Default::default() }),
+                Box::new(move |v, _| QuickFill {
+                    name: text(v, "name", 100),
+                    depart_on: date(v, "depart_on"),
+                    template_id: if editing { None } else { pick(text(v, "template", 60), &templates) },
+                    note: text(v, "note", 2000),
+                    clear: clears(v, "packing"),
+                    ..Default::default()
+                }),
             ))
         }
         _ => Err(format!("这里不能一句话填好：{module}")),
     }
 }
 
-async fn quick_fill(app: &AppHandle, module: &str, sentence: &str) -> Result<QuickFill, String> {
+/// The kind of record each 一句话填好 module's edit panel shows (data.rs `record_text`).
+fn record_kind(module: &str) -> Option<&'static str> {
+    Some(match module {
+        "finance" => "entry",
+        "todo" => "task",
+        "jobs" => "job",
+        "books" => "book",
+        "films" => "film",
+        "packing" => "trip",
+        _ => return None,
+    })
+}
+
+/// 一句话改好's prompt head: change only what the sentence says.
+pub const QUICK_EDIT: &str = "用户用一句话说要怎么改一条已有的记录（最后是它现在的样子），你写出要改的字段。只输出一个 JSON 对象，只写这句话要改的字段，没提到的不要写，不要编造；要清空的字段把字段名放进 \"clear\" 数组（比如 {\"clear\": [\"link\"]}）；改内容、备注这类长文字时写改好后的全文。日期写成 YYYY-MM-DD，按下面的日历算。";
+
+/// 一句话填好 (`record` None: a new one) or 改好 (the record the panel edits).
+async fn quick_fill(app: &AppHandle, module: &str, sentence: &str, record: Option<i64>) -> Result<QuickFill, String> {
     let sentence = sentence.trim();
     if sentence.is_empty() {
         return Err("先写一句话".into());
@@ -788,17 +956,26 @@ async fn quick_fill(app: &AppHandle, module: &str, sentence: &str) -> Result<Qui
     let p = &app.state::<AppState>().youzi;
     let route = route(p).await?;
     check(p, &route, module)?;
+    let editing = record.is_some();
     let (system, read, today) = app.state::<AppState>().with_db(|c| {
         let today = todo::today(c)?;
-        let (fields, read) = quick_fields(c, module, &today)?;
-        Ok((format!("{QUICK}\n{}\n{fields}", calendar(&today)), read, today))
+        let (fields, read) = quick_fields(c, module, &today, editing)?;
+        let system = match record {
+            None => format!("{QUICK}\n{}\n{fields}", calendar(&today)),
+            Some(id) => {
+                let kind = record_kind(module).ok_or_else(|| format!("这里不能一句话改好：{module}"))?;
+                let (_, now, _) = data::record_text(c, &today, &data::PageRef { kind: kind.into(), id })?;
+                format!("{QUICK_EDIT}\n{}\n{fields}\n\n现在的样子：\n{now}", calendar(&today))
+            }
+        };
+        Ok((system, read, today))
     })?;
-    let reply = ask(&route, &level_now(p), &system, &sentence.chars().take(300).collect::<String>(), 512).await?;
+    let reply = ask(&route, &level_now(p), &system, &sentence.chars().take(300).collect::<String>(), 1024).await?;
     let v = json_in(&reply).filter(Value::is_object).ok_or("没看懂这句话，换个说法试试")?;
     let mut f = read(&v, sentence);
     fix_dates(module, &mut f, sentence, &today);
-    // 书影: the creator / country / 类型 from 书单 / 影单检索 (when on and found)
-    if let (true, Some(title)) = (module == "books" || module == "films", f.title.clone()) {
+    // 书影 (new): the creator / country / 类型 from 书单 / 影单检索 (when on and found)
+    if let (true, false, Some(title)) = (module == "books" || module == "films", editing, f.title.clone()) {
         if let Some(w) = super::skills::work(app, module, &title, f.creator.as_deref()).await {
             let names: Vec<(i64, String)> = app.state::<AppState>().with_db(|c| Ok(kinds::list(c, module)?.into_iter().map(|k| (k.id, k.name)).collect()))?;
             f.creator = w.creator.or(f.creator);
@@ -810,8 +987,8 @@ async fn quick_fill(app: &AppHandle, module: &str, sentence: &str) -> Result<Qui
 }
 
 #[tauri::command]
-pub async fn youzi_quick_fill(app: AppHandle, module: String, sentence: String) -> Result<QuickFill, String> {
-    quick_fill(&app, &module, &sentence).await
+pub async fn youzi_quick_fill(app: AppHandle, module: String, sentence: String, record: Option<i64>) -> Result<QuickFill, String> {
+    quick_fill(&app, &module, &sentence, record).await
 }
 
 // ---------- mock model (dev builds, tests; mockIpc.ts mirrors it) ----------
@@ -819,7 +996,7 @@ pub async fn youzi_quick_fill(app: AppHandle, module: String, sentence: String) 
 /// What the mock model answers to an assist prompt.
 pub fn mock_reply(system: &str, user: &str) -> String {
     let first_kind = |s: &str| s.split("里选：").nth(1).or_else(|| s.split("里选一个：").nth(1)).and_then(|r| r.split(['、', '；', '"']).next()).unwrap_or("").to_string();
-    if system.contains("拆成各个字段") {
+    if system.contains("拆成各个字段") || system.contains("要改的字段") {
         return mock_quick(system, user);
     }
     if system.contains("英文标题和英文摘要") {
@@ -834,11 +1011,8 @@ pub fn mock_reply(system: &str, user: &str) -> String {
         "```json\n{\"company\": \"模拟公司\", \"position\": \"产品经理\", \"location\": \"上海\"}\n```".into()
     } else if system.contains("子任务") {
         "[\"列出要做的步骤\", \"先做第一步\", \"检查一遍\"]".into()
-    } else if system.contains("拆成待办") {
-        // one per line of the note (its list items or sentences), up to 5
-        let note = user.split("笔记：\n").nth(1).unwrap_or(user).split("\n\n已经转成的待办").next().unwrap_or("");
-        let items: Vec<String> = note.split(['\n', '；', '。']).map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c.is_ascii_digit() || c == '.').trim().to_string()).filter(|l| !l.is_empty() && !l.starts_with('#')).take(5).collect();
-        serde_json::to_string(&items).unwrap_or_default()
+    } else if system.contains("转成待办") {
+        mock_note_tasks(user)
     } else if system.contains("出门") {
         let k = first_kind(system);
         format!("[{{\"name\": \"充电宝\", \"kind\": \"{k}\"}}, {{\"name\": \"雨伞\", \"kind\": \"{k}\"}}, {{\"name\": \"常用药\", \"kind\": \"{k}\"}}]")
@@ -847,53 +1021,87 @@ pub fn mock_reply(system: &str, user: &str) -> String {
     }
 }
 
-/// The mock model's 一句话填好: a few plain rules (a number is the amount, 下周X a date…).
+/// The mock model's 一句话填好 / 改好: a few plain rules (a number is the amount, 下周X a date, what follows
+/// 「：」 the 内容 / 备注, a word starting http the link, 每天 a daily rule…); 改好 writes only what it finds.
 fn mock_quick(system: &str, sentence: &str) -> String {
+    let editing = system.contains("要改的字段");
     let after = |key: &str| system.split(key).nth(1).map(|r| r.split(['、', '；', '（', '"']).next().unwrap_or("").to_string()).unwrap_or_default();
     let next_week = |day: &str| system.split(&format!("下周{day} ")).nth(1).map(|r| r.chars().take(10).collect::<String>());
     let date = ["一", "二", "三", "四", "五", "六", "日"].iter().find(|d| sentence.contains(&format!("下周{d}"))).and_then(|d| next_week(d));
     let number: String = sentence.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let url = sentence.split_whitespace().find(|w| w.starts_with("http")).map(String::from);
+    let without_url = url.as_ref().map_or(sentence.to_string(), |u| sentence.replace(u.as_str(), "")).trim().to_string();
+    let (head, note) = match without_url.split_once('：') {
+        Some((h, n)) if !n.trim().is_empty() => (h.trim().to_string(), Some(n.trim().to_string())),
+        _ => (without_url.clone(), None),
+    };
     let mut v = serde_json::Map::new();
     let mut put = |k: &str, x: Value| {
         v.insert(k.into(), x);
     };
+    if let Some(n) = &note {
+        put("note", n.as_str().into());
+    }
+    if let Some(u) = &url {
+        put("link", u.as_str().into());
+    }
+    if editing && (sentence.contains("不要链接") || sentence.contains("删掉链接")) {
+        put("clear", serde_json::json!(["link"]));
+    }
     if system.contains("支出分类") {
-        put("flow", "out".into());
         if let Ok(n) = number.parse::<f64>() {
             put("amount", n.into());
+        }
+        if !editing {
+            put("flow", "out".into());
+            put("kind", after("支出分类之一：").into());
+            put("note", sentence.split(|c: char| c.is_ascii_digit() || c.is_whitespace()).next().unwrap_or("").into());
+        }
+        if sentence.contains("退款") {
+            put("refund", true.into());
         }
         for (word, code) in [("新币", "SGD"), ("港币", "HKD"), ("美元", "USD"), ("人民币", "CNY")] {
             if sentence.contains(word) {
                 put("currency", code.into());
             }
         }
-        put("kind", after("支出分类之一：").into());
-        put("note", sentence.split(|c: char| c.is_ascii_digit() || c.is_whitespace()).next().unwrap_or("").into());
     } else if system.contains("截止日期") {
-        put("title", sentence.trim_start_matches(|c: char| "下周一二三四五六日前".contains(c)).trim().into());
+        if !editing {
+            put("title", head.trim_start_matches(|c: char| "下周一二三四五六日前每天".contains(c)).trim().into());
+            put("group", after("分组之一：").into());
+        }
         if let Some(d) = date {
             put("due_date", d.into());
         }
-        put("group", after("分组之一：").into());
+        if sentence.contains("每天") {
+            put("type", if sentence.contains("打卡") { "打卡" } else { "重复" }.into());
+            put("rule", "daily".into());
+        }
     } else if system.contains("渠道之一") {
-        let rest = sentence.split("投了").nth(1).unwrap_or(sentence);
-        let mut parts = rest.split(['，', ',']);
-        let head = parts.next().unwrap_or("");
-        let (company, position) = head.split_once('的').unwrap_or((head, ""));
-        put("company", company.trim().into());
-        put("position", position.trim().into());
-        put("location", parts.next().unwrap_or("").trim().into());
-        put("channel", parts.next().unwrap_or("").trim().into());
-        put("status", after("状态之一：").into());
+        if !editing {
+            let rest = head.split("投了").nth(1).unwrap_or(&head);
+            let mut parts = rest.split(['，', ',']);
+            let first = parts.next().unwrap_or("");
+            let (company, position) = first.split_once('的').unwrap_or((first, ""));
+            put("company", company.trim().into());
+            put("position", position.trim().into());
+            put("location", parts.next().unwrap_or("").trim().into());
+            put("channel", parts.next().unwrap_or("").trim().into());
+            put("status", after("状态之一：").into());
+        }
     } else if system.contains("出发日期") {
-        put("name", sentence.trim_start_matches(|c: char| "下周一二三四五六日去".contains(c)).trim().into());
+        if !editing {
+            put("name", head.trim_start_matches(|c: char| "下周一二三四五六日去".contains(c)).trim().into());
+            put("template", after("模板之一：").into());
+        }
         if let Some(d) = date {
             put("depart_on", d.into());
         }
-        put("template", after("模板之一：").into());
     } else {
-        let title = sentence.split(['，', ',']).next().unwrap_or(sentence).trim_start_matches("看完了").trim_start_matches("读完了").trim();
-        put("title", title.into());
+        if !editing {
+            let title = head.split(['，', ',']).next().unwrap_or(&head).trim_start_matches("看完了").trim_start_matches("读完了").trim();
+            put("title", title.into());
+        }
         if sentence.contains('完') {
             put("status", "done".into());
         }
@@ -904,6 +1112,31 @@ fn mock_quick(system: &str, sentence: &str) -> String {
         }
     }
     Value::Object(v).to_string()
+}
+
+/// The mock model's 柚子转为待办: a card per line of the note (its list items or sentences), up to 5; what
+/// follows 「：」 is its 内容, 每天 a daily check-in.
+fn mock_note_tasks(user: &str) -> String {
+    let note = user.split_once("：\n").map_or(user, |(_, n)| n).split("\n\n已经转成的待办").next().unwrap_or("");
+    let cards: Vec<Value> = note
+        .split(['\n', '；', '。'])
+        .map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c.is_ascii_digit() || c == '.').trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .take(5)
+        .map(|l| {
+            let (title, body) = l.split_once('：').map_or((l.as_str(), None), |(t, b)| (t, Some(b.trim())));
+            let mut card = serde_json::json!({ "title": title.trim() });
+            if let Some(b) = body.filter(|b| !b.is_empty()) {
+                card["note"] = b.into();
+            }
+            if l.contains("每天") {
+                card["type"] = "打卡".into();
+                card["rule"] = "daily".into();
+            }
+            card
+        })
+        .collect();
+    Value::Array(cards).to_string()
 }
 
 // ---------- commands ----------
@@ -966,8 +1199,8 @@ pub async fn youzi_split_task(app: AppHandle, task_id: i64) -> Result<Vec<String
 }
 
 #[tauri::command]
-pub async fn youzi_split_note(app: AppHandle, note_id: i64) -> Result<Vec<String>, String> {
-    split_note(&app, note_id).await
+pub async fn youzi_note_tasks(app: AppHandle, note_id: i64) -> Result<Vec<QuickFill>, String> {
+    note_tasks(&app, note_id).await
 }
 
 #[tauri::command]
@@ -1032,8 +1265,12 @@ mod tests {
         assert_eq!(parse_work(&ask(&work_prompt("books", &["虚构".into()]), "名称：沙丘"), &kinds).unwrap().kind_id, Some(1));
         assert_eq!(parse_job(&ask(JOB, "招聘")).unwrap().company.as_deref(), Some("模拟公司"));
         assert_eq!(parse_list(&ask(SPLIT, "任务：写论文"), 8, &[]).unwrap().len(), 3);
-        let todos = parse_list(&ask(NOTE_SPLIT, "笔记：\n周末要做的 #生活\n- 交水电费\n- 给房东打电话\n\n已经转成的待办：交水电费"), 12, &["交水电费".into()]).unwrap();
-        assert_eq!(todos, ["周末要做的 #生活", "给房东打电话"]);
+        let c = memory_db();
+        let places = TaskPlaces::of(&c).unwrap();
+        let note = "周末要做的 #生活\n- 交水电费\n- 给房东打电话：问续租\n- 每天背单词";
+        let todos = parse_note_tasks(&ask(NOTE_TASKS, &format!("笔记（记于 2026-10-10）：\n{note}\n\n已经转成的待办：交水电费")), &places, note, &["交水电费".into()]).unwrap();
+        assert_eq!(todos.iter().map(|t| t.title.as_deref().unwrap()).collect::<Vec<_>>(), ["周末要做的 #生活", "给房东打电话", "每天背单词"]);
+        assert_eq!((todos[1].note.as_deref(), todos[2].task_type.as_deref(), todos[2].rule.as_deref()), (Some("问续租"), Some("checkin"), Some("daily")));
         let items = parse_items(&ask(&trip_prompt(&["随身".into()]), "出行：东京"), &[(9, "随身".into())], &[]).unwrap();
         assert_eq!((items.len(), items[0].kind_id), (3, Some(9)));
     }
@@ -1107,8 +1344,18 @@ mod tests {
 
     /// One sentence through the mock model, read back like the command does.
     fn quick(c: &rusqlite::Connection, module: &str, sentence: &str) -> QuickFill {
-        let (fields, read) = quick_fields(c, module, TODAY).unwrap();
+        let (fields, read) = quick_fields(c, module, TODAY, false).unwrap();
         let system = format!("{MARK}{QUICK}\n{}\n{fields}", calendar(TODAY));
+        let mut f = read(&json_in(&mock_reply(&system, sentence)).unwrap(), sentence);
+        fix_dates(module, &mut f, sentence, TODAY);
+        f
+    }
+
+    /// 一句话改好 through the mock model, on the record's text.
+    fn change(c: &rusqlite::Connection, module: &str, id: i64, sentence: &str) -> QuickFill {
+        let (fields, read) = quick_fields(c, module, TODAY, true).unwrap();
+        let (_, now, _) = data::record_text(c, TODAY, &data::PageRef { kind: record_kind(module).unwrap().into(), id }).unwrap();
+        let system = format!("{MARK}{QUICK_EDIT}\n{}\n{fields}\n\n现在的样子：\n{now}", calendar(TODAY));
         let mut f = read(&json_in(&mock_reply(&system, sentence)).unwrap(), sentence);
         fix_dates(module, &mut f, sentence, TODAY);
         f
@@ -1165,22 +1412,54 @@ mod tests {
         let tp = packing::create_template(&c, serde_json::from_value(serde_json::json!({ "name": "出国" })).unwrap()).unwrap().id;
         let f = quick(&c, "packing", "下周六去东京五天");
         assert_eq!((f.name.as_deref(), f.depart_on.as_deref(), f.template_id), (Some("东京五天"), Some("2026-10-24"), Some(tp)));
-        assert!(quick_fields(&c, "notes", TODAY).is_err());
+        assert!(quick_fields(&c, "notes", TODAY, false).is_err());
+        // more of a card: a task's 内容, 打卡 and its rule, its link; a 退款
+        let f = quick(&c, "todo", "每天打卡背单词：先背 20 个 https://example.com/words");
+        assert_eq!((f.title.as_deref(), f.note.as_deref(), f.task_type.as_deref(), f.rule.as_deref(), f.link.as_deref()), (Some("打卡背单词"), Some("先背 20 个"), Some("checkin"), Some("daily"), Some("https://example.com/words")));
+        assert_eq!(quick(&c, "finance", "退款 35").refund, Some(true));
+        let f = quick(&c, "jobs", "投了某公司的运营：JD 写着要会剪辑");
+        assert_eq!(f.note.as_deref(), Some("JD 写着要会剪辑"));
+    }
+
+    #[test]
+    fn one_sentence_changes_an_open_record() {
+        let c = memory_db();
+        let g = todo::create_group(&c, "生活").unwrap().id;
+        let t = todo::create_task_on(&c, serde_json::from_value(serde_json::json!({ "groupId": g, "title": "交房租", "dueDate": "2026-10-14", "link": "https://example.com/pay" })).unwrap(), TODAY).unwrap().id;
+        // only what the sentence says; nothing defaults
+        let f = change(&c, "todo", t, "改到下周五，内容：记得要收据");
+        assert_eq!((f.title, f.due_date.as_deref(), f.note.as_deref(), f.group_id, f.clear.len()), (None, Some("2026-10-23"), Some("记得要收据"), None, 0));
+        assert_eq!(change(&c, "todo", t, "不要链接了").clear, ["link"]);
+        let e = crate::modules::finance::create_entry(&c, serde_json::from_value(serde_json::json!({ "flow": "out", "amount": 3500, "currency": "SGD", "day": "2026-10-01" })).unwrap()).unwrap().id;
+        let f = change(&c, "finance", e, "其实是 42");
+        assert_eq!((f.amount, f.flow, f.day, f.currency), (Some(4200), None, None, None));
+        // a key the module can't empty is dropped; a rule alone keeps the type when editing
+        let (_, read) = quick_fields(&c, "todo", TODAY, true).unwrap();
+        let f = read(&serde_json::json!({ "clear": ["title", "link"], "rule": "weekly:1" }), "");
+        assert_eq!((f.clear, f.task_type, f.rule.as_deref()), (vec!["link".to_string()], None, Some("weekly:1")));
+        let (_, read) = quick_fields(&c, "todo", TODAY, false).unwrap();
+        let f = read(&serde_json::json!({ "rule": "every:3d", "times": "5", "link": "https://made.up/x" }), "每三天一次，五次");
+        assert_eq!((f.task_type.as_deref(), f.repeat_total, f.link, f.clear.len()), (Some("repeat"), Some(5), None, 0)); // a link not in the sentence: made up
+        let f = read(&serde_json::json!({ "type": "打卡", "rule": "monthly:1" }), "");
+        assert_eq!((f.task_type.as_deref(), f.rule), (Some("checkin"), None)); // a check-in: daily / weekly only
+        let f = read(&serde_json::json!({ "type": "进度条", "target": 300.4, "unit": "页" }), "");
+        assert_eq!((f.target, f.unit.as_deref()), (Some(300), Some("页")));
+        assert!(read(&serde_json::json!({ "rule": "hourly" }), "").rule.is_none());
     }
 
     #[test]
     fn filled_values_are_checked() {
         let c = memory_db();
-        let (_, read) = quick_fields(&c, "finance", TODAY).unwrap();
+        let (_, read) = quick_fields(&c, "finance", TODAY, false).unwrap();
         let f = read(&serde_json::json!({ "amount": "12.5", "currency": "港币", "day": "2026-02-30", "kind": "不存在", "flow": "支出" }), "");
         assert_eq!((f.amount, f.currency.as_deref(), f.day.as_deref(), f.kind_id), (Some(1250), Some("HKD"), Some(TODAY), None));
         assert_eq!(read(&serde_json::json!({ "amount": -3 }), "").amount, None);
         assert_eq!(read(&serde_json::json!({ "kind": "津贴" }), "").flow.as_deref(), Some("in")); // an income 分类 means income
-        let (_, read) = quick_fields(&c, "books", TODAY).unwrap();
+        let (_, read) = quick_fields(&c, "books", TODAY, false).unwrap();
         let f = read(&serde_json::json!({ "title": "《沙丘》", "rating": 9, "year": "公元前", "status": "想读" }), "");
         assert_eq!((f.title.as_deref(), f.rating, f.finished_year, f.status.as_deref()), (Some("沙丘"), None, None, Some("todo")));
         assert_eq!(read(&serde_json::json!({ "status": "todo", "year": "2026" }), "").finished_year, None); // a year only once finished
-        let (_, read) = quick_fields(&c, "todo", TODAY).unwrap();
+        let (_, read) = quick_fields(&c, "todo", TODAY, false).unwrap();
         let f = read(&serde_json::json!({ "title": "x", "start_date": "2026-11-01", "due_date": "2026-10-20" }), "");
         assert_eq!((f.start_date, f.due_date.as_deref()), (None, Some("2026-10-20"))); // a start after the end is dropped
         let f = read(&serde_json::json!({ "title": "x", "start_date": "2026-10-13" }), "");
@@ -1188,7 +1467,7 @@ mod tests {
         assert_eq!(read(&serde_json::json!({ "start_date": "2026-10-13", "due_date": "2026-10-13" }), "").start_date, None);
         let g = todo::create_group(&c, "学业").unwrap().id;
         let o = todo::create_goal(&c, serde_json::from_value(serde_json::json!({ "groupId": g, "name": "毕业论文" })).unwrap()).unwrap().id;
-        let (_, read) = quick_fields(&c, "todo", TODAY).unwrap();
+        let (_, read) = quick_fields(&c, "todo", TODAY, false).unwrap();
         let guess = serde_json::json!({ "title": "x", "group": "学业", "goal": "毕业论文" });
         assert_eq!((read(&guess, "交开题报告").group_id, read(&guess, "交开题报告").goal_id), (None, None)); // guessed: not filled
         assert_eq!((read(&guess, "论文开题报告").group_id, read(&guess, "论文开题报告").goal_id), (Some(g), Some(o)));
@@ -1228,7 +1507,7 @@ mod tests {
             ("packing", "下周六去东京五天"),
         ];
         for (module, sentence) in cases {
-            let (fields, read) = quick_fields(&c, module, TODAY).unwrap();
+            let (fields, read) = quick_fields(&c, module, TODAY, false).unwrap();
             let system = format!("{QUICK}\n{}\n{fields}", calendar(TODAY));
             let t = std::time::Instant::now();
             let reply = tauri::async_runtime::block_on(ask(&route, &Level::on(), &system, sentence, 512)).unwrap();

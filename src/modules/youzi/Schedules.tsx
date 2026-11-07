@@ -10,11 +10,12 @@ import { Plus, X } from "lucide-react";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { formatDay, toYmd, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
-import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
+import { Button, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
 import { BRIEF_KEY, LIBRARY_KEY, SCHEDULES_KEY, youziApi, ruleText, useBrief, useYouziStatus, useSchedules, type Schedule, type ScheduleInput } from "./api";
 import { modelOptions } from "./ModelMenu";
 import { FlowChart } from "./Plugins";
 import { LevelPicker, fromLevel, levelOf, thinkFits, thinkOf } from "./Thinking";
+import { MdField } from "@/shared/editor/MdField";
 
 type Confirm = ReturnType<typeof useConfirm>[0];
 
@@ -188,7 +189,7 @@ function BriefEditor() {
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1.5">
         <span className="text-xs text-muted-foreground">提示词</span>
-        <TextArea aria-label="提示词" value={text} onChange={(e) => setDraft(e.target.value)} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
+        <MdField label="提示词" value={text} onChange={setDraft} className="min-h-0 flex-1 font-reading" />
       </div>
       <div className="flex items-center gap-2">
         <Button onClick={rewrite} disabled={!b.enabled || b.state === "writing" || dirty}>
@@ -319,7 +320,7 @@ function ScheduleEditor(props: { schedule: Schedule | null; confirm: Confirm; on
         ) : (
           <div className="flex min-h-40 flex-1 flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">提示词</span>
-            <TextArea aria-label="提示词" value={form.prompt} onChange={(e) => set({ prompt: e.target.value })} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
+            <MdField label="提示词" value={form.prompt} onChange={(prompt) => set({ prompt })} className="min-h-0 flex-1 font-reading" />
           </div>
         )}
       </div>

@@ -1673,12 +1673,23 @@ fn packing_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, Strin
 
 // ---------- 念念不忘 ----------
 
-fn note_rows(conn: &Connection, list: &[notes::Note]) -> Vec<Row> {
+/// 今天 / 昨天 / N 天前 (a day before or on today).
+fn ago(day: &str, today: &str) -> String {
+    match common::day_number(today) - common::day_number(day) {
+        n if n <= 0 => "今天".into(),
+        1 => "昨天".into(),
+        n => format!("{n} 天前"),
+    }
+}
+
+/// A note per row with when it was written (and how long ago: what it says was that day's, not today's).
+fn note_rows(conn: &Connection, list: &[notes::Note], today: &str) -> Vec<Row> {
     list.iter()
         .map(|n| {
             let body = n.content.trim().replace('\n', "\n  ");
             let body = if body.chars().count() > 600 { format!("{}…（后面略）", body.chars().take(600).collect::<String>()) } else { body };
-            Row { text: format!("- {}：{body}", local_minute(conn, &n.created_at)), rec: Some(rec("notes", "note", n.id, &notes::excerpt(&n.content))) }
+            let at = local_minute(conn, &n.created_at);
+            Row { text: format!("- {at}（{}）：{body}", ago(&at[..at.len().min(10)], today)), rec: Some(rec("notes", "note", n.id, &notes::excerpt(&n.content))) }
         })
         .collect()
 }
@@ -1709,7 +1720,7 @@ fn notes_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String>
             if list.is_empty() {
                 head.push("没找到：可以换几个相关的词、或者去掉时间和标签再查。".into());
             }
-            Ok(Found::new(format!("「{q}」{tag_text}相关的笔记（{} 条）", list.len()), head).rows(note_rows(conn, &list)))
+            Ok(Found::new(format!("「{q}」{tag_text}相关的笔记（{} 条）", list.len()), head).rows(note_rows(conn, &list, today)))
         }
         "recent" => {
             let (mut from, mut to) = a.range(common::add_days(today, -29), today.to_string())?;
@@ -1746,7 +1757,7 @@ fn notes_view(conn: &Connection, a: &Args, today: &str) -> Result<Found, String>
                     None => "还没有笔记。".into(),
                 });
             }
-            Ok(Found::new(format!("{}{tag_text}的笔记（{} 条）", span(&from, &to), list.len()), head).rows(note_rows(conn, &list)))
+            Ok(Found::new(format!("{}{tag_text}的笔记（{} 条）", span(&from, &to), list.len()), head).rows(note_rows(conn, &list, today)))
         }
         _ => {
             let o = notes::overview(conn)?;
@@ -2798,10 +2809,12 @@ pub fn brief_parts(conn: &Connection, access: &Access, today: &str, budget: i64)
             _ => {
                 // none in two weeks: nothing to say about them
                 let from = common::add_days(today, -13);
-                if notes::list(conn, &notes::Filter { from: Some(from.clone()), to: Some(today.to_string()), ..Default::default() })?.is_empty() {
-                    continue;
-                }
-                ask(m.tool, json!({ "view": "recent", "from": from, "to": today }))
+                let list = notes::list(conn, &notes::Filter { from: Some(from.clone()), to: Some(today.to_string()), ..Default::default() })?;
+                let Some(latest) = list.iter().map(|n| local_day(conn, &n.created_at)).max() else { continue };
+                // what a note says was that day's: a feeling written days ago and nothing since isn't today's
+                let quiet = common::day_number(today) - common::day_number(&latest);
+                let since = if quiet >= 2 { format!("最近一条记于 {latest}（{quiet} 天前），之后没有再记。") } else { format!("最近一条记于 {latest}（{}）。", ago(&latest, today)) };
+                format!("{}\n\n{since}每条笔记写的是记下那天的想法和心情，不一定是今天的。", ask(m.tool, json!({ "view": "recent", "from": from, "to": today })))
             }
         };
         parts.push(Part { title: m.label.into(), text });

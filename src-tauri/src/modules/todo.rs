@@ -489,7 +489,7 @@ pub struct Task {
     pub period: Option<Period>,
     /// Repeat: occurrences done before logging started.
     pub done_before: i64,
-    /// The note it was made from (念念不忘 转成待办 / 拆成待办).
+    /// The note it was made from (念念不忘 转成待办 / 柚子转为待办).
     pub from_note: Option<i64>,
     /// Derived (`enrich`): repeat = occurrences done, checkin = days checked, progress = amount this period.
     pub count: i64,
@@ -1356,16 +1356,16 @@ pub fn create_subtasks(conn: &Connection, parent_id: i64, titles: &[String], tod
     Ok(out)
 }
 
-/// Several new root tasks from a note, in order, as one step (柚子's 拆成待办 the user picked), at the
-/// group / goal given.
-pub fn create_from_note(conn: &Connection, note_id: i64, group_id: Option<i64>, goal_id: Option<i64>, titles: &[String], today: &str) -> Result<Vec<Task>, String> {
-    if titles.is_empty() || titles.len() > 20 {
+/// Several new root tasks from a note, in order, as one step (柚子转为待办: the cards the user picked, each
+/// with its own place and fields, checked as the task panel's are).
+pub fn create_from_note(conn: &Connection, note_id: i64, tasks: Vec<TaskPatch>, today: &str) -> Result<Vec<Task>, String> {
+    if tasks.is_empty() || tasks.len() > 20 {
         return Err("一次加 1～20 个待办".into());
     }
     let tx = common::Tx::begin(conn)?;
-    let mut out = Vec::with_capacity(titles.len());
-    for t in titles {
-        out.push(create_task_on(&tx, TaskPatch { group_id, goal_id: goal_id.map(Some), title: Some(t.clone()), from_note: Some(note_id), ..Default::default() }, today)?);
+    let mut out = Vec::with_capacity(tasks.len());
+    for t in tasks {
+        out.push(create_task_on(&tx, TaskPatch { parent_id: None, from_note: Some(note_id), attachments: None, done_count: None, ..t }, today)?);
     }
     tx.commit()?;
     Ok(out)
@@ -2016,8 +2016,8 @@ pub fn todo_subtasks_create(state: State<AppState>, parent_id: i64, titles: Vec<
 }
 
 #[tauri::command]
-pub fn todo_tasks_from_note(state: State<AppState>, note_id: i64, group_id: Option<i64>, goal_id: Option<i64>, titles: Vec<String>) -> Result<Vec<Task>, String> {
-    state.with_undo("加上待办", |c| create_from_note(c, note_id, group_id, goal_id, &titles, &today(c)?))
+pub fn todo_tasks_from_note(state: State<AppState>, note_id: i64, tasks: Vec<TaskPatch>) -> Result<Vec<Task>, String> {
+    state.with_undo("加上待办", |c| create_from_note(c, note_id, tasks, &today(c)?))
 }
 #[tauri::command]
 pub fn todo_task_update(state: State<AppState>, id: i64, patch: TaskPatch) -> Result<Task, String> {
@@ -2101,8 +2101,12 @@ mod tests {
         let n = notes::create(&c, serde_json::from_value(json!({ "content": "周末\n- 交水电费\n- 给房东打电话" })).unwrap()).unwrap().id;
         let t = create_task(&c, tp(json!({ "groupId": g, "title": "周末", "note": "全文", "fromNote": n }))).unwrap();
         assert_eq!(t.from_note, Some(n));
-        let made = create_from_note(&c, n, Some(g), None, &["交水电费".into(), "给房东打电话".into()], "2026-10-17").unwrap();
+        let made = create_from_note(&c, n, vec![tp(json!({ "groupId": g, "title": "交水电费", "dueDate": "2026-10-20" })), tp(json!({ "groupId": g, "title": "给房东打电话", "taskType": "checkin", "repeatRule": "weekly:6", "note": "问续租" }))], "2026-10-17").unwrap();
         assert!(made.iter().all(|x| x.from_note == Some(n) && x.parent_id.is_none()));
+        assert_eq!((made[0].due_date.as_deref(), made[1].task_type, made[1].note.as_deref()), (Some("2026-10-20"), TaskType::Checkin, Some("问续租")));
+        // one that doesn't pass the task rules stops the whole step
+        let bad = create_from_note(&c, n, vec![tp(json!({ "groupId": g, "title": "读书" })), tp(json!({ "groupId": g, "title": "跑步", "taskType": "progress" }))], "2026-10-17");
+        assert!(bad.unwrap_err().contains("目标数量"));
         let titles: Vec<String> = notes::get(&c, n).unwrap().tasks.into_iter().map(|x| x.title).collect();
         assert_eq!(titles, ["周末", "交水电费", "给房东打电话"]);
         assert!(create_task(&c, tp(json!({ "groupId": g, "title": "x", "fromNote": 999 }))).unwrap_err().contains("笔记"));

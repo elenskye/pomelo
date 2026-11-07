@@ -1,13 +1,14 @@
-// One note in the stream: time · pin · menu (编辑 / 引用 / 转成待办 / 让柚子拆成待办 / 置顶 / 删除), the text
+// One note in the stream: time · pin · menu (编辑 / 引用 / 转成待办 / 柚子转为待办 / 置顶 / 删除), the text
 // (long ones fold), its attachments, the tasks made from it, the notes it quotes and the notes quoting it.
-// Double-click edits in place. 拆成待办 lists what 柚子 found to pick from, with where they go.
+// Double-click edits in place. 柚子转为待办: 柚子 decides how many tasks the note holds and writes each card (内容,
+// 类型和规则, 时间, 链接, 位置…); they are listed to pick from, each with where it goes, 「加上」 adds them in one step.
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, CornerDownRight, Ellipsis, Footprints, Pin, Quote, X } from "lucide-react";
-import { IdeaList, assistApi, assistBusyText, useAssistOn } from "@/modules/youzi/Assist";
+import { IdeaList, assistApi, assistBusyText, useAssistOn, type QuickFillResult } from "@/modules/youzi/Assist";
 import { useYouziStatus } from "@/modules/youzi/api";
-import { useGoals, useGroups, useTodoMutations } from "@/modules/todo/api";
+import { useGoals, useGroups, useTodoMutations, type TaskPatch } from "@/modules/todo/api";
 import type { FileInfo } from "@/shared/attachments/api";
 import { AttachButton, AttachmentStrip, withFiles } from "@/shared/attachments/Attachments";
 import { useAttachTarget } from "@/shared/attachments/target";
@@ -65,37 +66,104 @@ function Folding(props: { children: ReactNode }) {
   );
 }
 
-/** 拆成待办: 柚子's list to pick from, and the group / goal they go to. */
-function SplitList(props: { note: Note; ideas: string[]; onDone: () => void }) {
+const WEEK = "一二三四五六日";
+const UNIT: Record<string, string> = { d: "天", w: "周", m: "个月", y: "年" };
+/** A repeat / check-in rule (todo.rs `Rule`) in words. */
+function ruleWords(rule: string): string {
+  const [k, v = ""] = rule.split(":");
+  const n = parseInt(v, 10);
+  if (k === "daily") return "每天";
+  if (k === "weekly") return `每周${v.split(",").map((d) => WEEK[Number(d) - 1] ?? d).join("、")}`;
+  if (k === "monthly") return `每月 ${v.split(",").join("、")} 号`;
+  if (k === "yearly") {
+    const [md, every = "1"] = v.split("/");
+    const [m, d] = md.split("-").map(Number);
+    return `${every === "1" ? "每年" : `每 ${every} 年`} ${m} 月 ${d} 日`;
+  }
+  if (k === "every") return `每 ${n} ${v.endsWith("w") ? "周" : "天"}`;
+  if (k === "after") return `完成后隔 ${n} ${UNIT[v.slice(-1)] ?? ""}`;
+  return rule;
+}
+const slash = (d: string) => d.split("-").join(" / ");
+
+/** What a card holds besides its title, on one line. */
+function cardBits(c: QuickFillResult): string[] {
+  const type = c.taskType ?? "normal";
+  const when = c.dueDate && type !== "repeat" ? (c.startDate ? `${slash(c.startDate)} 到 ${slash(c.dueDate)}` : `截止 ${slash(c.dueDate)}`) : null;
+  return [
+    type === "repeat" && c.rule && `重复 · ${ruleWords(c.rule)}${c.repeatTotal ? `，共 ${c.repeatTotal} 次` : ""}`,
+    type === "checkin" && `打卡 · ${ruleWords(c.rule ?? "daily")}`,
+    type === "progress" && `进度条 · ${c.target ?? ""}${c.unit ?? ""}`,
+    when,
+    c.note && c.note.replace(/\s+/g, " "),
+    c.link,
+  ].filter((x): x is string => !!x);
+}
+
+/** 柚子转为待办: the cards 柚子 wrote, each going to its own group / goal (柚子's pick, else the first). */
+function TaskCards(props: { note: Note; cards: QuickFillResult[]; onDone: () => void }) {
   const { data: groups = [] } = useGroups();
   const { data: goals = [] } = useGoals();
-  const [where, setWhere] = useState<string | null>(null);
   const m = useTodoMutations();
   const qc = useQueryClient();
   const toast = useToast();
   const options = groups.flatMap((g) => [{ value: `g:${g.id}`, label: g.name }, ...goals.filter((o) => o.groupId === g.id && o.status === "active").map((o) => ({ value: `o:${o.id}`, label: `　${o.name}` }))]);
-  const place = where ?? options[0]?.value ?? null;
-  const add = (titles: string[]) => {
-    if (!place) return toast("先在一步一步里建一个分组", "error");
+  const [places, setPlaces] = useState<(string | null)[]>(() => props.cards.map((c) => (c.goalId != null ? `o:${c.goalId}` : c.groupId != null ? `g:${c.groupId}` : null)));
+  const placeOf = (i: number) => {
+    const p = places[i];
+    return p && options.some((o) => o.value === p) ? p : (options[0]?.value ?? null);
+  };
+  const patch = (c: QuickFillResult, place: string): TaskPatch => {
     const id = Number(place.slice(2));
+    const type = c.taskType ?? "normal";
+    const dated = type !== "repeat";
+    return {
+      ...(place.startsWith("o:") ? { goalId: id } : { groupId: id, goalId: null }),
+      title: c.title ?? "",
+      note: c.note,
+      link: c.link,
+      taskType: type,
+      repeatRule: type === "repeat" || type === "checkin" ? c.rule : null,
+      repeatTotal: type === "repeat" ? c.repeatTotal : null,
+      target: type === "progress" ? c.target : null,
+      unit: type === "progress" ? c.unit : null,
+      startDate: dated ? c.startDate : null,
+      dueDate: dated ? c.dueDate : null,
+    };
+  };
+  const add = (picked: number[]) => {
+    if (!options.length) return toast("先在一步一步里建一个分组", "error");
     m.fromNote.mutate(
-      { noteId: props.note.id, groupId: place.startsWith("g:") ? id : null, goalId: place.startsWith("o:") ? id : null, titles },
+      { noteId: props.note.id, tasks: picked.map((i) => patch(props.cards[i], placeOf(i)!)) },
       {
         onSuccess: () => {
           void qc.invalidateQueries({ queryKey: NOTES_KEY });
-          toast(`加上了 ${titles.length} 个待办`);
+          toast(`加上了 ${picked.length} 个待办`);
           props.onDone();
         },
+        onError: (e) => toast(errorText(e), "error"),
       },
     );
   };
   return (
-    <div className="mt-2 space-y-2">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        加到
-        <Dropdown<string | null> ariaLabel="加到哪个分组" value={place} onChange={setWhere} options={options} menuMaxHeight={300} />
-      </div>
-      <IdeaList items={props.ideas} label={(t) => t} busy={m.fromNote.isPending} onAdd={add} onCancel={props.onDone} />
+    <div className="mt-2">
+      <IdeaList
+        items={props.cards.map((_, i) => i)}
+        label={(i) => {
+          const c = props.cards[i];
+          const bits = cardBits(c);
+          return (
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="min-w-0 font-medium">{c.title}</span>
+              <Dropdown<string | null> ariaLabel={`「${c.title}」加到哪里`} value={placeOf(i)} onChange={(v) => setPlaces((ps) => ps.map((x, j) => (j === i ? v : x)))} options={options} menuMaxHeight={300} />
+              {bits.length > 0 && <span className="block w-full text-xs text-muted-foreground">{bits.join(" · ")}</span>}
+            </span>
+          );
+        }}
+        busy={m.fromNote.isPending}
+        onAdd={add}
+        onCancel={props.onDone}
+      />
     </div>
   );
 }
@@ -135,12 +203,12 @@ export function NoteCard(props: {
   const [showBack, setShowBack] = useState(!!props.focused);
   const assist = useAssistOn();
   const status = useYouziStatus().data;
-  const [ideas, setIdeas] = useState<string[] | null>(null);
+  const [ideas, setIdeas] = useState<QuickFillResult[] | null>(null);
   const [splitting, setSplitting] = useState(false);
   const split = async () => {
     setSplitting(true);
     try {
-      setIdeas(await assistApi.splitNote(n.id));
+      setIdeas(await assistApi.noteTasks(n.id));
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
@@ -210,7 +278,7 @@ export function NoteCard(props: {
               { value: "edit", label: "编辑" },
               { value: "quote", label: "引用" },
               ...(props.onToTodo ? [{ value: "todo", label: "转成待办" }] : []),
-              ...(assist ? [{ value: "split", label: "让柚子拆成待办" }] : []),
+              ...(assist ? [{ value: "split", label: "柚子转为待办" }] : []),
               { value: "pin", label: n.pinned ? "取消置顶" : "置顶" },
               { value: "delete", label: <span className="text-destructive">删除</span> },
             ]}
@@ -262,8 +330,8 @@ export function NoteCard(props: {
 
       {!editing && <AttachmentStrip files={n.attachments} className="mt-2" />}
       {!editing && n.tasks.length > 0 && <MadeTasks tasks={n.tasks} />}
-      {splitting && <p className="mt-2 animate-pulse text-xs text-muted-foreground">{assistBusyText(status, "正在拆成待办…")}</p>}
-      {ideas && <SplitList note={n} ideas={ideas} onDone={() => setIdeas(null)} />}
+      {splitting && <p className="mt-2 animate-pulse text-xs text-muted-foreground">{assistBusyText(status, "正在转为待办…")}</p>}
+      {ideas && <TaskCards note={n} cards={ideas} onDone={() => setIdeas(null)} />}
       {!editing && n.refs.length > 0 && (
         <div className="mt-2 space-y-0.5 border-l-2 pl-2.5">
           {n.refs.map((r) => (

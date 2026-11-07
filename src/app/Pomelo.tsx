@@ -176,7 +176,7 @@ export function useJobWatch() {
   }, []);
 }
 
-const BRIEF_FACE: Record<string, Face> = { calm: "idle", busy: "thinking", good: "success", worry: "worried" };
+const BRIEF_FACE: Record<string, Face> = { calm: "idle", busy: "thinking", good: "success", worry: "worried", plain: "idle" };
 /** The brief's face stays this long after it's done. */
 const BRIEF_MS = 3600_000;
 /** Picked each hour otherwise: none sad (and not 在想, which says 柚子 is writing). */

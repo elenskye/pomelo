@@ -454,26 +454,52 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
     filled.clear(k);
     setD((x) => ({ ...x, [k]: v }));
   };
-  // 一句话填好 (new tasks): 标题, the day or 时间段, and (not for a subtask) the group / goal
+  // 一句话填好 (new) / 改好 (editing): every field of the card (标题、内容、类型和规则、次数、目标数量和单位、时间、
+  // 链接) and, not for a subtask, the group / goal; 改好 may empty some
   const assistOn = useAssistOn();
-  const quick = !task && assistOn;
+  const quick = assistOn;
   const fill = (f: QuickFillResult) => {
     const next = { ...d };
     const keys: (keyof Draft)[] = [];
-    if (f.title) (next.title = f.title), keys.push("title");
-    if (f.dueDate) (next.ranged = true), (next.dueDate = f.dueDate), (next.startDate = f.startDate ?? ""), keys.push("dueDate");
-    if (props.create?.parentId === undefined && (f.goalId != null || f.groupId != null)) {
-      const where = f.goalId != null ? `o:${f.goalId}` : `g:${f.groupId}`;
-      if (whereOptions.some((o) => o.value === where)) (next.where = where), keys.push("where");
+    const put = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+      next[k] = v;
+      keys.push(k);
+    };
+    const daily = (r: string) => /^(daily|weekly)/.test(r);
+    if (f.title) put("title", f.title);
+    if (f.note) put("note", f.note);
+    if (f.link) put("link", f.link);
+    if (f.taskType && f.taskType !== next.taskType && !props.hasChildren) {
+      put("taskType", f.taskType);
+      if (f.taskType === "checkin" && !daily(next.rule)) next.rule = "daily";
     }
-    setD(next);
+    if (f.rule && (next.taskType === "repeat" || (next.taskType === "checkin" && daily(f.rule)))) put("rule", f.rule);
+    if (f.repeatTotal != null) put("repeatTotal", String(f.repeatTotal));
+    if (f.target != null) put("target", String(f.target));
+    if (f.unit) put("unit", f.unit);
+    if (f.dueDate) (next.ranged = true), (next.startDate = f.startDate ?? ""), put("dueDate", f.dueDate);
+    if (!isSub && (f.goalId != null || f.groupId != null)) {
+      const where = f.goalId != null ? `o:${f.goalId}` : `g:${f.groupId}`;
+      if (whereOptions.some((o) => o.value === where)) put("where", where);
+    }
+    for (const k of f.clear) {
+      if (k === "note" || k === "link" || k === "unit") put(k, "");
+      else if (k === "times") put("repeatTotal", "");
+      else if (k === "due_date") (next.ranged = false), (next.startDate = ""), put("dueDate", "");
+    }
+    setD(withStart(next));
     filled.mark(keys);
   };
   /** 完成后 starts from a date: today unless one is set. */
   const withStart = (x: Draft): Draft => (x.taskType === "repeat" && !counted(x.rule) && !x.planDate ? { ...x, planDate: today } : x);
-  const setType = (v: TaskType) =>
+  const setType = (v: TaskType) => {
+    filled.clear("taskType");
     setD((x) => withStart({ ...x, taskType: v, rule: v === "checkin" && !/^(daily|weekly)/.test(x.rule) ? "daily" : x.rule }));
-  const setRule = (v: string) => setD((x) => withStart({ ...x, rule: v }));
+  };
+  const setRule = (v: string) => {
+    filled.clear("rule");
+    setD((x) => withStart({ ...x, rule: v }));
+  };
 
   const whereOptions = props.groups.flatMap((g) => [
     { value: `g:${g.id}`, label: g.name },
@@ -553,13 +579,13 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
           : undefined
       }
     >
-      {quick && <QuickFill module="todo" onFill={fill} autoFocus />}
+      {quick && <QuickFill module="todo" record={task?.id} onFill={fill} autoFocus={!task} />}
       <Field label="标题">
-        <TextInput autoFocus={!quick} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" maxLength={500} className={filled.cls("title")} />
+        <TextInput autoFocus={!quick || !!task} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" maxLength={500} className={filled.cls("title")} />
       </Field>
       <Field label="内容" action={splitTask.action}>
         <Polish module="todo" value={d.note} onChange={(v) => set("note", v)}>
-          <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} />
+          <TextArea rows={4} value={d.note} onChange={(e) => set("note", e.target.value)} maxLength={5000} className={filled.cls("note")} />
         </Polish>
         {splitTask.list}
       </Field>
@@ -568,7 +594,9 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
         {props.hasChildren ? (
           <p className="text-sm">普通</p>
         ) : (
-          <Segmented ariaLabel="类型" value={d.taskType} onChange={setType} options={(Object.keys(TASK_TYPES) as TaskType[]).map((k) => ({ value: k, label: TASK_TYPES[k] }))} />
+          <div className={filled.halo("taskType")}>
+            <Segmented ariaLabel="类型" value={d.taskType} onChange={setType} options={(Object.keys(TASK_TYPES) as TaskType[]).map((k) => ({ value: k, label: TASK_TYPES[k] }))} />
+          </div>
         )}
       </Field>
       <Field label="位置">
@@ -585,12 +613,16 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
       {d.taskType === "repeat" && (
         <>
           <Field label="重复">
-            <RuleEditor value={d.rule} onChange={setRule} />
+            <div className={filled.halo("rule")}>
+              <RuleEditor value={d.rule} onChange={setRule} />
+            </div>
           </Field>
           {counted(d.rule) && (
             <div className="flex gap-4">
               <Field label="一共几次">
-                <NumberInput label="一共几次" value={d.repeatTotal} onChange={(v) => set("repeatTotal", v)} placeholder="不限" />
+                <div className={filled.halo("repeatTotal")}>
+                  <NumberInput label="一共几次" value={d.repeatTotal} onChange={(v) => set("repeatTotal", v)} placeholder="不限" />
+                </div>
               </Field>
               <Field label="已经做了几次">
                 <NumberInput label="已经做了几次" min={0} value={d.doneCount} onChange={(v) => set("doneCount", v)} />
@@ -636,7 +668,9 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
       {d.taskType === "checkin" && (
         <>
           <Field label="哪些天打卡">
-            <RuleEditor checkin value={d.rule} onChange={setRule} />
+            <div className={filled.halo("rule")}>
+              <RuleEditor checkin value={d.rule} onChange={setRule} />
+            </div>
           </Field>
           {range}
           {saved && <CheckinCalendar task={task} />}
@@ -646,10 +680,12 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
         <>
           <div className="flex gap-4">
             <Field label="目标数量">
-              <NumberInput label="目标数量" value={d.target} onChange={(v) => set("target", v)} placeholder="必填" />
+              <div className={filled.halo("target")}>
+                <NumberInput label="目标数量" value={d.target} onChange={(v) => set("target", v)} placeholder="必填" />
+              </div>
             </Field>
             <Field label="单位">
-              <TextInput value={d.unit} onChange={(e) => set("unit", e.target.value)} maxLength={10} className="w-28" />
+              <TextInput value={d.unit} onChange={(e) => set("unit", e.target.value)} maxLength={10} className={`w-28 ${filled.cls("unit")}`} />
             </Field>
           </div>
           {range}
@@ -661,7 +697,7 @@ function TaskForm(props: PanelProps & { files: FileInfo[] }) {
         </>
       )}
       <Field label="链接">
-        <TextInput value={d.link} onChange={(e) => set("link", e.target.value)} maxLength={1000} />
+        <TextInput value={d.link} onChange={(e) => set("link", e.target.value)} maxLength={1000} className={filled.cls("link")} />
       </Field>
       <AttachmentField files={d.files} onChange={(v) => set("files", v)} />
     </SidePanel>

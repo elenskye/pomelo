@@ -8,7 +8,10 @@
 //! - Reads only: 今天的待办、快到期的（3 天内）和过期的；今天该提醒的日子（提前提醒的那几天和当天）；该跟进
 //!   的投递、在笔试面试的；最近两周的笔记里常在想什么. Rust reads them first (data.rs `brief_parts`, each part capped) and sends them in one request:
 //!   the prompt (+ the user's instructions for the tone), then the day and what was read (thinking as set, with room for it). It writes nothing but the brief.
-//! - Its last line (the built-in prompt asks for it) gives the day's mood (轻松 / 很忙 / 有好消息 / 有烦心事 → calm / busy / good / worry),
+//! - Notes come with their day and how long ago, and a line on when the last one was written (a feeling
+//!   noted days ago isn't today's); the built-in prompt says so too.
+//! - Its last line (the built-in prompt asks for it) gives the day's mood (轻松 / 很忙 / 有好消息 / 有烦心事 / 一般 →
+//!   calm / busy / good / worry / plain; plain is the pomelo's usual face),
 //!   kept in `briefs.mood` (not in the text) for the pomelo's face in the top bar, for an hour after the
 //!   brief is done (`mood_at`); then, and without one, a random face that isn't sad.
 //! - Model as 定时任务 (schedule.rs `route`): a stopped local model is started and stopped after (only
@@ -63,14 +66,14 @@ pub struct Brief {
     pub left_out: Vec<String>,
     /// While writing: starting (the local model) | writing.
     pub phase: Option<&'static str>,
-    /// calm | busy | good | worry (the last good brief's).
+    /// calm | busy | good | worry | plain (the last good brief's).
     pub mood: Option<String>,
     /// When the brief with that mood was done (UTC); None while rewriting or after a failure.
     pub mood_at: Option<String>,
 }
 
-/// The mood line's words and keys.
-const MOODS: [(&str, &str); 4] = [("轻松", "calm"), ("很忙", "busy"), ("有好消息", "good"), ("有烦心事", "worry")];
+/// The mood line's words and keys (一般: nothing in particular, the pomelo's usual face).
+const MOODS: [(&str, &str); 5] = [("轻松", "calm"), ("很忙", "busy"), ("有好消息", "good"), ("有烦心事", "worry"), ("一般", "plain")];
 
 /// The text without its last 「心情：…」 line, and that mood (a line the model got wrong stays as text).
 pub fn split_mood(text: &str) -> (String, Option<&'static str>) {
@@ -180,9 +183,10 @@ const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 pub const DEFAULT_PROMPT: &str = "你是柚子，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
 - 根据读到的数据写 3～6 句话，可以分两三小段；称呼用户「你」；不要标题、不要开场白和客套话。
 - 只写这几件事：今天要做的、快到期的和过期的待办（看【一步一步】）；快到的日子，还有几天或者就是今天（看【来日方长】）；该跟进的投递、正在笔试面试的（看【投石问路】）；最近两周的笔记里常在想什么，一两句，像朋友一样提一下（看【念念不忘】）。
+- 笔记都带着日期，写的是记下那天的想法和心情，不代表今天。几天前的笔记里有低落、烦心的情绪，之后好几天没再记，不要当成用户现在还不开心；可以轻轻问一句最近心境有没有变化。
 - 没读到的就一个字都不要提（比如没读到笔记，就不要说笔记）。
 - 提到具体的事照抄它的名称；不要编，也不要建议用户去记录什么。
-- 最后单独一行写今天的心情，只能是这四个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事（看今天的事多不多、有没有好消息或烦心的事）。";
+- 最后单独一行写今天的心情，只能是这五个之一：心情：轻松 / 心情：很忙 / 心情：有好消息 / 心情：有烦心事 / 心情：一般（看今天的事多不多、有没有好消息或烦心的事；烦心事只看今天和最近一两天的；没什么特别的就写「一般」）。";
 const PROMPT_MAX: usize = 2000;
 
 /// The prompt in use, and whether it's the user's own.
@@ -397,6 +401,8 @@ mod tests {
         assert_eq!(parts.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(), ["一步一步", "投石问路", "念念不忘"]);
         assert!(left.is_empty());
         assert!(parts[2].text.contains("又在想要不要换城市"));
+        // each note says when, and the part says nothing came after
+        assert!(parts[2].text.contains("2 天前）：又在想要不要换城市") && parts[2].text.contains("最近一条记于 2026-10-10（2 天前），之后没有再记。"), "{}", parts[2].text);
         // cloud without 投石问路; 念念不忘 hidden: quietly left out
         let cloud = data::Access { cloud: true, cloud_allowed: vec!["todo".into(), "notes".into()], hidden: vec!["notes".into()], ..Default::default() };
         let (parts, left) = data::brief_parts(&pomelo, &cloud, today, PART_BUDGET).unwrap();
@@ -416,9 +422,10 @@ mod tests {
         assert_eq!(split_mood("今天很空。\n心情：轻松"), ("今天很空。".into(), Some("calm")));
         assert_eq!(split_mood("好消息！\n\n心情: 有好消息。\n"), ("好消息！".into(), Some("good")));
         assert_eq!(split_mood("一堆事。\n「心情：有烦心事」"), ("一堆事。".into(), Some("worry")));
+        assert_eq!(split_mood("还行。\n心情：一般"), ("还行。".into(), Some("plain")));
         // no line, or a mood it doesn't know: the text stays whole
         assert_eq!(split_mood("今天没什么。"), ("今天没什么。".into(), None));
-        assert_eq!(split_mood("还行。\n心情：一般"), ("还行。\n心情：一般".into(), None));
+        assert_eq!(split_mood("还行。\n心情：凑合"), ("还行。\n心情：凑合".into(), None));
         assert_eq!(split_mood("心情：很忙"), ("".into(), Some("busy")));
     }
 

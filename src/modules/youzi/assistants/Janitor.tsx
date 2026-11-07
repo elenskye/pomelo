@@ -20,7 +20,7 @@ import { Section } from "@/settings/layout";
 import { StackBar, Sunburst, type SunNode } from "@/shared/charts";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
-import { Button, EmptyState, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
+import { Button, EmptyState, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
 import { youziApi, useYouziStatus, useTemplates, type ChatMessage } from "../api";
 import { Composer, type ComposerHandle } from "../Composer";
 import { openFile } from "../Files";
@@ -30,6 +30,7 @@ import { Transcript, type TranscriptHandle } from "../Transcript";
 import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "../useChat";
 import { JanitorCards } from "./JanitorCards";
 import { JANITOR_KEY, ago, bytes, dayOf, janitorApi, type JanitorEnvItem, type JanitorGroup, type JanitorItem, type JanitorOutcome, type JanitorOverview, type JanitorRing } from "./janitorApi";
+import { MdField } from "@/shared/editor/MdField";
 
 type Tab = "disk" | "clean" | "env" | "agent" | "settings";
 const TABS = (moduleById("janitor").subs ?? []) as { value: Tab; label: string }[];
@@ -691,7 +692,7 @@ function AgentPrompt() {
       }
     >
       <div className="px-4 py-3 text-sm">
-        <TextArea aria-label="SKILL" value={text} onChange={(e) => setDraft(e.target.value)} rows={16} className="font-reading text-xs leading-relaxed" />
+        <MdField label="SKILL" value={text} onChange={setDraft} rows={16} className="font-reading text-xs" />
       </div>
       {showing && createPortal(<PromptHead text={`${p.head}\n\n## 现在的情况\n${p.situation}`} onClose={() => setShowing(false)} />, document.body)}
     </Section>

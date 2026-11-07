@@ -12,6 +12,7 @@ import { useModels } from "../Schedules";
 import { ThinkingButton, fromLevel } from "../Thinking";
 import { useSubPage } from "@/app/subpage";
 import { LanguagePickers, TranslateOutput, useTranslator } from "./translator";
+import { MdField } from "@/shared/editor/MdField";
 
 export function TranslatePage() {
   const [tab, setTab] = useSubPage<"translate" | "prompt">("translate");
@@ -108,7 +109,7 @@ function PromptTab(props: { data: TranslateView; settings: TranslateSettings; on
     <div className="-m-1 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-1 pb-4 text-sm">
       <div className="flex flex-col gap-1.5">
         <span>自己写的提示词</span>
-        <TextArea aria-label="自己写的提示词" rows={5} maxLength={2000} value={s.prompt} onChange={(e) => props.onSettings({ ...s, prompt: e.target.value }, true)} className="font-reading" />
+        <MdField label="自己写的提示词" rows={5} value={s.prompt} onChange={(prompt) => props.onSettings({ ...s, prompt }, true)} className="font-reading" />
       </div>
       <div className="flex flex-col gap-2.5">
         {props.data.lists.groups.map((g) => (

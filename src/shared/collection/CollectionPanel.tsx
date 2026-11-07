@@ -112,8 +112,8 @@ export function CollectionPanel(props: {
       setFilling(false);
     }
   };
-  // 一句话填好 (new items): 名称、作者 / 导演、国家、类型、状态、星级、完成时间
-  const quick = isNew && assistOn;
+  // 一句话填好 (new) / 改好 (editing): 名称、作者 / 导演、国家、类型、状态、星级、完成时间、备注
+  const quick = assistOn;
   const quickFill = (f: QuickFillResult) => {
     const next = { ...d };
     const keys: (keyof Draft)[] = [];
@@ -124,6 +124,13 @@ export function CollectionPanel(props: {
     if (f.status) (next.status = f.status), keys.push("status");
     if (f.rating != null) (next.rating = f.rating), keys.push("rating");
     if (f.finishedYear) (next.finishedYear = f.finishedYear), keys.push("finishedYear");
+    if (f.note) (next.note = f.note), keys.push("note");
+    for (const k of f.clear) {
+      if (k === "creator" || k === "country" || k === "note") (next[k] = ""), keys.push(k);
+      else if (k === "kind") (next.kindId = null), keys.push("kindId");
+      else if (k === "rating") (next.rating = null), keys.push("rating");
+      else if (k === "year") (next.finishedYear = null), keys.push("finishedYear");
+    }
     setD(next);
     filled.mark(keys);
   };
@@ -189,10 +196,10 @@ export function CollectionPanel(props: {
         </>
       }
     >
-      {quick && <QuickFill module={config.moduleId as "books" | "films"} onFill={quickFill} autoFocus />}
+      {quick && <QuickFill module={config.moduleId as "books" | "films"} record={item?.id} onFill={quickFill} autoFocus={isNew} />}
       <Field label={config.titleLabel}>
         <div className="flex items-center gap-1.5">
-          <TextInput autoFocus={!quick} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" className={`min-w-0 flex-1 ${filled.cls("title")}`} />
+          <TextInput autoFocus={!quick || !isNew} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" className={`min-w-0 flex-1 ${filled.cls("title")}`} />
           {assistOn && d.title.trim() && (
             <IconButton label={filling ? assistBusyText(status, "正在补全…") : "补全"} disabled={filling} onClick={() => void fillIn()}>
               <Sparkles size={15} strokeWidth={1.75} className={filling ? "animate-pulse" : ""} />
@@ -270,7 +277,7 @@ export function CollectionPanel(props: {
       )}
       <Field label="备注">
         <Polish module={config.moduleId} value={d.note} onChange={(v) => set("note", v)}>
-          <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} />
+          <TextArea rows={5} value={d.note} onChange={(e) => set("note", e.target.value)} className={filled.cls("note")} />
         </Polish>
       </Field>
     </SidePanel>

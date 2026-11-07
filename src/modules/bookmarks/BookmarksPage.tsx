@@ -1,5 +1,6 @@
-// 一网打尽 (网址收藏夹; Rust modules/bookmarks.rs): left the folder tree (一网打尽 = the top level; arrows fold,
-// remembered), right what's in the chosen folder — folders and links in their own order, like Edge's 收藏夹.
+// 一网打尽 (网址收藏夹; Rust modules/bookmarks.rs): left the folder tree (the top level holds folders only, links are
+// always in a folder; arrows fold, remembered; 新文件夹 at its bottom adds one at the top level), right what's in the
+// chosen folder (the last one looked at, else the first) — folders and links in their own order, like Edge's 收藏夹.
 // A link opens in the browser, a folder opens here. The circles pick (⌘-click and ⇧-click too); with some picked
 // a bar offers 打开 · 移到… · 删除 (and a click picks instead of opening). Drag a row — or the picked ones —
 // between rows to reorder, onto a folder (in the list or the tree) to move it in (pointer events, as
@@ -17,14 +18,17 @@ import { api as ipc } from "@/shared/ipc";
 import { Modal } from "@/shared/Modal";
 import { useOpenRequest, type Hit } from "@/shared/open";
 import { usePageKeys } from "@/shared/panel";
-import { isStringArray, useSetting } from "@/shared/settings";
+import { isNumberArray, isStringArray, useSetting } from "@/shared/settings";
 import { Button, EmptyState, Field, PageHeader, SearchInput, Switch, TextInput } from "@/shared/ui";
 import { buildTree, linksIn, pathTo, useBookmarkMutations, useBookmarks, useSiteIcons, type Node } from "./api";
 import { SiteIcon } from "./SiteIcon";
 
 const OPEN_KEY = "bookmarks.open";
+/** The folder looked at last ([id]). */
+const AT_KEY = "bookmarks.at";
 const THRESHOLD = 4;
-const ROOT = "一网打尽";
+/** Where folders can also go (moving / dragging folders only). */
+const TOP = "最外层";
 
 /** Where a drag would land: into a folder (null: the top level), or before / after a row (among its siblings). */
 type Drop ={ kind: "into"; folder: number | null } | { kind: "before" | "after"; row: number };
@@ -50,12 +54,14 @@ export default function BookmarksPage() {
   const [flash, setFlash] = useState<number | null>(null);
   const [pending, setPending] = useState<Hit | null>(null);
   const [open, setOpen] = useSetting<string[]>(OPEN_KEY, [], isStringArray);
+  const [at, setAt] = useSetting<number[]>(AT_KEY, [], isNumberArray);
   const anchor = useRef<number | null>(null);
   const dragged = useRef(false);
   const search = useRef<HTMLInputElement>(null);
 
-  // a folder that's gone (deleted, undone): back to the top level
-  const current = folder != null && byId.get(folder)?.kind === "folder" ? folder : null;
+  // a folder that's gone (deleted, undone): the last one looked at, else the first
+  const isFolder = (id: number | null | undefined): id is number => id != null && byId.get(id)?.kind === "folder";
+  const current = isFolder(folder) ? folder : isFolder(at[0]) ? at[0] : (roots.find((n) => n.kind === "folder")?.id ?? null);
   const path = pathTo(byId, current);
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown: { n: Node; where: string | null }[] = words.length
@@ -63,7 +69,7 @@ export default function BookmarksPage() {
         .map((b) => byId.get(b.id)!)
         .map((n) => ({ n, path: pathTo(byId, n.parentId).map((p) => p.title) }))
         .filter(({ n, path }) => words.every((w) => `${n.title} ${n.url} ${path.join(" ")}`.toLowerCase().includes(w)))
-        .map(({ n, path }) => ({ n, where: path.length ? path.join(" / ") : ROOT }))
+        .map(({ n, path }) => ({ n, where: path.length ? path.join(" / ") : null }))
     : (current == null ? roots : (byId.get(current)?.kids ?? [])).map((n) => ({ n, where: null }));
   const links = list.filter((b) => b.kind === "link").length;
   const pickedNodes = picked.map((id) => byId.get(id)).filter((n): n is Node => !!n);
@@ -77,8 +83,8 @@ export default function BookmarksPage() {
     const n = byId.get(pending.id);
     setPending(null);
     if (!n) return;
-    setQuery("");
-    setFolder(n.kind === "folder" ? n.id : n.parentId);
+    const f = n.kind === "folder" ? n.id : n.parentId;
+    if (f != null) go(f);
     if (n.kind === "link") setFlash(n.id);
   }, [pending, list, byId]);
   useEffect(() => {
@@ -91,20 +97,21 @@ export default function BookmarksPage() {
   const editingNode = editing?.mode === "edit" ? editing.node : null;
   usePageContext({
     module: "bookmarks",
-    page: words.length ? "搜索" : path.length ? path.map((p) => p.title).join(" / ") : ROOT,
+    page: words.length ? "搜索" : path.length ? path.map((p) => p.title).join(" / ") : m.label,
     filter: words.length ? query.trim() : null,
     record: editingNode ? { kind: "bookmark", id: editingNode.id, label: `网址：${editingNode.title}` } : null,
     selected: picked.length ? { kind: "bookmark", ids: picked, label: `选中的 ${picked.length} 项` } : null,
   });
   usePageKeys({
-    onNew: () => setEditing({ mode: "new", kind: "link", parentId: current }),
+    onNew: () => current != null && setEditing({ mode: "new", kind: "link", parentId: current }),
     onFind: () => search.current?.focus(),
     onEscape: picked.length ? () => setPicked([]) : undefined,
   });
 
-  const go = (id: number | null) => {
+  const go = (id: number) => {
     setQuery("");
     setFolder(id);
+    if (at[0] !== id) setAt([id]);
   };
   const openLink = (url: string) => void ipc.openLink(url).catch((e) => toast(errorText(e), "error"));
   const isOpen = (id: number) => open.includes(String(id)) || path.some((p) => p.id === id && p.id !== current);
@@ -139,7 +146,7 @@ export default function BookmarksPage() {
   const moveTo = (ids: number[], target: number | null) => {
     place(ids, target, null);
     setPicked([]);
-    if (target !== current && ids.length) toast(`移到「${target == null ? ROOT : byId.get(target)?.title}」了`);
+    if (target !== current && ids.length) toast(`移到「${target == null ? TOP : byId.get(target)?.title}」了`);
   };
   const remove = async (nodes: Node[]) => {
     if (!nodes.length) return;
@@ -155,16 +162,17 @@ export default function BookmarksPage() {
     setPicked([]);
   };
 
-  /** 移到…: the top level and every folder (not the moving ones or what's under them), as a menu. */
+  /** 移到…: every folder (not the moving ones or what's under them), and the top level when only folders move, as a menu. */
   const moveMenu = (x: number, y: number, ids: number[]) => {
-    const rows: MenuRow[] = [{ head: "移到" }, { label: ROOT, icon: <Folder size={14} />, checked: false, onSelect: () => moveTo(ids, null) }];
+    const rows: MenuRow[] = [{ head: "移到" }];
+    if (ids.every((id) => byId.get(id)?.kind === "folder")) rows.push({ label: TOP, icon: <Folder size={14} />, checked: false, onSelect: () => moveTo(ids, null) });
     const walk = (ns: Node[], depth: number) =>
       ns.forEach((n) => {
         if (n.kind !== "folder" || ids.includes(n.id)) return;
         rows.push({ label: `${"　".repeat(depth)}${n.title}`, icon: <Folder size={14} />, onSelect: () => moveTo(ids, n.id) });
         walk(n.kids, depth + 1);
       });
-    walk(roots, 1);
+    walk(roots, 0);
     setMenu({ x, y, rows });
   };
   const rowMenu = (n: Node, x: number, y: number) => {
@@ -195,7 +203,7 @@ export default function BookmarksPage() {
     const target = el?.closest<HTMLElement>("[data-drop-folder], [data-row]");
     if (!target) return null;
     if (target.dataset.dropFolder !== undefined) {
-      const f = target.dataset.dropFolder === "root" ? null : Number(target.dataset.dropFolder);
+      const f = Number(target.dataset.dropFolder);
       if (under(f, ids)) return null;
       const n = f == null ? undefined : byId.get(f);
       if (!n || target.dataset.tree === undefined || !ids.every((id) => byId.get(id)?.kind === "folder")) return { kind: "into", folder: f };
@@ -226,7 +234,7 @@ export default function BookmarksPage() {
     place(ids, parent, before);
     if (ids.some((id) => (byId.get(id)?.parentId ?? null) !== parent)) {
       setPicked([]);
-      toast(`移到「${parent == null ? ROOT : byId.get(parent)?.title}」了`);
+      toast(`移到「${parent == null ? TOP : byId.get(parent)?.title}」了`);
     }
   };
   /** `skip`: what inside the row is not a drag handle. */
@@ -307,8 +315,10 @@ export default function BookmarksPage() {
       />
       <div className="flex min-h-0 flex-1 gap-5 px-8 pb-6">
         <nav aria-label="文件夹" className="selectable -m-1 w-56 shrink-0 overflow-y-auto p-1">
-          <TreeRow label={ROOT} depth={0} on={!words.length && current == null} hint={hint(null)} drop="root" count={links} onClick={() => go(null)} />
           <FolderTree nodes={roots} depth={1} current={words.length ? null : current} isOpen={isOpen} toggle={toggleOpen} go={go} hint={hint} drag={treeDrag} />
+          <button type="button" onClick={() => setEditing({ mode: "new", kind: "folder", parentId: null })} className="mt-1 flex w-full items-center gap-1.5 rounded-control py-1.5 pr-2 pl-7 text-left text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+            <Plus size={14} strokeWidth={1.75} className="shrink-0" /> 新文件夹
+          </button>
         </nav>
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex shrink-0 flex-wrap items-center gap-2 pb-3">
@@ -332,12 +342,9 @@ export default function BookmarksPage() {
                   <span className="text-muted-foreground">找到 {shown.length} 条</span>
                 ) : (
                   <>
-                    <button type="button" data-drop-folder="root" onClick={() => go(null)} className={`rounded px-1 ${current == null ? "font-bold" : "text-muted-foreground hover:text-foreground"}`}>
-                      {ROOT}
-                    </button>
                     {path.map((p, i) => (
                       <span key={p.id} className="flex min-w-0 items-center gap-1">
-                        <ChevronRight size={13} className="shrink-0 text-muted-foreground" />
+                        {i > 0 && <ChevronRight size={13} className="shrink-0 text-muted-foreground" />}
                         <button type="button" data-drop-folder={p.id} onClick={() => go(p.id)} className={`truncate rounded px-1 ${i === path.length - 1 ? "font-bold" : "text-muted-foreground hover:text-foreground"}`}>
                           {p.title}
                         </button>
@@ -353,7 +360,7 @@ export default function BookmarksPage() {
             <Button onClick={() => setEditing({ mode: "new", kind: "folder", parentId: current })}>
               <FolderPlus size={14} /> 新文件夹
             </Button>
-            <Button variant="primary" onClick={() => setEditing({ mode: "new", kind: "link", parentId: current })}>
+            <Button variant="primary" disabled={current == null} onClick={() => current != null && setEditing({ mode: "new", kind: "link", parentId: current })}>
               <Plus size={14} /> 新网址
             </Button>
           </div>

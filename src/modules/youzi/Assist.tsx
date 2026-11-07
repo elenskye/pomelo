@@ -3,8 +3,9 @@
 // - <Polish>: a small button in the field's corner (on hover / focus) opens a box: this time's request,
 //   then the rewritten text with the changes marked, 「替换」 puts it into the field.
 // - <IdeaList>: suggestions with checkboxes (all on), 「加上」 / 取消.
-// - <QuickFill>: the top line of a new-record panel (一句话填好): a sentence → the panel's fields, checked
-//   by Rust (dates from today, names matched); filled fields show 浅柚红 (useFilled) until edited.
+// - <QuickFill>: the top line of a record panel: 一句话填好 (new: a sentence → every field of the panel) or 一句话改好
+//   (`record`: only what the sentence changes, `clear` empties fields), checked by Rust (dates from today, names
+//   matched); filled fields show 浅柚红 (useFilled) until edited.
 // - assistBusyText: what the wait says (a stopped local model is started first).
 // Light on purpose: module pages import this (no Markdown / formula libraries).
 import { useState, type ReactNode } from "react";
@@ -27,11 +28,19 @@ export type QuickFillResult = {
   day: string | null;
   kindId: number | null;
   note: string | null;
+  refund: boolean | null;
   title: string | null;
   startDate: string | null;
   dueDate: string | null;
   groupId: number | null;
   goalId: number | null;
+  taskType: "normal" | "repeat" | "checkin" | "progress" | null;
+  /** todo.rs Rule (a check-in's only daily / weekly). */
+  rule: string | null;
+  repeatTotal: number | null;
+  target: number | null;
+  unit: string | null;
+  link: string | null;
   company: string | null;
   position: string | null;
   location: string | null;
@@ -44,6 +53,8 @@ export type QuickFillResult = {
   name: string | null;
   departOn: string | null;
   templateId: number | null;
+  /** 一句话改好: fields to empty (note, link, due_date, times, unit, position, location, channel, kind, creator, country, rating, year, depart_on). */
+  clear: string[];
 };
 export type QuickModule = "finance" | "todo" | "jobs" | "books" | "films" | "packing";
 
@@ -53,9 +64,11 @@ export const assistApi = {
   fillWork: (module: "books" | "films", title: string) => invoke<WorkFill>("youzi_fill_work", { module, title }),
   fillJob: (jd: string) => invoke<JobFill>("youzi_fill_job", { jd }),
   splitTask: (taskId: number) => invoke<string[]>("youzi_split_task", { taskId }),
-  splitNote: (noteId: number) => invoke<string[]>("youzi_split_note", { noteId }),
+  /** 柚子转为待办: the cards the model wrote for a note (the task fields of QuickFillResult). */
+  noteTasks: (noteId: number) => invoke<QuickFillResult[]>("youzi_note_tasks", { noteId }),
   tripMissing: (tripId: number) => invoke<ItemIdea[]>("youzi_trip_missing", { tripId }),
-  quickFill: (module: QuickModule, sentence: string) => invoke<QuickFillResult>("youzi_quick_fill", { module, sentence }),
+  /** `record`: the record an edit panel shows (一句话改好). */
+  quickFill: (module: QuickModule, sentence: string, record?: number | null) => invoke<QuickFillResult>("youzi_quick_fill", { module, sentence, record: record ?? null }),
 };
 
 /** A help started from a field's label row (small, 淡墨, a star). */
@@ -91,8 +104,8 @@ export function useFilled<K extends string>() {
   };
 }
 
-/** 一句话填好: the top line of a new-record panel. Enter asks; `onFill` puts the values into the panel. */
-export function QuickFill(props: { module: QuickModule; onFill: (f: QuickFillResult) => void; autoFocus?: boolean }) {
+/** 一句话填好 / 改好 (`record`: the record the panel edits): the panel's top line. Enter asks; `onFill` puts the values in. */
+export function QuickFill(props: { module: QuickModule; record?: number | null; onFill: (f: QuickFillResult) => void; autoFocus?: boolean }) {
   const status = useYouziStatus().data;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -103,7 +116,7 @@ export function QuickFill(props: { module: QuickModule; onFill: (f: QuickFillRes
     setBusy(true);
     setError(null);
     try {
-      props.onFill(await assistApi.quickFill(props.module, text));
+      props.onFill(await assistApi.quickFill(props.module, text, props.record));
       setText("");
     } catch (e) {
       setError(errorText(e));
@@ -111,13 +124,14 @@ export function QuickFill(props: { module: QuickModule; onFill: (f: QuickFillRes
       setBusy(false);
     }
   };
+  const label = props.record != null ? "一句话改好" : "一句话填好";
   return (
     <div className="space-y-1">
       <div className="relative">
         <Sparkles size={14} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-[var(--module-youzi)]" />
         <TextInput
-          aria-label="一句话填好"
-          placeholder="一句话填好"
+          aria-label={label}
+          placeholder={label}
           autoFocus={props.autoFocus}
           value={text}
           readOnly={busy}
@@ -133,7 +147,7 @@ export function QuickFill(props: { module: QuickModule; onFill: (f: QuickFillRes
           className="pl-8"
         />
       </div>
-      {busy && <p className="animate-pulse text-xs text-muted-foreground">{assistBusyText(status, "正在填…")}</p>}
+      {busy && <p className="animate-pulse text-xs text-muted-foreground">{assistBusyText(status, props.record != null ? "正在改…" : "正在填…")}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );

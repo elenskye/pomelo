@@ -2,11 +2,14 @@
 // is written as you type (a moment later) and before the window hides: Esc, ⌘W and the close button give the
 // focus back to the app that was in front; a click elsewhere hides it too unless the pin is on.
 // The note's text scrolls inside its box, its attachments stay in a row along the box's bottom edge.
+// 存为 .md writes the note (and copies of its attachments) to a file of my choosing: not a 念念不忘 note, the draft stays.
 // 问柚子 chats right here, 翻译 is 柚子's Translator (CaptureChat, CaptureTranslate; loaded when first opened).
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Paperclip, Pin, Send } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { FileDown, Paperclip, Pin, Send } from "lucide-react";
 import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
+import { liteFileName, liteMarkdown } from "@/shared/editor/lite";
 import { AttachmentStrip, pickAttachments, withFiles } from "@/shared/attachments/Attachments";
 import { useAttachTarget } from "@/shared/attachments/target";
 import type { FileInfo } from "@/shared/attachments/api";
@@ -191,6 +194,21 @@ export function Capture() {
     }
   };
 
+  /** 存为 .md: the save panel (named from the first line), then the file; the draft stays. */
+  const saveMarkdown = async () => {
+    if (!ready || !d.note.trim()) return;
+    picking.current = true;
+    try {
+      const path = await save({ defaultPath: `${liteFileName(d.note, `笔记 ${meta?.today ?? ""}`.trim())}.md`, filters: [{ name: "Markdown", extensions: ["md"] }] });
+      if (path) say(`已存为「${await captureApi.saveMarkdown(path, liteMarkdown(latest.current.note))}」`);
+    } catch (e) {
+      fail(e);
+    } finally {
+      picking.current = false;
+      focus("note");
+    }
+  };
+
   const undo = async () => {
     try {
       const r = await captureApi.undo();
@@ -304,6 +322,18 @@ export function Capture() {
                 className="inline-flex shrink-0 items-center justify-center rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
               >
                 <Paperclip size={15} strokeWidth={1.75} />
+              </button>
+            )}
+            {tab === "note" && (
+              <button
+                type="button"
+                aria-label="存为 .md"
+                title="存为 .md"
+                disabled={!ready || !d.note.trim()}
+                onClick={() => void saveMarkdown()}
+                className="inline-flex shrink-0 items-center justify-center rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+              >
+                <FileDown size={15} strokeWidth={1.75} />
               </button>
             )}
             <span role="status" className={`min-w-0 truncate text-xs ${status?.error ? "text-destructive" : "text-muted-foreground"}`}>

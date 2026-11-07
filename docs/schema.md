@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 共 45 张表，当前版本 39；柚子的数据在单独的 `youzi.db`（版本 39），搜索索引在 `search.db`（版本 3），DevJanitor 的扫描结果在 `janitor.db`（版本 1）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
+`pomelo.db` 共 45 张表，当前版本 40；柚子的数据在单独的 `youzi.db`（版本 39），搜索索引在 `search.db`（版本 3），DevJanitor 的扫描结果在 `janitor.db`（版本 1）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
 
 ## 通用约定
 
@@ -25,7 +25,7 @@
 
 **kinds**（能自己增删改的类型）：`module`、`name`（同模块不重名，最多 20 字）、`sort_order`。记录里只存 `kind_id`，删类型后记录变「未分类」。各模块：`books`（虚构、非虚构、漫画、其他）、`films`（电影、剧集、动漫）、`drawing`（正课、DLC 跟画、LIVE 辅导）、`packing`（重要物品、随身、护理、兴趣）、`fin_out` 支出分类、`fin_in` 收入分类、`job_channel` 投递渠道；每个循序渐进模块一组（`progress/编号`，一开始是空的）。
 
-**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和柚子也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）。不进撤销。
+**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 模块坞的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和柚子也按它）；`ui.tabs` 开着的页签各自停在哪一页；`ui.site_tab` 呦呦漫游上次的子页、`bookmarks.at` 一网打尽上次看的文件夹等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）。不进撤销。
 
 ## 附件
 
@@ -143,7 +143,7 @@
 
 | 表 | 字段 |
 |---|---|
-| **bookmarks** | 文件夹和网址在一张表里：`parent_id`（空 = 最外层；删文件夹连里面的一起删）、`kind`（`folder` / `link`）、`title`、`url`（文件夹是空的；只收 http / https）、`on_home` 放首页（只有网址）、`sort_order` 在同一个文件夹里的位置（文件夹和网址混排） |
+| **bookmarks** | 文件夹和网址在一张表里：`parent_id`（空 = 最外层，只放文件夹，网址都在文件夹里；删文件夹连里面的一起删）、`kind`（`folder` / `link`）、`title`、`url`（文件夹是空的；只收 http / https）、`on_home` 放首页（只有网址）、`sort_order` 在同一个文件夹里的位置（文件夹和网址混排） |
 
 网站图标不在数据库里：数据目录的 `icons/`（一个网站一个文件，`failed.json` 记取不到的、7 天后再试），从网站算出来的缓存，不进备份、导出和撤销，删了重新取（`icons.rs`）。
 
@@ -266,7 +266,7 @@
 
 **schedules**：`name`（必填，最多 30 字）、`prompt` 提示词（必填，最多 2000 字；年度总结的面板里不显示）、`every`（`day` / `week` / `month` / `year`）、`day`（每周 1～7；每月、每年 1～31，没有那天就是最后一天）、`month`（每年 1～12）、`at`（`HH:MM`，本地时间）、`model`（`local:<key>` / `cloud:<id>`，空 = 跟着柚子）、`thinking`（默认开）、`effort` 思考强度（空 = 模型的默认）、`enabled`、`builtin`（`weekly` / `monthly` / `yearly`；删了不再加回来）、`sort_order`、`since` 从什么时候起算（新建、改时间、重新打开时设成那一刻）。能 ⌘Z。**schedule_state**：`last_slot` 上次跑到哪个时间（`YYYY-MM-DD HH:MM`），不进撤销。
 
-**briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块、`mood` 当天的心情（`calm` / `busy` / `good` / `worry`，从简报最后一行「心情：…」取出来，正文里不留；没有就空）。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
+**briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块、`mood` 当天的心情（`calm` / `busy` / `good` / `worry` / `plain` 一般，从简报最后一行「心情：…」取出来，正文里不留；没有就空）。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
 
 **month_summaries**（每月小结，只给年度总结用）：`month`、`content`、`fingerprint`（读的记录和写法的指纹，没变就直接用）、`model` · `model_name`。**run_month_notes**：一次年度总结用到的每月小结（照抄一份）。**year_runs**：一次年度总结写的是哪一年。后两张删对话时一起删。**year_atlas**（Atlas 的「呈现结果」，规则见 `youzi/atlas.rs` 开头）：`run_id`（写它的那次，删对话后变空，这一行留着）、`year`、`until`（今年没过完时写到哪天，空 = 全年）、`letter` 信的一份、`snapshot`（JSON：数字和去年同期、之最、每天几条记录、打卡、钱、能引用的记录 `note:12` 这样的编号带原文、两年同一天的笔记、有内容的幕）、`scenes`（JSON：每一幕的话和引用的编号；没写成时空，原因在 `error`）、`model` · `model_name`。
 
@@ -323,6 +323,7 @@ JSON，当前格式版本 39。旧文件都能读，读旧形状的规则在 `tr
 | 31～35 | 导入账单：收支加退款、账单和每一行；来源、关联决定、柚子做过什么；列表排序和改名 |
 | 36～38 | 标签拖动排序；「小拾」和模块键 `picky` 改成柚子 / `youzi` |
 | 39 | 一网打尽：`bookmarks` |
+| 40 | 一网打尽：最外层的网址收进新文件夹「未分类」（之后网址都在文件夹里） |
 
 **youzi.db**
 

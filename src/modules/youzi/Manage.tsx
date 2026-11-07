@@ -7,10 +7,11 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
-import { Button, IconButton, Segmented, Switch, TextArea, TextInput } from "@/shared/ui";
+import { Button, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
 import { INSTRUCTIONS_KEY, PRESETS_KEY, TEMPLATES_KEY, youziApi, usePresets, useTemplates, type Preset, type ProjectRow, type Template } from "./api";
 import { MemoriesTab } from "./Memory";
 import { slots, templateGroups } from "./slots";
+import { MdField } from "@/shared/editor/MdField";
 
 export type ManageTab = "templates" | "presets" | "global" | "memories";
 
@@ -201,7 +202,7 @@ function TemplateEditor(props: { template: Template; categories: string[]; onDel
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1.5">
         <span className="text-xs text-muted-foreground">内容</span>
-        <TextArea aria-label="内容" value={body} onChange={(e) => setBody(e.target.value)} onBlur={() => void flush()} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
+        <MdField label="内容" value={body} onChange={setBody} onBlur={() => void flush()} className="min-h-0 flex-1 font-reading" />
       </div>
       <div className="flex items-center gap-3">
         {names.length > 0 && <p className="text-xs text-muted-foreground">待填位置：{names.join("、")}</p>}
@@ -272,7 +273,7 @@ function PresetDialog(props: { preset: Preset | null; onClose: () => void; onSav
       </div>
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-muted-foreground">内容</span>
-        <TextArea rows={8} value={content} onChange={(e) => setContent(e.target.value)} className="font-reading" />
+        <MdField label="内容" rows={8} value={content} onChange={setContent} className="font-reading" />
       </div>
     </Modal>
   );
@@ -297,7 +298,7 @@ function Global() {
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
-      <TextArea aria-label="全局指令" value={value} onChange={(e) => setText(e.target.value)} className="min-h-0 flex-1 resize-none font-reading leading-relaxed" />
+      <MdField label="全局指令" value={value} onChange={setText} className="min-h-0 flex-1 font-reading" />
       <div className="flex justify-end gap-2">
         {dirty && <Button onClick={() => setText(null)}>还原</Button>}
         <Button variant="primary" disabled={!dirty} onClick={() => void save()}>

@@ -60,6 +60,41 @@ export function pairMarks(line: string, skip: Span[]): Map<number, Mark> {
 }
 
 export const LIST = /^( *)(?:([-*])|(\d+)([.)])) (.*)$/;
+
+/** The text as a Markdown file (速记小窗's 存为 .md): each line its own paragraph (list items stay together),
+ * ++underline++ as <u>…</u>; **bold**, ==highlight==, lists, #tags and URLs as written. */
+export function liteMarkdown(text: string): string {
+  const lines = text.replace(/\s+$/, "").split("\n");
+  const out: string[] = [];
+  lines.forEach((l, i) => {
+    const prev = lines[i - 1];
+    if (i > 0 && l.trim() && prev.trim() && !(LIST.test(l) && LIST.test(prev))) out.push("");
+    const li = LIST.exec(l);
+    const head = li ? l.slice(0, l.length - li[5].length) : "";
+    const body = l.slice(head.length);
+    const marks = pairMarks(body, atoms(body));
+    let line = head;
+    let on = false;
+    for (let j = 0; j < body.length; ) {
+      if (marks.get(j) === "++") {
+        line += on ? "</u>" : "<u>";
+        on = !on;
+        j += 2;
+      } else line += body[j++];
+    }
+    out.push(line);
+  });
+  return `${out.join("\n")}\n`;
+}
+
+/** A file name from the text's first line (marks, list markers and #tags off), else `fallback`. */
+export function liteFileName(text: string, fallback: string): string {
+  const first = text.split("\n").find((l) => l.trim()) ?? "";
+  const body = first.replace(LIST, "$5");
+  const plain = tagSpans(body).reverse().reduce((s, t) => s.slice(0, t.start) + s.slice(t.end), body);
+  const name = plain.replace(/\*\*|==|\+\+/g, "").replace(/[/\\:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+  return [...name].slice(0, 40).join("").trim() || fallback;
+}
 const MARK = "text-muted-foreground/45";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

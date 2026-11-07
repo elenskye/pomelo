@@ -16,7 +16,7 @@ export type Note = {
   refs: Brief[];
   backrefs: Brief[];
   attachments: FileInfo[];
-  /** Tasks made from it (转成待办 / 拆成待办), oldest first. */
+  /** Tasks made from it (转成待办 / 柚子转为待办), oldest first. */
   tasks: NoteTask[];
 };
 export type NoteTask = { id: number; title: string; done: boolean; groupId: number; goalId: number | null };

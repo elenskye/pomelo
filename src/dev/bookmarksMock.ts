@@ -1,5 +1,5 @@
 // 一网打尽 in the browser mock (`?mock`): a made-up tree, the same rules as modules/bookmarks.rs (http(s)
-// only, no name = the host, never a folder into itself, deleting a folder deletes what's in it). No icons
+// only, no name = the host, links always in a folder, never a folder into itself, deleting a folder deletes what's in it). No icons
 // (the mock never goes online): the page shows first letters. mockIpc wraps the writes in its undo.
 import type { Bookmark, NewBookmark } from "@/modules/bookmarks/api";
 
@@ -49,8 +49,8 @@ function add(parentId: number | null, kind: Bookmark["kind"], title: string, url
   const study = add(null, "folder", "学习");
   add(study.id, "link", "Google Scholar", "https://scholar.google.com/");
   add(study.id, "link", "中国知网", "https://kns.cnki.net/");
+  add(study.id, "link", "柚儿园的说明", "https://example.com/pomelo");
   add(null, "folder", "空的文件夹");
-  add(null, "link", "柚儿园的说明", "https://example.com/pomelo");
 }
 
 const get = (id: number) => {
@@ -70,6 +70,7 @@ export const bookmarkHandlers: Record<string, (a: Args) => unknown> = {
   bookmarks_create: (a) => {
     const i = a.input as NewBookmark;
     checkParent(i.parentId);
+    if (i.kind === "link" && i.parentId == null) throw "网址要放在文件夹里";
     if (i.kind === "link") {
       const url = normalize(i.url ?? "");
       return add(i.parentId, "link", i.title.trim() || host(url), url, !!i.onHome);
@@ -93,6 +94,7 @@ export const bookmarkHandlers: Record<string, (a: Args) => unknown> = {
     const before = (a.before as number | null) ?? null;
     checkParent(parent);
     ids.forEach(get);
+    if (parent == null && ids.some((id) => get(id).kind === "link")) throw "网址要放在文件夹里";
     for (let at = parent == null ? undefined : bm.rows.find((x) => x.id === parent); at; at = at.parentId == null ? undefined : bm.rows.find((x) => x.id === at!.parentId))
       if (ids.includes(at.id)) throw "文件夹不能放进它自己或它里面的文件夹";
     const order = kids(parent).filter((b) => !ids.includes(b.id)).map((b) => b.id);
