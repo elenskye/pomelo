@@ -1341,6 +1341,20 @@
   .pm-pomelo[data-face="wink"] > svg { animation: none; }
 }
 
+/* ---------- 动效 · 柚子 · 担心（pomelo-worried，expressive） ---------- */
+/* 柚子 · 担心（今日简报说有烦心事的那一小时）：比平常慢一点地呼吸（一口气 5.2 秒），眼睛往下看一会儿再抬起来。
+   外层和共用的呼吸在 pomelo-idle；脸是 marks/pomelo/pomelo-worried.svg（出错那张去掉红色「!」）。 */
+.pm-pomelo[data-face="worried"] > svg { animation: pm-pomelo-breathe 5.2s ease-in-out infinite; }
+.pm-pomelo[data-face="worried"] .eyes { animation: pm-pomelo-look-down 5.2s ease-in-out infinite; }
+@keyframes pm-pomelo-look-down {
+  0%, 30% { transform: translateY(0); }
+  40%, 70% { transform: translateY(1.6px); }
+  80%, 100% { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-pomelo[data-face="worried"] > svg, .pm-pomelo[data-face="worried"] .eyes { animation: none; }
+}
+
 /* ---------- 动效 · 柚子 · 哇（pomelo-wow，expressive） ---------- */
 /* 柚子「哇」：跳一下，三颗小星星闪一闪（打开柚子瓣、贴纸簿、拆信封时）。1.2 秒。
    白边（.wb）的第 9–11 条是三颗星星的。 */

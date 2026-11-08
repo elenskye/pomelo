@@ -10,8 +10,8 @@ import { Tip } from "@/shared/handParts";
 import { markSvg, sizedMark } from "@/shared/marks";
 
 export type Face = "idle" | "thinking" | "success" | "error" | "wink" | "wow" | "sleepy" | "worried" | "surprised";
-/** Pomelo's faces → the drawn ones synced from visual-atelier (marks/pomelo-*.svg); 担心 until its drawing is synced: 平常. */
-const MARK_FACE: Record<Face, string> = { idle: "normal", thinking: "think", success: "happy", error: "error", wink: "wink", wow: "wow", sleepy: "sleepy", worried: markSvg("pomelo-worried") ? "worried" : "normal", surprised: "surprised" };
+/** Pomelo's faces → the drawn ones synced from visual-atelier (marks/pomelo-*.svg). */
+const MARK_FACE: Record<Face, string> = { idle: "normal", thinking: "think", success: "happy", error: "error", wink: "wink", wow: "wow", sleepy: "sleepy", worried: "worried", surprised: "surprised" };
 
 /**
  * 柚子 with a face (visual-atelier's 8 drawn faces) and its animation from ds.css (the Design System's motion parts
