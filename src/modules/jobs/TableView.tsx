@@ -102,7 +102,7 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
                 <td className="truncate px-3 py-2">{j.location}</td>
                 <td className="px-3 py-2">
                   {j.statusId !== null && (
-                    <span className="rounded px-1.5 py-0.5 text-xs whitespace-nowrap" style={{ background: STAGE_STYLE[j.stage].bg, color: STAGE_STYLE[j.stage].fg }}>
+                    <span className="pm-chip" style={{ "--pm-tag-bg": STAGE_STYLE[j.stage].bg, "--pm-dot": STAGE_STYLE[j.stage].fg } as React.CSSProperties}>
                       {statusName.get(j.statusId)}
                     </span>
                   )}

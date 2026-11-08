@@ -1,0 +1,105 @@
+/* 首页完整版的桌面 (docs/design.md「首页」; visual-atelier's canvases/pomelo-pages Desk / DeskRight, phase6.mjs).
+   Cards, notes, the receipt, ticks and marks are the Design System's (ds.css pm-*, painted by shared/hand.ts);
+   this only places them. The notes falling in is the greeting motion part (pm-greet-note). */
+.dk-view { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; }
+.dk-view.panning { cursor: grabbing; }
+.dk-wide { position: absolute; left: 0; top: 0; will-change: transform; }
+.dk-note { position: absolute; touch-action: none; cursor: grab; }
+.dk-note.drag { cursor: grabbing; }
+.dk-note button, .dk-note a { cursor: pointer; }
+.dk-greet { position: absolute; left: 92px; top: 18px; display: flex; align-items: baseline; gap: 12px; pointer-events: none; white-space: nowrap; }
+.dk-greet .gw { font-size: var(--text-greeting, 46px); font-weight: 700; line-height: 1.15; }
+.dk-greet .gs { font-size: 17px; color: var(--color-ink-soft); }
+.dk-nav { position: absolute; right: 30px; bottom: 10px; display: flex; gap: 10px; z-index: 2; }
+.dk-nav button { display: grid; place-items: center; width: 18px; height: 18px; }
+.dk-nav button > span { display: block; width: 10px; height: 10px; border-radius: 50%; border: 1.6px solid var(--color-pen); }
+.dk-nav button.on > span { background: var(--color-pen); }
+
+/* the notes */
+.dk-card { padding: 16px 20px; }
+.dk-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dk-head .pm-card-title { margin: 0; }
+.dk-head .pm-card-meta { margin-left: auto; font-size: 13px; color: var(--color-ink-soft); white-space: nowrap; }
+.dk-title { display: flex; align-items: center; gap: 8px; text-align: left; border-radius: 6px; outline: none; }
+.dk-title:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.dk-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; font-size: 14px; text-align: left; }
+.dk-row > .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-row > .d { flex: none; font-size: 12px; color: var(--color-ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dk-row + .dk-row { border-top: 1px dashed var(--color-line); }
+.dk-lined .dk-row + .dk-row { border-top: 0; }
+.dk-lined .dk-row { min-height: 38.5px; }
+.dk-more { display: block; margin-top: 4px; font-size: 12px; color: var(--color-ink-soft); }
+.dk-more:hover { color: var(--color-ink); }
+.dk-empty { padding: 6px 0 2px; font-size: 14px; color: var(--color-ink-soft); }
+
+/* 今日简报 */
+.dk-brief { padding: 18px 22px 16px 34px; }
+.dk-brief .brief-body { max-height: 228px; overflow-y: auto; font-size: 15px; line-height: 1.85; }
+.dk-brief .brief-body p { margin: 0 0 4px; }
+
+/* 今天的待办 */
+.dk-todo .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 15px; }
+
+.dk-todo .due { flex: none; font-size: 12px; white-space: nowrap; color: var(--color-ink-soft); }
+.dk-todo .due.late { color: var(--color-danger); }
+
+/* 快到的日子 */
+.dk-day { display: flex; align-items: center; width: 100%; min-height: 46px; text-align: left; }
+.dk-day .n { display: flex; flex-direction: column; min-width: 0; }
+.dk-day .n > span:first-child { font-size: 15px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-day .n > span:last-child { font-size: 12px; line-height: 16px; color: var(--color-ink-soft); }
+.dk-day .pm-stat { margin-left: auto; padding-left: 10px; white-space: nowrap; }
+
+/* 在读在看、绘画进度 */
+.dk-bar { position: relative; height: 12px; margin-top: 4px; }
+.dk-bar > .in { position: absolute; left: 2px; top: 2px; bottom: 2px; border-radius: 5px; }
+
+/* 资产小票：翻过来是曲线（motion receipt-flip） */
+.dk-receipt { position: relative; perspective: 900px; }
+.dk-receipt .pm-flip-face .pm-receipt { filter: drop-shadow(0 6px 10px var(--color-shadow)); }
+.dk-receipt .rtape { position: absolute; left: 92px; top: -12px; width: 80px; height: 24px; z-index: 3; }
+.dk-receipt .rflip { position: absolute; right: 10px; top: 10px; z-index: 3; display: flex; color: var(--color-pen); }
+
+/* 念念不忘一条 */
+.dk-sticky { padding: 20px 20px 16px; }
+.dk-sticky .txt { font-size: 17px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; text-align: left; }
+
+/* 今年的数字：圆贴纸 */
+.dk-year { position: relative; height: 236px; }
+.dk-year .yt { position: absolute; left: 4px; top: -2px; font-size: 14px; font-weight: 700; line-height: 20px; }
+.dk-ystat { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 88px; height: 88px; color: var(--color-on-sticky); }
+.dk-ystat > * { position: relative; }
+.dk-ystat .v { font-size: 22px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.dk-ystat .v small { font-size: 11px; font-weight: 400; }
+.dk-ystat .l { font-size: 11px; line-height: 14px; }
+
+/* 本月小月历 */
+.dk-month { padding: 14px 16px; cursor: pointer; text-align: left; }
+.dk-mgrid { display: grid; grid-template-columns: repeat(7, 34px); grid-auto-rows: 30px; margin-top: 6px; }
+.dk-mgrid .mh { font-size: 12px; line-height: 22px; text-align: center; color: var(--color-ink-soft); }
+.dk-mgrid .mc { position: relative; display: flex; flex-direction: column; align-items: center; font-size: 13px; line-height: 18px; }
+.dk-mgrid .mc b { position: relative; z-index: 1; font-weight: 400; }
+.dk-mgrid .mc.we b { color: var(--color-ink-soft); }
+.dk-mgrid .mc.now b { font-weight: 700; color: var(--color-ink); }
+.dk-mgrid .mnow { position: absolute; left: 5px; top: -4px; width: 24px; height: 24px; }
+.dk-mgrid .dots { display: flex; gap: 2px; height: 6px; margin-top: 1px; }
+.dk-mgrid .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--pm-dot); }
+
+/* 今年按月 */
+.dk-months .sers { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
+.dk-months .sers .pm-chip[aria-pressed="true"] { box-shadow: inset 0 0 0 1.6px var(--color-pen); font-weight: 700; }
+.dk-months .lab { display: grid; grid-template-columns: repeat(12, 1fr); margin-top: 4px; text-align: center; font-size: 11px; color: var(--color-ink-soft); }
+.dk-months .lab .on { color: var(--color-ink); font-weight: 700; }
+.dk-months text { font-family: inherit; font-size: 13px; font-weight: 700; fill: var(--color-ink); }
+
+/* 求职近况 */
+.dk-jnums { display: grid; grid-template-columns: repeat(3, 1fr); margin: 4px 0 6px; }
+.dk-jnums > div { display: flex; flex-direction: column; font-size: 12px; }
+.dk-jnums > div + div { padding-left: 14px; border-left: 1.5px dashed var(--color-line); }
+.dk-jnums .soft { color: var(--color-ink-soft); }
+
+/* 那年今日 */
+.dk-then .txt { margin-top: 8px; font-size: 15px; line-height: 1.65; text-align: left; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 一网打尽 */
+.dk-links .dk-row { white-space: nowrap; }

@@ -3,7 +3,7 @@
 // can open the conversation in 柚子. Hidden when 柚子 is hidden.
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { Bird, X } from "lucide-react";
+import { X } from "lucide-react";
 import { MarkdownView } from "@/modules/youzi/MarkdownView";
 import { useYearCard, type YearLetter } from "@/modules/youzi/api";
 import { InlineMd } from "@/shared/InlineMd";
@@ -26,18 +26,13 @@ export function YearCard() {
   if (!letter) return null;
   const [keywords, first] = opening(letter.content);
   return (
-    <section className="rounded-card border bg-card px-4 py-3">
-      <div className="flex items-center gap-1.5">
-        <button type="button" onClick={() => setReading(true)} className="flex items-center gap-1.5 rounded-control text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Bird size={15} strokeWidth={1.75} style={{ color: "var(--module-youzi)" }} />
-          {letter.year} 年度总结
+    // on the desk: a card like 今日简报 (Design System card), above it in the brief's note
+    <section className="pm-card dk-card" data-hand="card" data-seed={739} data-tilt={0.8} data-tapes={1} style={{ marginBottom: 18, "--pm-card-bg": "var(--color-cat-orange-tint)" } as React.CSSProperties}>
+      <div className="dk-head">
+        <button type="button" onClick={() => setReading(true)} className="dk-title">
+          <span className="pm-card-title">{letter.year} 年度总结</span>
         </button>
-        <div className="flex-1" />
-        <button
-          type="button"
-          onClick={() => setReading(true)}
-          className="rounded-control px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <button type="button" onClick={() => setReading(true)} className="pm-card-meta pm-link">
           看全文
         </button>
       </div>

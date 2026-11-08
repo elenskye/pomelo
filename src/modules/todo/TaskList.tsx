@@ -36,7 +36,7 @@ function Pie(props: { ratio: number }) {
 
 /** The task type's quick action. A tick is the Design System checkbox (a sticker that jelly-bounces when ticked, its
  *  yuzu fill pops and the tick draws itself; motion part check); a 进度条 task shows its pie instead. */
-function ActionCircle(props: { task: Task; onToggle: () => void }) {
+export function ActionCircle(props: { task: Task; onToggle: () => void }) {
   const t = props.task;
   const ref = useRef<HTMLButtonElement>(null);
   const checked = t.done || (t.taskType === "checkin" && t.loggedToday);

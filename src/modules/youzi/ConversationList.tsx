@@ -12,14 +12,18 @@
 // Project headers drag to reorder projects. Esc or a drop outside cancels. Everything here can be undone.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlarmClock, ChevronRight, Ellipsis, Folder, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Search, Settings2, X } from "lucide-react";
+import { AlarmClock, Ellipsis, Folder, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Settings2, X } from "lucide-react";
+import { ModuleIcon } from "@/app/ModuleIcon";
+import { moduleById } from "@/app/modules";
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
+import { HandIcon } from "@/shared/handParts";
 import { IconButton } from "@/shared/ui";
 import { LIBRARY_KEY, isBool, isNumbers, isStrings, youziApi, useYouziUi, type Library, type ListKey, type ProjectRow, type SessionRow } from "./api";
 import { useConversationActions } from "./actions";
 import { ASSISTANTS } from "./assistants";
 import { ProjectDialog } from "./ProjectDialog";
+import "./list.css";
 
 type Target = { list: ListKey; before?: number; after?: number; header?: boolean };
 type Drag = { kind: "session" | "project"; id: number; title: string; x: number; y: number; target: Target | null };
@@ -119,6 +123,11 @@ function useListDrag(box: RefObject<HTMLElement | null>, onDrop: (d: Drag) => vo
     return true;
   };
   return { drag, begin, swallow };
+}
+
+/** The open conversation (or 助手) sits on a hand-cut block of the selection colour (Phase 2 final design). */
+function SelBlock(props: { seed: number }) {
+  return <span aria-hidden className="yz-sel" data-hand="frame" data-stroke="none" data-fill="selected" data-r="9" data-amp="1" data-pad="2" data-seed={props.seed} />;
 }
 
 const menuTrigger =
@@ -273,11 +282,10 @@ export function ConversationList(props: {
         data-id={s.id}
         data-list={list}
         onPointerDown={(e) => !sel.length && renaming !== s.id && begin(e, "session", s.id, s.title)}
-        className={`group relative flex items-center gap-1 rounded-control pr-1 transition-colors duration-150 ${
-          isSel ? "bg-accent ring-1 ring-primary/40" : s.id === props.current ? "bg-accent" : "hover:bg-muted/70"
-        } ${drag?.kind === "session" && drag.id === s.id ? "opacity-40" : ""}`}
+        className={`group yz-row ${isSel ? "sel" : ""} ${drag?.kind === "session" && drag.id === s.id ? "dragged" : ""}`}
       >
-        {line && <span className={`pointer-events-none absolute right-1 left-1 h-0.5 rounded bg-primary ${line === "top" ? "-top-px" : "-bottom-px"}`} />}
+        {s.id === props.current && !isSel && <SelBlock seed={1220 + (s.id % 40)} />}
+        {line && <span className={`pointer-events-none absolute right-1 left-1 z-[2] h-0.5 rounded bg-primary ${line === "top" ? "-top-px" : "-bottom-px"}`} />}
         {renaming === s.id ? (
           <div className="flex-1 py-0.5 pl-1">
             <RenameInput
@@ -294,10 +302,10 @@ export function ConversationList(props: {
             aria-current={s.id === props.current}
             title={s.title}
             onClick={(e) => click(e, s)}
-            className="min-w-0 flex-1 truncate py-1.5 pl-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="yz-title"
           >
-            {s.private && <Lock size={11} className="mr-1 inline-block -translate-y-px text-muted-foreground" aria-label="私密" />}
-            {s.title}
+            {s.private && <Lock size={11} className="shrink-0 text-muted-foreground" aria-label="私密" />}
+            <span className="yz-t">{s.title}</span>
           </button>
         )}
         {props.generating.includes(s.id) ? (
@@ -330,20 +338,17 @@ export function ConversationList(props: {
       <div
         data-drop={list && accepts(list) ? "list" : undefined}
         data-list={list ?? undefined}
-        className={`mt-3 flex items-center gap-1 rounded-control px-2.5 py-0.5 text-xs text-muted-foreground first:mt-0 ${hot ? "bg-accent ring-1 ring-primary/40" : ""}`}
+        className={`yz-label ${hot ? "hot" : ""}`}
       >
         {folding ? (
-          <button
-            type="button"
-            aria-expanded={folding.open}
-            onClick={() => !swallow() && folding.toggle()}
-            className="flex flex-1 cursor-default items-center gap-1 rounded-control text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronRight size={12} className={`transition-transform duration-150 ${folding.open ? "rotate-90" : ""}`} />
-            {text}
+          <button type="button" aria-expanded={folding.open} onClick={() => !swallow() && folding.toggle()} className="yz-lab">
+            <HandIcon name="down" size={14} seed={1201} className={`yz-chev ${folding.open ? "" : "shut"}`} />
+            <span className="yz-lt">{text}</span>
           </button>
         ) : (
-          <span className="flex flex-1 items-center gap-1">{text}</span>
+          <span className="yz-lab">
+            <span className="yz-lt">{text}</span>
+          </span>
         )}
         {extra}
       </div>
@@ -361,20 +366,18 @@ export function ConversationList(props: {
         data-project={p.id}
         data-list={list}
         onPointerDown={(e) => !sel.length && begin(e, "project", p.id, p.name)}
-        className={`group relative flex items-center gap-1 rounded-control pr-1 transition-colors duration-150 ${hot ? "bg-accent ring-1 ring-primary/40" : "hover:bg-muted/70"} ${
-          drag?.kind === "project" && drag.id === p.id ? "opacity-40" : ""
-        }`}
+        className={`group yz-row head ${hot ? "sel" : ""} ${drag?.kind === "project" && drag.id === p.id ? "dragged" : ""}`}
       >
         {line && <span className={`pointer-events-none absolute right-1 left-1 h-0.5 rounded bg-primary ${line === "top" ? "-top-px" : "-bottom-px"}`} />}
         <button
           type="button"
           aria-expanded={!isCollapsed}
           onClick={() => !swallow() && setCollapsed(isCollapsed ? collapsed.filter((x) => x !== p.id) : [...collapsed, p.id])}
-          className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="yz-title !pl-0"
         >
-          <ChevronRight size={12} className={`shrink-0 text-muted-foreground transition-transform duration-150 ${isCollapsed ? "" : "rotate-90"}`} />
-          <Folder size={14} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
-          <span className="truncate">{p.name}</span>
+          <HandIcon name="down" size={14} seed={1202} className={`yz-chev ${isCollapsed ? "shut" : ""}`} />
+          <Folder size={14} strokeWidth={1.5} className="shrink-0" style={{ color: "var(--color-pen)" }} />
+          <span className="yz-t">{p.name}</span>
         </button>
         <Dropdown<string | null>
           plain
@@ -405,17 +408,14 @@ export function ConversationList(props: {
   const batchMove: DropdownOption<string>[] = [...lib.projects.map((p) => ({ value: String(p.id), label: p.name, group: "移到项目" })), { value: "none", label: "移出项目", group: "移到项目" }];
 
   return (
-    <div className="flex w-[248px] shrink-0 flex-col">
-      <div className="flex items-center pr-2 pb-1">
-        <button
-          type="button"
-          onClick={props.onSearch}
-          className="flex flex-1 items-center gap-1.5 rounded-control px-2.5 py-1.5 text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Search size={14} /> 搜索对话
-        </button>
-      </div>
-      <div ref={box} className="-m-1 min-h-0 flex-1 overflow-y-auto p-1 pr-2">
+    <div className="yz-list">
+      <button type="button" onClick={props.onSearch} className="pm-field pm-compact yz-search" data-hand="field" data-seed={1210} data-r={10} data-fill="card">
+        <span style={{ color: "var(--color-pen)" }}>
+          <HandIcon name="search" size={16} seed={1211} />
+        </span>
+        <span>搜索对话</span>
+      </button>
+      <div ref={box} className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
         {(lib.pinned.length > 0 || dragging) && label("置顶", "pinned")}
         {lib.pinned.map((s) => row(s, "pinned"))}
 
@@ -432,15 +432,13 @@ export function ConversationList(props: {
             <div key={p.id}>
               {projectHeader(p)}
               {!collapsed.includes(p.id) && (
-                <div className="pl-4">
+                <div className="yz-sub">
                   {p.files > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => props.onProjectFiles(p.id)}
-                      className="flex w-full items-center gap-1.5 rounded-control px-2.5 py-1 text-left text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
-                    </button>
+                    <div className="yz-row yz-files">
+                      <button type="button" onClick={() => props.onProjectFiles(p.id)} className="yz-title">
+                        <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
+                      </button>
+                    </div>
                   )}
                   {p.sessions.map((s) => row(s, `project:${p.id}`))}
                 </div>
@@ -451,16 +449,13 @@ export function ConversationList(props: {
         {label("助手", null, null, fold("assistants"))}
         {open("assistants") &&
           ASSISTANTS.map((a) => (
-            <button
-              key={a.key}
-              type="button"
-              aria-current={a.key === props.assistant}
-              onClick={() => props.onAssistant(a.key)}
-              className={`flex w-full items-center gap-1.5 rounded-control py-1.5 pl-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${a.key === props.assistant ? "bg-accent" : "hover:bg-muted/70"}`}
-            >
-              <a.icon size={14} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
-              <span className="truncate">{a.name}</span>
-            </button>
+            <div key={a.key} className="yz-row">
+              {a.key === props.assistant && <SelBlock seed={1260} />}
+              <button type="button" aria-current={a.key === props.assistant} onClick={() => props.onAssistant(a.key)} className="yz-title !pl-1.5">
+                <ModuleIcon def={moduleById(a.key)} size={22} />
+                <span className="yz-t">{a.name}</span>
+              </button>
+            </div>
           ))}
 
         {(lib.scheduled.length > 0 || draggedScheduled) &&
@@ -484,9 +479,9 @@ export function ConversationList(props: {
       </div>
 
       {sel.length > 0 && (
-        <div className="mt-2 mr-2 flex flex-wrap items-center gap-1 rounded-card border bg-card p-1.5 text-sm shadow-sm">
+        <div className="yz-selbar">
           <span className="px-1.5 text-muted-foreground">已选 {sel.length}</span>
-          <button type="button" className="rounded-control px-2 py-1 hover:bg-muted" onClick={() => void act.pin(sel, !allPinned)}>
+          <button type="button" onClick={() => void act.pin(sel, !allPinned)}>
             {allPinned ? "取消置顶" : "置顶"}
           </button>
           <Dropdown<string | null>
@@ -496,12 +491,12 @@ export function ConversationList(props: {
             options={batchMove}
             onChange={(v) => v && void act.move(sel, v === "none" ? null : Number(v))}
             renderTrigger={() => <span>移到</span>}
-            triggerClassName="rounded-control px-2 py-1 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            triggerClassName="yz-selbtn outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <button type="button" className="rounded-control px-2 py-1 hover:bg-muted" onClick={() => void act.archive(sel, !allArchived)}>
+          <button type="button" onClick={() => void act.archive(sel, !allArchived)}>
             {allArchived ? "恢复" : "归档"}
           </button>
-          <button type="button" className="rounded-control px-2 py-1 text-destructive hover:bg-muted" onClick={() => void act.remove(sel).then((ok) => ok && setSelected([]))}>
+          <button type="button" className="text-destructive" onClick={() => void act.remove(sel).then((ok) => ok && setSelected([]))}>
             删除
           </button>
           <IconButton label="取消选择" onClick={() => setSelected([])}>
@@ -510,7 +505,7 @@ export function ConversationList(props: {
         </div>
       )}
 
-      <div className="mt-1 mr-2 grid grid-cols-2 gap-x-1">
+      <div className="yz-foot">
         {(
           [
             ["管理", props.onManage, Settings2],
@@ -523,7 +518,7 @@ export function ConversationList(props: {
             key={label}
             type="button"
             onClick={onClick}
-            className="flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="yz-tool pm-press"
           >
             <Icon size={14} strokeWidth={1.5} /> {label}
           </button>

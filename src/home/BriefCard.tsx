@@ -3,7 +3,6 @@
 // hidden or the brief is off (管理 → 定时).
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bird } from "lucide-react";
 import { BRIEF_KEY, youziApi, useBrief, type Brief } from "@/modules/youzi/api";
 import { errorText, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
@@ -28,16 +27,15 @@ export function BriefCard(props: { today: string; onTitle: () => void }) {
   const writing = b.state === "writing" || (b.state === "none" && asked.current === props.today);
   const paragraphs = b.content.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   return (
-    <section className="relative rounded-card border bg-card px-4 py-3 pr-14">
+    // on the desk: the Design System card with stitches down its left edge, 柚子's sticker slapped on its corner
+    <section className="pm-card dk-brief" data-hand="card" data-seed={740} data-tilt={-1.2} data-tapes={1} data-stitches="">
       <Whisper className="brief-whisper" />
-      <div className="flex items-center gap-1.5">
-        <button type="button" onClick={props.onTitle} className="flex items-center gap-1.5 rounded-control text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Bird size={15} strokeWidth={1.75} style={{ color: "var(--module-youzi)" }} />
-          今日简报
+      <div className="dk-head">
+        <button type="button" onClick={props.onTitle} className="dk-title">
+          <span className="pm-card-title">今日简报</span>
         </button>
-        <div className="flex-1" />
         {!writing && b.state !== "none" && (
-          <button type="button" onClick={write} className="rounded-control px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          <button type="button" onClick={write} className="pm-card-meta" style={{ marginRight: 54 }}>
             {b.state === "failed" ? "重试" : "重写"}
           </button>
         )}
@@ -47,7 +45,7 @@ export function BriefCard(props: { today: string; onTitle: () => void }) {
       )}
       {b.state === "failed" && b.error && <p className="mt-2 text-sm text-destructive">{b.error}</p>}
       {paragraphs.length > 0 && (
-        <div className={`mt-2 space-y-1.5 text-sm leading-relaxed whitespace-pre-line ${writing ? "opacity-50" : ""}`}>
+        <div data-scroll className={`brief-body whitespace-pre-line ${writing ? "opacity-50" : ""}`}>
           {paragraphs.map((p, i) => (
             <p key={i}>
               <InlineMd text={p.replace(/^#+\s*/gm, "")} />

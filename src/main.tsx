@@ -8,6 +8,7 @@ import FilmsPage from "@/modules/films/FilmsPage";
 import DrawingPage from "@/modules/drawing/DrawingPage";
 import PackingPage from "@/modules/packing/PackingPage";
 import HomePage from "@/home/HomePage";
+import CalendarPage from "@/calendar/CalendarPage";
 import FinancePage from "@/modules/finance/FinancePage";
 import JobsPage from "@/modules/jobs/JobsPage";
 import NotesPage from "@/modules/notes/NotesPage";
@@ -72,6 +73,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
             <Route path="janitor/:sub?" element={<Suspense fallback={null}><AssistantModule which="janitor" /></Suspense>} />
             <Route path="importer" element={<Navigate to="/finance/import" replace />} />
+            <Route path="calendar" element={<CalendarPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/health" element={<HealthPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

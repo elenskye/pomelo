@@ -9,16 +9,17 @@ import { flash } from "./hand";
 import { HandIcon, Tip } from "./handParts";
 import { markSvg, sizedMark } from "./marks";
 
+/** A page's title, as the typical pages (visual-atelier's canvases/pomelo-pages): big, no icon — the module's sticker
+ *  is slapped on the paper's corner — clear of that sticker; what the page holds in soft small print on the right.
+ *  `icon` / `color` stay for pages shown outside the paper. */
 export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
-  const Icon = props.icon;
   return (
-    <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between gap-4 px-8 pb-3">
-      <h1 className="pointer-events-none flex shrink-0 items-center gap-2 text-[22px] font-bold whitespace-nowrap">
-        {Icon && <Icon size={22} strokeWidth={1.75} style={{ color: props.color }} />}
+    <header data-tauri-drag-region className="pm-page-head flex h-[68px] shrink-0 items-end justify-between gap-4 pr-8 pb-3 pl-14">
+      <h1 className="pm-sheet-title pointer-events-none flex shrink-0 items-center gap-2 whitespace-nowrap">
         {props.title}
         {props.badge}
       </h1>
-      <div className="min-w-0 text-right">{props.right}</div>
+      <div className="min-w-0 text-right text-sm text-[var(--color-ink-soft)]">{props.right}</div>
     </header>
   );
 }

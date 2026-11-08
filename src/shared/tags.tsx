@@ -13,9 +13,11 @@ export function tagStyle(index: number): CSSProperties {
   return { background: `var(--tag-${n}-bg)`, color: `var(--tag-${n}-fg)` };
 }
 
+/** The Design System's chip: the option's tint behind, a dot of its color, the words in ink. */
 export function Tag(props: { index: number; children: ReactNode; className?: string }) {
+  const s = tagStyle(props.index);
   return (
-    <span style={tagStyle(props.index)} className={`inline-block rounded-md px-2 py-0.5 text-xs whitespace-nowrap ${props.className ?? ""}`}>
+    <span style={{ "--pm-tag-bg": s.background, "--pm-dot": s.color } as CSSProperties} className={`pm-chip ${props.className ?? ""}`}>
       {props.children}
     </span>
   );

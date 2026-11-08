@@ -1,6 +1,7 @@
 // Right-side editor shell + page-level selection/keyboard helpers shared by module pages.
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Trash2, X } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { HandIcon } from "./handParts";
 import { useConfirm } from "./feedback";
 import { Button } from "./ui";
 
@@ -23,17 +24,13 @@ export function SidePanel(props: {
     if (body.current) body.current.scrollTop = 0;
   }, []);
   return (
-    <aside className="absolute inset-y-0 right-[var(--chat-float,0px)] z-10 flex w-[400px] animate-slide-in flex-col border-l bg-card shadow-2xl">
+    // the detail page's panel (visual-atelier canvases/pomelo-pages Detail): a hand-drawn card standing off the right edge
+    <aside className="pm-panel absolute inset-y-1 right-[calc(var(--chat-float,0px)+4px)] z-10 flex w-[400px] animate-slide-in flex-col" data-hand="card" data-seed={1500} data-amp="0.8">
       <form onSubmit={props.onSubmit} className="flex min-h-0 flex-1 flex-col">
         <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between px-6 pb-3">
-          <h2 className="pointer-events-none text-base font-bold">{props.title}</h2>
-          <button
-            type="button"
-            aria-label="关闭"
-            onClick={props.onClose}
-            className="rounded-control p-1 text-muted-foreground hover:bg-muted"
-          >
-            <X size={16} />
+          <h2 className="pointer-events-none text-xl font-bold">{props.title}</h2>
+          <button type="button" aria-label="关闭" onClick={props.onClose} className="pm-press grid size-8 place-items-center rounded-control text-[var(--color-pen)]">
+            <HandIcon name="x" size={18} seed={1501} />
           </button>
         </header>
         <div ref={body} className="flex-1 space-y-4 overflow-y-auto px-6 py-2">
@@ -41,7 +38,7 @@ export function SidePanel(props: {
           {props.error && <p className="text-sm text-destructive">{props.error}</p>}
           {props.meta && <p className="pt-2 text-xs text-muted-foreground">{props.meta}</p>}
         </div>
-        <footer className="flex shrink-0 items-center gap-2 border-t px-6 py-3">
+        <footer className="flex shrink-0 items-center gap-2 border-t border-dashed px-6 py-3">
           {props.onDelete && (
             <Button variant="ghost-danger" onClick={props.onDelete}>
               <Trash2 size={14} /> 删除

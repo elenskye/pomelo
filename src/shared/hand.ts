@@ -13,6 +13,29 @@ declare global {
 
 const WATCHED = ["data-hand", "data-seed", "data-fill", "data-tilt", "data-r", "data-sw", "data-amp", "data-size", "data-d", "data-o", "data-tapes", "data-stitches", "data-stroke", "data-pad"];
 
+/** The white boxes on a module's paper (tables, lists, cards: `rounded-card border bg-card`) become the Design
+ *  System's card — a hand-drawn edge, the typical pages of visual-atelier's canvases/pomelo-pages — without touching
+ *  each page: marked data-auto-card + data-hand="card" here (frame.css styles them). Menus, dialogs, pills and boxes
+ *  smaller than a row are left alone; a box that scrolls keeps its overflow (its edge stays inside). */
+const AUTO = ".pm-sheet .rounded-card.border.bg-card:not([data-hand]):not([data-no-hand])";
+let autoSeed = 2000;
+function autoCards() {
+  for (const el of document.querySelectorAll<HTMLElement>(AUTO)) {
+    if (el.closest("dialog,[role=menu],[role=listbox],[role=dialog],.pm-menu,[popover],.pm-panel")) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 160 || r.height < 44) continue;
+    const cs = getComputedStyle(el);
+    if (cs.position === "static") el.style.position = "relative";
+    const scrolls = /(auto|scroll)/.test(cs.overflowY);
+    el.dataset.autoCard = "";
+    if (scrolls) el.dataset.autoScroll = "";
+    el.dataset.hand = "card";
+    el.dataset.amp = "0.7";
+    el.dataset.pad = scrolls ? "0" : "3";
+    el.dataset.seed = String(autoSeed++);
+  }
+}
+
 let started = false;
 /** Once, before the first render: paints now and whenever the page changes. */
 export function startHand() {
@@ -25,6 +48,7 @@ export function startHand() {
     queued = false;
     const ns = window.Pomelo;
     if (!ns) return;
+    autoCards();
     ns.paint(document.body);
     for (const el of document.querySelectorAll("[data-hand]")) {
       if (seen.has(el)) continue;

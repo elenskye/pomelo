@@ -2,7 +2,26 @@
 // marks with 4px rounded data-ends on one baseline, hairline solid grid, one y-axis, hover tooltips
 // (crosshair on lines, per-band on columns), text in text colors only — a colored key sits beside it.
 // Every chart here is paired with a list or table on its page, so no value is hover-only.
+// Drawn by hand like the rest of the frame (visual-atelier canvases/pomelo-pages Stats): columns and donut slices are
+// hand-cut fills with a pen outline, lines are hand strokes, the grid is dashed (the Design System's handmade.js).
 import { useEffect, useRef, useState, type ReactNode } from "react";
+
+type Hand = { P: (d: string) => unknown; handFill: (c: unknown, o: object) => string; handStroke: (c: unknown, o: object) => string };
+const handNs = () => (window as unknown as { Pomelo?: { hand?: Hand } }).Pomelo?.hand ?? null;
+const drawn = new Map<string, string>();
+/** A path drawn by hand (cached: hovering re-renders the chart). `d` uses M / L / Q / Z with spaces. */
+function byHand(d: string, kind: "fill" | "stroke", seed: number, amp = 0.5): string {
+  const key = `${kind}${seed}${amp}${d}`;
+  const hit = drawn.get(key);
+  if (hit) return hit;
+  const h = handNs();
+  if (!h || !d) return d;
+  const out = kind === "fill" ? h.handFill(h.P(d), { amp, seed, sp: 3, keep: 3 }) : h.handStroke(h.P(d), { amp, seed, wave: 14, sp: 1.5, keep: 3 });
+  if (drawn.size > 4000) drawn.clear();
+  drawn.set(key, out);
+  return out;
+}
+const n2 = (v: number) => +v.toFixed(1);
 
 export type Fmt = (n: number) => string;
 
@@ -79,8 +98,8 @@ const leftFor = (labels: string[]) => Math.max(28, 10 + Math.max(...labels.map((
 /** Rounded data-end (top), square at the baseline. */
 function columnPath(x: number, y: number, w: number, h: number) {
   if (h <= 0) return "";
-  const r = Math.min(4, w / 2, h);
-  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  const r = Math.min(5, w / 2, h);
+  return `M${n2(x)} ${n2(y + h)} L${n2(x)} ${n2(y + r)} Q${n2(x)} ${n2(y)} ${n2(x + r)} ${n2(y)} L${n2(x + w - r)} ${n2(y)} Q${n2(x + w)} ${n2(y)} ${n2(x + w)} ${n2(y + r)} L${n2(x + w)} ${n2(y + h)} Z`;
 }
 
 function YGrid(props: { ticks: number[]; y: (v: number) => number; width: number; format: Fmt; left: number }) {
@@ -88,7 +107,15 @@ function YGrid(props: { ticks: number[]; y: (v: number) => number; width: number
     <g>
       {props.ticks.map((t) => (
         <g key={t}>
-          <line x1={props.left} x2={props.width - PAD.right} y1={props.y(t)} y2={props.y(t)} stroke={t === props.ticks[0] ? "var(--chart-axis)" : "var(--chart-grid)"} strokeWidth={1} />
+          <line
+            x1={props.left}
+            x2={props.width - PAD.right}
+            y1={props.y(t)}
+            y2={props.y(t)}
+            stroke={t === props.ticks[0] ? "var(--color-pen)" : "var(--color-line)"}
+            strokeWidth={t === props.ticks[0] ? 1.4 : 1}
+            strokeDasharray={t === props.ticks[0] ? undefined : "3 4"}
+          />
           <text x={props.left - 6} y={props.y(t)} dy="0.32em" textAnchor="end" className="fill-muted-foreground text-[11px] tabular-nums">
             {props.format(t)}
           </text>
@@ -143,7 +170,13 @@ export function ColumnChart(props: {
                   {hover === i && <rect x={x0} y={PAD.top} width={band} height={plotH} className="fill-muted" />}
                   {props.series.map((ser, k) => {
                     const v = props.values[k][i] ?? 0;
-                    return <path key={k} d={columnPath(gx + k * (barW + 2), y(v), barW, y(0) - y(v))} fill={ser.color} />;
+                    const d = columnPath(gx + k * (barW + 2), y(v), barW, y(0) - y(v));
+                    return (
+                      <g key={k}>
+                        <path d={byHand(d, "fill", 300 + i * 7 + k)} fill={ser.color} />
+                        <path d={byHand(d, "stroke", 301 + i * 7 + k)} fill="none" stroke="var(--color-pen)" strokeWidth={1.2} strokeLinejoin="round" />
+                      </g>
+                    );
                   })}
                   {i % every === 0 && (
                     <text x={x0 + band / 2} y={height - 6} textAnchor="middle" className="fill-muted-foreground text-[11px] tabular-nums">
@@ -231,7 +264,7 @@ export function LineChart(props: {
                   opacity={0.1}
                 />
               )}
-              <path d={seg.map((p, j) => `${j ? "L" : "M"}${x(p.i)},${y(p.v)}`).join("")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              <path d={byHand(seg.map((p, j) => `${j ? "L" : "M"}${n2(x(p.i))} ${n2(y(p.v))}`).join(" "), "stroke", 90 + k, 0.6)} fill="none" stroke={color} strokeWidth={2.4} strokeLinejoin="round" strokeLinecap="round" />
             </g>
           ))}
           {props.labels.map((label, i) =>
@@ -310,7 +343,7 @@ export function MultiLineChart(props: {
             const pts = s.values.flatMap((v, i) => (v === null ? [] : [{ i, v }]));
             return (
               <g key={s.key}>
-                <path d={pts.map((p, j) => `${j ? "L" : "M"}${x(p.i)},${y(p.v)}`).join("")} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                <path d={byHand(pts.map((p, j) => `${j ? "L" : "M"}${n2(x(p.i))} ${n2(y(p.v))}`).join(" "), "stroke", 110 + s.key.length, 0.6)} fill="none" stroke={s.color} strokeWidth={2.4} strokeLinejoin="round" strokeLinecap="round" />
                 {pts.map((p) => (
                   <circle key={p.i} cx={x(p.i)} cy={y(p.v)} r={p.i === hover ? 4 : 2.5} fill={s.color} stroke="var(--card)" strokeWidth={p.i === hover ? 2 : 1} />
                 ))}
@@ -345,12 +378,20 @@ export function Donut(props: { slices: { key: string; label: string; value: numb
     const [a0, a1] = [a + gap, a + span - gap];
     a += span;
     if (a1 <= a0) return "";
-    const pt = (rad: number, ang: number) => `${R + rad * Math.cos(ang)},${R + rad * Math.sin(ang)}`;
-    const large = a1 - a0 > Math.PI ? 1 : 0;
+    // the hand-drawn lines don't take arcs (A): each ring is short straight steps
+    const pt = (rad: number, ang: number) => `${n2(R + rad * Math.cos(ang))} ${n2(R + rad * Math.sin(ang))}`;
+    const ring = (rad: number, from: number, to: number) => {
+      const n = Math.max(2, Math.ceil(Math.abs(to - from) / 0.08));
+      return Array.from({ length: n + 1 }, (_, k) => pt(rad, from + ((to - from) * k) / n));
+    };
     if (span >= Math.PI * 2 - 1e-6) {
-      return `M${pt(R, -Math.PI / 2)}A${R},${R} 0 1 1 ${pt(R, Math.PI * 1.5 - 1e-4)}ZM${pt(r0, -Math.PI / 2)}A${r0},${r0} 0 1 1 ${pt(r0, Math.PI * 1.5 - 1e-4)}Z`;
+      const o = ring(R - 1, 0, Math.PI * 2 - 0.02);
+      const inn = ring(r0, Math.PI * 2 - 0.02, 0);
+      return `M${o[0]} ${o.slice(1).map((q) => `L${q}`).join(" ")} L${inn[0]} ${inn.slice(1).map((q) => `L${q}`).join(" ")} Z`;
     }
-    return `M${pt(R, a0)}A${R},${R} 0 ${large} 1 ${pt(R, a1)}L${pt(r0, a1)}A${r0},${r0} 0 ${large} 0 ${pt(r0, a0)}Z`;
+    const o = ring(R - 1, a0, a1);
+    const inn = ring(r0, a1, a0);
+    return `M${o[0]} ${o.slice(1).map((q) => `L${q}`).join(" ")} L${inn[0]} ${inn.slice(1).map((q) => `L${q}`).join(" ")} Z`;
   });
   const h = hover !== null ? props.slices[hover] : null;
   return (
@@ -358,15 +399,10 @@ export function Donut(props: { slices: { key: string; label: string; value: numb
       <svg width={size} height={size} role="img" aria-label={props.slices.map((s) => s.label).join("、")}>
         {total === 0 && <circle cx={R} cy={R} r={(R + r0) / 2} fill="none" stroke="var(--chart-grid)" strokeWidth={R - r0} />}
         {arcs.map((d, i) => (
-          <path
-            key={props.slices[i].key}
-            d={d}
-            fill={props.slices[i].color}
-            fillRule="evenodd"
-            opacity={hover === null || hover === i ? 1 : 0.45}
-            className="transition-opacity duration-150"
-            onPointerEnter={() => setHover(i)}
-          />
+          <g key={props.slices[i].key} opacity={hover === null || hover === i ? 1 : 0.45} className="transition-opacity duration-150" onPointerEnter={() => setHover(i)}>
+            <path d={byHand(d, "fill", 530 + i, 0.6)} fill={props.slices[i].color} />
+            <path d={byHand(d, "stroke", 540 + i, 0.6)} fill="none" stroke="var(--color-pen)" strokeWidth={1.3} strokeLinejoin="round" />
+          </g>
         ))}
       </svg>
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">

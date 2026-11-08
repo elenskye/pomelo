@@ -25,7 +25,7 @@
 
 **kinds**（能自己增删改的类型）：`module`、`name`（同模块不重名，最多 20 字）、`sort_order`。记录里只存 `kind_id`，删类型后记录变「未分类」。各模块：`books`（虚构、非虚构、漫画、其他）、`films`（电影、剧集、动漫）、`drawing`（正课、DLC 跟画、LIVE 辅导）、`packing`（重要物品、随身、护理、兴趣）、`fin_out` 支出分类、`fin_in` 收入分类、`job_channel` 投递渠道；每个循序渐进模块一组（`progress/编号`，一开始是空的）。
 
-**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 贴纸簿（以前的模块坞）的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和柚子也按它）；`ui.module_look` 每个模块挑的贴纸和颜色（`{ [模块]: { mark?, tint?: mint|pink|grape|orange|sky } }`，没写的就是它自己的；模块删了一起删）；`ui.tabs` 桌上开着的页（每页停在哪个路径，字符串数组；以前页签存的也是这个样子，照样读）；`ui.site_tab` 呦呦漫游上次的子页、`bookmarks.at` 一网打尽上次看的文件夹等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）；`appearance` 外观（`{ palette: blue|purple|kraft|yellow|mint, theme: system|light|dark }`，没设是蓝笔、跟随系统；界面另在 localStorage 留一份，打开窗口时先用它）。不进撤销，不进导出。
+**settings**：`key`、`value`（JSON）：界面状态（`ui.dock` 贴纸簿（以前的模块坞）的分类、各分类里模块的顺序和置顶：`{ cats: [{ id, name, tone 分类色, mods }], pinned }`；`ui.module_hidden` 隐藏的模块（搜索和柚子也按它）；`ui.module_look` 每个模块挑的贴纸和颜色（`{ [模块]: { mark?, tint?: mint|pink|grape|orange|sky } }`，没写的就是它自己的；模块删了一起删）；`ui.desk` 首页桌面上每张便签放在哪（`{ notes: { [便签]: [x, y] } }`，没写的在默认位置）；`ui.tabs` 桌上开着的页（每页停在哪个路径，字符串数组；以前页签存的也是这个样子，照样读）；`ui.site_tab` 呦呦漫游上次的子页、`bookmarks.at` 一网打尽上次看的文件夹等）、开机启动这类开关、`site.folder`（呦呦漫游的网站文件夹，没设用默认的）；速记小窗的 `capture.draft`（`{ tab, note, todo, due, group, ask }`：上次的标签、笔记正文、待办标题、日期（空是今天）、上次的分组、问的话）、`capture.files`（草稿里附件的编号，「清理没用到的附件」算它们在用）、`capture.pin`（图钉）；`appearance` 外观（`{ palette: blue|purple|kraft|yellow|mint, theme: system|light|dark }`，没设是蓝笔、跟随系统；界面另在 localStorage 留一份，打开窗口时先用它）。不进撤销，不进导出。
 
 ## 附件
 

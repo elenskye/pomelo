@@ -69,10 +69,16 @@
 }
 
 @layer base {
+  /* the window never scrolls or rubber-bands as a whole: only the areas inside it scroll, and they don't
+     bounce at their ends either (a page a few pixels too tall used to make the whole app wobble) */
   html,
   body,
   #root {
     height: 100%;
+    overflow: hidden;
+  }
+  * {
+    overscroll-behavior: none;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;

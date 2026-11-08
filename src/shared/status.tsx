@@ -13,7 +13,8 @@ export const statusStyle = (s: StatusCode) => ({
 
 export function StatusTag(props: { value: StatusCode; labels: StatusLabels }) {
   return (
-    <span style={statusStyle(props.value)} className="inline-block rounded-md px-2 py-0.5 text-xs whitespace-nowrap">
+    // the Design System's chip: the status's tint, a dot of its color
+    <span style={{ "--pm-tag-bg": `var(--status-${props.value}-bg)`, "--pm-dot": `var(--status-${props.value}-fg)` } as React.CSSProperties} className="pm-chip">
       {props.labels[props.value]}
     </span>
   );
