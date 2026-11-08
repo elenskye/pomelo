@@ -2,12 +2,12 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { moduleById } from "@/app/modules";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";
 import { KindManager } from "@/shared/kinds/KindManager";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
-import { Button, PageHeader, Segmented } from "@/shared/ui";
+import { Button, PageHeader } from "@/shared/ui";
 import { CHANNELS, JOBS_KEY, jobLabel, useJobs } from "./api";
 import { JobPanel } from "./JobPanel";
 import { StatsView } from "./StatsView";
@@ -19,6 +19,7 @@ type View = "table" | "stats";
 export default function JobsPage() {
   const m = moduleById("jobs");
   const [view, setView] = useSubPage<View>("jobs");
+  useSubNav("jobs", (p) => setView(p as View));
   const { data: jobs = [] } = useJobs();
   const panel = usePanelSelection<number | "new">();
   const [managing, setManaging] = useState<"statuses" | "channels" | null>(null);
@@ -56,16 +57,7 @@ export default function JobsPage() {
         }
       />
       <div className="flex min-h-0 flex-1 flex-col px-8 pb-6">
-        <div className="flex shrink-0 items-center justify-between gap-4 pb-3">
-          <Segmented
-            ariaLabel="投递还是统计"
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "table" as View, label: "投递" },
-              { value: "stats" as View, label: "统计" },
-            ]}
-          />
+        <div className="flex shrink-0 items-center justify-end gap-4 pb-3">
           <Button variant="primary" onClick={() => void panel.request("new")}>
             <Plus size={14} /> 新投递
           </Button>

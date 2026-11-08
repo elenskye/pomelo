@@ -17,7 +17,7 @@ import { localToday, slashDate } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
-import { Button, PageHeader, SearchInput } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, SearchInput } from "@/shared/ui";
 import { NOTES_KEY, useNoteMutations, useNotes, useOverview, useSimilarNotes, type Brief, type Note, type NoteFilter } from "./api";
 import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
 import { excerpt } from "./NoteBody";
@@ -255,7 +255,7 @@ export default function NotesPage() {
             ))}
             {shown < notes.length && <div ref={sentinel} className="h-8" />}
             {notesQ.data && notes.length === 0 && !(near.length > 0 || similar.isFetching) && (
-              <p className="py-12 text-center text-muted-foreground">{overview?.total === 0 && !filtered ? "念念不忘，必有回响" : "没有找到"}</p>
+              overview?.total === 0 && !filtered ? <EmptyState art="notes" title="念念不忘，必有回响" /> : <p className="py-12 text-center text-muted-foreground">没有找到</p>
             )}
             {nearShown && shown >= notes.length && (
               <>

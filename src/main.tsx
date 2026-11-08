@@ -21,11 +21,11 @@ import BookmarksPage from "@/modules/bookmarks/BookmarksPage";
 const YouziPage = lazy(() => import("@/modules/youzi/YouziPage"));
 // 柚子's 助手 as modules (v0.7)
 const AssistantModule = lazy(() => import("@/modules/youzi/assistants"));
-import DockPage from "@/app/DockPage";
 import TodoPage from "@/modules/todo/TodoPage";
 import HealthPage from "@/settings/Health";
 import SettingsPage from "@/settings/SettingsPage";
 import { startAppearance } from "@/shared/appearance";
+import { startHand } from "@/shared/hand";
 import { ToastProvider } from "@/shared/feedback";
 import "./index.css";
 
@@ -35,6 +35,8 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
 }
 // the palette and light / dark chosen in 设置, before the first paint
 startAppearance();
+// the hand-drawn frames, lines and controls (data-hand), painted as they appear
+startHand();
 
 // Local IPC: no network retries / refetch-on-focus noise.
 const queryClient = new QueryClient({
@@ -70,7 +72,6 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
             <Route path="janitor/:sub?" element={<Suspense fallback={null}><AssistantModule which="janitor" /></Suspense>} />
             <Route path="importer" element={<Navigate to="/finance/import" replace />} />
-            <Route path="dock" element={<DockPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/health" element={<HealthPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -6,32 +6,22 @@
 // parts are in translator.tsx (the 速记小窗 translates too).
 import { useQuery } from "@tanstack/react-query";
 import { Dropdown } from "@/shared/Dropdown";
-import { Button, Segmented, TextArea } from "@/shared/ui";
+import { Button, TextArea } from "@/shared/ui";
 import { youziApi, type TranslateSettings, type TranslateView } from "../api";
 import { useModels } from "../Schedules";
 import { ThinkingButton, fromLevel } from "../Thinking";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { LanguagePickers, TranslateOutput, useTranslator } from "./translator";
 import { MdField } from "@/shared/editor/MdField";
 
 export function TranslatePage() {
   const [tab, setTab] = useSubPage<"translate" | "prompt">("translate");
+  useSubNav("translate", (p) => setTab(p as "translate" | "prompt"));
   const { data, input, settings, typed, change, run, stop } = useTranslator();
   if (!data || input == null || !settings) return <div className="flex-1" />;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col px-8 pb-1">
       <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3">
-        <div>
-          <Segmented
-            ariaLabel="Translator"
-            value={tab}
-            onChange={setTab}
-            options={[
-              { value: "translate", label: "Translator" },
-              { value: "prompt", label: "提示词" },
-            ]}
-          />
-        </div>
         {tab === "translate" ? (
           <TranslateTab data={data} input={input} settings={settings} onInput={typed} onSettings={change} onRun={run} onStop={stop} />
         ) : (

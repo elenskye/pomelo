@@ -1,9 +1,8 @@
 // 钱来钱往: left nav (收支 · 资产 · 报表) + the chosen view. Each view owns its panel and dialogs. 导入账单 (Importer,
 // `/finance/import`) lies over 收支, which stays underneath as it was.
 import { useState } from "react";
-import { ChartPie, Landmark, ReceiptText, type LucideIcon } from "lucide-react";
 import { moduleById } from "@/app/modules";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { useOpenRequest, type Hit } from "@/shared/open";
 import { PageHeader } from "@/shared/ui";
 import { AssetsView } from "./AssetsView";
@@ -12,15 +11,15 @@ import { ImportPanel } from "./ImportPanel";
 import { ReportsView } from "./ReportsView";
 
 type View = "entries" | "assets" | "reports" | "import";
-const VIEWS: { id: View; label: string; icon: LucideIcon }[] = [
-  { id: "entries", label: "收支", icon: ReceiptText },
-  { id: "assets", label: "资产", icon: Landmark },
-  { id: "reports", label: "报表", icon: ChartPie },
-];
 
 export default function FinancePage() {
   const m = moduleById("finance");
   const [view, setView] = useSubPage<View>("finance");
+  // its pages are the folder tabs on the paper's top edge (the frame)
+  useSubNav("finance", (p) => {
+    setFocus(null);
+    setView(p as View);
+  });
   // 全局搜索: switch to the view that has it; the view opens the record
   const [focus, setFocus] = useState<Hit | null>(null);
   const [posted, setPosted] = useState<string | null>(null);
@@ -32,29 +31,6 @@ export default function FinancePage() {
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader icon={m.icon} color={m.color} title={m.label} />
       <div className="flex min-h-0 flex-1 gap-6 px-8 pb-6">
-        <nav aria-label={m.label} className="flex w-40 shrink-0 flex-col gap-0.5">
-          {VIEWS.map((v) => {
-            const Icon = v.icon;
-            const active = v.id === view;
-            return (
-              <button
-                key={v.id}
-                type="button"
-                aria-current={active}
-                onClick={() => {
-                  setFocus(null);
-                  setView(v.id);
-                }}
-                className={`flex items-center gap-2 rounded-control px-2.5 py-1.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${
-                  active ? "bg-accent" : "hover:bg-muted/70"
-                }`}
-              >
-                <Icon size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
-                {v.label}
-              </button>
-            );
-          })}
-        </nav>
         <section className="flex min-w-0 flex-1 flex-col">
           {(view === "entries" || view === "import") && <EntriesView focus={focus} showMonth={posted} onImport={() => setView("import")} />}
           {view === "assets" && <AssetsView focus={focus} />}

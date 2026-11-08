@@ -26,6 +26,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileDown, MapPin, Pencil, RotateCcw, X } from "lucide-react";
 import { errorText, useToast } from "@/shared/feedback";
+import { ThinkLine } from "@/shared/handParts";
 import { api } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
 import { youziApi, type Card, type CardField, type ChatMessage, type Note, type Query, type QueryRecord, type ReadingProgress, type Source } from "./api";
@@ -535,7 +536,7 @@ function Item(p: ItemProps) {
       {m.edit && <EditCard edit={m.edit} streaming={streaming} onChanged={() => void qc.invalidateQueries({ queryKey: ["youzi", "messages"] })} />}
       {p.extra?.(m, streaming)}
       {!streaming && <SourceList sources={citedIn(m.content, m.sources ?? [])} onOpen={p.onOpenSource} />}
-      {writingNow && !m.content && !m.reasoning && !m.reading && <p className="animate-pulse font-reading text-sm text-muted-foreground">{m.queued ? (m.model?.startsWith("cloud:") ? "云端模型忙，等一下再试…" : "排队中（本地模型正在回答别的）") : "正在生成…"}</p>}
+      {writingNow && !m.content && !m.reasoning && !m.reading && (m.queued ? <p className="animate-pulse font-reading text-sm text-muted-foreground">{m.model?.startsWith("cloud:") ? "云端模型忙，等一下再试…" : "排队中（本地模型正在回答别的）"}</p> : <ThinkLine>柚子在想…</ThinkLine>)}
       {!streaming && <UsedMemories memories={m.memories ?? []} />}
       <Notice m={m} retry={p.last && !p.busy && RETRYABLE.has(m.state) ? p.onRegenerate : undefined} />
       {!streaming && (

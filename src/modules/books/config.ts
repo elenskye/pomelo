@@ -15,4 +15,5 @@ export const BOOKS: CollectionConfig = {
   rereadAdd: "再读一次",
   statusLabels: { unmarked: "待标记", todo: "想读", doing: "在读", done: "已读" },
   emptyTitle: "书架空空，去摸会儿鱼吧",
+  emptyArt: "books",
 };

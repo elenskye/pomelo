@@ -2,15 +2,17 @@
 // A row shows only the title and the due date (a repeat task's current occurrence). Circle = the
 // type's quick action (Rust decides what it means): check, finish this occurrence, check in today,
 // or +1. Row click = edit; drag the row = reorder among siblings; 「1/3 ⌄」 on the right = fold.
-import { useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, Circle, Link2, ListPlus, X } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, Link2, ListPlus, X } from "lucide-react";
+import { cheerOver } from "@/shared/cheer";
+import { flash } from "@/shared/hand";
 import { slashDate } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
 import { api } from "@/shared/ipc";
 import { useSortable } from "@/shared/sortable";
 import { IconButton } from "@/shared/ui";
-import { buildTree, useTodoMutations, type PlacedTask, type Task, type TreeNode } from "./api";
+import { buildTree, fetchAgenda, useTodoMutations, type PlacedTask, type Task, type TreeNode } from "./api";
 
 function Pie(props: { ratio: number }) {
   const r = 7;
@@ -32,30 +34,31 @@ function Pie(props: { ratio: number }) {
   );
 }
 
+/** The task type's quick action. A tick is the Design System checkbox (a sticker that jelly-bounces when ticked, its
+ *  yuzu fill pops and the tick draws itself; motion part check); a 进度条 task shows its pie instead. */
 function ActionCircle(props: { task: Task; onToggle: () => void }) {
   const t = props.task;
+  const ref = useRef<HTMLButtonElement>(null);
   const checked = t.done || (t.taskType === "checkin" && t.loggedToday);
   const label = t.done
     ? `把「${t.title}」标为没做完`
     : { normal: `完成「${t.title}」`, repeat: `完成这一次「${t.title}」`, checkin: t.loggedToday ? `取消今天的打卡` : `今天打卡「${t.title}」`, progress: `「${t.title}」+1` }[t.taskType];
+  const pie = !checked && t.taskType === "progress";
   return (
     <button
+      ref={ref}
       type="button"
+      role={pie ? undefined : "checkbox"}
+      aria-checked={pie ? undefined : checked}
       aria-label={label}
-      title={label}
       onClick={(e) => {
         e.stopPropagation();
+        if (!checked && !pie) flash(ref.current, "is-pop", 620);
         props.onToggle();
       }}
-      className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={`shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring ${pie ? "" : "pm-check pm-check-only"}`}
     >
-      {checked ? (
-        <CheckCircle2 size={18} strokeWidth={1.75} style={{ color: "var(--status-done-fg)" }} />
-      ) : t.taskType === "progress" ? (
-        <Pie ratio={t.target ? t.count / t.target : 0} />
-      ) : (
-        <Circle size={18} strokeWidth={1.75} className="text-muted-foreground hover:text-foreground" />
-      )}
+      {pie ? <Pie ratio={t.target ? t.count / t.target : 0} /> : <span data-hand="check" data-size="20" data-seed={1400 + (t.id % 7)} />}
     </button>
   );
 }
@@ -96,10 +99,31 @@ function TaskRow(p: RowProps) {
   const m = useTodoMutations();
   const toast = useToast();
   const t = p.task;
+  const row = useRef<HTMLDivElement>(null);
+  const title = useRef<HTMLSpanElement>(null);
+  /** Ticked: the ink line strikes the title out (motion part check's stroke); the day's last one → 全做完 (done-cheer). */
+  const toggle = () => {
+    const done = !(t.done || (t.taskType === "checkin" && t.loggedToday));
+    m.setDone.mutate(
+      { id: t.id, done },
+      {
+        onSuccess: () => {
+          if (!done) return;
+          if (t.taskType !== "checkin") flash(title.current, "is-pop", 700);
+          void fetchAgenda(p.today)
+            .then((a) => {
+              if (!a.overdue.length && !a.due.length && a.doneToday.length) cheerOver(row.current?.closest("[data-tasks]") ?? row.current, "今天的事都做完啦！");
+            })
+            .catch(() => {});
+        },
+      },
+    );
+  };
   const struck = t.done && t.taskType !== "checkin";
   const late = !t.done && t.dueDate !== null && t.dueDate < p.today;
   return (
     <div
+      ref={row}
       {...p.drag}
       onClick={() => p.onOpen(t)}
       style={{ paddingLeft: 12 + (p.depth ?? 0) * 24 }}
@@ -107,9 +131,9 @@ function TaskRow(p: RowProps) {
         p.selected ? "bg-accent" : "bg-card hover:bg-muted/70"
       }`}
     >
-      <ActionCircle task={t} onToggle={() => m.setDone.mutate({ id: t.id, done: !(t.done || (t.taskType === "checkin" && t.loggedToday)) })} />
+      <ActionCircle task={t} onToggle={toggle} />
       <div className="min-w-0 flex-1">
-        <span className={struck ? "text-muted-foreground line-through decoration-1" : undefined}>
+        <span ref={title} className={`task-title ${struck ? "done text-muted-foreground" : ""}`} data-hand="strike" data-seed={1405 + (t.id % 7)}>
           <InlineMd text={t.title} />
         </span>
         {t.dueDate && (
@@ -207,7 +231,7 @@ export function TaskTree(props: TreeProps & { tasks: Task[]; empty?: ReactNode; 
   const onDelete = (n: TreeNode) => void del(n.task, countSub(n));
 
   return (
-    <div className="space-y-4">
+    <div data-tasks className="space-y-4">
       {open.length > 0 ? (
         <div className="overflow-hidden rounded-card border bg-card">
           <Siblings {...props} nodes={open} depth={0} onDelete={onDelete} />
@@ -246,7 +270,7 @@ export function TaskTree(props: TreeProps & { tasks: Task[]; empty?: ReactNode; 
 export function PlacedList(props: { items: PlacedTask[]; today: string; selectedId: number | null; onOpen: (t: Task) => void }) {
   const [del, delDialog] = useDeleteTask();
   return (
-    <div className="overflow-hidden rounded-card border bg-card">
+    <div data-tasks className="overflow-hidden rounded-card border bg-card">
       {props.items.map((p, i) => (
         <TaskRow
           key={`${p.id}-${i}`}

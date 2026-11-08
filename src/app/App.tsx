@@ -9,10 +9,14 @@ import { Button } from "@/shared/ui";
 import { IDLE_MS, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "@/modules/vault/api";
 import { LIBRARY_KEY, useYouziStatus } from "@/modules/youzi/api";
 import { Bloom } from "./Bloom";
+import { DeskCommon, PaperStack } from "./Desk";
+import { StickerBook } from "./StickerBook";
+import { cheer, CheerLayer } from "@/shared/cheer";
+import type { Face } from "./Pomelo";
 import { useDock } from "./dock";
 import { DragChip } from "./drag";
 import { useHiddenModules } from "./hidden";
-import { IndexTabs } from "./IndexTabs";
+import { useLookColors } from "./moduleLooks";
 import { moduleLabel } from "./modules";
 import { usePublishedContext, type PageContext } from "./pageContext";
 import { reportProblem, useJobWatch } from "./Pomelo";
@@ -53,13 +57,13 @@ function useChatKey(enabled: boolean, toggle: () => void) {
 }
 
 /** The menu bar's 页签 menu (Rust menu.rs: ⌘T ⌘W ⌃Tab ⌃⇧Tab ⌘1–⌘9, 设置… ⌘,) and ⌘⇧[ ⌘⇧] (Safari's other keys
- * for the previous / next 页签). The menu's ⌘1–⌘9 follow the 索引签: 首页, 模块坞, then the pinned modules. */
+ * for the previous / next page). ⌘T opens the 贴纸簿; ⌘1–⌘9: the desk, the 贴纸簿, then the pinned modules. */
 function useTabKeys(enabled: boolean) {
   const tabs = useTabs();
   const dock = useDock();
   const now = useRef({ tabs, pinned: dock.pinned });
   now.current = { tabs, pinned: dock.pinned };
-  const names = ["首页", "模块坞", ...dock.pinned.map(moduleLabel)].slice(0, 9).join("\n");
+  const names = ["桌面", "贴纸簿", ...dock.pinned.map(moduleLabel)].slice(0, 9).join("\n");
   useEffect(() => {
     if (enabled) api.appMenuIndex(names.split("\n")).catch(() => {});
   }, [enabled, names]);
@@ -70,14 +74,18 @@ function useTabKeys(enabled: boolean) {
       const { tabs: t, pinned } = now.current;
       const n = t.tabs.length;
       if (action === "new-tab") t.newTab();
-      else if (action === "close-tab") t.close(t.active);
-      else if (action === "next-tab") t.select((t.active + 1) % n);
-      else if (action === "prev-tab") t.select((t.active + n - 1) % n);
-      else if (action === "settings") t.open("/settings");
+      else if (action === "close-tab") {
+        if (t.active >= 0) t.close(t.active);
+      } else if (action === "next-tab" || action === "prev-tab") {
+        if (!n) return;
+        const d = action === "next-tab" ? 1 : n - 1;
+        t.select(t.active < 0 ? 0 : (t.active + d) % n);
+      } else if (action === "settings") t.open("/settings");
       else if (action.startsWith("go:")) {
         const i = Number(action.slice(3));
-        const to = i === 0 ? "/" : i === 1 ? "/dock" : pinned[i - 2] ? `/${pinned[i - 2]}` : null;
-        if (to !== null) t.open(to);
+        if (i === 0) t.goHome();
+        else if (i === 1) t.newTab();
+        else if (pinned[i - 2]) t.open(`/${pinned[i - 2]}`);
       }
     };
     const off = listen<string>("app-menu", (e) => act(e.payload));
@@ -254,7 +262,8 @@ export function App() {
   );
 }
 
-/** The frame (requirements「界面外框」): the top bar, the paper with the page, the 索引签, the 小窗 and the 柚子瓣. */
+/** The frame (requirements「界面外框」, the B3 desk): the top bar, the desk with the open pages (首页 lies on it), the
+ *  小窗, the 柚子瓣 and the 贴纸簿. */
 function Shell() {
   const info = useQuery({ queryKey: ["app_info"], queryFn: api.appInfo });
   const ok = !!info.data && !info.data.startupError;
@@ -265,6 +274,7 @@ function Shell() {
   useVaultIdleLock(ok);
   useSearchKey(ok, openSearch);
   useJobWatch();
+  useLookColors();
   // 柚子's 小窗: not on the 柚子 page, not when 柚子 is hidden
   const [hidden] = useHiddenModules();
   const path = useLocation().pathname;
@@ -287,11 +297,42 @@ function Shell() {
   };
   useTabKeys(ok);
   useCapture(ok);
+  const tabs = useTabs();
+  // the frame's cues for the pomelo: 哇 when the 柚子瓣 / 贴纸簿 opens, 开心 when a page comes to the front, 眨眼 at the desk
+  const [face, setFace] = useState<Face | null>(null);
+  const faceT = useRef(0);
+  const cue = useCallback((f: Face | null, ms: number) => {
+    setFace(f);
+    clearTimeout(faceT.current);
+    faceT.current = window.setTimeout(() => setFace(null), ms);
+  }, []);
+  const frontId = tabs.stack[0]?.id ?? null;
+  const firstCue = useRef(true);
+  useEffect(() => {
+    if (firstCue.current) {
+      firstCue.current = false;
+      return;
+    }
+    cue(frontId == null ? "wink" : "success", 900);
+  }, [frontId, cue]);
+  // a page can ask for a face too (the 今日简报's sticker falling back: 眨眼)
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ face: Face; ms: number }>).detail;
+      cue(d.face, d.ms);
+    };
+    window.addEventListener("pomelo:face", on);
+    return () => window.removeEventListener("pomelo:face", on);
+  }, [cue]);
+  useEffect(() => {
+    if (bloom || tabs.book) cue("wow", 900);
+  }, [!!bloom, tabs.book]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (
     <div className="flex h-full flex-col bg-sidebar">
       <TopBar
+        face={face}
         isDev={info.data?.isDev}
         bloomOpen={!!bloom}
         onPomelo={(el) => setBloom((b) => (b ? null : el))}
@@ -300,17 +341,30 @@ function Shell() {
         chatOpen={chat}
         unseen={unseen}
       />
-      <div className="relative flex min-h-0 flex-1 py-3.5 pl-4">
-        <main className="paper relative z-[2] flex min-w-0 flex-1 flex-col overflow-hidden rounded-[14px_4px_4px_14px] border bg-background">
-          <div
-            className="relative flex min-h-0 flex-1 flex-col overflow-y-auto"
-            // editors on the right edge make room for a floating 小窗
-            style={chat && floating ? ({ "--chat-float": "380px" } as React.CSSProperties) : undefined}
-          >
-            {ok && <Outlet />}
-          </div>
-        </main>
-        <IndexTabs unseen={unseen} />
+      <div className="relative flex min-h-0 flex-1">
+        <div
+          className="desk"
+          // editors on the right edge make room for a floating 小窗
+          style={chat && floating ? ({ "--chat-float": "380px" } as React.CSSProperties) : undefined}
+        >
+          {tabs.home ? (
+            <div className="deskhome">
+              <div className="deskpage">{ok && <Outlet />}</div>
+              {ok && <DeskCommon />}
+            </div>
+          ) : (
+            <PaperStack
+              onFace={cue}
+              onDizzy={(el) => {
+                const r = el.getBoundingClientRect();
+                cheer("别戳啦，晕了…", r.right + 300, r.top + 70);
+              }}
+            >
+              {ok && <Outlet />}
+            </PaperStack>
+          )}
+          {tabs.book && ok && <StickerBook onClose={() => tabs.setBook(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />}
+        </div>
         {chat && (
           <Suspense fallback={null}>
             <SideChat context={context} floating={floating} ask={ask} onClose={() => setChatOpen(false)} />
@@ -329,7 +383,8 @@ function Shell() {
         )}
       </div>
       <DragChip />
-      {searching && <SearchBox onClose={() => setSearching(false)} />}
+      <CheerLayer />
+      {searching && <SearchBox onClose={() => setSearching(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />}
     </div>
   );
 }

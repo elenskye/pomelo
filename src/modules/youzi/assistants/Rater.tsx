@@ -9,9 +9,8 @@ import { PickField } from "@/shared/PickField";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
-import { moduleById } from "@/app/modules";
 import { Section } from "@/settings/layout";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { jobLabel, useJobs, jobPicks } from "@/modules/jobs/api";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
@@ -28,7 +27,6 @@ import { SEEKER_KEY, seekerApi, type SeekerRecord, type SeekerWorkspace } from "
 import { RATER_CATEGORIES, RATER_FEATURES, RATER_KEY, RATER_LIMIT, RATER_MODES, RATER_OPTIONS_KEY, RATER_POLISH, RATER_PRACTICE_KEY, RATER_UNSURE, RATER_USES, raterApi, raterChoice, type RaterAsk, type RaterBank, type RaterCan, type RaterChoice, type RaterFeature, type RaterOptions, type RaterProposal, type RaterQuestion } from "./raterApi";
 
 type Tab = "bank" | "cards" | "interview" | "rules" | "settings";
-const TABS = (moduleById("rater").subs ?? []) as { value: Tab; label: string }[];
 const ALL = "全部";
 const blank = (category: string): RaterQuestion => ({ id: crypto.randomUUID(), category, question: "", answer: "", tags: [], material: null, job: null, from: null, revision: 0 });
 const splitTags = (text: string) => [...new Set(text.split(/[,，、]/).map((t) => t.trim()).filter(Boolean))];
@@ -37,6 +35,7 @@ export function RaterPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const [tab, setTab] = useSubPage<Tab>("rater");
+  useSubNav("rater", (p) => setTab(p as Tab));
   const bank = useQuery({ queryKey: RATER_KEY, queryFn: raterApi.bank });
   const seeker = useQuery({ queryKey: SEEKER_KEY, queryFn: seekerApi.workspace });
   const defaults = useQuery({ queryKey: [...RATER_KEY, "defaults"], queryFn: raterApi.defaults, staleTime: Infinity });
@@ -62,9 +61,6 @@ export function RaterPage() {
   if (!bank.data || !seeker.data) return <EmptyState title="正在读取 Rater…" />;
   const materials = seeker.data.catalog.records.filter((r) => r.kind === "material" && r.enabled && (r.lang ?? "cn") === "cn");
   return <div className="relative flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-4">
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-3">
-      <div className="-m-1 overflow-x-auto p-1"><Segmented<Tab> ariaLabel="Rater 子页面" value={tab} onChange={setTab} options={TABS} /></div>
-    </div>
     {tab === "bank"
       ? <QuestionBank bank={bank.data} seeker={seeker.data} materials={materials} can={can} busy={busy} write={writeBank} toCards={() => setTab("cards")} />
       : tab === "cards"

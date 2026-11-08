@@ -1,7 +1,13 @@
-// Shared UI primitives styled to docs/design.md (no component library). Dropdowns: ./Dropdown.tsx.
+// Shared UI primitives in the Design System「Pomelo 柚儿园」 look (ds.css, synced from visual-atelier; docs/design.md):
+// hand-drawn edges painted by shared/hand.ts (data-hand), the controls' small motions (按下扁一下, 荧光笔拖过去, 圆贴纸滑过去,
+// 小签晃两下, 空状态画完再弹…) from the Design System's motion parts. Sizes stay Pomelo's (compact) where a page is dense.
+// Dropdowns: ./Dropdown.tsx.
 import type { LucideIcon } from "lucide-react";
-import { RefreshCw, Search } from "lucide-react";
-import { useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode } from "react";
+import { flash } from "./hand";
+import { HandIcon, Tip } from "./handParts";
+import { markSvg, sizedMark } from "./marks";
 
 export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
   const Icon = props.icon;
@@ -17,7 +23,29 @@ export function PageHeader(props: { icon?: LucideIcon; color?: string; title: st
   );
 }
 
-export function EmptyState(props: { title: string; hint?: ReactNode; action?: ReactNode }) {
+/** The empty pages' drawings (visual-atelier marks/empty/): a page that has nothing yet draws its picture, then
+ *  each thing in it pops, then the line (motion part empty-state). */
+export type EmptyArt = "todo" | "notes" | "days" | "packing" | "books" | "films" | "jobs" | "vault";
+
+function EmptyPicture(props: { art: EmptyArt }) {
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const svg = markSvg(`empty/${props.art}`);
+  const html = useMemo(() => (svg ? sizedMark(svg, 256, uid, 150) : ""), [svg, uid]);
+  return svg ? <span aria-hidden className="block" dangerouslySetInnerHTML={{ __html: html }} /> : null;
+}
+
+export function EmptyState(props: { title: string; hint?: ReactNode; action?: ReactNode; art?: EmptyArt }) {
+  if (props.art && markSvg(`empty/${props.art}`))
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-1 pb-16 text-center">
+        <div className="pm-empty is-in">
+          <EmptyPicture art={props.art} />
+          <p className="pm-empty-line">{props.title}</p>
+        </div>
+        {props.hint && <p className="text-xs text-muted-foreground">{props.hint}</p>}
+        {props.action && <div className="mt-3">{props.action}</div>}
+      </div>
+    );
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-1 pb-16 text-center">
       <p className="text-lg">{props.title}</p>
@@ -28,67 +56,103 @@ export function EmptyState(props: { title: string; hint?: ReactNode; action?: Re
 }
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "ghost-danger";
-const VARIANTS: Record<Variant, string> = {
-  primary: "bg-primary text-primary-foreground hover:opacity-90",
-  secondary: "border bg-card hover:bg-muted",
-  ghost: "hover:bg-muted",
-  danger: "bg-destructive text-white hover:opacity-90 dark:text-background",
-  "ghost-danger": "text-destructive hover:bg-muted",
+/** The hand-drawn button frame (data-hand="button") and its fill; ghost ones have no frame. */
+const FRAMES: Record<Variant, { cls: string; fill?: string } | null> = {
+  primary: { cls: "text-[var(--color-on-primary)]" },
+  secondary: { cls: "pm-btn--plain", fill: "card" },
+  danger: { cls: "text-[var(--color-on-danger)]", fill: "danger" },
+  ghost: null,
+  "ghost-danger": null,
 };
+const GHOST: Partial<Record<Variant, string>> = { ghost: "hover:bg-muted", "ghost-danger": "text-destructive hover:bg-muted" };
 
 export function Button({ variant = "secondary", className, type, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+  const frame = FRAMES[variant];
+  // a seed from the label keeps a button's wobble the same each time it's drawn
+  const seed = typeof rest.children === "string" ? 1430 + ([...rest.children].reduce((a, c) => a + c.charCodeAt(0), 0) % 50) : 1430;
+  if (!frame)
+    return (
+      <button
+        type={type ?? "button"}
+        className={`pm-press inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control px-3 py-1.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${GHOST[variant]} ${className ?? ""}`}
+        {...rest}
+      />
+    );
   return (
     <button
       type={type ?? "button"}
-      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control px-3 py-1.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${VARIANTS[variant]} ${className ?? ""}`}
+      data-hand="button"
+      data-seed={seed}
+      data-fill={frame.fill}
+      className={`pm-btn h-8 gap-1.5 px-3 text-sm ${frame.cls} ${className ?? ""}`}
       {...rest}
     />
   );
 }
 
-/** Input look without a width — add one (w-24, w-auto…); inputClass is the full-width version. */
+/** A field without a box of its own: the hand-drawn edge around it thickens when it has focus (Design System Input). */
+const FIELD = "pm-field pm-compact";
+
+/** Input look without a width — add one (w-24, w-auto…); inputClass is the full-width version. Plain inputs
+ *  (selects, number boxes) keep this; TextInput / TextArea / SearchInput get the hand-drawn field. */
 export const fieldClass =
-  "rounded-control border bg-card px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring";
+  "rounded-control border border-[var(--color-pen)]/40 bg-card px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring";
 export const inputClass = `w-full ${fieldClass}`;
 
 export function TextInput({ className, ...rest }: ComponentProps<"input">) {
-  return <input type="text" autoComplete="off" spellCheck={false} className={`${inputClass} ${className ?? ""}`} {...rest} />;
-}
-
-export function TextArea({ className, ...rest }: ComponentProps<"textarea">) {
-  return <textarea spellCheck={false} className={`${inputClass} resize-none leading-relaxed ${className ?? ""}`} {...rest} />;
-}
-
-export function SearchInput(props: ComponentProps<"input">) {
   return (
-    <div className="relative">
-      <Search size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground" />
-      <TextInput type="search" {...props} className={`pl-8 ${props.className ?? ""}`} />
-    </div>
+    <span className={`${FIELD} w-full ${className ?? ""}`} data-hand="field" data-seed="1410">
+      <input type="text" autoComplete="off" spellCheck={false} {...rest} />
+    </span>
   );
 }
 
+export function TextArea({ className, ...rest }: ComponentProps<"textarea">) {
+  return (
+    <span className={`${FIELD} pm-area w-full ${className ?? ""}`} data-hand="field" data-seed="1411">
+      <textarea spellCheck={false} className="resize-none leading-relaxed" {...rest} />
+    </span>
+  );
+}
+
+export function SearchInput(props: ComponentProps<"input">) {
+  const { className, ...rest } = props;
+  return (
+    <span className={`${FIELD} w-full ${className ?? ""}`} data-hand="field" data-seed="1412">
+      <span className="pm-field-icon text-muted-foreground" style={{ order: -1 }}>
+        <HandIcon name="search" size={16} seed={14} />
+      </span>
+      <input type="search" autoComplete="off" spellCheck={false} {...rest} />
+    </span>
+  );
+}
+
+/** One of a few: a marker stroke under the chosen one, dragged across to a new one (Design System Segmented). */
 export function Segmented<T extends string>(props: {
   value: T;
   options: { value: T; label: ReactNode }[];
   onChange: (v: T) => void;
   ariaLabel?: string;
 }) {
+  const box = useRef<HTMLDivElement>(null);
+  const hl = useRef<HTMLSpanElement>(null);
+  const was = useRef(props.value);
+  useLayoutEffect(() => {
+    const on = box.current?.querySelector<HTMLElement>('[aria-checked="true"]');
+    const h = hl.current;
+    if (!on || !h) return;
+    h.style.width = `${on.offsetWidth}px`;
+    h.style.setProperty("--pm-seg-x", `${on.offsetLeft - 3}px`);
+    if (was.current !== props.value) flash(h, "is-pop", 440);
+    was.current = props.value;
+  });
   return (
-    <div role="radiogroup" aria-label={props.ariaLabel} className="inline-flex shrink-0 rounded-control bg-muted p-0.5">
+    <div ref={box} role="radiogroup" aria-label={props.ariaLabel} className="pm-seg pm-compact shrink-0" data-hand="field" data-seed="1390" data-sw="1.5" data-amp="0.55">
+      <span ref={hl} className="pm-seg-hl" data-hand="pick" data-seed="1391" />
       {props.options.map((o) => {
         const on = o.value === props.value;
         return (
-          <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            onClick={() => props.onChange(o.value)}
-            className={`rounded-md px-2.5 py-1 text-sm whitespace-nowrap transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              on ? "bg-card shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
+          <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => props.onChange(o.value)} className="pm-seg-item outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {o.label}
           </button>
         );
@@ -115,7 +179,7 @@ export function Field(props: { label: string; action?: ReactNode; children: Reac
   );
 }
 
-/** Small square icon-only button (ghost). */
+/** Small icon-only button (ghost): its name hangs under it on a string when pointed at (Design System Tooltip). */
 export function IconButton(props: {
   label: string;
   onClick: () => void;
@@ -127,14 +191,14 @@ export function IconButton(props: {
     <button
       type="button"
       aria-label={props.label}
-      title={props.label}
       disabled={props.disabled}
       onClick={props.onClick}
-      className={`inline-flex shrink-0 items-center justify-center rounded-control p-1.5 transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-30 ${
+      className={`pm-press pm-tip-host relative inline-flex shrink-0 items-center justify-center rounded-control p-1.5 transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-30 ${
         props.danger ? "text-destructive" : "text-muted-foreground hover:text-foreground"
       }`}
     >
       {props.children}
+      <Tip>{props.label}</Tip>
     </button>
   );
 }
@@ -160,21 +224,24 @@ export function ProgressBar(props: { done: number; doing?: number; total: number
   );
 }
 
-/** On / off switch (settings rows). */
+/** On / off (settings rows): a round sticker slides across, a marker fills the track (Design System Switch). */
 export function Switch(props: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+  const ref = useRef<HTMLButtonElement>(null);
   return (
     <button
+      ref={ref}
       type="button"
       role="switch"
       aria-checked={props.checked}
       aria-label={props.label}
       disabled={props.disabled}
-      onClick={() => props.onChange(!props.checked)}
-      className={`relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
-        props.checked ? "bg-primary" : "bg-muted-foreground/30"
-      }`}
+      onClick={() => {
+        props.onChange(!props.checked);
+        flash(ref.current, "is-pop", 460);
+      }}
+      className="pm-switch pm-switch-only shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
     >
-      <span className={`size-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${props.checked ? "translate-x-4" : "translate-x-0.5"}`} />
+      <span data-hand="switch" data-seed="1371" />
     </button>
   );
 }

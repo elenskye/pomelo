@@ -405,6 +405,7 @@ export default function PackingPage() {
 
       {loading ? null : tab === "trips" && trips.length === 0 ? (
         <EmptyState
+          art="packing"
           title="行李箱空空，说走就走"
           action={
             <Button variant="primary" onClick={() => setTripDialog({ mode: "new" })}>

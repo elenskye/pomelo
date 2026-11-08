@@ -320,7 +320,7 @@ export default function TodoPage() {
             </Section>
           )}
           {agenda && agenda.overdue.length + agenda.due.length === 0 && (
-            <p className="py-10 text-center text-muted-foreground">今天没有安排，喝杯茶吧 🍵</p>
+            <EmptyState art="todo" title="今天没有安排，喝杯茶吧" />
           )}
           {gid !== null && (
             <QuickAdd

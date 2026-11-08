@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { BellRing } from "lucide-react";
 import { useKinds } from "@/shared/kinds/api";
-import { Button, SearchInput, Segmented } from "@/shared/ui";
+import { Button, EmptyState, SearchInput, Segmented } from "@/shared/ui";
 import { CHANNELS, jobLabel, STAGE_STYLE, useJobMutations, useStatuses, type Job } from "./api";
 
 /** "all" or "s<status id>". */
@@ -75,7 +75,7 @@ export function TableView(props: { jobs: Job[]; selectedId: number | null; onOpe
         </div>
       </div>
       {shown.length === 0 ? (
-        <p className="py-10 text-center text-muted-foreground">{props.jobs.length === 0 ? "还没有投递" : "没有符合的投递"}</p>
+        props.jobs.length === 0 ? <EmptyState art="jobs" title="还没有投递" /> : <p className="py-10 text-center text-muted-foreground">没有符合的投递</p>
       ) : (
         <table className="w-full overflow-hidden rounded-card border bg-card text-sm">
           <thead className="border-b text-xs text-muted-foreground">

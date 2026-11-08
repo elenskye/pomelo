@@ -324,7 +324,7 @@ export const tokens = {
     }
   },
   "motion": {
-    "$note": "动效的数值，取自站主验收的 Phase 2 小样；规则见 DESIGN.md §5。每个零件照这里取，招牌时刻要登记在 registeredSurfaces。",
+    "$note": "动效的数值，取自站主验收的 Phase 2 小样；规则见 DESIGN.md §5。每个零件照这里取，招牌时刻要登记在 registeredSurfaces；零件在 motion/（Dawn Plan · Phase 5）。",
     "easing": {
       "spring": "cubic-bezier(.3,1.6,.5,1)",
       "spring-soft": "cubic-bezier(.3,1.5,.5,1)",
@@ -358,12 +358,16 @@ export const tokens = {
           "greeting",
           "wheel-open",
           "pomelo-think",
+          "pomelo-answer",
           "pomelo-idle",
+          "pomelo-sleepy",
+          "pomelo-face",
           "atlas-envelope",
           "atlas-turn",
           "done-cheer",
           "empty-state",
-          "loading-needle"
+          "loading-needle",
+          "easter-egg"
         ]
       }
     },
@@ -432,12 +436,36 @@ export const tokens = {
         "loop": true,
         "loopMs": 1600
       },
+      "pomelo-answer": {
+        "tier": "expressive",
+        "label": "柚子回答：一个字一个字写出来",
+        "personality": "drawThenBounce",
+        "trigger": "柚子想好了",
+        "maxMs": 3000,
+        "loop": false,
+        "charMs": 24
+      },
       "pomelo-idle": {
         "tier": "expressive",
-        "label": "柚子平常的样子",
+        "label": "柚子平常的样子：呼吸两下（一下 2.6 秒）、看一看、眨一下眼",
         "trigger": "一直在",
         "loop": true,
-        "loopMs": 2600
+        "loopMs": 5200
+      },
+      "pomelo-sleepy": {
+        "tier": "expressive",
+        "label": "柚子睡着了",
+        "trigger": "20 秒不动",
+        "loop": true,
+        "loopMs": 5200
+      },
+      "pomelo-face": {
+        "tier": "expressive",
+        "label": "柚子换表情（眨眼、开心、出错、哇、惊讶）",
+        "personality": "jelly",
+        "trigger": "到桌上、进一页、出错、打开柚子瓣和贴纸簿、被吵醒",
+        "maxMs": 1300,
+        "loop": false
       },
       "atlas-envelope": {
         "tier": "expressive",
@@ -478,6 +506,23 @@ export const tokens = {
         "trigger": "等待",
         "loop": true,
         "loopMs": 3200
+      },
+      "easter-egg": {
+        "tier": "expressive",
+        "label": "小彩蛋：撕起简报角上的柚子贴纸，底下有句悄悄话",
+        "personality": "paperPhysics",
+        "trigger": "点或拖简报角上的柚子贴纸",
+        "maxMs": 1300,
+        "loop": false
+      }
+    },
+    "calmExceptions": {
+      "tooltip-swing": {
+        "parts": [
+          "tooltip"
+        ],
+        "durationMs": 1100,
+        "approved": "站主 2026-11-08 要柚子瓣的小签用 Phase 2「控件的小动静」里的小签动效（挂在线上晃两下停住，1.1 秒）；后面 0.5 秒只是越晃越小"
       }
     }
   },

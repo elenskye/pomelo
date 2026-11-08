@@ -18,7 +18,7 @@ import { DragHandle, useSortable } from "@/shared/sortable";
 import { StatusSelect, type StatusCode } from "@/shared/status";
 import { TagSelect } from "@/shared/tags";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } from "@/shared/ui";
-import { CUSTOM_KEY, madeDef, TEMPLATE_COLOR, useCourses, useCustomModules, useCustomMutations, useLessons, type Course, type Custom, type Lesson } from "./api";
+import { CUSTOM_KEY, madeDef, useCourses, useCustomModules, useCustomMutations, useLessons, type Course, type Custom, type Lesson } from "./api";
 import { CustomDialog } from "./CustomDialog";
 import { LessonPanel, PROGRESS_ORDER, PROGRESS_STATUS } from "./LessonPanel";
 
@@ -226,7 +226,7 @@ function ProgressView(props: { mod: Custom }) {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={def.icon} color={TEMPLATE_COLOR.progress} title={mod.name} right={stats} />
+      <PageHeader icon={def.icon} color={def.color} title={mod.name} right={stats} />
       {isPending ? null : courses.length === 0 ? (
         <EmptyState
           title="慢慢来，先建第一个吧"

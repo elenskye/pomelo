@@ -18,14 +18,12 @@ import { useSeekerFiles } from "./SeekerFiles";
 import { flushSeekerDraft, queueSeekerDraft, useSeekerDraft } from "./seekerDraft";
 import { SeekerJobLine, dropSeekerJob, seekerJobKey, startSeekerJob, useSeekerJobs } from "./seekerJobs";
 import { ON_DRAFT, SEEKER_FILES_KEY, SEEKER_JOB_RESUMES_KEY, groupName, SEEKER_KEY, SEEKER_KNOWLEDGE_KEY, deskOf, draftLang, pageLang, seekerApi, seekerModel, type SeekerCatalog, type SeekerEdit, type SeekerEntry, type SeekerForm, type SeekerHeader, type SeekerImport, type SeekerLang, type SeekerReviewed, type SeekerSelection, type SeekerWorkspace, type SourceChange } from "./seekerApi";
-import { useSubPage } from "@/app/subpage";
-import { moduleById } from "@/app/modules";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { Row, Section } from "@/settings/layout";
 import { Switch } from "@/shared/ui";
 import { PickRow } from "./select";
 
 type Tab = "resume" | "library" | "dossiers" | "rules" | "apply" | "history" | "settings";
-const TABS = (moduleById("seeker").subs ?? []) as { value: Tab; label: string }[];
 /** The sub-pages that follow 中文 / English (档案 and 网申 are both languages'). */
 const BY_LANG: Tab[] = ["resume", "library", "rules", "history", "settings"];
 const entryText = (e: SeekerEntry) => [e.time, e.name, e.role, e.location, e.note, ...e.points.map((p) => p.text)].filter(Boolean).join("\n");
@@ -77,6 +75,12 @@ export function SeekerPage() {
   const settings = catalog.settings;
   const hasModel = (kind: string) => seekerModel(settings, kind).model != null;
   const flush = () => flushSeekerDraft(qc);
+  // its pages are the folder tabs on the paper's top edge (the draft is saved first)
+  useSubNav("seeker", (v) => {
+    void flush();
+    setTab(v as Tab);
+    setDrawer(null);
+  });
   /** ↻: what the page shows from the folder (cv/, material/, knowledge/: files, companies, a job's résumés),
    * read again; the draft is saved first. */
   const reread = async () => {
@@ -175,7 +179,7 @@ export function SeekerPage() {
   const polishLine = (id: string) => <SeekerJobLine job={job("material", id)} running="正在润色…" failed="润色没成" view={() => setViewing(seekerJobKey("material", lang, id))} retry={() => void run("material", id)} />;
   const shown = viewing ? jobs.find((j) => j.key === viewing)?.suggestion : undefined;
   return <div className="relative flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-4">
-    <div className="flex flex-wrap items-center gap-4 border-b pb-3"><div className="-m-1 overflow-x-auto p-1"><Segmented<Tab> ariaLabel="Seeker 子页面" value={tab} onChange={(v) => { void flush(); setTab(v); setDrawer(null); }} options={TABS} /></div><span className="flex-1" />{BY_LANG.includes(tab) && <Segmented<SeekerLang> ariaLabel="简历语言" value={lang} onChange={switchLang} options={[{ value: "cn", label: "中文" }, { value: "en", label: "English" }]} />}{data.folder && <RefreshButton label="重新读 Seeker 文件夹" onRefresh={reread} />}</div>
+    <div className="flex flex-wrap items-center gap-4 border-b pb-3"><span className="flex-1" />{BY_LANG.includes(tab) && <Segmented<SeekerLang> ariaLabel="简历语言" value={lang} onChange={switchLang} options={[{ value: "cn", label: "中文" }, { value: "en", label: "English" }]} />}{data.folder && <RefreshButton label="重新读 Seeker 文件夹" onRefresh={reread} />}</div>
     {local.error && <div role="alert" className="flex items-center gap-2 py-2 text-sm text-destructive"><span>{local.error}；输入仍保留</span><Button onClick={() => void flush()}>重试保存</Button></div>}
     {tab === "resume" ? <>
       <div className="flex flex-wrap items-center gap-2 py-3"><Button className="xl:hidden" onClick={() => setDrawer("materials")}>选材</Button><Button disabled={busy} onClick={() => void create()}>新建</Button><Button disabled={!draft || busy} onClick={() => void flush().then((ok) => { if (ok) setExporting(true); })}>导出</Button><span className="flex-1" /><span role="status" className="text-xs text-muted-foreground">{local.error ? "保存失败" : busy || local.saving ? "正在保存…" : desk?.updatedAt ? "草稿已保存" : "尚无草稿"}</span><Button className="xl:hidden" onClick={() => setDrawer("assistant")}>助手</Button></div>

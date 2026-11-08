@@ -17,7 +17,7 @@ import { useSortable } from "@/shared/sortable";
 import { StarRating } from "@/shared/StarRating";
 import { TagMulti, TagSelect } from "@/shared/tags";
 import { Button, EmptyState, PageHeader, SearchInput } from "@/shared/ui";
-import { madeDef, TEMPLATE_COLOR, useCustomModules, useCustomMutations, useFields, useItems, type Custom, type Field, type Item, type Value } from "./api";
+import { madeDef, useCustomModules, useCustomMutations, useFields, useItems, type Custom, type Field, type Item, type Value } from "./api";
 import { CustomDialog } from "./CustomDialog";
 import { FieldManager } from "./FieldManager";
 import { ItemPanel } from "./ItemPanel";
@@ -229,7 +229,7 @@ function ListView(props: { list: Custom }) {
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
         icon={def.icon}
-        color={TEMPLATE_COLOR.list}
+        color={def.color}
         title={list.name}
         right={
           <div className="flex items-center justify-end gap-2">

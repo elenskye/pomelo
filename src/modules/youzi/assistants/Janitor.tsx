@@ -14,13 +14,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, FolderOpen, Plus, Trash2, X } from "lucide-react";
-import { moduleById } from "@/app/modules";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { Section } from "@/settings/layout";
 import { StackBar, Sunburst, type SunNode } from "@/shared/charts";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
-import { Button, EmptyState, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
+import { Button, EmptyState, IconButton, Switch, TextInput } from "@/shared/ui";
 import { youziApi, useYouziStatus, useTemplates, type ChatMessage } from "../api";
 import { Composer, type ComposerHandle } from "../Composer";
 import { openFile } from "../Files";
@@ -33,7 +32,6 @@ import { JANITOR_KEY, ago, bytes, dayOf, janitorApi, type JanitorEnvItem, type J
 import { MdField } from "@/shared/editor/MdField";
 
 type Tab = "disk" | "clean" | "env" | "agent" | "settings";
-const TABS = (moduleById("janitor").subs ?? []) as { value: Tab; label: string }[];
 const OVERVIEW = [...JANITOR_KEY, "overview"];
 
 function useOverview() {
@@ -48,6 +46,7 @@ function useOverview() {
 export function JanitorPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useSubPage<Tab>("janitor");
+  useSubNav("janitor", (p) => setTab(p as Tab));
   const ov = useOverview();
   useEffect(() => {
     janitorApi.scan(false).then(() => qc.invalidateQueries({ queryKey: OVERVIEW })).catch(() => {});
@@ -57,7 +56,6 @@ export function JanitorPage() {
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-3">
-        <div className="-m-1 overflow-x-auto p-1"><Segmented<Tab> ariaLabel="DevJanitor 子页面" value={tab} onChange={setTab} options={TABS} /></div>
         <ScanBar ov={ov.data} />
       </div>
       {tab === "agent" ? (

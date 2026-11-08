@@ -19,7 +19,7 @@ import { formatDay, toYmd, weekday } from "@/shared/dates";
 import type { Hit } from "@/shared/open";
 import { errorText, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";
-import { PageHeader, ProgressBar } from "@/shared/ui";
+import { ProgressBar } from "@/shared/ui";
 import { useOverview, type CourseLine, type JobsCard, type Point, type Recent, type Then, type Year } from "./api";
 import { BriefCard } from "./BriefCard";
 import { YearCard } from "./YearCard";
@@ -445,6 +445,15 @@ function LinksBlock(props: { links: Bookmark[]; go: () => void }) {
   );
 }
 
+/** A card on the desk: falls into place when the desk is shown (`i`: which one, they come one by one). */
+function Note(props: { i: number; children: ReactNode }) {
+  return (
+    <div className="pm-greet-note" style={{ "--pm-i": Math.min(props.i, 8) } as React.CSSProperties}>
+      {props.children}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const now = useNow();
   const today = toYmd(now);
@@ -478,16 +487,30 @@ export default function HomePage() {
     : [];
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader title={greeting(now.getHours())} right={<p className="pointer-events-none text-sm text-muted-foreground">{formatDay(today)} {weekday(today)}</p>} />
+    // 打开的问候 (motion part greeting): the cards fall onto the desk one by one, the greeting is written out and a marker
+    // swipes under it, then 柚子 winks; each time you come back to the desk
+    <div className="pm-greet is-in flex h-full min-h-0 flex-col overflow-hidden">
+      <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between gap-4 px-8 pb-3">
+        <h1 className="pointer-events-none flex shrink-0 items-baseline gap-3 whitespace-nowrap">
+          <span className="pm-greet-word text-[26px] font-bold">
+            <span className="pm-mark" data-hand="marker" data-seed="710">
+              {greeting(now.getHours())}
+            </span>
+          </span>
+          <span className="pm-greet-sub text-sm font-normal text-muted-foreground">今天也慢慢来。</span>
+        </h1>
+        <p className="pointer-events-none text-sm text-muted-foreground">
+          {formatDay(today)} {weekday(today)}
+        </p>
+      </header>
       <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
         <div className="space-y-5 px-8 pb-6">
-          {shown("youzi") && <YearCard />}
-          {shown("youzi") && <BriefCard today={today} onTitle={() => open.module("youzi")} />}
-          {data && <YearRow year={data.year} go={(id) => open.module(id)} />}
+          {shown("youzi") && <Note i={0}><YearCard /></Note>}
+          {shown("youzi") && <Note i={1}><BriefCard today={today} onTitle={() => open.module("youzi")} /></Note>}
+          {data && <Note i={2}><YearRow year={data.year} go={(id) => open.module(id)} /></Note>}
           <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <div className="space-y-5">{main}</div>
-            <div className="space-y-5">{side}</div>
+            <div className="space-y-5">{main.filter(Boolean).map((el, i) => <Note key={i} i={3 + i * 2}>{el}</Note>)}</div>
+            <div className="space-y-5">{side.filter(Boolean).map((el, i) => <Note key={i} i={4 + i * 2}>{el}</Note>)}</div>
           </div>
         </div>
       </div>

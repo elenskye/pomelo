@@ -133,7 +133,7 @@ export default function DaysPage() {
           </Button>
         </div>
         {shown.length === 0 ? (
-          <EmptyState title={EMPTY[tab]} />
+          <EmptyState title={EMPTY[tab]} art={tab === "all" ? "days" : undefined} />
         ) : (
           <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
             <div className="space-y-4">

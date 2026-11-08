@@ -7,7 +7,9 @@ import { MODULES, setMadeModules, type ModuleDef } from "@/app/modules";
 import { errorText, useToast } from "@/shared/feedback";
 import { KINDS_KEY } from "@/shared/kinds/api";
 import type { StatusCode } from "@/shared/status";
-import { iconOf } from "./icons";
+import { stickerById, tintColor } from "@/shared/marks";
+import { colorVar, useLooks } from "@/app/looks";
+import { iconOf, MADE_MARKS } from "./icons";
 
 export type Template = "list" | "progress";
 export type Custom = {
@@ -94,7 +96,13 @@ export const useCourses = (moduleId: number) => useQuery({ queryKey: [...CUSTOM_
 export const useLessons = (courseId: number | null) =>
   useQuery({ queryKey: [...CUSTOM_KEY, "lessons", courseId], queryFn: () => customApi.lessons(courseId!), enabled: courseId !== null });
 
-export const madeDef = (c: Custom): ModuleDef => ({ id: c.key, label: c.name, icon: iconOf(c.icon), color: TEMPLATE_COLOR[c.template] });
+/** A made module as a module: its sticker is its icon's, its color the sticker's own (or the template's before a
+ *  sync brings the stickers), behind its own variable so a picked color (looks.ts) reaches it. */
+export function madeDef(c: Custom): ModuleDef {
+  const mark = MADE_MARKS[c.icon] ?? "shapes";
+  const tint = stickerById(mark)?.tint;
+  return { id: c.key, label: c.name, icon: iconOf(c.icon), mark, color: `var(${colorVar(c.key)}, ${tint ? tintColor(tint) : TEMPLATE_COLOR[c.template]})` };
+}
 
 /** Built-in modules, then the made ones (oldest first); also keeps moduleById / moduleLabel aware of them. */
 export function useAllModules(): ModuleDef[] {
@@ -109,6 +117,7 @@ export function useAllModules(): ModuleDef[] {
 export function useCustomMutations() {
   const qc = useQueryClient();
   const toast = useToast();
+  const looks = useLooks();
   const onSuccess = () => void qc.invalidateQueries({ queryKey: CUSTOM_KEY });
   const onError = (e: unknown) => toast(errorText(e), "error");
   // a lesson's 类型 changes what 管理类型 counts; a deleted module takes its 类型 list
@@ -119,7 +128,14 @@ export function useCustomMutations() {
   return {
     create: useMutation({ mutationFn: customApi.create, onSuccess }),
     update: useMutation({ mutationFn: customApi.update, onSuccess }),
-    remove: useMutation({ mutationFn: customApi.remove, onSuccess: withKinds, onError }),
+    remove: useMutation({
+      mutationFn: customApi.remove,
+      onSuccess: (_, id) => {
+        withKinds();
+        looks.forget([`list/${id}`, `progress/${id}`]);
+      },
+      onError,
+    }),
     fieldCreate: useMutation({ mutationFn: customApi.fieldCreate, onSuccess }),
     fieldUpdate: useMutation({ mutationFn: customApi.fieldUpdate, onSuccess }),
     fieldDelete: useMutation({ mutationFn: customApi.fieldDelete, onSuccess, onError }),

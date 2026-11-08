@@ -8,6 +8,8 @@ export type ModuleDef = {
   label: string;
   icon: LucideIcon;
   color: string;
+  /** Its sticker when not its id (made modules: the sticker of the icon they were made with); see looks.ts. */
+  mark?: string;
   /** One of 柚子's 助手 (a small bird next to its name). */
   assistant?: boolean;
   /** Opens this page instead of its own (Importer has none: 钱来钱往 · 导入账单). */

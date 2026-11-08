@@ -4,27 +4,33 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { Button } from "./ui";
 
 type ToastKind = "info" | "error";
-type ToastItem = { id: number; text: string; kind: ToastKind };
+type ToastItem = { id: number; text: string; kind: ToastKind; leaving: boolean };
 const ToastCtx = createContext<(text: string, kind?: ToastKind) => void>(() => {});
 
+/** Toasts are sticky notes (Design System Toast): one slaps on in the bottom-right corner, stays a moment and
+ *  peels itself off (motion part toast; an error's note is pink and stays longer). */
 export function ToastProvider(props: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const push = useCallback((text: string, kind: ToastKind = "info") => {
     const id = Date.now() + Math.random();
-    setItems((xs) => [...xs, { id, text, kind }]);
-    setTimeout(() => setItems((xs) => xs.filter((x) => x.id !== id)), kind === "error" ? 6000 : 2500);
+    setItems((xs) => [...xs, { id, text, kind, leaving: false }]);
+    const stay = kind === "error" ? 6000 : 2600;
+    setTimeout(() => setItems((xs) => xs.map((x) => (x.id === id ? { ...x, leaving: true } : x))), stay);
+    setTimeout(() => setItems((xs) => xs.filter((x) => x.id !== id)), stay + 400);
   }, []);
   return (
     <ToastCtx.Provider value={push}>
       {props.children}
-      <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
-        {items.map((t) => (
+      <div className="pointer-events-none fixed right-6 bottom-6 z-50 flex flex-col items-end gap-3">
+        {items.map((t, i) => (
           <div
             key={t.id}
             role="status"
-            className={`max-w-md rounded-control px-4 py-2 text-sm shadow-lg ${
-              t.kind === "error" ? "border bg-card text-destructive" : "bg-foreground text-background"
-            }`}
+            data-hand="note"
+            data-seed={1450 + (i % 3)}
+            data-tilt={i % 2 ? 2 : -3}
+            data-tapes="1"
+            className={`pm-toast toast ${t.kind === "error" ? "is-error" : ""} ${t.leaving ? "is-leaving" : "is-in"}`}
           >
             {t.text}
           </div>

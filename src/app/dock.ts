@@ -16,20 +16,24 @@ const QUERY = ["setting", KEY];
 export type Cat = { id: string; name: string; tone: number; mods: string[] };
 export type Layout = { cats: Cat[]; pinned: string[] };
 
-/** Category colors, by `tone`. */
-export const TONES = ["var(--module-todo)", "var(--module-finance)", "var(--module-books)", "var(--module-jobs)", "var(--module-site)", "var(--module-youzi)", "var(--module-vault)", "var(--module-days)", "var(--module-films)", "var(--module-packing)"];
-export const toneColor = (tone: number) => TONES[((tone % TONES.length) + TONES.length) % TONES.length];
+/** The scheme's five category colors (visual-atelier DESIGN.md §2: 日常薄荷、兴趣樱粉、求职葡萄紫、柚子橙、工具天蓝), by `tone`. */
+export const CAT_TINTS = ["mint", "pink", "grape", "orange", "sky"] as const;
+export type CatTint = (typeof CAT_TINTS)[number];
+/** The color a category's name means (also for layouts saved before the five, 2026-11-08); other names go by `tone`. */
+const NAME_TINT: Record<string, CatTint> = { 日常: "mint", 生活: "mint", 兴趣: "pink", 创作: "pink", 求职: "grape", 柚子: "orange", 工具: "sky" };
+export const catTint = (c: { name: string; tone: number }): CatTint => NAME_TINT[c.name] ?? CAT_TINTS[((c.tone % 5) + 5) % 5];
+/** A category's color (its dot, its 柚子瓣 wedge). */
+export const toneColor = (c: { name: string; tone: number }) => `var(--pm-cat-${catTint(c)})`;
 
 const INTEREST = "c3";
+/** The scheme's five categories, like the module stickers' colors (the 柚子瓣 has a color per wedge). */
 export const DEFAULT: Layout = {
   cats: [
-    { id: "c1", name: "日常", tone: 0, mods: ["todo", "notes", "days"] },
-    { id: "c2", name: "生活", tone: 1, mods: ["finance", "packing"] },
-    { id: INTEREST, name: "兴趣", tone: 2, mods: ["books", "films", "drawing"] },
-    { id: "c4", name: "求职", tone: 3, mods: ["jobs", "seeker", "rater"] },
-    { id: "c5", name: "创作", tone: 4, mods: ["site"] },
-    { id: "c6", name: "柚子", tone: 5, mods: ["youzi", "translate", "pub2md", "importer"] },
-    { id: "c7", name: "工具", tone: 6, mods: ["vault", "bookmarks", "janitor"] },
+    { id: "c1", name: "日常", tone: 0, mods: ["todo", "notes", "days", "finance", "packing"] },
+    { id: INTEREST, name: "兴趣", tone: 1, mods: ["books", "films", "drawing", "site"] },
+    { id: "c4", name: "求职", tone: 2, mods: ["jobs", "seeker", "rater"] },
+    { id: "c6", name: "柚子", tone: 3, mods: ["youzi", "translate", "pub2md", "importer"] },
+    { id: "c7", name: "工具", tone: 4, mods: ["vault", "bookmarks", "janitor"] },
   ],
   pinned: ["todo", "notes", "jobs", "seeker", "youzi"],
 };

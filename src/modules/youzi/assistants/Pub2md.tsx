@@ -19,7 +19,7 @@ import { youziApi, useYouziStatus, type Level, type Pub2mdFormat, type Pub2mdPar
 import { modelOptions } from "../ModelMenu";
 import { useModels } from "../Schedules";
 import { LevelPicker } from "../Thinking";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { watchJob } from "@/app/Pomelo";
 import { MdField } from "@/shared/editor/MdField";
 
@@ -76,6 +76,7 @@ export function Pub2mdPage() {
     if (data) setSettings((x) => x ?? data.settings);
   }, [data]);
   const [tab, setTab] = useSubPage<"work" | "prompt">("pub2md");
+  useSubNav("pub2md", (p) => setTab(p as "work" | "prompt"));
   const [preview, setPreview] = useState<{ folder: string; file: string } | null>(null);
   const typing = useRef<ReturnType<typeof setTimeout>>(undefined);
   const set = (v: Pub2mdView) => qc.setQueryData(PUB2MD_KEY, v);
@@ -131,17 +132,6 @@ export function Pub2mdPage() {
 
   return (
     <div ref={page} className={`flex min-h-0 min-w-0 flex-1 flex-col px-8 pb-1 ${dropping ? "bg-accent/40" : ""}`}>
-      <div className="mx-auto w-full max-w-4xl pb-3">
-        <Segmented
-          ariaLabel="Pub2MD"
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "work", label: "Pub2MD" },
-            { value: "prompt", label: "提示词" },
-          ]}
-        />
-      </div>
       {tab === "prompt" && <PromptTab data={data} settings={settings} onChange={change} />}
       <div className={`-m-1 mx-auto min-h-0 w-full max-w-4xl flex-1 flex-col gap-4 overflow-y-auto p-1 pb-6 text-sm ${tab === "work" ? "flex" : "hidden"}`}>
         <Options settings={settings} onChange={change} data={data} onFolder={() => void folder()} />

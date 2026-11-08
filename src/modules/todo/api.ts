@@ -129,6 +129,8 @@ export const useGroups = () => useQuery({ queryKey: [...TODO_KEY, "groups"], que
 export const useGoals = () => useQuery({ queryKey: [...TODO_KEY, "goals"], queryFn: api.goals });
 export const useTasks = (p: Place | null) =>
   useQuery({ queryKey: [...TODO_KEY, "tasks", p], queryFn: () => api.tasks(p!), enabled: p !== null });
+/** Today's agenda now (after a tick: is everything done? → 全做完 cheers). */
+export const fetchAgenda = (today: string) => api.agenda(today);
 export const useAgenda = (today: string) => useQuery({ queryKey: [...TODO_KEY, "agenda", today], queryFn: () => api.agenda(today) });
 export const useDoneBetween = (from: string, to: string) =>
   useQuery({ queryKey: [...TODO_KEY, "done", from, to], queryFn: () => api.doneBetween(from, to) });

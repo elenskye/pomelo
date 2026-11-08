@@ -44,6 +44,8 @@ export type CollectionConfig = {
   rereadAdd: string; // "再读一次" | "再看一次"
   statusLabels: StatusLabels;
   emptyTitle: string;
+  /** Its empty page's drawing (visual-atelier marks/empty/). */
+  emptyArt?: import("@/shared/ui").EmptyArt;
 };
 
 /** The most recent 完成时间: the item's own or a later 重读 / 重看. */

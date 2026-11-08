@@ -199,11 +199,13 @@ export function Dropdown<T>(props: {
           else show();
         }}
         onKeyDown={onKeyDown}
+        // the default trigger is the Design System's select: a hand-drawn field with the arrow flipping over
+        data-hand={props.triggerClassName ? undefined : "field"}
+        data-r={props.triggerClassName ? undefined : 10}
+        data-seed={props.triggerClassName ? undefined : 1395}
         className={
           props.triggerClassName ??
-          `${props.block ? "flex w-full min-w-0 justify-between" : "inline-flex shrink-0"} items-center gap-1.5 rounded-control border bg-card py-1.5 pr-2 pl-3 text-sm whitespace-nowrap transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${
-            open ? "bg-muted" : ""
-          }`
+          `pm-field pm-select pm-compact ${props.block ? "w-full min-w-0 justify-between" : "shrink-0"} gap-1.5 pr-2 pl-3 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring ${open ? "is-focus" : ""}`
         }
       >
         {props.renderTrigger ? (
@@ -241,7 +243,8 @@ export function Dropdown<T>(props: {
               maxHeight: props.menuMaxHeight ?? 320,
               visibility: pos ? "visible" : "hidden",
             }}
-            className="z-50 animate-pop-in overflow-y-auto rounded-card border bg-popover p-1 text-foreground shadow-lg"
+            // the menu unfolds like a strip of paper, row by row (motion part select)
+            className="dd-menu z-50 overflow-y-auto rounded-card border bg-popover p-1 text-foreground shadow-lg"
           >
             {rows.map((row, r) => {
               if (row.kind === "group") {

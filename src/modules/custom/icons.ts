@@ -55,3 +55,33 @@ export const ICONS: [string, LucideIcon][] = [
 ];
 
 export const iconOf = (name: string): LucideIcon => ICONS.find(([n]) => n === name)?.[1] ?? Shapes;
+
+/** Each icon's sticker (visual-atelier's marks/modules/, MADE_ICON_MARKS in its art.mjs): a made module wears it unless another is picked. */
+export const MADE_MARKS: Record<string, string> = {
+  shapes: "shapes",
+  "list-checks": "checklist",
+  "gamepad-2": "game",
+  music: "music",
+  headphones: "headphones",
+  camera: "camera",
+  tv: "tv",
+  coffee: "coffee",
+  utensils: "bowl",
+  "shopping-bag": "bag",
+  gift: "gift",
+  shirt: "shirt",
+  plane: "plane",
+  mountain: "mountain",
+  leaf: "leaf",
+  sprout: "sprout",
+  dumbbell: "dumbbell",
+  heart: "heart",
+  star: "star",
+  "graduation-cap": "grad",
+  languages: "translate",
+  code: "code",
+  puzzle: "puzzle",
+  trophy: "trophy",
+};
+/** The icon name kept with a made module for a sticker (its small icon in 页签 and search until those are drawn too). */
+export const iconForMark = (mark: string): string | null => Object.entries(MADE_MARKS).find(([, m]) => m === mark)?.[0] ?? null;

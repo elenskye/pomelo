@@ -7,11 +7,11 @@ import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { moduleById } from "@/app/modules";
-import { useSubPage } from "@/app/subpage";
+import { useSubNav, useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
-import { Button, EmptyState, PageHeader, RefreshButton, Segmented } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, RefreshButton } from "@/shared/ui";
 import { OVERVIEW_KEY, SITE_KEY, rereadSite, siteApi, useHistory, useOverview, type Overview } from "./api";
 import { AboutPage } from "./About";
 import { AssetsPage } from "./Assets";
@@ -155,6 +155,8 @@ export default function SitePage() {
     dirty.current = false;
     setTab(t);
   };
+  // its pages are the folder tabs on the paper's top edge (asking first when there are unsaved changes)
+  useSubNav("site", (t) => void switchTab(t as Tab));
   const toast = useToast();
   const qc = useQueryClient();
   const onError = (e: unknown) => toast(errorText(e), "error");
@@ -175,7 +177,6 @@ export default function SitePage() {
         ) : (
           <>
             <div className="flex shrink-0 items-center gap-2 px-8 pb-3">
-              <Segmented ariaLabel="页面" value={tab} onChange={(t) => void switchTab(t)} options={TABS} />
               <span className="flex-1" />
               <RefreshButton label="重新读网站文件夹" onRefresh={reread} />
             </div>

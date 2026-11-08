@@ -1,12 +1,17 @@
-// 全局搜索: ⌘K (or the sidebar's magnifier) opens a box over every module that isn't hidden (芝麻开门 is
+// 找东西 (全局搜索): ⌘K (or the top bar's magnifier) searches every module that isn't hidden (芝麻开门 is
 // never searched — Rust doesn't look there). Words all have to match (search/mod.rs). Results are grouped
 // by module; below them 意思相近 (v0.4: by meaning, a moment later, without what words found). ↑↓ move,
 // ↩ opens (navigate with the hit; the page opens the record), Esc closes.
+// Looks like a receipt printer (visual-atelier's frame prototype, board Search): the slot drops in, a receipt
+// prints out of it, the results print line by line as you type; picking one tears the receipt off and takes you
+// there. Motion: ds.css (receipt-print).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTabs } from "./tabs";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { Search as SearchIcon, Sparkles } from "lucide-react";
 import { errorText } from "@/shared/feedback";
+import { reducedMotion } from "@/shared/hand";
+import { HandIcon } from "@/shared/handParts";
+import { ModuleIcon } from "./ModuleIcon";
 import { money, type Currency } from "@/modules/finance/money";
 import { slashDate } from "@/shared/dates";
 import { searchAll, searchSimilar, type Hit } from "@/shared/open";
@@ -24,7 +29,14 @@ function detail(h: Hit): string | null {
   return h.detail;
 }
 
-export function SearchBox(props: { onClose: () => void }) {
+/** The receipt's torn bottom edge. */
+const TORN = (() => {
+  const n = 22, zz: string[] = [];
+  for (let i = 0; i <= n * 2; i++) zz.push(`${((i / (n * 2)) * 100).toFixed(2)}% ${i % 2 ? "calc(100% - 10px)" : "100%"}`);
+  return `polygon(0 0,100% 0,${zz.reverse().join(",")})`;
+})();
+
+export function SearchBox(props: { onClose: () => void; onAsk?: ((text: string) => void) | null }) {
   const ref = useRef<HTMLDialogElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const tabs = useTabs();
@@ -33,6 +45,14 @@ export function SearchBox(props: { onClose: () => void }) {
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
+  const [closing, setClosing] = useState(false);
+  const paper = useRef<HTMLDivElement>(null);
+  const close = () => {
+    if (closing) return;
+    if (reducedMotion()) return props.onClose();
+    setClosing(true);
+    setTimeout(props.onClose, 300);
+  };
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
@@ -58,9 +78,15 @@ export function SearchBox(props: { onClose: () => void }) {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
+  // the receipt tears off, then the page opens
   const open = (h: Hit) => {
-    props.onClose();
-    tabs.open(`/${h.module}`, { open: h });
+    const go = () => {
+      props.onClose();
+      tabs.open(`/${h.module}`, { open: h });
+    };
+    if (reducedMotion() || !paper.current) return go();
+    paper.current.classList.add("is-tear");
+    setTimeout(go, 340);
   };
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -73,101 +99,109 @@ export function SearchBox(props: { onClose: () => void }) {
   };
 
   let i = -1;
+  const row = (h: Hit, near: boolean) => {
+    i += 1;
+    const index = i;
+    const d = detail(h);
+    const m = near ? modules.find((x) => x.id === h.module) : undefined;
+    return (
+      <div
+        key={`${near ? "near-" + h.module : ""}${h.kind}${h.id}`}
+        role="option"
+        aria-selected={index === active}
+        data-index={index}
+        onMouseMove={() => setActive(index)}
+        onClick={() => open(h)}
+        className={`srow pm-print-row ${index === active ? "on" : ""}`}
+        style={{ "--pm-i": index } as React.CSSProperties}
+      >
+        {m && <ModuleIcon def={m} size={18} />}
+        <span className="rt">{h.title}</span>
+        {d && <span className="rd">{d}</span>}
+      </div>
+    );
+  };
+  const n = hits.length;
   return (
     <dialog
       ref={ref}
-      aria-label="全局搜索"
+      aria-label="找东西"
       onCancel={(e) => {
         e.preventDefault();
-        props.onClose();
+        close();
       }}
-      onClick={(e) => e.target === ref.current && props.onClose()}
-      className="mx-auto mt-[12vh] w-[600px] max-w-[calc(100vw-32px)] overflow-hidden rounded-card border bg-popover p-0 text-foreground shadow-xl backdrop:bg-black/30"
+      onClick={(e) => e.target === ref.current && close()}
+      className="searchdlg"
     >
-      <div className="flex items-center gap-2.5 border-b px-4">
-        <SearchIcon size={16} className="shrink-0 text-muted-foreground" />
-        <input
-          autoFocus
-          aria-label="搜索全部"
-          placeholder="搜索"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          className="h-12 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
-        />
-      </div>
-      {q !== "" && (
-        <div ref={list} role="listbox" aria-label="搜索结果" className="max-h-[56vh] overflow-y-auto p-1.5">
-          {all.length === 0 && !similar.isFetching ? (
-            isFetched && <p className="px-3 py-6 text-center text-sm text-muted-foreground">没有找到</p>
-          ) : (
-            modules.filter((m) => hits.some((h) => h.module === m.id)).map((m) => {
-              const Icon = m.icon;
-              return (
-                <div key={m.id} className="pb-1">
-                  <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-xs text-muted-foreground">
-                    <Icon size={13} strokeWidth={1.75} style={{ color: m.color }} />
-                    {m.label}
-                  </div>
-                  {hits
-                    .filter((h) => h.module === m.id)
-                    .map((h) => {
-                      i += 1;
-                      const index = i;
-                      const d = detail(h);
-                      return (
-                        <div
-                          key={`${h.kind}${h.id}`}
-                          role="option"
-                          aria-selected={index === active}
-                          data-index={index}
-                          onMouseMove={() => setActive(index)}
-                          onClick={() => open(h)}
-                          className={`flex cursor-default items-baseline gap-3 rounded-control px-2.5 py-1.5 text-sm ${index === active ? "bg-accent" : ""}`}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{h.title}</span>
-                          {d && <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground tabular-nums">{d}</span>}
-                        </div>
-                      );
-                    })}
-                </div>
-              );
-            })
-          )}
-          {(near.length > 0 || similar.isFetching || similar.isError) && (
-            <div className="pb-1">
-              <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-xs text-muted-foreground">
-                <Sparkles size={13} strokeWidth={1.75} />
-                意思相近
-                {similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
-                {similar.isError && <span className="truncate">· {errorText(similar.error)}</span>}
-              </div>
-              {near.map((h) => {
-                i += 1;
-                const index = i;
-                const d = detail(h);
-                const m = modules.find((x) => x.id === h.module);
-                const Icon = m?.icon;
-                return (
-                  <div
-                    key={`near-${h.module}${h.kind}${h.id}`}
-                    role="option"
-                    aria-selected={index === active}
-                    data-index={index}
-                    onMouseMove={() => setActive(index)}
-                    onClick={() => open(h)}
-                    className={`flex cursor-default items-baseline gap-2 rounded-control px-2.5 py-1.5 text-sm ${index === active ? "bg-accent" : ""}`}
-                  >
-                    {Icon && <Icon size={13} strokeWidth={1.75} className="shrink-0 self-center" style={{ color: m.color }} aria-label={m.label} />}
-                    <span className="min-w-0 flex-1 truncate">{h.title}</span>
-                    {d && <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground tabular-nums">{d}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      <div className={`pm-printer ${closing ? "is-closing" : "is-open"}`} onClick={(e) => e.target === e.currentTarget && close()}>
+        <div className="pslot pm-print-slot" aria-hidden>
+          <div className="ps-body" />
+          <div className="ps-mouth" />
         </div>
-      )}
+        <div className="rcwrap">
+          <div ref={paper} className="rcpt pm-print-paper">
+            <div className="rpaper" style={{ clipPath: TORN }} />
+            <div className="rin">
+              <div className="rhead">— 柚儿园 · 找东西 —</div>
+              <div className="sfield">
+                <HandIcon name="search" size={20} seed={902} className="text-[var(--color-ink-soft)]" />
+                <input autoFocus aria-label="找东西" placeholder="找点什么…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
+                {q && n > 0 && <span className="scount">{n} 条</span>}
+                <span className="pm-rule sline" data-hand="rule" data-seed="901" data-sw="1.8" />
+              </div>
+              {q !== "" && (
+                <div ref={list} role="listbox" aria-label="找到的" className="sres">
+                  {all.length === 0 && !similar.isFetching
+                    ? isFetched && (
+                        <div className="snone">
+                          没找到「{q}」
+                          {props.onAsk && (
+                            <button
+                              type="button"
+                              className="pm-press"
+                              onClick={() => {
+                                props.onAsk!(q);
+                                props.onClose();
+                              }}
+                            >
+                              <HandIcon name="sparkle" size={13} seed={903} />
+                              问问柚子
+                            </button>
+                          )}
+                        </div>
+                      )
+                    : modules
+                        .filter((m) => hits.some((h) => h.module === m.id))
+                        .map((m) => (
+                          <div key={m.id}>
+                            <div className="sgh">
+                              <ModuleIcon def={m} size={18} />
+                              {m.label}
+                            </div>
+                            {hits.filter((h) => h.module === m.id).map((h) => row(h, false))}
+                          </div>
+                        ))}
+                  {(near.length > 0 || similar.isFetching || similar.isError) && (
+                    <div>
+                      <div className="snear">
+                        <i />
+                        <span>
+                          意思相近
+                          {similar.isFetching && near.length === 0 && " · 正在找…"}
+                          {similar.isError && ` · ${errorText(similar.error)}`}
+                        </span>
+                        <i />
+                      </div>
+                      {near.map((h) => row(h, true))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="rfoot">谢谢光临 · 柚子</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </dialog>
   );
 }

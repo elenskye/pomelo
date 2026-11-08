@@ -11,7 +11,7 @@ import { api as ipc } from "@/shared/ipc";
 import { KindEditor } from "@/shared/kinds/KindManager";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { useSortable } from "@/shared/sortable";
-import { Button, PageHeader, SearchInput, Segmented } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, SearchInput, Segmented } from "@/shared/ui";
 import { useVaultCategories, useVaultList, useVaultMutations, useVaultStatus, type CopyField, type Summary } from "./api";
 import { EntryPanel } from "./EntryPanel";
 import { Setup, Unlock } from "./Gate";
@@ -204,7 +204,7 @@ function OpenVault() {
             onOpen={(id) => void panel.request(id)}
             onReorder={needle ? undefined : reorder}
           />
-          {listQ.data && shown.length === 0 && <p className="py-10 text-center text-muted-foreground">{all.length === 0 ? "芝麻还没开过门" : "没有找到"}</p>}
+          {listQ.data && shown.length === 0 && (all.length === 0 ? <EmptyState art="vault" title="芝麻还没开过门" /> : <p className="py-10 text-center text-muted-foreground">没有找到</p>)}
         </div>
       </div>
       {panel.selection !== null && (

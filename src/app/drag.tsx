@@ -5,7 +5,8 @@
 import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { moduleById } from "./modules";
-import { Mark, moduleMark } from "@/shared/marks";
+import { ModuleIcon } from "./ModuleIcon";
+import { resolveLook, useLooks } from "./looks";
 
 export type Over = { zone: string; before?: string };
 export type DragNow = { mod: string; from: string; x: number; y: number; over: Over | null };
@@ -85,13 +86,14 @@ export function pressModule(e: React.PointerEvent, mod: string, from: string, dr
 /** The chip under the pointer while dragging. */
 export function DragChip() {
   const d = useDragNow();
+  const looks = useLooks();
   if (!d) return null;
   const m = moduleById(d.mod);
   const Icon = m.icon;
-  const mark = moduleMark(d.mod);
+  const mark = resolveLook(m, looks.lookOf(d.mod)).svg;
   return createPortal(
     <div style={{ left: d.x + 10, top: d.y + 8 }} className="pointer-events-none fixed z-[70] flex items-center gap-1.5 rounded-control border bg-popover px-2 py-1 text-sm shadow-lg">
-      {mark ? <Mark svg={mark} size={22} className="-my-1" /> : <Icon size={14} strokeWidth={1.75} style={{ color: m.color }} />}
+      {mark ? <ModuleIcon def={m} size={22} className="-my-1" /> : <Icon size={14} strokeWidth={1.75} style={{ color: m.color }} />}
       {m.label}
     </div>,
     document.body,
