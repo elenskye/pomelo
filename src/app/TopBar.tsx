@@ -4,7 +4,7 @@
 // (click to bring it to the front, × to close it, its name hangs under it) —「＋」 (the 贴纸簿), the date, 找东西 (⌘K),
 // 设置 and 柚子's button (⌘J). Icon-only buttons have a tooltip on a string instead of a title.
 import { useEffect, useRef, useState } from "react";
-import { Bird } from "lucide-react";
+import { Bird } from "@/shared/icons";
 import { HandIcon, Tape, Tip } from "@/shared/handParts";
 import { reducedMotion } from "@/shared/hand";
 import { Mark, markSvg } from "@/shared/marks";

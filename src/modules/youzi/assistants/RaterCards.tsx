@@ -6,7 +6,7 @@
 import { PickField } from "@/shared/PickField";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Keyboard, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Keyboard, Plus, Sparkles, Trash2, X } from "@/shared/icons";
 import { useJobs, jobPicks } from "@/modules/jobs/api";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm } from "@/shared/feedback";

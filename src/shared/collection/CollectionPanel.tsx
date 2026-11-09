@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Plus, Sparkles, X } from "lucide-react";
+import { Plus, Sparkles, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";

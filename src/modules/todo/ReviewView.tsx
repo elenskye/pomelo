@@ -2,7 +2,7 @@
 // group (ranked bars), a few numbers, then the list itself. One "件" = one DoneItem (a checked task,
 // or one occurrence / check-in / amount of a typed task), as Rust reports them.
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "@/shared/icons";
 import { BarList, ColumnChart } from "@/shared/charts";
 import { addDays, formatDay, mondayOf, parseYmd, toYmd, weekday } from "@/shared/dates";
 import { Button, IconButton, Segmented } from "@/shared/ui";

@@ -1,7 +1,7 @@
 //! Organising 柚子's conversations:
 //! - Lists: 置顶 = pinned and not archived (shown only there, whatever its project) · each project =
-//!   its sessions not pinned / archived · 定时 = the rest written by 定时任务 (schedule.rs) · 最近 = the
-//!   rest · 归档 = archived. Shown in that order. 定时 and 最近 don't take each other's sessions.
+//!   its sessions not pinned / archived · 最近 = the rest (what a 定时任务 wrote too, schedule.rs: no list
+//!   of its own since Dawn Plan · Phase 6) · 归档 = archived. Shown in that order.
 //! - A list follows last activity until the user drags within it (`manual_lists`); then it keeps
 //!   that order and sessions arriving since (moved in, new) come first, by activity. A drop that
 //!   leaves the order as it was changes nothing (an automatic list stays automatic).
@@ -37,7 +37,6 @@ pub const UNNAMED: &str = "未命名项目";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum List {
     Pinned,
-    Scheduled,
     Recent,
     Archived,
     Project(i64),
@@ -47,7 +46,6 @@ impl List {
     pub fn key(self) -> String {
         match self {
             List::Pinned => "pinned".into(),
-            List::Scheduled => "scheduled".into(),
             List::Recent => "recent".into(),
             List::Archived => "archived".into(),
             List::Project(id) => format!("project:{id}"),
@@ -56,7 +54,6 @@ impl List {
     pub fn parse(s: &str) -> Result<List, String> {
         Ok(match s {
             "pinned" => List::Pinned,
-            "scheduled" => List::Scheduled,
             "recent" => List::Recent,
             "archived" => List::Archived,
             _ => List::Project(s.strip_prefix("project:").and_then(|n| n.parse().ok()).ok_or_else(|| format!("不认识的列表：{s}"))?),
@@ -97,7 +94,6 @@ impl SessionRow {
         } else {
             match self.project_id {
                 Some(p) if projects.contains(&p) => List::Project(p),
-                _ if self.scheduled => List::Scheduled,
                 _ => List::Recent,
             }
         }
@@ -124,7 +120,6 @@ pub struct ProjectRow {
 pub struct Library {
     pub pinned: Vec<SessionRow>,
     pub projects: Vec<ProjectRow>,
-    pub scheduled: Vec<SessionRow>,
     pub recent: Vec<SessionRow>,
     pub archived: Vec<SessionRow>,
 }
@@ -134,7 +129,6 @@ impl Library {
         let ids = |v: &Vec<SessionRow>| v.iter().map(|s| s.id).collect();
         Some(match list {
             List::Pinned => ids(&self.pinned),
-            List::Scheduled => ids(&self.scheduled),
             List::Recent => ids(&self.recent),
             List::Archived => ids(&self.archived),
             List::Project(p) => ids(&self.projects.iter().find(|x| x.id == p)?.sessions),
@@ -178,12 +172,11 @@ pub fn library(conn: &Connection) -> Result<Library, String> {
         }
     }
     let by_session = chosen("session_libraries", "session_id")?;
-    let mut lib = Library { pinned: vec![], projects: vec![], scheduled: vec![], recent: vec![], archived: vec![] };
+    let mut lib = Library { pinned: vec![], projects: vec![], recent: vec![], archived: vec![] };
     for mut s in sessions(conn)? {
         s.libraries = by_session.iter().filter(|x| x.0 == s.id).map(|x| x.1).collect();
         match s.list(&known) {
             List::Pinned => lib.pinned.push(s),
-            List::Scheduled => lib.scheduled.push(s),
             List::Recent => lib.recent.push(s),
             List::Archived => lib.archived.push(s),
             List::Project(p) => projects.iter_mut().find(|x| x.id == p).expect("known project").sessions.push(s),
@@ -196,7 +189,6 @@ pub fn library(conn: &Connection) -> Result<Library, String> {
         }
     };
     arrange(&mut lib.pinned, List::Pinned);
-    arrange(&mut lib.scheduled, List::Scheduled);
     arrange(&mut lib.recent, List::Recent);
     arrange(&mut lib.archived, List::Archived);
     for p in projects.iter_mut() {
@@ -454,12 +446,6 @@ pub fn drop(conn: &Connection, id: i64, list: List, before: Option<i64>, after: 
             return Ok(false);
         }
     }
-    let scheduled = row(&tx, id)?.scheduled;
-    match list {
-        List::Scheduled if !scheduled => return Err("只有定时任务写的对话能放进「定时」".into()),
-        List::Recent if scheduled => return Err("定时任务写的对话不能放进「最近」".into()),
-        _ => {}
-    }
     let mut order: Vec<i64> = members.iter().copied().filter(|x| *x != id).collect();
     let at = match (before, after) {
         (Some(b), _) => order.iter().position(|x| *x == b).unwrap_or(0),
@@ -475,7 +461,7 @@ pub fn drop(conn: &Connection, id: i64, list: List, before: Option<i64>, after: 
             s.pinned = true;
             s.archived = false;
         }
-        List::Recent | List::Scheduled => {
+        List::Recent => {
             s.pinned = false;
             s.archived = false;
             s.project_id = None;
@@ -574,7 +560,7 @@ pub fn youzi_projects_reorder(state: State<AppState>, ids: Vec<i64>) -> Result<(
     state.with_youzi_undo("调整顺序", |c| reorder_projects(c, &ids))
 }
 
-/// `list`: "pinned" | "scheduled" | "recent" | "archived" | "project:<id>".
+/// `list`: "pinned" | "recent" | "archived" | "project:<id>".
 #[tauri::command]
 pub fn youzi_drop(state: State<AppState>, id: i64, list: String, before: Option<i64>, after: Option<i64>) -> Result<bool, String> {
     let list = List::parse(&list)?;
@@ -582,7 +568,7 @@ pub fn youzi_drop(state: State<AppState>, id: i64, list: String, before: Option<
         List::Pinned => "置顶",
         List::Archived => "归档",
         List::Project(_) => "移到项目",
-        List::Recent | List::Scheduled => "调整顺序",
+        List::Recent => "调整顺序",
     };
     state.with_youzi_undo(label, |c| drop(c, id, list, before, after))
 }
@@ -601,6 +587,40 @@ mod tests {
     }
     fn ids(v: &[SessionRow]) -> Vec<i64> {
         v.iter().map(|s| s.id).collect()
+    }
+
+    #[test]
+    fn what_a_schedule_wrote_lies_in_recent_with_the_rest() {
+        let c = memory_db();
+        let a = new_session(&c, "平常的");
+        let b = new_session(&c, "定时写的");
+        c.execute("UPDATE sessions SET scheduled = 1, unseen = 1 WHERE id = ?1", [b]).unwrap();
+        let lib = library(&c).unwrap();
+        assert_eq!(ids(&lib.recent), vec![b, a]);
+        assert!(lib.recent[0].scheduled && lib.recent[0].unseen);
+        // dragged among the rest like any other, into a project and back
+        assert!(drop(&c, b, List::Recent, None, Some(a)).unwrap());
+        assert_eq!(ids(&library(&c).unwrap().recent), vec![a, b]);
+        assert!(List::parse("scheduled").is_err());
+    }
+
+    #[test]
+    fn migration_40_gives_scheduled_sessions_no_place_of_their_own() {
+        let mut c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure(&c).unwrap();
+        crate::db::migrate_with(&mut c, &crate::youzi::store::MIGRATIONS[..39], None).unwrap();
+        let (a, b, d) = (new_session(&c, "平常的"), new_session(&c, "定时写的"), new_session(&c, "定时写的，置顶了"));
+        c.execute("UPDATE sessions SET sort_order = 0 WHERE id = ?1", [a]).unwrap();
+        c.execute("UPDATE sessions SET scheduled = 1, sort_order = 0 WHERE id = ?1", [b]).unwrap();
+        c.execute("UPDATE sessions SET scheduled = 1, sort_order = 0, pinned_at = updated_at WHERE id = ?1", [d]).unwrap();
+        c.execute_batch("INSERT INTO manual_lists (list) VALUES ('scheduled'), ('recent'), ('pinned')").unwrap();
+        crate::db::migrate_with(&mut c, crate::youzi::store::MIGRATIONS, None).unwrap();
+        // 最近 was arranged by hand: the newcomer from 定时 comes on top; the pinned one keeps its place
+        let lib = library(&c).unwrap();
+        assert_eq!((ids(&lib.recent), ids(&lib.pinned)), (vec![b, a], vec![d]));
+        let order = |id: i64| c.query_row("SELECT sort_order FROM sessions WHERE id = ?1", [id], |r| r.get::<_, Option<i64>>(0)).unwrap();
+        assert_eq!((order(a), order(b), order(d)), (Some(0), None, Some(0)));
+        assert_eq!(manual(&c).unwrap(), HashSet::from(["recent".to_string(), "pinned".to_string()]));
     }
 
     #[test]

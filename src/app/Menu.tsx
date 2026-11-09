@@ -3,7 +3,7 @@
 // outside; ↑↓ ↩ work. Stays inside the window.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check } from "lucide-react";
+import { Check } from "@/shared/icons";
 
 export type MenuRow = { label: string; icon?: ReactNode; dot?: string; checked?: boolean; onSelect: () => void } | { head: string } | "-";
 export type MenuAt = { x: number; y: number; rows: MenuRow[] };

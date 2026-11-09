@@ -1,7 +1,7 @@
 // 设置 → 体检 (rules in Rust health.rs): records worth a look, listed by what's wrong; each opens its record the way ⌘K does.
 import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { Stethoscope } from "lucide-react";
+import { Stethoscope } from "@/shared/icons";
 import { useTabs } from "@/app/tabs";
 import { moduleById } from "@/app/modules";
 import type { Hit } from "@/shared/open";

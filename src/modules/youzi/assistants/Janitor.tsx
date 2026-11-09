@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FolderOpen, Plus, Trash2, X } from "lucide-react";
+import { ChevronRight, FolderOpen, Plus, Trash2, X } from "@/shared/icons";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { Section } from "@/settings/layout";
 import { StackBar, Sunburst, type SunNode } from "@/shared/charts";

@@ -1,7 +1,7 @@
 // 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder, fold a group's goals)
 // + right content. Modeled on GoalMap. Goals carry no icon (names can start with an emoji).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, CalendarDays, ChevronDown, FolderPlus, ListPlus, Plus, Sun, Target } from "lucide-react";
+import { CalendarCheck, CalendarDays, ChevronDown, FolderPlus, ListPlus, Plus, Sun, Target } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { formatDay, localToday, weekday } from "@/shared/dates";

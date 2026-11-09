@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, Settings } from "lucide-react";
+import { FolderOpen, Settings } from "@/shared/icons";
 import { useTabs } from "@/app/tabs";
 import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";

@@ -5,7 +5,7 @@
 // into a .docx (the cited sources at the end) in a folder chosen here (remembered), then 打开 / 在访达中显示.
 import { useEffect, useState, type FormEvent } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FilePen, FilePlus2 } from "lucide-react";
+import { FilePen, FilePlus2 } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";
 import { Modal } from "@/shared/Modal";

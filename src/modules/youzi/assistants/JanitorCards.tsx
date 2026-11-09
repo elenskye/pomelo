@@ -4,7 +4,7 @@
 // while the reply is still being written.
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy } from "lucide-react";
+import { Copy } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
 import { JANITOR_KEY, bytes, janitorApi, type JanitorCard } from "./janitorApi";

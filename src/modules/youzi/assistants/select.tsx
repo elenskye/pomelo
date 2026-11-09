@@ -4,7 +4,7 @@
 // (SortGroup). Writes are Rust's (one undo step each). No tick boxes in v0.7's pages: a choice is a
 // button whose background shows it's on (`Chip`, `picked`), a setting a Switch (like Pub2MD).
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { CheckSquare } from "lucide-react";
+import { CheckSquare } from "@/shared/icons";
 import { useSortable } from "@/shared/sortable";
 import { Button } from "@/shared/ui";
 

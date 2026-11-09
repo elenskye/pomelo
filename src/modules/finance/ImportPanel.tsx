@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Bird, ChevronDown, ChevronRight, Ellipsis, FileDown, Maximize2, Plus, Sparkles, X } from "lucide-react";
+import { Bird, ChevronDown, ChevronRight, Ellipsis, FileDown, Maximize2, Plus, Sparkles, X } from "@/shared/icons";
 import { useSortable } from "@/shared/sortable";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";

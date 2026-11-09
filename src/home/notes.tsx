@@ -17,6 +17,7 @@ import { cheerOver } from "@/shared/cheer";
 import { errorText, useToast } from "@/shared/feedback";
 import { flash } from "@/shared/hand";
 import { HandIcon, Tape, Tip } from "@/shared/handParts";
+import { NoteBody } from "@/modules/notes/NoteBody";
 import { InlineMd } from "@/shared/InlineMd";
 import { api as ipc } from "@/shared/ipc";
 import type { Hit } from "@/shared/open";
@@ -274,9 +275,10 @@ export function StickyNote(props: { note: DeskNoteData; open: () => void }) {
         <ModuleIcon def={moduleById("notes")} size={24} />
         <span style={{ fontSize: 15, fontWeight: 700 }}>念念不忘</span>
       </div>
-      <button type="button" className="txt" onClick={props.open}>
-        {props.note.content}
-      </button>
+      {/* drawn like the note itself (bold, highlight, lists…), not its source; the whole text opens it */}
+      <div role="button" tabIndex={0} className="txt" onClick={props.open} onKeyDown={(e) => e.key === "Enter" && props.open()}>
+        <NoteBody content={props.note.content} />
+      </div>
       <div style={{ fontSize: 12, marginTop: 8, opacity: 0.7 }}>{ymdText(props.note.day)}</div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { usePageContext } from "@/app/pageContext";
 import { Dropdown } from "@/shared/Dropdown";

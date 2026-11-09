@@ -1,6 +1,6 @@
 // Side panel for one 五花八门 item: 名称, then every field (shown in the table or not) by its type.
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";

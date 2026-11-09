@@ -24,7 +24,7 @@
 import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileDown, MapPin, Pencil, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileDown, MapPin, Pencil, RotateCcw, X } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { ThinkLine } from "@/shared/handParts";
 import { api } from "@/shared/ipc";

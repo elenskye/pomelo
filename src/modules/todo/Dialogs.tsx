@@ -1,6 +1,6 @@
 // Modals for groups (name only) and goals (name, group, dates, status, note, 复盘).
 import { useState, type FormEvent } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2 } from "@/shared/icons";
 import { useAttachmentsOf, type FileInfo } from "@/shared/attachments/api";
 import { AttachmentField } from "@/shared/attachments/Attachments";
 import { Dropdown } from "@/shared/Dropdown";

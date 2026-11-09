@@ -4,7 +4,7 @@
 import { useEffect, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
-import { Languages, Square } from "lucide-react";
+import { Languages, Square } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { Button, TextArea } from "@/shared/ui";
 import { toolClass } from "@/modules/youzi/Composer";

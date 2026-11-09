@@ -2,8 +2,9 @@
 // module's page is a sheet of grid paper with stitches down its left edge, tilted a little, its sticker slapped on
 // the top-left corner and its pages (subs) as folder tabs (纸签) on the top edge. The other open pages are stacked
 // to its right, a paper edge and their sticker showing (hover pulls one out a little, its name hangs under the
-// sticker; click brings it to the front). Motion: ds.css (page-stack, slap-in); the sheet is painted (data-hand).
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+// sticker; a click anywhere on what shows of it brings it to the front). Motion: ds.css (page-stack, slap-in); the
+// sheet is painted (data-hand).
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { flash, reducedMotion } from "@/shared/hand";
 import { HandIcon, Tape, Tip } from "@/shared/handParts";
@@ -12,7 +13,6 @@ import { useModuleMenu } from "./DockPage";
 import { Menu } from "./Menu";
 import { ModuleIcon } from "./ModuleIcon";
 import { moduleById, pageName, splitPath } from "./modules";
-import { PomeloFace, type Face } from "./Pomelo";
 import { rememberSub, subNav } from "./subpage";
 import { STACK_SHOWN, useTabs } from "./tabs";
 
@@ -55,49 +55,34 @@ function FolderTabs(props: { module: string; path: string }) {
   );
 }
 
-/** 柚子's own page has 柚子 on its corner, and it can be poked (小彩蛋: 5 pokes in 2.5 s and it gets dizzy). */
-function PokePomelo(props: { onFace: (f: Face | null, ms: number) => void; onDizzy: (el: HTMLElement) => void }) {
-  const [face, setFace] = useState<Face>("idle");
-  const [dizzy, setDizzy] = useState(false);
-  const pokes = useRef<number[]>([]);
-  const timer = useRef(0);
-  const set = (f: Face, ms: number) => {
-    setFace(f);
-    props.onFace(f, ms);
-    clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setFace("idle"), ms);
-  };
-  return (
-    <button
-      type="button"
-      aria-label="戳一下柚子"
-      className="slap poke pm-slap-in is-in"
-      onClick={(e) => {
-        const now = Date.now();
-        pokes.current = pokes.current.filter((t) => now - t < 2500).concat(now);
-        if (pokes.current.length >= 5 && !dizzy) {
-          pokes.current = [];
-          setDizzy(!reducedMotion());
-          set("error", 2200);
-          props.onDizzy(e.currentTarget);
-          setTimeout(() => setDizzy(false), 2200);
-          return;
-        }
-        if (!dizzy) set((["wow", "success", "wink", "surprised"] as Face[])[pokes.current.length % 4], 1000);
-      }}
-    >
-      <span style={{ transform: "rotate(-8deg)", display: "inline-flex" }}>
-        <PomeloFace face={face} size={72} dizzy={dizzy} />
-      </span>
-    </button>
-  );
+/** A place on the desk beside the front page, for the page to fill (柚子's page: the big pomelo and the slips of
+ *  what was talked about, Phase 2 final design). Null on other pages. */
+const SideCtx = createContext<HTMLElement | null>(null);
+export const useDeskSide = () => useContext(SideCtx);
+
+const RINGS = Array.from({ length: 64 }, (_, i) => i);
+
+/** A value that follows `value` after `ms`, starting from `first` (the pile behind the front page: the front page
+ *  paints first, also when coming back from the desk). */
+function useLate<T>(value: T, ms: number, first: T): T {
+  const [late, setLate] = useState(first);
+  useEffect(() => {
+    const t = setTimeout(() => setLate(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return late;
 }
 
-export function PaperStack(props: { children: ReactNode; onFace: (f: Face | null, ms: number) => void; onDizzy: (el: HTMLElement) => void }) {
+/** The pages on the desk. Smoothness (docs/testing.md「流畅度」): a page behind keeps its own element and layer while
+ *  it lies there — rendered in a fixed order (by id), its z-index its own `seen` (never renumbered: WebKit repaints a
+ *  whole layer whose z-index changes), only its place in the pile changes (its transform, written on the element: a custom property
+ *  would be inherited by everything in the page and restyle it), which the compositor moves without repainting — and the pile is brought up to date a moment after the front page (it paints first). */
+export function PaperStack(props: { children: ReactNode }) {
   const tabs = useTabs();
   const path = useLocation().pathname;
   const [front, ...behind] = tabs.stack;
   const frontRef = useRef<HTMLDivElement>(null);
+  const [side, setSide] = useState<HTMLElement | null>(null);
   const was = useRef<{ id: number | null; ids: number[] }>({ id: null, ids: [] });
   // a page that wasn't on the desk slides in from the right; any page coming to the front slaps its sticker again
   // (before the first paint, so it doesn't show in place for a frame first)
@@ -110,30 +95,44 @@ export function PaperStack(props: { children: ReactNode; onFace: (f: Face | null
     }
     was.current = { id: front.id, ids: tabs.stack.map((p) => p.id) };
   }, [front?.id, tabs.stack]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pile = useLate(behind.slice(0, STACK_SHOWN).map((p) => p.id).join(), 240, "");
   if (!front) return null;
   const mod = splitPath(front.path).module;
   const def = moduleById(mod);
+  const youzi = mod === "youzi";
+  const places = new Map(pile ? pile.split(",").map((id, j) => [Number(id), j]) : []);
+  const stacked = behind.filter((p) => places.has(p.id)).sort((a, b) => a.id - b.id);
   return (
     <div className="stack">
-      {behind.slice(0, STACK_SHOWN).map((p, j) => {
+      {stacked.map((p) => {
         const m = splitPath(p.path).module;
+        const j = places.get(p.id) ?? 0;
         return (
-          <div key={p.id} className="pm-page is-stacked" style={{ "--j": j } as React.CSSProperties}>
+          // the whole page that shows is the way to it, not only its sticker
+          <div key={p.id} className="pm-page is-stacked" style={{ transform: `translate(${22 * (j + 1)}px, ${4 * j}px) rotate(${0.6 + 0.8 * j}deg)`, zIndex: p.seen }} onClick={() => tabs.select(tabs.tabs.findIndex((t) => t.id === p.id))}>
             <div className="paper pm-sheet" data-hand="sheet" data-seed={seedOf(m)} data-tilt="-0.3" />
-            <button type="button" className="peek pm-page-peek pm-tip-host" aria-label={`换到「${pageName(p.path)}」`} onClick={() => tabs.select(tabs.tabs.findIndex((t) => t.id === p.id))}>
+            <button type="button" className="peek pm-page-peek pm-tip-host" style={{ top: 80 + 92 * j }} aria-label={`换到「${pageName(p.path)}」`}>
               <ModuleIcon def={moduleById(m)} size={46} />
               <Tip>{pageName(p.path)}</Tip>
             </button>
           </div>
         );
       })}
+      {youzi && <div ref={setSide} className="deskside" />}
       <div ref={frontRef} key={front.id} className="pm-page front" aria-label={def.label}>
         <FolderTabs module={mod} path={path.startsWith(`/${mod}`) ? path : front.path} />
-        <main className={`paper pm-sheet ${mod === "youzi" ? "lined" : ""}`} data-hand="sheet" data-seed={seedOf(mod)} data-tilt="-0.3">
-          <div className="paper-scroll">{props.children}</div>
+        <main className={`paper pm-sheet ${youzi ? "lined" : ""}`} data-hand="sheet" data-seed={seedOf(mod)} data-tilt="-0.3">
+          <div className="paper-scroll">
+            <SideCtx.Provider value={youzi ? side : null}>{props.children}</SideCtx.Provider>
+          </div>
         </main>
-        {mod === "youzi" ? (
-          <PokePomelo onFace={props.onFace} onDizzy={props.onDizzy} />
+        {youzi ? (
+          // 柚子's page is a spiral notepad: the rings along its top edge (柚子 itself sits on the desk beside it)
+          <span className="rings" aria-hidden>
+            {RINGS.map((i) => (
+              <i key={i} />
+            ))}
+          </span>
         ) : (
           <span className="slap pm-slap-in is-in" style={{ "--pm-delay": ".3s" } as React.CSSProperties} aria-hidden>
             <span style={{ transform: "rotate(-8deg)", display: "inline-flex" }}>

@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Brain, Check, ChevronRight, Ellipsis, Plus } from "lucide-react";
+import { Brain, Check, ChevronRight, Ellipsis, Plus } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { toYmd } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";

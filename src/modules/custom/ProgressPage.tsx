@@ -5,7 +5,7 @@
 // Header ⋯: 改名和叫法 · 管理类型 · 删除.
 import { useMemo, useState } from "react";
 import { Navigate, useParams } from "react-router";
-import { CheckCircle2, Circle, CircleDot, Ellipsis, Pencil, Plus } from "lucide-react";
+import { CheckCircle2, Circle, CircleDot, Ellipsis, Pencil, Plus } from "@/shared/icons";
 import { usePageContext } from "@/app/pageContext";
 import { Dropdown } from "@/shared/Dropdown";
 import { useKinds, UNCATEGORIZED, type Kind } from "@/shared/kinds/api";

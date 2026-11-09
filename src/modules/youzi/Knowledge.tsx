@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "re
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, Globe, LibraryBig, Plus, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, Globe, LibraryBig, Plus, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
@@ -28,7 +28,7 @@ const home = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
 function sessionOf(lib: Library | undefined, id: number | null) {
   if (!lib || id == null) return undefined;
-  return [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived].find((s) => s.id === id);
+  return [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.recent, ...lib.archived].find((s) => s.id === id);
 }
 
 /** The switch and libraries of `current` (a draft's own under `draftKey`, in `draftProject`). */

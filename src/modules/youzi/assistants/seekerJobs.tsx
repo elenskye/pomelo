@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { X } from "lucide-react";
+import { X } from "@/shared/icons";
 import { errorText } from "@/shared/feedback";
 import { Button, IconButton } from "@/shared/ui";
 import type { SeekerLang, SeekerSuggestion } from "./seekerApi";

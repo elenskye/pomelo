@@ -80,14 +80,14 @@ export type YouziInfo = { mode: Mode; dbPath: string; filesDir: string; schemaVe
 
 export type Session = { id: number; title: string; updatedAt: string };
 
-/** `scheduled`: written by a 定时任务; `unseen`: not opened since; `private`: 私密 (年度总结 and 柚子's search leave it out); `thinking`, `effort`: its 思考 switch and 思考强度 (none: the model's default);
+/** `scheduled`: written by a 定时任务 (it lies in 最近 with the rest); `unseen`: not opened since; `private`: 私密 (年度总结 and 柚子's search leave it out); `thinking`, `effort`: its 思考 switch and 思考强度 (none: the model's default);
  *  `knowledge`: its 知识库 switch, `libraries` the ones it chose (none: its project's, then all). */
 export type SessionRow = { id: number; title: string; projectId: number | null; pinned: boolean; archived: boolean; updatedAt: string; scheduled: boolean; unseen: boolean; private: boolean; thinking: boolean; effort?: string | null; knowledge: boolean; libraries: number[] };
 /** `libraries`: the 知识库 its conversations search (none: all). */
 export type ProjectRow = { id: number; name: string; instructions: string; sessions: SessionRow[]; files: number; includeGlobalMemories: boolean; libraries: number[] };
 /** The conversation list, each part in display order. */
-export type Library = { pinned: SessionRow[]; projects: ProjectRow[]; scheduled: SessionRow[]; recent: SessionRow[]; archived: SessionRow[] };
-/** "pinned" | "scheduled" | "recent" | "archived" | "project:<id>" */
+export type Library = { pinned: SessionRow[]; projects: ProjectRow[]; recent: SessionRow[]; archived: SessionRow[] };
+/** "pinned" | "recent" | "archived" | "project:<id>" */
 export type ListKey = string;
 export type ChatHit = { sessionId: number; title: string; messageId: number | null; snippet: string | null; at: string; model: string | null; archived: boolean };
 

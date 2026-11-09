@@ -9,7 +9,7 @@
 // 搜索 lists matches from every folder with where they are. ⋯ / right-click: 打开 · 编辑 · 放首页
 // · 移到… · 删除. ⌘N adds a link, ⌘F searches. Every change is one undo step (Rust).
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Check, ChevronRight, ExternalLink, Folder, FolderInput, FolderPlus, House, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, Folder, FolderInput, FolderPlus, House, Pencil, Plus, Trash2 } from "@/shared/icons";
 import { Menu, type MenuAt, type MenuRow } from "@/app/Menu";
 import { moduleById } from "@/app/modules";
 import { usePageContext } from "@/app/pageContext";

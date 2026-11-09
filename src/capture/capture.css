@@ -1,0 +1,13 @@
+/* 速记小窗（docs/design.md「外框 · 速记小窗」）：一页方格纸；上面的分段、输入框、下拉、按钮和主窗口一样是手画的
+   （main.tsx 的 startHand，样子在同步来的 ds.css）。笔记的框是手画的输入框，聚焦或拖文件进来时边描粗。 */
+.cap {
+  background-color: var(--color-paper);
+  background-image: linear-gradient(var(--color-grid) 1px, transparent 1px), linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+  background-size: 22px 22px;
+  color: var(--color-ink);
+}
+.cap-note { position: relative; isolation: isolate; }
+.cap-note > [data-hand-painted] path[stroke] { transition: stroke-width .18s; }
+.cap-note:focus-within > [data-hand-painted] path[stroke], .cap-note.drop > [data-hand-painted] path[stroke] { stroke-width: var(--pm-sw-focus); }
+.cap-note > .border-t { border-top: 2px dashed var(--color-line); }
+@media (prefers-reduced-motion: reduce) { .cap-note > [data-hand-painted] path[stroke] { transition: none; } }

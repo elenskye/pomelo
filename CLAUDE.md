@@ -27,8 +27,9 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。2026-11-07 起同一个 Agent 两边一起做，计划在 `docs/roadmap.md`「Dawn Plan」，和那边的 `ROADMAP.md` 里的一模一样（两个仓库唯一允许重复的内容，改要一起改）。那边的规矩在它的 `CLAUDE.md`。
 - 资产单向同步过来（那边打 tag 后 `sync`，每个 Phase 一次），放在 `src/vendor/pomelo/`：颜色变量 `pomelo.css`、颜色常量 `tokens.ts`、手画零件的画法 `handmade.js`，连 `VERSION` 和 `SHA256SUMS` 一起，不手改；要改回那边改。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
 - 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push 仍由我做；每个 Phase 做完 Agent 直接做升级测试并 `pnpm app:install`。
+- 界面小图标从 `@/shared/icons` 取（自己画的 148 个，同步在 `src/vendor/pomelo/marks/icons/`，名字沿用以前 Lucide 的 `Plus`、`Trash2`…）；项目里没有 lucide-react 了，不要再装。要新图标：回 visual-atelier 在 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行。
 - 图标：柚子的表情、「问柚子」按钮、模块贴纸在 `src/vendor/pomelo/marks/`，用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark` 画（每次换一套 id，同一张能放很多次）；菜单栏的模板图和 App 图标也从那里来。
-- 已定的要求见 `docs/requirements.md`「以后」；`docs/design.md` 到 Dawn Plan · Phase 9 重写（开发指南并进去，不再单独写 `v0.9-guide.md`）。
+- 已定的要求见 `docs/requirements.md`「以后」；`docs/design.md` 到 Dawn Plan · Phase 10 重写（开发指南并进去，不再单独写 `v0.9-guide.md`）。
 
 ## 只在主目录做
 
@@ -94,6 +95,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - 外框：顶栏、页签和前进后退、索引签、模块坞、柚子瓣、柚子，照 `requirements.md`「界面外框」和 `design.md`「外框」；各模块自己的布局不动。
 - 图表用 `src/shared/charts.tsx`，颜色只用 `--chart-*`；新增模块颜色要同时写进 `index.css` 和 `design.md`。
 - 能滚动的区域用 `-m-1 … p-1`，焦点框才不会被切掉。拖动排序用鼠标事件（`src/shared/sortable`），不用浏览器自带的拖放。
+- 流畅度（`docs/testing.md`「流畅度」）：窗口是 WebKit。不放实时的 SVG 滤镜（纸纹是平铺的图）；整页大小的层不改 `z-index`、不反复新建；改了外框、纸、手画零件或动效，在 Safari 里量一遍。
 - 字体只用 `font-sans`（`index.css` 里的 `Pomelo Hand`），不直接写 `Hannotate SC`（粗体会被系统描粗发糊）。柚子消息正文用苹方是唯一的例外。
 - 面板里柚子的操作（贴 JD、拆成子任务）放在那一栏标题的右边：`Field` 的 `action` 加 `Assist.tsx` 的 `AssistAction`。
 
@@ -116,12 +118,13 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `src-tauri/src/` 其他 | `icons.rs` 一网打尽的网站图标；`health.rs` 设置里的体检；`dock.rs` 模块坞的实时小字；`tray.rs` 菜单栏的柚子（图在 `src/vendor/pomelo/marks/`）；`menu.rs` Mac 菜单栏的菜单（页签快捷键）；`capture.rs` 速记小窗（窗口、⌥Space、草稿）；`autostart.rs`；`undo.rs` 撤销 / 重做（SQLite session，分两个库）；`secure.rs` 钥匙串、Touch ID、剪贴板；`transfer.rs` · `backup.rs` 导出导入、备份恢复；`db.rs` · `migrations/`；`home.rs` 首页汇总 |
 | `src/app/` | `App.tsx` 外壳、⌘Z / ⌘K / ⌘J、例行检查；`TopBar.tsx` 顶栏；`tabs.tsx` 页签和前进后退、`subpage.ts` 子页进地址；`IndexTabs.tsx` 索引签；`dock.ts` · `DockPage.tsx` 模块坞；`Bloom.tsx` 柚子瓣；`Pomelo.tsx` 柚子的表情和状态；`drag.tsx` · `Menu.tsx`；`frame.css`；`Search.tsx`；`pageContext.ts`；`hidden.ts`；`modules.ts`（模块、助手、子页） |
 | `src/home/` | 首页、`BriefCard.tsx`、`YearCard.tsx` |
-| `src/capture/` | 速记小窗的页面（`capture.html`，Vite 的第二个入口；`CaptureChat.tsx` 问柚子，`CaptureTranslate.tsx` 翻译） |
-| `src/modules/<模块>/` | 各模块页面（`finance/ImportPanel.tsx` · `importApi.ts` · `importJob.ts` 导入账单，子页 `/finance/import`）；书影共用 `src/shared/collection/`；`custom/` 五花八门、循序渐进；`site/` 呦呦漫游（`SitePage.tsx` 入口和页签、`parts.tsx` 共用的、`MdEditor.tsx`）；`jobs/SeekerExports.tsx` · `jobs/Interviews.tsx` 岗位面板里的 Seeker 简历（从 cv/ 选）和面试；`bookmarks/` 一网打尽（`SiteIcon.tsx` 网站图标，首页也用） |
-| `src/modules/youzi/` | `YouziPage.tsx`；`ConversationList.tsx`；`Transcript.tsx` · `markdown.ts`；`useChat.tsx`；`SideChat.tsx` 右侧小窗；`AskCard.tsx` 问我的卡片；`Composer.tsx` · `slots.ts`；`Manage.tsx` `Schedules.tsx` `Plugins.tsx` `Knowledge.tsx` `Work.tsx`；`Assist.tsx` 面板里的帮手；`Thinking.tsx` 思考和强度的按钮、下拉；`assistants/`（`ModelRow.tsx` 助手设置页的一行模型和思考；`Seeker.tsx` 和 `Seeker*.tsx`、`seekerApi.ts`、`seekerDraft.ts`、`seekerJobs.tsx`（模型调用离开页面也跑完，和按钮下的状态行）；`SeekerFiles.tsx` cv/ 和 material/；`select.tsx` 拖动排序和「选择」多选；`SeekerGroups.tsx` 分组改名删除、上移下移、规则「发给」和发给模型的说明；`Rater.tsx`（含设置页）· `RaterCards.tsx` 卡片页 · `RaterInterview.tsx` 面试页（准备、复盘对话窗、总结）· `raterApi.ts`；`Translate.tsx` · `translator.tsx` 和速记小窗共用的部分；`Pub2md.tsx` · `MmdPreview.tsx`；`Janitor.tsx` · `JanitorCards.tsx` · `janitorApi.ts` DevJanitor） |
+| `src/capture/` | 速记小窗的页面（`capture.html`，Vite 的第二个入口，`main.tsx` 和主窗口一样要 `startHand()`；`capture.css` 方格纸和笔记的框；`CaptureChat.tsx` 问柚子，`CaptureTranslate.tsx` 翻译） |
+| `src/modules/<模块>/` | 各模块页面（`finance/ImportPanel.tsx` · `importApi.ts` · `importJob.ts` 导入账单，子页 `/finance/import`）；书影共用 `src/shared/collection/`；`custom/` 五花八门、循序渐进；`site/` 呦呦漫游（`SitePage.tsx` 入口和页签、`parts.tsx` 共用的、`MdEditor.tsx`、`ContentIcons.tsx` 正文上面的内容图标选择器：插入 `:名字:`，清单是同步来的 `src/vendor/pomelo/content-icons.json`）；`jobs/SeekerExports.tsx` · `jobs/Interviews.tsx` 岗位面板里的 Seeker 简历（从 cv/ 选）和面试；`bookmarks/` 一网打尽（`SiteIcon.tsx` 网站图标，首页也用） |
+| `src/modules/youzi/` | `YouziPage.tsx`（线圈本）；`ConversationList.tsx` 桌面上的小纸条、`BigPomelo.tsx` 桌面上的大柚子（经 `app/Desk.tsx` 的 `useDeskSide` 放到纸的左边）；`Transcript.tsx` · `markdown.ts`；`useChat.tsx`；`SideChat.tsx` 右侧小窗；`AskCard.tsx` 问我的卡片；`Composer.tsx` · `slots.ts`；`Manage.tsx` `Schedules.tsx` `Plugins.tsx` `Knowledge.tsx` `Work.tsx`；`Assist.tsx` 面板里的帮手；`Thinking.tsx` 思考和强度的按钮、下拉；`assistants/`（`ModelRow.tsx` 助手设置页的一行模型和思考；`Seeker.tsx` 和 `Seeker*.tsx`、`seekerApi.ts`、`seekerDraft.ts`、`seekerJobs.tsx`（模型调用离开页面也跑完，和按钮下的状态行）；`SeekerFiles.tsx` cv/ 和 material/；`select.tsx` 拖动排序和「选择」多选；`SeekerGroups.tsx` 分组改名删除、上移下移、规则「发给」和发给模型的说明；`Rater.tsx`（含设置页）· `RaterCards.tsx` 卡片页 · `RaterInterview.tsx` 面试页（准备、复盘对话窗、总结）· `raterApi.ts`；`Translate.tsx` · `translator.tsx` 和速记小窗共用的部分；`Pub2md.tsx` · `MmdPreview.tsx`；`Janitor.tsx` · `JanitorCards.tsx` · `janitorApi.ts` DevJanitor） |
 | `src/settings/` · `src/shared/` | 设置页（`Youzi.tsx` 柚子、云端模型，`Health.tsx` 体检）；共用组件（`editor/` 写字的输入框：`LiveText` 底子、`LiteEditor`（念念不忘的格式）、`lite.ts`，新模块要写字就用它；`markdown.ts` Markdown 的样子，`MdField` 写提示词的框（新加能写提示词的地方用它）；`Dropdown` `PickField`（长列表的搜索小弹窗）`DateInput` `panel` `Modal` `sortable` `charts` `diff` `InlineMd` `open` `tags` `attachments/` 等） |
+| `src/dev/perf.ts` | 流畅度自测（`?mock&perf=<端口>`，结果发给 `scripts/perf-listen.mjs`，见 `docs/testing.md`「流畅度」） |
 | `src/dev/mockIpc.ts` | 浏览器测试用的模拟后端（新命令要加进来；Seeker 的在 `seekerMock.ts`，一网打尽的在 `bookmarksMock.ts`，DevJanitor 的在 `janitorMock.ts`，数据 `janitorMock.json` 由 Rust 扫假 Mac 生成） |
-| `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`resume-templates.ts`（生成 `src-tauri/templates/` 的内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
+| `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`perf-listen.mjs`（流畅度自测的收件人）、`resume-templates.ts`（生成 `src-tauri/templates/` 的内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
 
 ## 新增一个模块
 

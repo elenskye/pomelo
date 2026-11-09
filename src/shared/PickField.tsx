@@ -4,7 +4,7 @@
 // sit inside another dialog's form) and renders at <body>; its clicks don't reach the page behind.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronsUpDown, X } from "lucide-react";
+import { ChevronsUpDown, X } from "@/shared/icons";
 import { IconButton, SearchInput } from "./ui";
 
 export type PickOption<T> = { value: T; label: string; detail?: string; group?: string };

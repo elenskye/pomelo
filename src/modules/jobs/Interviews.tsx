@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { MessageSquare, Sparkles } from "lucide-react";
+import { MessageSquare, Sparkles } from "@/shared/icons";
 import { useTabs } from "@/app/tabs";
 import { RATER_INTERVIEWS_KEY, interviewApi, sameJob } from "@/modules/youzi/assistants/raterApi";
 import type { Hit } from "@/shared/open";

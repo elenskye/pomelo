@@ -1,7 +1,7 @@
 // 来日方长: the pinned one as a big card, then one list in days.rs order (过期的证件, 还有 N 天, past
 // one-offs last); tabs 全部 · 纪念日 · 生日 · 证件. ⌘N adds one of the tab's kind.
 import { useState } from "react";
-import { Pin, Plus } from "lucide-react";
+import { Pin, Plus } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { usePageContext } from "@/app/pageContext";
 import { slashDate, weekday } from "@/shared/dates";

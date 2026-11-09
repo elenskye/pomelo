@@ -2,8 +2,8 @@
 // hand-drawn edges painted by shared/hand.ts (data-hand), the controls' small motions (按下扁一下, 荧光笔拖过去, 圆贴纸滑过去,
 // 小签晃两下, 空状态画完再弹…) from the Design System's motion parts. Sizes stay Pomelo's (compact) where a page is dense.
 // Dropdowns: ./Dropdown.tsx.
-import type { LucideIcon } from "lucide-react";
-import { RefreshCw } from "lucide-react";
+import type { IconType } from "@/shared/icons";
+import { RefreshCw } from "@/shared/icons";
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode } from "react";
 import { flash } from "./hand";
 import { HandIcon, Tip } from "./handParts";
@@ -12,7 +12,7 @@ import { markSvg, sizedMark } from "./marks";
 /** A page's title, as the typical pages (visual-atelier's canvases/pomelo-pages): big, no icon — the module's sticker
  *  is slapped on the paper's corner — clear of that sticker; what the page holds in soft small print on the right.
  *  `icon` / `color` stay for pages shown outside the paper. */
-export function PageHeader(props: { icon?: LucideIcon; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
+export function PageHeader(props: { icon?: IconType; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
   return (
     <header data-tauri-drag-region className="pm-page-head flex h-[68px] shrink-0 items-end justify-between gap-4 pr-8 pb-3 pl-14">
       <h1 className="pm-sheet-title pointer-events-none flex shrink-0 items-center gap-2 whitespace-nowrap">

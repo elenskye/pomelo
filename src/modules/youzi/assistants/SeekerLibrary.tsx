@@ -7,7 +7,7 @@
 // 「选择」 ticks several to 启用 / 停用 / 删除 at once (select.tsx; one undo step each).
 import { PickField } from "@/shared/PickField";
 import { useState, type ReactNode } from "react";
-import { ChevronRight, Copy, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ChevronRight, Copy, History, Pencil, Plus, Sparkles, Trash2 } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { InlineMd } from "@/shared/InlineMd";
 import { Modal } from "@/shared/Modal";

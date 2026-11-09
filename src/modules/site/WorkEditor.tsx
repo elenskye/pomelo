@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AssistAction, Polish, useAssistOn, useFilled } from "@/modules/youzi/Assist";
-import { ArrowDown, ArrowUp, FileText, ImagePlus, MoreHorizontal, X } from "lucide-react";
+import { ArrowDown, ArrowUp, FileText, ImagePlus, MoreHorizontal, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";

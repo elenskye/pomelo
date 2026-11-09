@@ -33,6 +33,9 @@ import "./index.css";
 // Browser-only UI testing: `pnpm dev` → http://localhost:1420/?mock (tree-shaken from builds).
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   await (await import("./dev/mockIpc")).installMockIpc();
+  // 流畅度自测：`&perf=<端口>`（docs/testing.md）
+  const perf = new URLSearchParams(location.search).get("perf");
+  if (perf) void import("./dev/perf").then((m) => m.runPerf(perf));
 }
 // the palette and light / dark chosen in 设置, before the first paint
 startAppearance();

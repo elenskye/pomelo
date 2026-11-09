@@ -1,4 +1,6 @@
-// 柚子: conversation list (collapsible; or the search panel) · message area · input. Opening the page
+// 柚子 (Phase 2 final design): its page is a spiral notepad — the message area and the input — and on the desk beside
+// it sit 柚子 itself (BigPomelo: thinking while it writes) and the conversation list as slips of paper (collapsible; or
+// the search panel), put there through the frame's desk side (app/Desk.tsx useDeskSide). Opening the page
 // returns to the last conversation. 「新对话」 (also inside a project) is only a draft until its first
 // question is sent. A search hit (here or from ⌘K) opens its conversation at that message, switching to
 // its version if needed. Replies stream in over a
@@ -14,17 +16,18 @@
 // Phase 6: memories are chosen in the same step (记忆 menu: this question / this conversation; a draft
 // keeps its own conversation switch); 「/记住 …」 opens a confirmation card instead of sending.
 // v0.4.5 阶段 7: the 知识库 button (and its manager from the list's bottom); opening the page compares the
-// library folders with their index. 阶段 8: a 助手 (left column) opens its own page in place of the
-// conversation; it is remembered like the last conversation. Work (改文件, 新建 Word) is the plugin
-// library's Word 工具箱 / 文本工具箱 now: 柚子 uses them when it decides to (no entry here).
+// library folders with their index. The 助手 are modules of their own (no entry here). Work (改文件, 新建 Word) is
+// the plugin library's Word 工具箱 / 文本工具箱 now: 柚子 uses them when it decides to (no entry here).
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bird, Globe, PanelLeftClose, PanelLeftOpen, Pin, Plus, SquarePen } from "lucide-react";
+import { Globe, PanelLeftClose, PanelLeftOpen, Pin, Plus, SquarePen } from "@/shared/icons";
+import { useDeskSide } from "@/app/Desk";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys } from "@/shared/panel";
-import { Button, IconButton, PageHeader } from "@/shared/ui";
+import { Button, IconButton } from "@/shared/ui";
 import {
   LIBRARY_KEY,
   MEMORIES_KEY,
@@ -48,6 +51,7 @@ import {
   type MessageFile,
   type SessionSetting,
 } from "./api";
+import { BigPomelo } from "./BigPomelo";
 import { ChatSearch } from "./ChatSearch";
 import { Composer, toolClass, type ComposerHandle } from "./Composer";
 import { ConversationList } from "./ConversationList";
@@ -63,7 +67,6 @@ import { IssueNotice, ModelMenu } from "./ModelMenu";
 import { ThinkingButton, useThinking } from "./Thinking";
 import { Transcript, type TranscriptHandle } from "./Transcript";
 import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "./useChat";
-import { useTabs } from "@/app/tabs";
 
 const asMessageFile = (f: FileInfo, label: string | null = null, fileId: number | null = null): MessageFile => ({ ...f, fileId, version: null, label });
 const EMPTY_QUESTION = "请总结这些附件。";
@@ -78,7 +81,14 @@ export default function YouziPage() {
   const status = useYouziStatus().data;
   const library = useLibrary();
   const [sessionId, setSessionId] = useState<number | null | undefined>(undefined); // undefined = not chosen yet
-  const tabs = useTabs();
+  const side = useDeskSide();
+  /** A shorter window gets a smaller pomelo, so the slips keep their room. */
+  const [tall, setTall] = useState(() => window.innerHeight >= 800);
+  useEffect(() => {
+    const on = () => setTall(window.innerHeight >= 800);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
   /** A draft started inside a project. */
   const [draftProject, setDraftProject] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
@@ -117,7 +127,7 @@ export default function YouziPage() {
   useEffect(() => void youziApi.kbScan().catch(() => {}), []);
 
   const lib = library.data;
-  const allSessions = lib ? [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived] : null;
+  const allSessions = lib ? [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.recent, ...lib.archived] : null;
   // back to the last conversation (if it still exists), else the newest
   useEffect(() => {
     if (sessionId !== undefined || !allSessions) return;
@@ -397,41 +407,35 @@ export default function YouziPage() {
   const pinnedTemplates = templates.filter((t) => t.pinned).slice(0, 4);
   const issue = status && status.selection === "local" ? status.local.issue : null;
   const ListToggle = collapsed ? PanelLeftOpen : PanelLeftClose;
+  const title = current == null ? null : (allSessions?.find((x) => x.id === current)?.title ?? null);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader
-        icon={Bird}
-        color="var(--module-youzi)"
-        title="柚子"
-        right={
-          <div className="flex items-center justify-end gap-2">
-            <IconButton label={collapsed ? "展开对话列表" : "收起对话列表"} onClick={() => setCollapsed(!collapsed)}>
-              <ListToggle size={16} strokeWidth={1.5} />
-            </IconButton>
-            <Button disabled={current == null && draftProject == null && !live} onClick={() => newChat()}>
-              <SquarePen size={14} strokeWidth={1.5} /> 新对话
-            </Button>
-            {status && !status.error && <ModelMenu status={status} />}
-          </div>
-        }
-      />
-      {status?.error ? (
-        <div className="flex flex-1 items-center justify-center px-16">
-          <p className="selectable max-w-xl text-center text-sm text-destructive">{status.error}</p>
+      <header data-tauri-drag-region className="yz-top">
+        <h1 className="pointer-events-none">和柚子聊聊{title ? ` · ${title}` : ""}</h1>
+        <div className="flex shrink-0 items-center justify-end gap-2 text-sm">
+          <IconButton label={collapsed ? "展开对话列表" : "收起对话列表"} onClick={() => setCollapsed(!collapsed)}>
+            <ListToggle size={16} strokeWidth={1.5} />
+          </IconButton>
+          <Button disabled={current == null && draftProject == null && !live} onClick={() => newChat()}>
+            <SquarePen size={14} strokeWidth={1.5} /> 新对话
+          </Button>
+          {status && !status.error && <ModelMenu status={status} />}
         </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 gap-4 pb-5 pl-8">
-          {!collapsed &&
-            (searching ? (
+      </header>
+      {side &&
+        !collapsed &&
+        !status?.error &&
+        createPortal(
+          <div className="yz-side">
+            <BigPomelo writing={busy} asking={!!activeHere?.asking} size={tall ? 132 : 92} />
+            {searching ? (
               <ChatSearch onOpen={(h: ChatHit, q) => void openAt(h.sessionId, h.messageId, q)} onClose={() => setSearching(false)} />
             ) : (
               lib && (
                 <ConversationList
                   library={lib}
                   current={current}
-                  assistant={null}
-                  onAssistant={(key) => tabs.open(`/${key}`)}
                   generating={writing}
                   onOpen={open}
                   onNewInProject={(p) => newChat(p)}
@@ -443,7 +447,16 @@ export default function YouziPage() {
                   onProjectFiles={setFilesFor}
                 />
               )
-            ))}
+            )}
+          </div>,
+          side,
+        )}
+      {status?.error ? (
+        <div className="flex flex-1 items-center justify-center px-16">
+          <p className="selectable max-w-xl text-center text-sm text-destructive">{status.error}</p>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 pb-5">
             <div className="flex min-w-0 flex-1 flex-col pr-0">
               <Transcript
                 ref={transcript}

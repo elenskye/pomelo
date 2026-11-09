@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";

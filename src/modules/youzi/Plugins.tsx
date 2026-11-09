@@ -4,7 +4,7 @@
 // Also here: the skills a draft asks for (chips above the input, the 联网 button), sent with it.
 import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { X, RefreshCw } from "lucide-react";
+import { X, RefreshCw } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, IconButton, Switch, TextInput } from "@/shared/ui";
 import { SKILLS_KEY, youziApi, useSkills, type Skill, type SkillFlowNode, type SkillKey } from "./api";

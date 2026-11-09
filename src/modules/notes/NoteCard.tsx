@@ -5,7 +5,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, CornerDownRight, Ellipsis, Footprints, Pin, Quote, X } from "lucide-react";
+import { ChevronDown, CornerDownRight, Ellipsis, Footprints, Pin, Quote, X } from "@/shared/icons";
 import { IdeaList, assistApi, assistBusyText, useAssistOn, type QuickFillResult } from "@/modules/youzi/Assist";
 import { useYouziStatus } from "@/modules/youzi/api";
 import { useGoals, useGroups, useTodoMutations, type TaskPatch } from "@/modules/todo/api";

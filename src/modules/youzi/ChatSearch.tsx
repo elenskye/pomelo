@@ -4,7 +4,7 @@
 // Below: 意思相近 (v0.4, by meaning, same filters, without the conversations words found).
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Search, Sparkles, X } from "lucide-react";
+import { Search, Sparkles, X } from "@/shared/icons";
 import { errorText } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
 import { Switch } from "@/shared/ui";
@@ -77,7 +77,7 @@ export function ChatSearch(props: { onOpen: (hit: ChatHit, query: string) => voi
       key={`${h.sessionId}-${h.messageId}`}
       type="button"
       onClick={() => props.onOpen(h, q)}
-      className="block w-full rounded-control px-2.5 py-2 text-left outline-none hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring"
+      className="mb-1.5 block w-full rounded-[4px] bg-card px-2.5 py-2 text-left shadow-sm outline-none hover:bg-[var(--color-selected)] focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span className="block truncate">{h.title}</span>
       {h.snippet && (
@@ -92,7 +92,7 @@ export function ChatSearch(props: { onOpen: (hit: ChatHit, query: string) => voi
   );
 
   return (
-    <div className="-m-1 flex w-[248px] shrink-0 flex-col p-1 pr-2">
+    <div className="-m-1 flex min-h-0 flex-1 flex-col p-1">
       <div className="flex items-center gap-1.5 rounded-control border bg-card px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-ring">
         <Search size={14} className="shrink-0 text-muted-foreground" />
         <input

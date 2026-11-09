@@ -2,7 +2,7 @@
 // safety copy before restore) live in Rust (backup.rs); this file only renders and confirms.
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, DatabaseBackup, FolderOpen } from "lucide-react";
+import { ArchiveRestore, DatabaseBackup, FolderOpen } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api, type BackupInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";

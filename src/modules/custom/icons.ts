@@ -24,10 +24,10 @@ import {
   Trophy,
   Tv,
   Utensils,
-  type LucideIcon,
-} from "lucide-react";
+  type IconType,
+} from "@/shared/icons";
 
-export const ICONS: [string, LucideIcon][] = [
+export const ICONS: [string, IconType][] = [
   ["shapes", Shapes],
   ["list-checks", ListChecks],
   ["gamepad-2", Gamepad2],
@@ -54,7 +54,7 @@ export const ICONS: [string, LucideIcon][] = [
   ["trophy", Trophy],
 ];
 
-export const iconOf = (name: string): LucideIcon => ICONS.find(([n]) => n === name)?.[1] ?? Shapes;
+export const iconOf = (name: string): IconType => ICONS.find(([n]) => n === name)?.[1] ?? Shapes;
 
 /** Each icon's sticker (visual-atelier's marks/modules/, MADE_ICON_MARKS in its art.mjs): a made module wears it unless another is picked. */
 export const MADE_MARKS: Record<string, string> = {

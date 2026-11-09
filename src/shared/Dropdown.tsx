@@ -5,7 +5,7 @@
 // is open, and the groups opened by hand stay open for the session.
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight } from "@/shared/icons";
 
 /** `group`: options sharing one get a small heading above them in the menu (consecutive options only). */
 export type DropdownOption<T> = { value: T; label: ReactNode; group?: string };

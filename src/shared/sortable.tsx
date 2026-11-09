@@ -7,7 +7,7 @@
 // followed on window, so a fast flick that leaves the row still drags.
 // Only direct children carrying data-sort-id take part; the new order is read from the DOM.
 import { useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { GripVertical } from "lucide-react";
+import { GripVertical } from "@/shared/icons";
 
 type Rect = { id: number; mid: number; height: number };
 type Drag = { id: number; dy: number; rects: Rect[] };

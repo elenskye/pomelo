@@ -2,7 +2,7 @@
 // off on the timeline below — checking fills today's date, which stays editable. Rust derives the
 // current status (last checked; none = 想投) and 投递日期 (first checked day).
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Check, ExternalLink, Settings2 } from "lucide-react";
+import { Check, ExternalLink, Settings2 } from "@/shared/icons";
 import { AssistAction, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type JobFill, type QuickFillResult } from "@/modules/youzi/Assist";
 import { useYouziStatus } from "@/modules/youzi/api";
 import { DateInput } from "@/shared/DateInput";

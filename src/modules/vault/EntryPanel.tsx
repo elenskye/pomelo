@@ -1,7 +1,7 @@
 // Side panel for one password: 名称 · 分类 · 链接 · 用户名 · 账号 · 密码 (show / 生成) · 备注; 归档 in the
 // footer. Editing loads the full entry from Rust; nothing is cached after the panel closes (gcTime 0).
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Archive, ArchiveRestore, Eye, EyeOff, ExternalLink, WandSparkles } from "lucide-react";
+import { Archive, ArchiveRestore, Eye, EyeOff, ExternalLink, WandSparkles } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";

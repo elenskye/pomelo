@@ -2,7 +2,7 @@
 // Pub2MD, Seeker, Rater, Importer and DevJanitor; their names are the user's to choose. Since v0.7 each one is a
 // module of its own (`/translate`, `/pub2md`, `/seeker`, `/rater`, `/janitor`; app/modules.ts), still listed in
 // 柚子's left column. Importer has no page: it is 钱来钱往 · 导入账单 (`to` in modules.ts).
-import { Bird } from "lucide-react";
+import { Bird } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { markSvg, YouziBadge } from "@/shared/marks";
 import { PageHeader } from "@/shared/ui";

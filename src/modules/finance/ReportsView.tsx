@@ -5,7 +5,7 @@
 // Category colors follow the category, not this period's rank: the 4 biggest spenders of all time
 // (in this currency) get --chart-3…6, everything else is 其他. --chart-1 / --chart-2 are 收入 / 支出.
 import { useState, type FormEvent, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Target } from "lucide-react";
+import { ChevronLeft, ChevronRight, Target } from "@/shared/icons";
 import { BarList, ColumnChart, Donut, Meter, MultiLineChart } from "@/shared/charts";
 import { errorText, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";

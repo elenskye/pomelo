@@ -1,7 +1,7 @@
 // 月历: 6-week grid of dated work (deadlines, time ranges, repeat occurrences, what got done).
 // Click a day to list its items below the grid.
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "@/shared/icons";
 import { addDays, formatDay, mondayOf, toYmd, weekday } from "@/shared/dates";
 import { Button, IconButton } from "@/shared/ui";
 import { useMonth, type CalItem, type Task } from "./api";

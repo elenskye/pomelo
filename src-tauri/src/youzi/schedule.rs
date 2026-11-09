@@ -690,21 +690,20 @@ mod tests {
         assert_eq!(get(&c, id).unwrap().effort, None);
         let b = begin(&c, &get(&c, id).unwrap(), "2026-10-14 08:00", "local:x", "X").unwrap();
         assert!(!b.request.thinking);
-        assert!(!library::library(&c).unwrap().scheduled[0].thinking);
+        assert!(!library::library(&c).unwrap().recent[0].thinking);
         // a file from before 思考 (format 12) reads as on
         let old: ScheduleInput = serde_json::from_str(r#"{"name":"a","prompt":"b","every":"day","at":"09:00"}"#).unwrap();
         assert!(old.thinking);
     }
 
     #[test]
-    fn runs_write_unseen_conversations_under_scheduled() {
+    fn runs_write_unseen_conversations_into_recent() {
         let c = memory_db();
         let id = create(&c, &input("早报", "day", None, "08:00")).unwrap();
         let s = get(&c, id).unwrap();
         let b = begin(&c, &s, "2026-10-14 08:00", "local:x", "X").unwrap();
         let lib = library::library(&c).unwrap();
-        assert_eq!(lib.scheduled.iter().map(|r| (r.id, r.title.as_str(), r.unseen)).collect::<Vec<_>>(), [(b.session_id, "早报 · 10/14", true)]);
-        assert!(lib.recent.is_empty());
+        assert_eq!(lib.recent.iter().map(|r| (r.id, r.title.as_str(), r.unseen, r.scheduled)).collect::<Vec<_>>(), [(b.session_id, "早报 · 10/14", true, true)]);
         assert_eq!(unseen(&c), 1);
         assert_eq!(get(&c, id).unwrap().last_session, Some(b.session_id));
         seen(&c, b.session_id).unwrap();
@@ -713,8 +712,8 @@ mod tests {
         failed(&c, &s, "2026-10-15 08:00", "local:x", "X", "本地模型没能启动：x").unwrap();
         let shown = chat::path(&c, get(&c, id).unwrap().last_session.unwrap()).unwrap();
         assert_eq!((shown[0].content.as_str(), shown[1].state.as_str(), shown[1].error.as_deref()), ("回顾一下", "failed", Some("本地模型没能启动：x")));
-        // deleting the schedule keeps its conversations under 定时
+        // deleting the schedule keeps its conversations
         delete(&c, id).unwrap();
-        assert_eq!(library::library(&c).unwrap().scheduled.len(), 2);
+        assert_eq!(library::library(&c).unwrap().recent.len(), 2);
     }
 }

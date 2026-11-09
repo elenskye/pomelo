@@ -1,27 +1,23 @@
-// The conversation list (rules in Rust library.rs):
-// 置顶 · 项目 (each collapsible, with its conversations) · 定时 (what 定时任务 wrote) · 最近 · 归档 (folded).
-// 项目, 助手, 定时 and 最近 fold too (their label; remembered); 归档 starts folded.
-// Each list follows last activity until dragged by hand. A dot marks a 定时 conversation not opened yet
-// (and the 定时 label while any is). ⋯ on a row: 改名 / 置顶 / 私密 (a lock; stays in its list) / 复制整段对话 /
+// The conversation list (rules in Rust library.rs), on the desk beside 柚子's notepad (Phase 2 final design: each
+// conversation is a slip of paper lying a little askew, the open one in the selection colour):
+// 置顶 · 项目 (each collapsible, with its conversations) · 最近 (what a 定时任务 wrote too) · 归档 (folded).
+// 项目 and 最近 fold too (their label; remembered); 归档 starts folded. The 助手 aren't listed here: each is a module.
+// Each list follows last activity until dragged by hand. A dot marks a 定时 conversation not opened yet.
+// ⋯ on a row: 改名 / 置顶 / 私密 (a lock; stays in its list) / 复制整段对话 /
 // 导出 / 移到项目 / 归档 / 删除.
 // ⌘-click / ⇧-click select several (a bar at the bottom acts on them; no dragging meanwhile). Drag a row:
 // onto another row = that place in its list; onto a list or project header = its top. Into a project
 // moves it in; into 最近 takes it out of its project and unpins it; into 置顶 pins it (keeps its project).
-// 定时 and 最近 don't take each other's conversations (no drop target while dragging one).
-// 助手 (v0.4.5, between 项目 and 定时): each opens its own page instead of a conversation.
 // Project headers drag to reorder projects. Esc or a drop outside cancels. Everything here can be undone.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlarmClock, Ellipsis, Folder, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Settings2, X } from "lucide-react";
-import { ModuleIcon } from "@/app/ModuleIcon";
-import { moduleById } from "@/app/modules";
+import { AlarmClock, Ellipsis, Folder, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Settings2, X } from "@/shared/icons";
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { HandIcon } from "@/shared/handParts";
 import { IconButton } from "@/shared/ui";
 import { LIBRARY_KEY, isBool, isNumbers, isStrings, youziApi, useYouziUi, type Library, type ListKey, type ProjectRow, type SessionRow } from "./api";
 import { useConversationActions } from "./actions";
-import { ASSISTANTS } from "./assistants";
 import { ProjectDialog } from "./ProjectDialog";
 import "./list.css";
 
@@ -125,10 +121,14 @@ function useListDrag(box: RefObject<HTMLElement | null>, onDrop: (d: Drag) => vo
   return { drag, begin, swallow };
 }
 
-/** The open conversation (or 助手) sits on a hand-cut block of the selection colour (Phase 2 final design). */
-function SelBlock(props: { seed: number }) {
-  return <span aria-hidden className="yz-sel" data-hand="frame" data-stroke="none" data-fill="selected" data-r="9" data-amp="1" data-pad="2" data-seed={props.seed} />;
-}
+/** How each slip lies: its tilt and how far in from the left (the text stays upright; only the paper is askew). */
+const LIE = [
+  [-2.6, 2],
+  [2, 20],
+  [-1.4, 8],
+  [3, 26],
+];
+const lie = (i: number) => ({ "--r": `${LIE[i % 4][0]}deg`, "--x": `${LIE[i % 4][1]}px` }) as React.CSSProperties;
 
 const menuTrigger =
   "rounded-control p-0.5 text-muted-foreground opacity-0 outline-none group-hover:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring aria-expanded:opacity-100";
@@ -170,9 +170,6 @@ export function ConversationList(props: {
   onPlugins: () => void;
   onSchedules: () => void;
   onKnowledge: () => void;
-  /** The 助手 whose page is open, and opening one. */
-  assistant: string | null;
-  onAssistant: (key: string) => void;
   onProjectFiles: (projectId: number) => void;
 }) {
   const lib = props.library;
@@ -182,7 +179,7 @@ export function ConversationList(props: {
   const box = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useYouziUi("ui.collapsed_projects", [] as number[], isNumbers);
   const [archiveOpen, setArchiveOpen] = useYouziUi("ui.archive_open", false, isBool);
-  /** The folded lists: projects | assistants | scheduled | recent. */
+  /** The folded lists: projects | recent. */
   const [folded, setFolded] = useYouziUi("ui.folded_lists", [] as string[], isStrings);
   const open = (list: string) => !folded.includes(list);
   const fold = (list: string) => ({ open: open(list), toggle: () => setFolded(open(list) ? [...folded, list] : folded.filter((x) => x !== list)) });
@@ -191,12 +188,11 @@ export function ConversationList(props: {
   const [renaming, setRenaming] = useState<number | null>(null);
   const [projectDialog, setProjectDialog] = useState<ProjectRow | "new" | null>(null);
 
-  const all = [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived];
+  const all = [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.recent, ...lib.archived];
   const byId = new Map(all.map((s) => [s.id, s]));
   const order = [
     ...lib.pinned,
     ...(open("projects") ? lib.projects.flatMap((p) => (collapsed.includes(p.id) ? [] : p.sessions)) : []),
-    ...(open("scheduled") ? lib.scheduled : []),
     ...(open("recent") ? lib.recent : []),
     ...(archiveOpen ? lib.archived : []),
   ].map((s) => s.id);
@@ -216,9 +212,6 @@ export function ConversationList(props: {
     }
   });
   const dragging = drag?.kind === "session";
-  const draggedScheduled = dragging && !!byId.get(drag.id)?.scheduled;
-  /** Where the dragged conversation may go. */
-  const accepts = (list: ListKey) => !dragging || (list === "recent" ? !draggedScheduled : list === "scheduled" ? draggedScheduled : true);
 
   useEffect(() => {
     if (!sel.length) return;
@@ -271,20 +264,20 @@ export function ConversationList(props: {
     else if (v.startsWith("move:")) void act.move([s.id], Number(v.slice(5)));
   };
 
-  const row = (s: SessionRow, list: ListKey) => {
+  const row = (s: SessionRow, list: ListKey, i: number) => {
     const line = dragging && drag.target && !drag.target.header && drag.target.list === list ? (drag.target.before === s.id ? "top" : drag.target.after === s.id ? "bottom" : null) : null;
     const [options, actions] = sessionMenu(s);
     const isSel = sel.includes(s.id);
     return (
       <div
         key={s.id}
-        data-drop={accepts(list) ? "session" : undefined}
+        data-drop="session"
         data-id={s.id}
         data-list={list}
         onPointerDown={(e) => !sel.length && renaming !== s.id && begin(e, "session", s.id, s.title)}
-        className={`group yz-row ${isSel ? "sel" : ""} ${drag?.kind === "session" && drag.id === s.id ? "dragged" : ""}`}
+        style={lie(i)}
+        className={`group yz-row yz-slip ${s.id === props.current ? "on" : ""} ${isSel ? "sel" : ""} ${drag?.kind === "session" && drag.id === s.id ? "dragged" : ""}`}
       >
-        {s.id === props.current && !isSel && <SelBlock seed={1220 + (s.id % 40)} />}
         {line && <span className={`pointer-events-none absolute right-1 left-1 z-[2] h-0.5 rounded bg-primary ${line === "top" ? "-top-px" : "-bottom-px"}`} />}
         {renaming === s.id ? (
           <div className="flex-1 py-0.5 pl-1">
@@ -336,7 +329,7 @@ export function ConversationList(props: {
     const hot = dragging && list && drag.target?.header && drag.target.list === list;
     return (
       <div
-        data-drop={list && accepts(list) ? "list" : undefined}
+        data-drop={list ? "list" : undefined}
         data-list={list ?? undefined}
         className={`yz-label ${hot ? "hot" : ""}`}
       >
@@ -366,7 +359,7 @@ export function ConversationList(props: {
         data-project={p.id}
         data-list={list}
         onPointerDown={(e) => !sel.length && begin(e, "project", p.id, p.name)}
-        className={`group yz-row head ${hot ? "sel" : ""} ${drag?.kind === "project" && drag.id === p.id ? "dragged" : ""}`}
+        className={`group yz-row yz-head ${hot ? "hot" : ""} ${drag?.kind === "project" && drag.id === p.id ? "dragged" : ""}`}
       >
         {line && <span className={`pointer-events-none absolute right-1 left-1 h-0.5 rounded bg-primary ${line === "top" ? "-top-px" : "-bottom-px"}`} />}
         <button
@@ -415,9 +408,9 @@ export function ConversationList(props: {
         </span>
         <span>搜索对话</span>
       </button>
-      <div ref={box} className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
+      <div ref={box} className="-m-1 min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-1">
         {(lib.pinned.length > 0 || dragging) && label("置顶", "pinned")}
-        {lib.pinned.map((s) => row(s, "pinned"))}
+        {lib.pinned.map((s, i) => row(s, "pinned", i))}
 
         {label(
           "项目",
@@ -440,42 +433,18 @@ export function ConversationList(props: {
                       </button>
                     </div>
                   )}
-                  {p.sessions.map((s) => row(s, `project:${p.id}`))}
+                  {p.sessions.map((s, i) => row(s, `project:${p.id}`, i))}
                 </div>
               )}
             </div>
           ))}
 
-        {label("助手", null, null, fold("assistants"))}
-        {open("assistants") &&
-          ASSISTANTS.map((a) => (
-            <div key={a.key} className="yz-row">
-              {a.key === props.assistant && <SelBlock seed={1260} />}
-              <button type="button" aria-current={a.key === props.assistant} onClick={() => props.onAssistant(a.key)} className="yz-title !pl-1.5">
-                <ModuleIcon def={moduleById(a.key)} size={22} />
-                <span className="yz-t">{a.name}</span>
-              </button>
-            </div>
-          ))}
-
-        {(lib.scheduled.length > 0 || draggedScheduled) &&
-          label(
-            <>
-              定时
-              {lib.scheduled.some((s) => s.unseen) && <span className="size-1.5 rounded-full bg-primary" aria-label="有还没看的" />}
-            </>,
-            "scheduled",
-            null,
-            fold("scheduled"),
-          )}
-        {open("scheduled") && lib.scheduled.map((s) => row(s, "scheduled"))}
-
-        {(lib.recent.length > 0 || (dragging && !draggedScheduled)) && label("最近", "recent", null, fold("recent"))}
-        {open("recent") && lib.recent.map((s) => row(s, "recent"))}
+        {(lib.recent.length > 0 || dragging) && label("最近", "recent", null, fold("recent"))}
+        {open("recent") && lib.recent.map((s, i) => row(s, "recent", i))}
 
         {(lib.archived.length > 0 || dragging) &&
           label(<>归档 {lib.archived.length || ""}</>, "archived", null, { open: archiveOpen, toggle: () => setArchiveOpen(!archiveOpen) })}
-        {archiveOpen && lib.archived.map((s) => row(s, "archived"))}
+        {archiveOpen && lib.archived.map((s, i) => row(s, "archived", i))}
       </div>
 
       {sel.length > 0 && (

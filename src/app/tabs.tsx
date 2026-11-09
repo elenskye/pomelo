@@ -23,8 +23,10 @@ type State = { pages: Page[]; front: number | null; hist: string[]; i: number; b
 export type TabsApi = {
   /** The open pages in the order they were opened (the top bar's「桌上开着」). */
   tabs: { id: number; path: string }[];
-  /** The front page first, then the others by when they were last in front (the stack on the desk). */
-  stack: { id: number; path: string }[];
+  /** The front page first, then the others by when they were last in front (the stack on the desk). `seen` grows
+   *  each time a page comes to the front: a page behind keeps its own, so the pile's order can be told without
+   *  renumbering the pages (Desk.tsx). */
+  stack: { id: number; path: string; seen: number }[];
   /** Index in `tabs` of the page in front; -1 on the desk. */
   active: number;
   home: boolean;
@@ -214,7 +216,7 @@ export function TabsProvider(props: { children: ReactNode }) {
     };
     return {
       tabs,
-      stack: [...(front ? [front] : []), ...behind].map((p) => ({ id: p.id, path: p.path })),
+      stack: [...(front ? [front] : []), ...behind].map((p) => ({ id: p.id, path: p.path, seen: p.seen })),
       active: front ? tabs.findIndex((t) => t.id === front.id) : -1,
       home: !front,
       canBack: st.i > 0,

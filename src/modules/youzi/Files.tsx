@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type Reac
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Check, CircleCheck, Ellipsis, Library, Plus, TriangleAlert, X } from "lucide-react";
+import { Check, CircleCheck, Ellipsis, Library, Plus, TriangleAlert, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";

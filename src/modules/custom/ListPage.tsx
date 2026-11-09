@@ -6,7 +6,7 @@
 // 改名和图标 · 管理字段 · 删除. Rules: lists.rs.
 import { useMemo, useState, type MouseEvent } from "react";
 import { Navigate, useParams } from "react-router";
-import { ArrowDown, ArrowUp, Check, ChevronDown, Ellipsis, ExternalLink, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Ellipsis, ExternalLink, Plus } from "@/shared/icons";
 import { usePageContext } from "@/app/pageContext";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";

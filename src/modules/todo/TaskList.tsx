@@ -3,7 +3,7 @@
 // type's quick action (Rust decides what it means): check, finish this occurrence, check in today,
 // or +1. Row click = edit; drag the row = reorder among siblings; 「1/3 ⌄」 on the right = fold.
 import { useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Link2, ListPlus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Link2, ListPlus, X } from "@/shared/icons";
 import { cheerOver } from "@/shared/cheer";
 import { flash } from "@/shared/hand";
 import { slashDate } from "@/shared/dates";

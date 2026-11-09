@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Plus, Sparkles, Trash2, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { InlineMd } from "@/shared/InlineMd";
 import { Modal } from "@/shared/Modal";

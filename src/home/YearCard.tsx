@@ -3,7 +3,7 @@
 // can open the conversation in 柚子. Hidden when 柚子 is hidden.
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { X } from "lucide-react";
+import { X } from "@/shared/icons";
 import { MarkdownView } from "@/modules/youzi/MarkdownView";
 import { useYearCard, type YearLetter } from "@/modules/youzi/api";
 import { InlineMd } from "@/shared/InlineMd";

@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Ellipsis, ScrollText, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Ellipsis, ScrollText, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { useConfirm } from "@/shared/feedback";

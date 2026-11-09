@@ -2,7 +2,7 @@
 // it — started by itself only when arriving at the page, not after locking there — else the master password).
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Fingerprint, KeyRound } from "lucide-react";
+import { Fingerprint, KeyRound } from "@/shared/icons";
 import { errorText } from "@/shared/feedback";
 import { Button, TextInput } from "@/shared/ui";
 import { REASON, VAULT_KEY, VAULT_STATUS_KEY, vaultApi, type VaultStatus } from "./api";

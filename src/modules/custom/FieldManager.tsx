@@ -2,7 +2,7 @@
 // 新字段 at the bottom. The field dialog edits the name, the type (new fields only) and 单选 / 多选 options
 // (renaming one renames it in every item; removing one takes it out of them).
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Trash2, X } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";

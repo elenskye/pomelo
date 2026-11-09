@@ -8,7 +8,7 @@
 // Motion: ds.css (book-open, sticker-peel).
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ListChecks, Pencil, TrendingUp, Trash2 } from "lucide-react";
+import { ListChecks, Pencil, TrendingUp, Trash2 } from "@/shared/icons";
 import { CustomDialog } from "@/modules/custom/CustomDialog";
 import type { Template } from "@/modules/custom/api";
 import { reducedMotion } from "@/shared/hand";

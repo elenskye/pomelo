@@ -2,7 +2,7 @@ import { PickField } from "@/shared/PickField";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, FolderOpen } from "lucide-react";
+import { FileText, FolderOpen } from "@/shared/icons";
 import { useTabs } from "@/app/tabs";
 import { AssistAction } from "@/modules/youzi/Assist";
 import { SEEKER_JOB_RESUMES_KEY, SEEKER_KEY, deskOf, pageLang, seekerApi, seekerJobCompanyKey, seekerJobResumesKey, type SeekerCvFile, type SeekerLang, type SeekerLinked } from "@/modules/youzi/assistants/seekerApi";

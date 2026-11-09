@@ -8,7 +8,7 @@
 // ancestors always show, and the filter follows a renamed / moved tag.
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Ellipsis, Hash } from "lucide-react";
+import { ChevronDown, Ellipsis, Hash } from "@/shared/icons";
 import { TAG_ICONS, TagIcon } from "./tagIcons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";

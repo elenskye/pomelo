@@ -1,6 +1,6 @@
 // 投石问路: 投递 (table + 该跟进) and 统计, switched in the header. ⌘N adds an application.
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";

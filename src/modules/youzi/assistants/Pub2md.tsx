@@ -9,7 +9,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FileText, FolderOpen, X } from "lucide-react";
+import { FileText, FolderOpen, X } from "@/shared/icons";
 import { MmdPreview } from "./MmdPreview";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";

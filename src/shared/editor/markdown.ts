@@ -9,6 +9,9 @@ import type { Flavor } from "./LiveText";
 export type ImageSrc = (url: string) => string | null;
 
 const MARK = "text-muted-foreground/45";
+/** A format mark (** * _ ~~ \` # > and a link's brackets and address): shown only while the box is being edited
+ *  (index.css .md-mark). List markers, rules and code fences stay. */
+const FMT = `md-mark ${MARK}`;
 const LIST = /^( *)([-*+]|\d+[.)])( +)(.*)$/;
 const QUOTE = /^( *>+ ?)(.*)$/;
 const HEADING = /^(#{1,6})( +)(.*)$/;
@@ -36,13 +39,13 @@ function inline(text: string, st: Style = {}): string {
     out += span(cls(st), text.slice(last, m.index));
     last = m.index + m[0].length;
     const [all] = m;
-    if (m[1] !== undefined) out += span(MARK, m[1]) + span("rounded-sm bg-muted px-0.5 font-mono text-[0.9em]", m[2]) + span(MARK, m[1]);
+    if (m[1] !== undefined) out += span(FMT, m[1]) + span("rounded-sm bg-muted px-0.5 font-mono text-[0.9em]", m[2]) + span(FMT, m[1]);
     else if (m[3] !== undefined) out += span(MARK, "![") + span(cls(st), m[3]) + span(MARK, `](${m[4]})`);
-    else if (m[5] !== undefined) out += span(MARK, "[") + inline(m[5], { ...st, link: true }) + span(MARK, `](${m[6]})`);
-    else if (m[7] !== undefined) out += span(MARK, m[7]) + inline(m[8], { ...st, bold: true }) + span(MARK, m[7]);
-    else if (m[9] !== undefined) out += span(MARK, "*") + inline(m[9], { ...st, italic: true }) + span(MARK, "*");
-    else if (m[10] !== undefined) out += span(MARK, "_") + inline(m[10], { ...st, italic: true }) + span(MARK, "_");
-    else if (m[11] !== undefined) out += span(MARK, "~~") + inline(m[11], { ...st, strike: true }) + span(MARK, "~~");
+    else if (m[5] !== undefined) out += span(FMT, "[") + inline(m[5], { ...st, link: true }) + span(FMT, `](${m[6]})`);
+    else if (m[7] !== undefined) out += span(FMT, m[7]) + inline(m[8], { ...st, bold: true }) + span(FMT, m[7]);
+    else if (m[9] !== undefined) out += span(FMT, "*") + inline(m[9], { ...st, italic: true }) + span(FMT, "*");
+    else if (m[10] !== undefined) out += span(FMT, "_") + inline(m[10], { ...st, italic: true }) + span(FMT, "_");
+    else if (m[11] !== undefined) out += span(FMT, "~~") + inline(m[11], { ...st, strike: true }) + span(FMT, "~~");
     else out += span(all.startsWith("<") ? "text-primary" : MARK, all);
   }
   return out + span(cls(st), text.slice(last));
@@ -50,7 +53,7 @@ function inline(text: string, st: Style = {}): string {
 
 function lineHtml(line: string, imageSrc: ImageSrc): { cls: string; html: string } {
   let m: RegExpExecArray | null;
-  if ((m = HEADING.exec(line))) return { cls: `${HEAD_CLASS[m[1].length]} mt-1`, html: span(MARK, m[1] + m[2]) + inline(m[3], { bold: true }) };
+  if ((m = HEADING.exec(line))) return { cls: `${HEAD_CLASS[m[1].length]} mt-1`, html: span(FMT, m[1] + m[2]) + inline(m[3], { bold: true }) };
   if (RULE.test(line) || TAG_LINE.test(line)) return { cls: "", html: span(MARK, line) };
   if (/^ *\|/.test(line)) return { cls: "font-mono text-[13px]", html: inline(line) };
   if ((m = IMAGE_LINE.exec(line))) {
@@ -58,7 +61,7 @@ function lineHtml(line: string, imageSrc: ImageSrc): { cls: string; html: string
     const pic = src ? `<span contenteditable="false" class="block select-none py-1"><img src="${esc(src)}" alt="" draggable="false" class="max-h-56 max-w-full rounded-control border object-contain"></span>` : "";
     return { cls: "", html: inline(line) + pic };
   }
-  if ((m = QUOTE.exec(line))) return { cls: "border-l-2 pl-3 text-muted-foreground", html: span(MARK, m[1]) + inline(m[2]) };
+  if ((m = QUOTE.exec(line))) return { cls: "border-l-2 pl-3 text-muted-foreground", html: span(FMT, m[1]) + inline(m[2]) };
   if ((m = LIST.exec(line))) return { cls: "", html: span(MARK, m[1] + m[2] + m[3]) + inline(m[4]) };
   return { cls: "", html: inline(line) };
 }

@@ -4,7 +4,7 @@
 // Views: 全部 · each category · 未分类 · 归档 (archived ones only there; a search also finds the
 // archived ones of the view). A drag inside a view is sent as the whole list (Rust's first-drag rule).
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
-import { Copy, ExternalLink, Lock, Plus } from "lucide-react";
+import { Copy, ExternalLink, Lock, Plus } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { errorText, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";

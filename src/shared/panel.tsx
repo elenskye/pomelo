@@ -1,6 +1,6 @@
 // Right-side editor shell + page-level selection/keyboard helpers shared by module pages.
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2 } from "@/shared/icons";
 import { HandIcon } from "./handParts";
 import { useConfirm } from "./feedback";
 import { Button } from "./ui";

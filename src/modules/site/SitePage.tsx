@@ -5,7 +5,7 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { usePageContext } from "@/app/pageContext";

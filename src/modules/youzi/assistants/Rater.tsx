@@ -8,7 +8,7 @@
 import { PickField } from "@/shared/PickField";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, History, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ChevronRight, History, Pencil, Plus, Sparkles, Trash2 } from "@/shared/icons";
 import { Section } from "@/settings/layout";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { jobLabel, useJobs, jobPicks } from "@/modules/jobs/api";

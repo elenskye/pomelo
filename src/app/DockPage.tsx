@@ -3,7 +3,7 @@
 // each module's line of live text (Rust dock.rs).
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bird, Ellipsis, Eye, EyeOff, Palette, Pin, PinOff } from "lucide-react";
+import { Bird, Ellipsis, Eye, EyeOff, Palette, Pin, PinOff } from "@/shared/icons";
 import { markSvg, YouziBadge } from "@/shared/marks";
 import { toneColor, type Dock } from "./dock";
 import { pressModule, useDragNow } from "./drag";

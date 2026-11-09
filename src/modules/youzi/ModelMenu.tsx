@@ -1,6 +1,6 @@
 // The model button (page header): cloud models (by provider) + local models in one menu; choosing a local model
 // switches to it (starting it if needed). Shares its state with the menu bar (Rust keeps both).
-import { ChevronDown, Cloud } from "lucide-react";
+import { ChevronDown, Cloud } from "@/shared/icons";
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";

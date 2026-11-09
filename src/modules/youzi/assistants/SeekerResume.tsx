@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, MessageSquare, Pencil, Plus } from "lucide-react";
+import { Check, MessageSquare, Pencil, Plus } from "@/shared/icons";
 import { InlineMd } from "@/shared/InlineMd";
 import { diff } from "@/shared/diff";
 import { Button, IconButton } from "@/shared/ui";

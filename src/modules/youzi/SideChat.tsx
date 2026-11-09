@@ -7,7 +7,7 @@
 // for here too (「/名称」, 联网), and the 知识库 button works as on the page.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bird, ChevronDown, Globe, MapPin, SquarePen, X } from "lucide-react";
+import { Bird, ChevronDown, Globe, MapPin, SquarePen, X } from "@/shared/icons";
 import { moduleLabel } from "@/app/modules";
 import { payload, pillText, type PageContext } from "@/app/pageContext";
 import { Dropdown } from "@/shared/Dropdown";
@@ -44,7 +44,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
   /** The pill × : this context (by its contents) stays out until the page says something else. */
   const [dropped, setDropped] = useState<string | null>(null);
 
-  const all = useMemo(() => (lib ? [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived] : []), [lib]);
+  const all = useMemo(() => (lib ? [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.recent, ...lib.archived] : []), [lib]);
   const current = sessionId != null && (!lib || all.some((s) => s.id === sessionId)) ? sessionId : null;
   // opening a 定时 conversation here takes its dot away too
   const unseenHere = !!all.find((s) => s.id === current)?.unseen;

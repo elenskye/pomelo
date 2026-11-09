@@ -1,12 +1,12 @@
 // Module registry. Add new modules here (id = route path segment).
 // MODULES hold data (search, export, 柚子 read them); the 助手 are 柚子's, shown as modules in the 模块坞, the
 // 索引签 and the 柚子瓣 (their data and code stay in 柚子; hiding 柚子 hides them too).
-import { Bird, BookOpen, CalendarDays, Briefcase, BrushCleaning, CalendarHeart, Clapperboard, Compass, Feather, FileInput, FileUser, Globe, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, Settings, Shapes, Wallet, type LucideIcon } from "lucide-react";
+import { Bird, BookOpen, CalendarDays, Briefcase, BrushCleaning, CalendarHeart, Clapperboard, Compass, Feather, FileInput, FileUser, Globe, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, Settings, Shapes, Wallet, type IconType } from "@/shared/icons";
 
 export type ModuleDef = {
   id: string;
   label: string;
-  icon: LucideIcon;
+  icon: IconType;
   color: string;
   /** Its sticker when not its id (made modules: the sticker of the icon they were made with); see looks.ts. */
   mark?: string;

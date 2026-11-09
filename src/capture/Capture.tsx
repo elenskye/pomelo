@@ -7,7 +7,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { FileDown, Paperclip, Pin, Send } from "lucide-react";
+import { FileDown, Paperclip, Pin, Send } from "@/shared/icons";
 import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
 import { liteFileName, liteMarkdown } from "@/shared/editor/lite";
 import { AttachmentStrip, pickAttachments, withFiles } from "@/shared/attachments/Attachments";
@@ -18,6 +18,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText } from "@/shared/feedback";
 import { Button, Segmented, TextInput } from "@/shared/ui";
 import { EMPTY, captureApi, type CaptureTab, type Draft, type Snapshot } from "./api";
+import "./capture.css";
 
 const CaptureChat = lazy(() => import("./CaptureChat"));
 const CaptureTranslate = lazy(() => import("./CaptureTranslate"));
@@ -226,7 +227,7 @@ export function Capture() {
 
   return (
     <main
-      className="flex h-screen flex-col gap-3 bg-background px-4 pt-3 pb-3 font-sans text-foreground"
+      className="cap flex h-screen flex-col gap-3 px-4 pt-3 pb-3 font-sans"
       onKeyDown={(e) => {
         if (e.key !== "Escape" || e.defaultPrevented || e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
@@ -272,7 +273,7 @@ export function Capture() {
       ) : (
         <>
           {tab === "note" && meta && (
-            <div ref={box} className={`flex min-h-0 flex-1 flex-col rounded-card border bg-card focus-within:ring-2 focus-within:ring-ring ${dropping ? "ring-2 ring-primary" : ""}`}>
+            <div ref={box} data-hand="field" data-r="12" data-seed="1301" className={`cap-note flex min-h-0 flex-1 flex-col ${dropping ? "drop" : ""}`}>
               <div
                 className="min-h-0 flex-1 cursor-text overflow-y-auto px-3 py-2"
                 onMouseDown={(e) => {

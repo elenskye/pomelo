@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, Circle, CircleDot, Pencil, Plus } from "lucide-react";
+import { CheckCircle2, Circle, CircleDot, Pencil, Plus } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";

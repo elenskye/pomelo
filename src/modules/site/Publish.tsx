@@ -3,7 +3,7 @@
 // check, what gets committed) are Rust's.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { Check, X } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
 import { Modal } from "@/shared/Modal";

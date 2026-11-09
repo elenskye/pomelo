@@ -1,6 +1,6 @@
 // 投递: 该跟进 reminders on top, then the table (filter by current status, search company / 岗位 / 地点).
 import { useEffect, useState } from "react";
-import { BellRing } from "lucide-react";
+import { BellRing } from "@/shared/icons";
 import { useKinds } from "@/shared/kinds/api";
 import { Button, EmptyState, SearchInput, Segmented } from "@/shared/ui";
 import { CHANNELS, jobLabel, STAGE_STYLE, useJobMutations, useStatuses, type Job } from "./api";

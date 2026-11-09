@@ -4,7 +4,7 @@
 // the other one may have changed things), unless a write of its own is on its way. No router here.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Copy } from "lucide-react";
+import { ArrowLeftRight, Copy } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { youziApi, type TranslateSettings, type TranslateView } from "../api";

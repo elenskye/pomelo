@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } 
 import { useQueryClient } from "@tanstack/react-query";
 import { useGoals, useGroups } from "@/modules/todo/api";
 import { TaskPanel } from "@/modules/todo/TaskPanel";
-import { Notebook, Quote, Send, Sparkles, X } from "lucide-react";
+import { Notebook, Quote, Send, Sparkles, X } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import type { FileInfo } from "@/shared/attachments/api";
 import { AttachButton, AttachmentStrip, withFiles } from "@/shared/attachments/Attachments";

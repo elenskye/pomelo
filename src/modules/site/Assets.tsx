@@ -4,7 +4,7 @@
 // scan), then asks (an unused file may go too). Files put in the folder by hand: 登记 registers them.
 import { useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Plus } from "lucide-react";
+import { FileText, Plus } from "@/shared/icons";
 import { Polish } from "@/modules/youzi/Assist";
 import { useDropTarget } from "@/shared/attachments/target";
 import { errorText } from "@/shared/feedback";

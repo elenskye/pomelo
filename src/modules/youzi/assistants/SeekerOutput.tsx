@@ -1,7 +1,7 @@
 import { PickField } from "@/shared/PickField";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileText } from "lucide-react";
+import { FileText } from "@/shared/icons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Modal } from "@/shared/Modal";
 import { Button, Field, TextInput } from "@/shared/ui";

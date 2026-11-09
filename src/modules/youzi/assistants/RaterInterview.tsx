@@ -9,7 +9,7 @@ import { PickField } from "@/shared/PickField";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ChevronRight, FileDown, Globe, MessageSquare, Pencil, Play, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ChevronRight, FileDown, Globe, MessageSquare, Pencil, Play, Plus, Sparkles, Trash2, X } from "@/shared/icons";
 import { jobLabel, useJobs, type Job, jobPicks } from "@/modules/jobs/api";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";

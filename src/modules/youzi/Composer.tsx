@@ -9,7 +9,7 @@
 // asks the page to add its chip (the next question asks for it).
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, FileText, Square } from "lucide-react";
+import { ArrowUp, FileText, Square } from "@/shared/icons";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { TEMPLATES_KEY, youziApi, type Template } from "./api";
 import { nextSlot, slashAt, slashMatches, slots } from "./slots";

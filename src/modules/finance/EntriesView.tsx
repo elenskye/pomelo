@@ -2,7 +2,7 @@
 // 多选 for batch 分类 / 币种 / 删除) and the 固定支出 list. 导入账单 opens its page over this one (FinancePage). Periods
 // from 记小额 (before v0.8) show in every month they cover; a refund counts against its 分类.
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, FileDown, ListChecks, Plus, Repeat, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, FileDown, ListChecks, Plus, Repeat, Trash2 } from "@/shared/icons";
 import { localToday, weekday } from "@/shared/dates";
 import { Dropdown } from "@/shared/Dropdown";
 import { useConfirm, useToast, errorText } from "@/shared/feedback";

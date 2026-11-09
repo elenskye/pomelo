@@ -10,7 +10,7 @@
 // Light on purpose: module pages import this (no Markdown / formula libraries).
 import { useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Sparkles, X } from "lucide-react";
+import { Sparkles, X } from "@/shared/icons";
 import { useHiddenModules } from "@/app/hidden";
 import { diff } from "@/shared/diff";
 import { errorText } from "@/shared/feedback";

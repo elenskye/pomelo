@@ -1,6 +1,6 @@
 // Modal to create / edit / delete a named container (课程, 模板…): name + note.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2 } from "@/shared/icons";
 import { errorText, useConfirm } from "./feedback";
 import { Button, Field, TextArea, TextInput } from "./ui";
 

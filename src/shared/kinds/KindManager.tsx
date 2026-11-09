@@ -1,7 +1,7 @@
 // Modal for editing a module's 类型 list: rename inline, reorder ↑↓, delete (items → 未分类), add.
 // KindEditor is the dialog itself; 芝麻开门 feeds it its own (encrypted) categories.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { useKindMutations, useKinds } from "./api";

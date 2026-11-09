@@ -3,7 +3,7 @@
 // material/'s files by name (打开, 在访达中显示) — Pomelo doesn't read them.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, FolderOpen } from "lucide-react";
+import { FileText, FolderOpen } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { api as ipc } from "@/shared/ipc";
 import { Button, EmptyState, IconButton } from "@/shared/ui";

@@ -4,7 +4,7 @@
 // sideways, smaller squares (a box's bottom edge, the 速记小窗).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ChevronLeft, ChevronRight, ExternalLink, FileText, ImageOff, Paperclip, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, FileText, ImageOff, Paperclip, X } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { Field } from "@/shared/ui";
 import { attachmentsApi, fileSize, fileSrc, type FileInfo } from "./api";

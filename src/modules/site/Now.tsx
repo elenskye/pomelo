@@ -2,7 +2,7 @@
 // marked) and the open month's text in 中文 · English · 并排 — the body only, with 润色 and 按中文起草.
 import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus } from "@/shared/icons";
 import { errorText, useConfirm } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { MonthInput } from "@/shared/MonthInput";

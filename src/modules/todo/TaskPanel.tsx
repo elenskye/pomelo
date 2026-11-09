@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Feather, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Feather, X } from "@/shared/icons";
 import type { Note } from "@/modules/notes/api";
 import { excerpt } from "@/modules/notes/NoteBody";
 import { AssistAction, IdeaList, Polish, QuickFill, assistApi, assistBusyText, useAssistOn, useFilled, type QuickFillResult } from "@/modules/youzi/Assist";

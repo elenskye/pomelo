@@ -4007,7 +4007,7 @@ const pCapChat = { id: null as number | null };
 const pUnlisted = (id: number) => pRecords.has(id) || pCapChat.id === id || janitorChat.id === id;
 /** library.rs: which list a session shows in (a 复盘 · 记录, the 速记小窗's: none). */
 const pListOf = (s: PSession) =>
-  pUnlisted(s.id) ? "unlisted" : s.archived ? "archived" : s.pinned ? "pinned" : s.projectId != null && pky.projects.some((p) => p.id === s.projectId) ? `project:${s.projectId}` : s.scheduled ? "scheduled" : "recent";
+  pUnlisted(s.id) ? "unlisted" : s.archived ? "archived" : s.pinned ? "pinned" : s.projectId != null && pky.projects.some((p) => p.id === s.projectId) ? `project:${s.projectId}` : "recent";
 const pRow = (s: PSession) => ({ id: s.id, title: s.title, projectId: s.projectId, pinned: s.pinned, archived: s.archived, updatedAt: s.updatedAt, scheduled: s.scheduled, unseen: s.unseen, private: !!s.private, thinking: s.thinking !== false, effort: s.effort ?? null, knowledge: !!s.knowledge, libraries: pKbOwn("s", s.id) });
 const pMembers = (list: string) => {
   const ms = pky.sessions.filter((x) => pListOf(x) === list).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id);
@@ -4936,7 +4936,6 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
     projects: [...pky.projects]
       .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
       .map((p) => ({ ...p, includeGlobalMemories: p.includeGlobalMemories ?? true, sessions: pMembers(`project:${p.id}`).map(pRow), files: pky.files.filter((f) => f.projectId === p.id).length, libraries: pKbOwn("p", p.id) })),
-    scheduled: pMembers("scheduled").map(pRow),
     recent: pMembers("recent").map(pRow),
     archived: pMembers("archived").map(pRow),
   }),
@@ -5010,15 +5009,13 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
     const target = (a.before ?? a.after) as number | null;
     if (target != null && !members.includes(target)) throw "对话列表已经变了，请重新拖一次";
     if (target === s.id) return false;
-    if (list === "scheduled" && !s.scheduled) throw "只有定时任务写的对话能放进「定时」";
-    if (list === "recent" && s.scheduled) throw "定时任务写的对话不能放进「最近」";
     const order = members.filter((x) => x !== s.id);
     const at = a.before != null ? order.indexOf(a.before as number) : a.after != null ? order.indexOf(a.after as number) + 1 : 0;
     order.splice(Math.max(0, at), 0, s.id);
     if (pListOf(s) === list && order.join() === members.join()) return false;
     pRegroup(s, (x) => {
       if (list === "pinned") Object.assign(x, { pinned: true, archived: false });
-      else if (list === "recent" || list === "scheduled") Object.assign(x, { pinned: false, archived: false, projectId: null });
+      else if (list === "recent") Object.assign(x, { pinned: false, archived: false, projectId: null });
       else if (list === "archived") x.archived = true;
       else Object.assign(x, { pinned: false, archived: false, projectId: Number(list.slice(8)) });
     });

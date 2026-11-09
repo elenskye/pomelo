@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 共 45 张表，当前版本 40；柚子的数据在单独的 `youzi.db`（版本 39），搜索索引在 `search.db`（版本 3），DevJanitor 的扫描结果在 `janitor.db`（版本 1）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
+`pomelo.db` 共 45 张表，当前版本 40；柚子的数据在单独的 `youzi.db`（版本 40），搜索索引在 `search.db`（版本 3），DevJanitor 的扫描结果在 `janitor.db`（版本 1）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
 
 ## 通用约定
 
@@ -338,6 +338,7 @@ JSON，当前格式版本 39。旧文件都能读，读旧形状的规则在 `tr
 | 32～35 | 思考强度（对话、定时任务）；问我（`run_asks`）；Excel 工具箱 |
 | 36～38 | 改名柚子（我写的提示词和模块键；对话内容不动）；Atlas 的底子 `year_atlas` |
 | 39 | DevJanitor 的 Agent：`janitor_rules`、`janitor_cards` |
+| 40 | 对话列表没有「定时」分组了：定时任务写的对话在「最近」里，原来在「定时」里排的位置清掉（`sort_order`、`manual_lists` 的 `scheduled`） |
 
 **search.db**：1 是搜索索引；2 加知识库（`kb_docs`、`kb_chunks`）；3 柚子的记录改记 `youzi`（重建一次）。
 

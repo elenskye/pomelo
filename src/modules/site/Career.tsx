@@ -2,7 +2,7 @@
 // file chosen is added to it, 资源库… picks one there), 页面模块 (add, move, remove; 小标题 + 要点 or 时间 + 角色 + 机构 + 要点 — switching
 // empties the module, asked first), 附加内容 (the body).
 import { useState } from "react";
-import { FilePlus } from "lucide-react";
+import { FilePlus } from "@/shared/icons";
 import { useConfirm } from "@/shared/feedback";
 import { Polish } from "@/modules/youzi/Assist";
 import { useSetting } from "@/shared/settings";

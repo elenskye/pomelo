@@ -96,6 +96,8 @@ export function liteFileName(text: string, fallback: string): string {
   return [...name].slice(0, 40).join("").trim() || fallback;
 }
 const MARK = "text-muted-foreground/45";
+/** A format mark (** == ++): shown only while the box is being edited (index.css .md-mark). */
+const FMT = `md-mark ${MARK}`;
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const span = (cls: string, text: string) => (cls ? `<span class="${cls}">${esc(text)}</span>` : `<span>${esc(text)}</span>`);
@@ -120,7 +122,7 @@ function lineHtml(line: string, tags: boolean): string {
     const mark = marks.get(i);
     if (mark) {
       flush();
-      out += span(MARK, mark);
+      out += span(FMT, mark);
       on[mark] = !on[mark];
       i += 2;
       continue;

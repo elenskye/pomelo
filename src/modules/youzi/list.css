@@ -1,44 +1,72 @@
-/* 柚子's conversation list (docs/design.md「柚子 › 对话列表」), as in visual-atelier's Phase 2 final design
-   (canvases/pomelo-explore/p2-final/views.mjs chatList): the hand-drawn search field, each list's name in soft small
-   text, the open conversation on a hand-cut block of the selection colour; a dashed margin line between the list and
-   the conversation. Colours are the Design System's --color-*; frames and marks are painted by
-   shared/hand.ts (data-hand). No motion of its own. */
-.yz-list { position: relative; display: flex; flex-direction: column; width: 248px; flex-shrink: 0; margin-right: 8px; padding-right: 10px; }
-.yz-list::after { content: ""; position: absolute; top: 6px; bottom: 6px; right: 0; border-right: 2px dashed var(--color-line); pointer-events: none; }
+/* 柚子's side of the desk (docs/design.md「柚子」), as in visual-atelier's Phase 2 final design
+   (canvases/pomelo-explore/p2-final/b.mjs askPage): 柚子 itself sitting on the desk beside its notepad, under it what
+   was talked about, each conversation a slip of paper lying a little askew (only the paper is tilted, the words stay
+   upright), the open one in the selection colour. Colours are the Design System's --color-*; the search field is
+   painted by shared/hand.ts (data-hand). */
+.yz-side { display: flex; flex: 1; flex-direction: column; min-height: 0; color: var(--color-ink); }
+
+/* 柚子：在想、写好了、等回答都看得出来；戳它换表情 */
+.yz-pomelo { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; padding-bottom: 10px; }
+.yz-pomelo > button { display: flex; border-radius: 50%; outline: none; cursor: pointer; }
+.yz-pomelo > button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.yz-pomelo > svg { margin-top: -10px; }
+.yz-pomelo ellipse { fill: var(--color-shadow); }
+.yz-poke { margin-top: 2px; font-size: 13px; line-height: 20px; opacity: .75; }
+
+.yz-list { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; }
 
 .yz-search { width: 100%; margin: 2px 0 8px; color: var(--color-ink-soft); cursor: default; outline: none; }
 .yz-search > span { position: relative; display: inline-flex; align-items: center; }
 .yz-search:hover { color: var(--color-ink); }
 .yz-search:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 10px; }
 
-.yz-label { display: flex; align-items: center; gap: 2px; min-height: 26px; margin-top: 14px; padding: 0 2px 0 2px; border-radius: 8px; }
+.yz-label { display: flex; align-items: center; gap: 2px; min-height: 26px; margin-top: 12px; padding: 0 2px; border-radius: 8px; }
 .yz-label:first-child { margin-top: 2px; }
 .yz-label.hot { outline: 2px dashed var(--color-pen); outline-offset: 1px; }
 .yz-lab { display: flex; flex: 1; align-items: center; gap: 2px; min-width: 0; text-align: left; cursor: default; outline: none; }
 .yz-lab:focus-visible .yz-lt { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 4px; }
-.yz-lt { display: flex; align-items: center; gap: 4px; color: var(--color-ink-soft); font-size: 13px; white-space: nowrap; }
-.yz-lab:hover .yz-lt { color: var(--color-ink); }
-.yz-chev { color: var(--color-ink-soft); transition: transform .15s; }
+.yz-lt { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 700; line-height: 20px; white-space: nowrap; }
+.yz-chev { transition: transform .15s; }
 .yz-chev.shut { transform: rotate(-90deg); }
 
-.yz-row { position: relative; isolation: isolate; display: flex; align-items: center; gap: 4px; min-height: 34px; padding-right: 4px; border-radius: 9px; transition: background-color .15s; }
-.yz-row > :not(.yz-sel) { z-index: 1; }
-.yz-sel { position: absolute; inset: 2px 0; z-index: 0; pointer-events: none; }
-.yz-row:hover { background: color-mix(in srgb, var(--color-selected) 55%, transparent); }
-.yz-row.sel { background: var(--color-selected); outline: 2px dashed var(--color-pen); outline-offset: -2px; }
+.yz-row { position: relative; isolation: isolate; display: flex; align-items: center; gap: 4px; min-height: 34px; padding-right: 4px; }
 .yz-row.dragged { opacity: .4; }
-.yz-row.head { padding-left: 4px; }
-.yz-title { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; padding: 5px 0 5px 10px; font-size: 15px; text-align: left; white-space: nowrap; outline: none; }
-.yz-title:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; border-radius: 8px; }
+.yz-title { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; padding: 5px 0 5px 12px; font-size: 14px; text-align: left; white-space: nowrap; outline: none; }
+.yz-title:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; border-radius: 4px; }
 .yz-title > .yz-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.yz-sub { padding-left: 14px; }
-.yz-files { color: var(--color-ink-soft); font-size: 13px; min-height: 28px; }
+
+/* 小纸条 */
+.yz-slip { width: calc(100% - 34px); height: 36px; margin: 9px 0 9px var(--x, 0px); }
+.yz-slip::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: 4px; background: var(--color-card);
+  box-shadow: 0 1px 2px var(--color-shadow), 0 4px 8px var(--color-shadow);
+  transform: rotate(var(--r, 0deg)); transition: transform .25s cubic-bezier(.3, 1.6, .5, 1);
+}
+.yz-slip:hover::before { transform: rotate(0deg) scale(1.02); }
+.yz-slip.on::before { background: var(--color-selected); }
+.yz-slip.on .yz-t { font-weight: 700; }
+.yz-slip.sel::before { background: var(--color-selected); outline: 2px dashed var(--color-pen); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .yz-slip::before { transition: none; } }
+
+/* 项目：文件夹那一行不是纸条，里面的对话往里缩一点 */
+.yz-head { margin-top: 2px; padding-left: 2px; border-radius: 8px; }
+.yz-head:hover { background: color-mix(in srgb, var(--color-card) 45%, transparent); }
+.yz-head.hot { outline: 2px dashed var(--color-pen); outline-offset: -2px; }
+.yz-head .yz-title { padding-left: 0; font-size: 15px; }
+.yz-sub { padding-left: 10px; }
+.yz-files { min-height: 26px; font-size: 13px; opacity: .8; }
+.yz-files .yz-title { padding: 2px 0 2px 12px; font-size: 13px; }
 
 .yz-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-top: 8px; padding: 6px; border: 2px dashed var(--color-line); border-radius: 12px; background: var(--color-card); font-size: 14px; }
 .yz-selbar > button, .yz-selbar .yz-selbtn { height: 28px; padding: 0 8px; border-radius: 8px; }
 .yz-selbar > button:hover, .yz-selbar .yz-selbtn:hover { background: var(--color-selected); }
 
-.yz-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 4px; margin-top: 6px; padding-top: 8px; border-top: 2px dashed var(--color-line); }
-.yz-tool { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 9px; color: var(--color-ink-soft); font-size: 14px; outline: none; }
-.yz-tool:hover { color: var(--color-ink); background: color-mix(in srgb, var(--color-selected) 55%, transparent); }
+.yz-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 4px; flex-shrink: 0; margin-top: 6px; padding-top: 8px; border-top: 2px dashed color-mix(in srgb, var(--color-ink) 22%, transparent); }
+.yz-tool { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 9px; font-size: 14px; outline: none; opacity: .8; }
+.yz-tool:hover { opacity: 1; background: color-mix(in srgb, var(--color-card) 45%, transparent); }
 .yz-tool:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+
+/* 线圈本的页头：和柚子聊聊 · 这一段的名字 */
+.yz-top { display: flex; flex-shrink: 0; align-items: flex-end; justify-content: space-between; gap: 16px; height: 72px; padding: 0 32px 10px 26px; }
+.yz-top h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 22px; line-height: 30px; font-weight: 700; }
+.yz-top h1 > span { font-weight: 400; }

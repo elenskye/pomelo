@@ -5,7 +5,7 @@
 // the model chosen right now, so they change with it; a level the model doesn't have counts as its default.
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Lightbulb } from "lucide-react";
+import { ChevronDown, Lightbulb } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { LIBRARY_KEY, youziApi, useLibrary, useYouziStatus, type Level, type Library, type YouziStatus, type Think } from "./api";
@@ -60,7 +60,7 @@ export const thinkFits = (t: Think, on: boolean) => t === "switch" || (t === "al
 
 function rowOf(lib: Library | undefined, id: number | null) {
   if (!lib || id == null) return undefined;
-  return [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.scheduled, ...lib.recent, ...lib.archived].find((s) => s.id === id);
+  return [...lib.pinned, ...lib.projects.flatMap((p) => p.sessions), ...lib.recent, ...lib.archived].find((s) => s.id === id);
 }
 
 /** The switch for `current` (a draft's own under `draftKey`, on until turned off). */

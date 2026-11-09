@@ -4,7 +4,7 @@
 // months), Monday first, 6 rows; keys ←→↑↓ PageUp/PageDown Enter Esc; footer 今天 / 清除.
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, X } from "@/shared/icons";
 import { addDays, localToday, mondayOf, toYmd } from "./dates";
 import { fieldClass } from "./ui";
 

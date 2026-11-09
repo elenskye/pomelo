@@ -1,7 +1,7 @@
 // 资产 editors: 更新余额 (all accounts + rates on a day), an account's side panel, a broker's holdings
 // (quantity × unit price) on a day.
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { SidePanel } from "@/shared/panel";

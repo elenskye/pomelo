@@ -1,5 +1,5 @@
 // A point's text box, drawn while typing the way the Word export reads it (word.rs `styled`): each
-// line on its own, split at 「**」, every other piece bold; the marks stay, dimmed. 念念不忘's way
+// line on its own, split at 「**」, every other piece bold; the marks stay, dimmed, and are shown only while the box is being edited (index.css .md-mark). 念念不忘's way
 // (shared/editor/editable.ts): the text is the model, the browser types inside a line, everything else
 // (↩, paste, drop, ⌘B) edits the text here; after each change the lines are drawn again and the caret
 // put back. Nothing is redrawn while an IME composes. The box keeps its own ⌘Z / ⌘⇧Z.
@@ -13,7 +13,7 @@ function lineHtml(line: string): string {
   if (!line) return "<br>";
   return line
     .split("**")
-    .map((piece, i) => (i > 0 ? `<span class="${MARK}">**</span>` : "") + (piece ? `<span${i % 2 ? ' class="font-bold"' : ""}>${esc(piece)}</span>` : ""))
+    .map((piece, i) => (i > 0 ? `<span class="md-mark ${MARK}">**</span>` : "") + (piece ? `<span${i % 2 ? ' class="font-bold"' : ""}>${esc(piece)}</span>` : ""))
     .join("");
 }
 const docHtml = (text: string) => text.split("\n").map((l) => `<div>${lineHtml(l)}</div>`).join("");

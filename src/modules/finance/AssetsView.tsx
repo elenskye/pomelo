@@ -1,6 +1,6 @@
 // 资产: total assets in CNY on each update day (Rust carries balances and rates forward) and its curve,
 // the accounts with their latest balance, and each broker account's latest holdings.
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "@/shared/icons";
 import { LineChart } from "@/shared/charts";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { useSortable } from "@/shared/sortable";

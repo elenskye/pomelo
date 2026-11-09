@@ -2,7 +2,7 @@
 // (rules in Rust youzi/storage.rs).
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { HardDrive } from "lucide-react";
+import { HardDrive } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button } from "@/shared/ui";
 import { byteText, fileDetail, youziApi, type StoredFile } from "@/modules/youzi/api";

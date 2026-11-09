@@ -3,10 +3,10 @@ import {
   Bookmark, BookOpen, Brain, Briefcase, CalendarDays, Camera, Cat, Citrus, Clapperboard, Cloud, Code, Coffee, Dumbbell, Flame, Flower2,
   Gamepad2, Gift, Globe, GraduationCap, Hash, Heart, HeartPulse, Hourglass, House, Leaf, Library, Lightbulb, MapPin, MessageCircle, Moon,
   Music, NotebookPen, Palette, PenLine, Plane, Puzzle, Quote, Smile, Sparkles, Sprout, Star, Sun, Tag, Target, User, Users, Utensils, Wallet,
-  Wrench, type LucideIcon,
-} from "lucide-react";
+  Wrench, type IconType,
+} from "@/shared/icons";
 
-export const TAG_ICONS: [string, LucideIcon][] = [
+export const TAG_ICONS: [string, IconType][] = [
   ["book-open", BookOpen], ["library", Library], ["notebook", NotebookPen], ["pen", PenLine], ["lightbulb", Lightbulb], ["brain", Brain],
   ["message", MessageCircle], ["quote", Quote], ["bookmark", Bookmark], ["tag", Tag], ["target", Target], ["star", Star],
   ["sparkles", Sparkles], ["flame", Flame], ["heart", Heart], ["citrus", Citrus], ["sprout", Sprout], ["flower", Flower2],

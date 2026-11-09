@@ -1,36 +1,24 @@
 // Small hand-drawn pieces of the frame, the same as visual-atelier's frame prototype (canvases/pomelo-frame):
-// one-stroke icons (drawn by shared/hand.ts from data-hand="icon"), the tooltip hanging on a string (Design System
+// one-stroke icons, the tooltip hanging on a string (Design System
 // Tooltip; it swings, motion part tooltip), and a strip of tape (mint or yuzu stripes, zigzag ends).
-// The frame's icons stay these until Dawn Plan · Phase 8 draws all of the UI icons.
+// The frame's icons are the UI icons now (shared/icons.tsx, drawn in visual-atelier), under the short names the frame
+// has always used; nothing is painted at run time for them.
 import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { BackDesk, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Flip, LayoutGrid, Plus, Search, Settings, Sparkle, X, type IconType } from "./icons";
 
 const f = (n: number) => +n.toFixed(2);
-const gear = Array.from({ length: 8 }, (_, i) => {
-  const a = (i * Math.PI) / 4;
-  return `M${f(12 + 7 * Math.cos(a))} ${f(12 + 7 * Math.sin(a))} L${f(12 + 9.6 * Math.cos(a))} ${f(12 + 9.6 * Math.sin(a))}`;
-}).join(" ");
 
-/** 24-unit one-stroke paths; `o` adds rings (cx cy r). */
-const ICONS = {
-  back: { d: "M15 5.5 L8.5 12 L15 18.5" },
-  fwd: { d: "M9 5.5 L15.5 12 L9 18.5" },
-  plus: { d: "M12 5 L12 19 M5 12 L19 12" },
-  x: { d: "M6.5 6.5 L17.5 17.5 M17.5 6.5 L6.5 17.5" },
-  search: { d: "M16 16 L20.5 20.5", o: "10.5 10.5 6" },
-  gear: { d: gear, o: "12 12 3, 12 12 6.6" },
-  back2: { d: "M9.5 6 L4.5 11 L9.5 16 M4.5 11 L14.5 11 C18 11 20 13 20 16 L20 19" },
-  sparkle: { d: "M12 4 Q12 12 20 12 Q12 12 12 20 Q12 12 4 12 Q12 12 12 4 Z" },
-  grid: { d: "M5 5 L10.5 5 L10.5 10.5 L5 10.5 Z M13.5 5 L19 5 L19 10.5 L13.5 10.5 Z M5 13.5 L10.5 13.5 L10.5 19 L5 19 Z M13.5 13.5 L19 13.5 L19 19 L13.5 19 Z" },
-  down: { d: "M7 10 L12 15 L17 10" },
-  check: { d: "M5.5 12.5 L10 17 L18.5 7" },
-  flip: { d: "M5 9 C6 5.5 9 4 12 4 C16.5 4 19.5 7.5 19.5 11 M19.5 11 L21.5 8.5 M19.5 11 L17 9.5 M19 15 C18 18.5 15 20 12 20 C7.5 20 4.5 16.5 4.5 13 M4.5 13 L2.5 15.5 M4.5 13 L7 14.5" },
-  cal: { d: "M5 7 L19 7 L19 19.5 L5 19.5 Z M5 11 L19 11 M9 4.5 L9 8.5 M15 4.5 L15 8.5" },
-} as const;
+const ICONS = { back: ChevronLeft, fwd: ChevronRight, plus: Plus, x: X, search: Search, gear: Settings, back2: BackDesk, sparkle: Sparkle, grid: LayoutGrid, down: ChevronDown, check: Check, flip: Flip, cal: CalendarDays } satisfies Record<string, IconType>;
 export type HandIconName = keyof typeof ICONS;
 
+/** `seed` is from when each icon was drawn in the page (kept so callers needn't change): the line is the icon's own now. */
 export function HandIcon(props: { name: HandIconName; size?: number; seed?: number; className?: string }) {
-  const ic = ICONS[props.name] as { d: string; o?: string };
-  return <span aria-hidden className={`inline-flex shrink-0 ${props.className ?? ""}`} data-hand="icon" data-size={props.size ?? 20} data-seed={props.seed ?? 1} data-d={ic.d} data-o={ic.o} />;
+  const Icon = ICONS[props.name];
+  return (
+    <span aria-hidden className={`inline-flex shrink-0 ${props.className ?? ""}`}>
+      <Icon size={props.size ?? 20} />
+    </span>
+  );
 }
 
 /** The tooltip on a string under an icon-only button or a sticker: put it last inside an element with `pm-tip-host`. */

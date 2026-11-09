@@ -1,7 +1,7 @@
 // Settings page building blocks: titled card sections with label/value rows. Explanations hide
 // behind a small (?) that shows them on hover / focus, so rows stay one line.
 import type { ReactNode } from "react";
-import { CircleQuestionMark } from "lucide-react";
+import { CircleQuestionMark } from "@/shared/icons";
 
 export function HelpTip(props: { text: ReactNode }) {
   return (

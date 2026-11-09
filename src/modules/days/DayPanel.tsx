@@ -1,7 +1,7 @@
 // Side panel for one day: 类型 · 名称 · 日期 (生日: 年 (可不知道) / 月 / 日; 证件: 到期日) · 重复 (纪念日) ·
 // 提醒 (up to 5 lead days) · 置顶 · 礼物点子 and 送过的 (生日) · 备注. Rules are checked in Rust.
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X } from "@/shared/icons";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";
 import { currentYear, YearInput } from "@/shared/MonthInput";

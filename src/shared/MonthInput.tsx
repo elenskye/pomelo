@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { X } from "@/shared/icons";
 import { Dropdown } from "./Dropdown";
 
 export const currentYear = () => String(new Date().getFullYear());

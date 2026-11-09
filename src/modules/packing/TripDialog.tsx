@@ -1,6 +1,6 @@
 // Create a trip (its list copied from a template or an earlier trip, or blank) / edit / delete a trip.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2 } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { DateInput } from "@/shared/DateInput";

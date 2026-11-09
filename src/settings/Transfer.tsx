@@ -1,7 +1,7 @@
 // 导出 / 导入 rows: one Pomelo data file (.json) for all modules. Rules live in Rust (transfer.rs).
 import { useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { FileInput, FileOutput } from "lucide-react";
+import { FileInput, FileOutput } from "@/shared/icons";
 import { moduleLabel } from "@/app/modules";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";

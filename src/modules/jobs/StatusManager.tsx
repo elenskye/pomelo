@@ -1,6 +1,6 @@
 // Modal for the status list: rename inline, reorder ↑↓, delete (only unused), add. Stages stay internal.
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { useJobMutations, useStatuses, type Status } from "./api";

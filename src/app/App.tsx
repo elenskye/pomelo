@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event";
 import { Outlet, useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, TriangleAlert } from "lucide-react";
+import { FolderOpen, TriangleAlert } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { api, type AppInfo } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
@@ -11,7 +11,7 @@ import { LIBRARY_KEY, useYouziStatus } from "@/modules/youzi/api";
 import { Bloom } from "./Bloom";
 import { DeskCommon, PaperStack } from "./Desk";
 import { StickerBook } from "./StickerBook";
-import { cheer, CheerLayer } from "@/shared/cheer";
+import { CheerLayer } from "@/shared/cheer";
 import type { Face } from "./Pomelo";
 import { useDock } from "./dock";
 import { DragChip } from "./drag";
@@ -353,15 +353,7 @@ function Shell() {
               {ok && <DeskCommon />}
             </div>
           ) : (
-            <PaperStack
-              onFace={cue}
-              onDizzy={(el) => {
-                const r = el.getBoundingClientRect();
-                cheer("别戳啦，晕了…", r.right + 300, r.top + 70);
-              }}
-            >
-              {ok && <Outlet />}
-            </PaperStack>
+            <PaperStack>{ok && <Outlet />}</PaperStack>
           )}
           {tabs.book && ok && <StickerBook onClose={() => tabs.setBook(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />}
         </div>

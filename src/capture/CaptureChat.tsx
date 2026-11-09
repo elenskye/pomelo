@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Send, Square, SquarePen } from "lucide-react";
+import { Send, Square, SquarePen } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextArea } from "@/shared/ui";
 import { youziApi, useYouziStatus, type ChatMessage } from "@/modules/youzi/api";

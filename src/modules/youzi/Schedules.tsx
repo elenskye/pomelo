@@ -6,7 +6,7 @@
 // listed, off only ones that can do without; a chosen one that doesn't fit goes back to 柚子现在选的.
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Plus, X } from "@/shared/icons";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { formatDay, toYmd, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";

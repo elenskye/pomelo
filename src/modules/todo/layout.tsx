@@ -1,6 +1,6 @@
 // Shared bits of the 一步一步 right pane: view header (title, sub line, edit, actions) and a titled section.
 import type { ReactNode } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil } from "@/shared/icons";
 import { IconButton } from "@/shared/ui";
 
 export function ViewHeader(props: { title: ReactNode; sub?: ReactNode; onEdit?: () => void; editLabel?: string; actions?: ReactNode }) {
