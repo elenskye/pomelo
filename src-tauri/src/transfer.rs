@@ -6,7 +6,7 @@
 //! planDate / repeatUntil, no finance (todo.rs adapts); v5 = no jobs; v6 = no notes; v7 = 书影 finishedMonth, finance
 //! snapshots by month, holdings by value, entries with an account (books.rs / finance.rs adapt); v8 = jobs with one current
 //! status, dates and 一步一步 links (jobs.rs adapts); v9 = no 书影 rereads, no notes tag settings; v10 = no 柚子
-//! (module `youzi`, youzi/transfer.rs: it lives in youzi.db, imported after pomelo.db); v11 = no 定时任务 (youzi keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (youzi `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (youzi `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name); v37 = 柚子 under its old key `picky` (read as `youzi`); v38 = no 一网打尽 (`bookmarks`).
+//! (module `youzi`, youzi/transfer.rs: it lives in youzi.db, imported after pomelo.db); v11 = no 定时任务 (youzi keeps its own); v12 = 定时任务 without 思考 (on); v15 = no 五花八门 / 循序渐进 (`custom`); v16 = tasks without the note they came from (`fromNote`); v17 = 五花八门 with 日期 fields (read as 年份), 循序渐进 without 类型; v18 = no Seeker (youzi `seeker`); v19 = Seeker without the draft's job and the jobs' 公司资料 choices (exports with a page count, dropped). v20 = Seeker records without 技术栈 / 档案 links and 个人约定 (rules and facts as whole files); v21 = Seeker without English (records without a language: Chinese, the SEEKER.md rules both languages'); v22 = no Rater (youzi `rater`); v23 = Rater without its practice rounds (`rater.rounds`: kept as they are); v24 = Rater without its interviews (`rater.interviews`: kept); v25 = Seeker's job links name an export (`exportId`: its path is taken); v26 = Seeker with 确认版本 and exports carrying their draft (read for their language and materials, then dropped); v27 = Seeker's settings without company names (`companyNames`: none); v28 = Seeker rules as text and 个人约定 (`decision`) records (read as points / a rule of one point: seeker/catalog.rs `normalize`); v29 = Seeker with the rule group 共用准则 (its rules and name left out: catalog.rs `without_shared_rules`) and groups without an order; v30 = Seeker drafts without 批注 (`notes`: none); v31 = Rater interviews without 总结 (`summaries`: none, the file still replaces them); v32 = finance without 导入的账单 / 退款 (none); v33 = 账单 without an order or a name of their own (newest first, the file name); v37 = 柚子 under its old key `picky` (read as `youzi`); v38 = no 一网打尽 (`bookmarks`); v39 = 一步一步 groups and goals without an icon (none).
 //! All older versions are read.
 //! Import: every record is validated before anything is written; all modules replace in one
 //! transaction. A module's kinds lists (if present) replace its kinds first — only for modules
@@ -25,7 +25,7 @@ use std::path::Path;
 use tauri::State;
 
 pub const FORMAT: &str = "pomelo-export";
-pub const FORMAT_VERSION: u32 = 39;
+pub const FORMAT_VERSION: u32 = 40;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -540,12 +540,12 @@ mod tests {
         packing::delete_template(&a, gone).unwrap();
         let first = packing::items(&a, packing::List::Trip, t1.id).unwrap()[0].id;
         packing::update_item(&a, packing::List::Trip, first, serde_json::from_value(json!({"packed": true})).unwrap()).unwrap();
-        let tg = todo::create_group(&a, "🖥️ Diploma").unwrap().id;
+        let tg = todo::create_group_with(&a, "🖥️ Diploma", Some("i:graduation".into())).unwrap().id;
         // 附件: names and checksums travel (the files stay on the Mac they were added on)
         let att_dir = temp_dir("roundtrip-attachments");
         let pic = crate::modules::attachments::store(&a, &att_dir, "海报.png", b"poster").unwrap().id;
         let pdf = crate::modules::attachments::store(&a, &att_dir, "开题报告.pdf", b"%PDF-report").unwrap().id;
-        let goal = todo::create_goal(&a, serde_json::from_value(json!({"groupId": tg, "name": "毕业", "status": "paused", "attachments": [pdf]})).unwrap()).unwrap().id;
+        let goal = todo::create_goal(&a, serde_json::from_value(json!({"groupId": tg, "name": "毕业", "icon": "i:target", "status": "paused", "attachments": [pdf]})).unwrap()).unwrap().id;
         let root = todo::create_task(&a, serde_json::from_value(json!({"goalId": goal, "title": "答辩前提交", "collapsed": true, "attachments": [pic, pdf]})).unwrap()).unwrap().id;
         let kid = todo::create_task(&a, serde_json::from_value(json!({"parentId": root, "title": "IA Report", "dueDate": "2027-01-22"})).unwrap()).unwrap().id;
         todo::create_task(&a, serde_json::from_value(json!({"parentId": root, "title": "Poster"})).unwrap()).unwrap();
@@ -616,6 +616,8 @@ mod tests {
         assert_eq!((v["modules"]["bookmarks"][0]["title"].as_str(), v["modules"]["bookmarks"][1]["children"][1]["onHome"].as_bool()), (Some("读书"), Some(true)));
         assert_eq!(v["modules"]["notes"]["notes"][1]["attachments"][0]["name"], "海报.png");
         assert_eq!(v["modules"]["todo"]["groups"][0]["goals"][0]["attachments"][0]["name"], "开题报告.pdf");
+        assert_eq!(v["modules"]["todo"]["groups"][0]["icon"], "i:graduation");
+        assert_eq!(v["modules"]["todo"]["groups"][0]["goals"][0]["icon"], "i:target");
         // on the other Mac they are names waiting for their files
         let missing: i64 = b.query_row("SELECT count(*) FROM attachment_files WHERE stored IS NULL", [], |r| r.get(0)).unwrap();
         assert_eq!(missing, 2);

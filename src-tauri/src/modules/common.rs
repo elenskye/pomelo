@@ -124,6 +124,20 @@ pub fn clean(s: Option<String>) -> Option<String> {
     s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
+pub const ICON_MAX: usize = 32;
+
+/// An icon picked for a thing (a 念念不忘 tag, a 一步一步 group or goal): `i:<key>` from the interface's icon library
+/// (src/shared/iconLibrary.tsx knows the keys; an unknown one just isn't drawn), or an emoji kept from before.
+pub fn clean_icon(icon: Option<String>) -> Result<Option<String>, String> {
+    let icon = clean(icon);
+    if let Some(i) = &icon {
+        if i.chars().count() > ICON_MAX || i.chars().any(char::is_whitespace) {
+            return Err("图标只能从图标库里选".into());
+        }
+    }
+    Ok(icon)
+}
+
 pub fn require(s: &str, label: &str, max_chars: usize) -> Result<String, String> {
     let v = s.trim();
     if v.is_empty() {

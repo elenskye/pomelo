@@ -240,8 +240,7 @@ export function KnowledgeDialog(props: { onClose: () => void }) {
       </div>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <nav aria-label="库" className="-m-1 flex w-52 shrink-0 flex-col overflow-y-auto border-r p-1 px-3 py-3">
-          <div className="flex items-center justify-between px-2 pb-1">
-            <p className="text-xs text-muted-foreground">库</p>
+          <div className="flex items-center justify-end px-2 pb-1">
             <IconButton label="新建库" onClick={() => setNaming({ id: null, name: "" })}>
               <Plus size={13} strokeWidth={1.75} />
             </IconButton>

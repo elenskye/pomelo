@@ -110,6 +110,10 @@
 
 `src/shared/editor/`：`LiveText` 是共用的底子：一个只收纯文字的可编辑框，文字是唯一的数据，每改一次按行重画、按位置放回光标（`editable.ts`），自带 ⌘Z、输入法、粘贴、列表续行、⌘ 快捷键加标记和「打 # 出提示」这类光标下的小列表（固定定位，挂在页面或所在的对话框上，不会被滚动的框裁掉）。刚回车出来的空行先按「要写的那一段」画（整行高、带段距），光标离开才缩回空行。长什么样由 Flavor 定：`lite.ts` 是念念不忘的格式（念念不忘、速记小窗用 `LiteEditor`，以后要写字的模块也用它，`tags` 可不要），`markdown.ts` 是 Markdown 的 Flavor（能给「只有一张图的行」配图片地址）：呦呦漫游的 `MdEditor.tsx` 用它（配作品的图片），写提示词的框都用 `MdField.tsx`（外观同多行输入框，自己滚动，没有图片）。
 
+- **右键的那条纸**（`MdMenu.tsx`）：`LiveText` 自己接右键，列出 Flavor 的 `formats`（包住选区、给选中的每一行加开头、加一行），再是两个图标库。新 Flavor 写上 `formats` 和 `linePrefix` 就有。
+- **字里的图标**（`inlineIcon.ts`）：`:pm-<名字>:` 是柚儿园的图标（名字是图标库的键，`shared/iconLibrary.tsx`），两个 Flavor 都把它画成一个光标进不去的小块（`contenteditable=false`，里面藏着这几个字，所以框里的文字、复制出去的、存下来的都没变）；`editable.ts` 的 `pointAt` 把落在小块里的位置放到它前面或后面。显示用的 `NoteBody`、`InlineMd` 也画它；笔记的一行预览（Rust `notes::excerpt`）把它去掉。`:名字:`（没有 `pm-`）是网站的内容图标，Pomelo 不画。各家浏览器对这种小块的做法不一样，改了这里在 Safari 里跑一遍 `?mock&edtest=<端口>`（`testing.md`）。
+- **图标库**（`shared/iconLibrary.tsx`）：`IconDialog`、`IconField`（弹窗里名字前的那一格）、`StoredIcon`。存成 `i:<键>`，键是图标的文件名；念念不忘以前用的 48 个键（`pin` 是地点、`notebook` 是带笔的本子…）原样留着，被它们占了名字的两个文件另起键（`pushpin`、`notebook-plain`）。Rust 只管长度（`common::clean_icon`），不认识的键只是不画。
+
 ## 界面外框
 
 - **页签和前进后退**（`src/app/tabs.tsx`）：只在界面里：每个页签一串走过的页（最多 50 步），用路由地址记（`#/finance/assets`：模块的子页是地址的第二段，`subpage.ts`）。路由只显示当前页签的页，切页签就是换地址（页面重新打开）。索引签、模块坞、柚子瓣、全局搜索走 `open`（别的页签开着这个模块就切过去）；页面里自己的跳转照常，外框记下来。鼠标侧键用 `mouseup` 的第 4、5 键，也有 ⌘[ ⌘]。页签（各自当前那一页）存在 `settings` 的 `ui.tabs`，打开 App 时恢复。
@@ -156,6 +160,12 @@
 - **读写内容**（`yaml.rs`、`doc.rs`）：读用 `yaml-rust2`（键保持顺序）；写是 js-yaml 4.3 `dump` 的逐行移植（网站原有文件就是它写的），JSON 照 `JSON.stringify(…, null, 2)`。键原地改、不认识的原样留、没变的文件不写、写之前比对读进来时的指纹。85 组对照测试，另有只读测试拿网站全部内容文件和 Node 跑的 js-yaml 逐字比对。各页各一个文件（`wander.rs` `now.rs` `about.rs` `career.rs` `terms.rs`）。
 - **资源库**（`images.rs`、`registry.rs`）：内容只写引用，保存时检查引用的是资源库里的文件。加文件都走 `site_files_add`：超过 1.5 MB 的图片用 `sips` 转 JPEG、缩长边；资源库里有一模一样的就用它，网站别处有一样的就拒绝；否则存进资源库并按去处自动登记。删之前照网站 `asset-reference-report.mjs` 的规则扫引用。界面经 `pomelo-site://localhost/<网址>` 显示网站里的图片（只认 `public/` 下的）。
 - **预览和编辑器**：Rust 开一个 `site-preview` 窗口装本地服务的那一页（它不能调用 Pomelo 的命令）；编辑器 `MdEditor.tsx` 是共用输入框（见「写字的输入框」）的 Markdown Flavor。
+
+## 看画布
+
+- **Pomelo 不存画布**：`canvas.rs` 只记文件夹（设置 `canvas.folder`，默认 `~/Documents/GitHub/visual-atelier`）和上次看的那块（`canvas.last`）；不进 `pomelo.db` 的表、备份、导出、撤销、搜索，柚子不读。
+- **画布服务**是 visual-atelier 的 bench（`node bench/bin/dw.js serve --port N --json`，只听 127.0.0.1），Node 按它的 `.nvmrc` 在 nvm 里找（和呦呦漫游同一套 `site/tools.rs`、`site/server.rs`）。Pomelo 用它给别的程序的接口（它的 `bench/README.md`「给别的程序用」）：`GET /api/status` 认出是不是它（`app: visual-atelier-bench`），`GET /api/canvases`、`/api/canvases/<名字>` 列画布和画板，`POST /api/stop` 停掉。端口上有别处启动的就直接用；不是它（或是没有 `/api/status` 的旧服务）就说端口被占着。正式版用 bench 自己的 4321；开发版、测试、临时数据目录的打包版用 4331，不碰正式的那个。Pomelo 启动的在退出时整组停掉。
+- **页面**（`modules/canvas/`）：画布界面放在一个 frame 里（地址是 bench 的 `/#/<画布>?page=&board=`）。左边点了就把 frame 的地址换掉（`location.replace`，不留历史）；bench 的界面每换一次地方给外面发一条消息（`{ source: "dw", type: "route" }`），左边跟着选中。Rust 这边因为页面跨不了域取不到 bench 的 JSON，所以列表由 Rust 去问。
 
 ## 首页和每天的例行检查
 

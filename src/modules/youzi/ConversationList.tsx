@@ -1,6 +1,7 @@
 // The conversation list (rules in Rust library.rs), on the desk beside 柚子's notepad (Phase 2 final design: each
 // conversation is a slip of paper lying a little askew, the open one in the selection colour):
-// 置顶 · 项目 (each collapsible, with its conversations) · 最近 (what a 定时任务 wrote too) · 归档 (folded).
+// 置顶 · 项目 (each a kraft folder: a click on the folder opens or shuts it, its conversations are the slips under
+// it) · 最近 (what a 定时任务 wrote too) · 归档 (folded).
 // 项目 and 最近 fold too (their label; remembered); 归档 starts folded. The 助手 aren't listed here: each is a module.
 // Each list follows last activity until dragged by hand. A dot marks a 定时 conversation not opened yet.
 // ⋯ on a row: 改名 / 置顶 / 私密 (a lock; stays in its list) / 复制整段对话 /
@@ -11,7 +12,7 @@
 // Project headers drag to reorder projects. Esc or a drop outside cancels. Everything here can be undone.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlarmClock, Ellipsis, Folder, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Settings2, X } from "@/shared/icons";
+import { AlarmClock, Ellipsis, Library as LibraryIcon, LibraryBig, Lock, Plus, Puzzle, Settings2, X } from "@/shared/icons";
 import { Dropdown, type DropdownAction, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { HandIcon } from "@/shared/handParts";
@@ -348,7 +349,7 @@ export function ConversationList(props: {
     );
   };
 
-  const projectHeader = (p: ProjectRow) => {
+  const projectHeader = (p: ProjectRow, i: number) => {
     const list = `project:${p.id}`;
     const isCollapsed = collapsed.includes(p.id);
     const hot = dragging && drag.target?.header && drag.target.list === list;
@@ -359,18 +360,18 @@ export function ConversationList(props: {
         data-project={p.id}
         data-list={list}
         onPointerDown={(e) => !sel.length && begin(e, "project", p.id, p.name)}
-        className={`group yz-row yz-head ${hot ? "hot" : ""} ${drag?.kind === "project" && drag.id === p.id ? "dragged" : ""}`}
+        style={{ "--r": `${[-1.2, 0.9, -0.6][i % 3]}deg` } as React.CSSProperties}
+        className={`group yz-row yz-folder ${isCollapsed ? "" : "open"} ${hot ? "hot" : ""} ${drag?.kind === "project" && drag.id === p.id ? "dragged" : ""}`}
       >
         {line && <span className={`pointer-events-none absolute right-1 left-1 h-0.5 rounded bg-primary ${line === "top" ? "-top-px" : "-bottom-px"}`} />}
         <button
           type="button"
           aria-expanded={!isCollapsed}
           onClick={() => !swallow() && setCollapsed(isCollapsed ? collapsed.filter((x) => x !== p.id) : [...collapsed, p.id])}
-          className="yz-title !pl-0"
+          className="yz-title"
         >
-          <HandIcon name="down" size={14} seed={1202} className={`yz-chev ${isCollapsed ? "shut" : ""}`} />
-          <Folder size={14} strokeWidth={1.5} className="shrink-0" style={{ color: "var(--color-pen)" }} />
           <span className="yz-t">{p.name}</span>
+          {isCollapsed && p.sessions.length > 0 && <span className="yz-n">{p.sessions.length}</span>}
         </button>
         <Dropdown<string | null>
           plain
@@ -421,9 +422,9 @@ export function ConversationList(props: {
           fold("projects"),
         )}
         {open("projects") &&
-          lib.projects.map((p) => (
+          lib.projects.map((p, i) => (
             <div key={p.id}>
-              {projectHeader(p)}
+              {projectHeader(p, i)}
               {!collapsed.includes(p.id) && (
                 <div className="yz-sub">
                   {p.files > 0 && (

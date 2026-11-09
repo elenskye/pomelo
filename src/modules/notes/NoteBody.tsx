@@ -1,10 +1,13 @@
 // Renders a note's Markdown-lite text (shared/editor/lite.ts): lines = paragraphs, `- ` / `1. ` lists
-// (2 spaces per level), **bold**, ==highlight==, ++underline++, #tags (clickable) and bare URLs (open via Rust).
+// (2 spaces per level), **bold**, ==highlight==, ++underline++, #tags (clickable), bare URLs (open via Rust) and
+// `:pm-<key>:` icons from the icon library.
 import type { ReactNode } from "react";
 import { api } from "@/shared/ipc";
+import { withoutIcons } from "@/shared/editor/inlineIcon";
 import { atoms, LIST, pairMarks, tagSpans } from "@/shared/editor/lite";
+import { LibIcon, libraryIcon } from "@/shared/iconLibrary";
 
-/** One-line preview, as notes.rs makes it: no tags, marks or list bullets. */
+/** One-line preview, as notes.rs makes it: no tags, marks, icons or list bullets. */
 export function excerpt(content: string, max = 60): string {
   const lines = content.split("\n").map((l) => {
     let out = "";
@@ -13,7 +16,7 @@ export function excerpt(content: string, max = 60): string {
       out += l.slice(last, t.start);
       last = t.end;
     }
-    return (out + l.slice(last)).replace(/\*\*|==|\+\+/g, "").replace(/^\s*(?:[-*]|\d+[.)]) /, "");
+    return withoutIcons(out + l.slice(last)).replace(/\*\*|==|\+\+/g, "").replace(/^\s*(?:[-*]|\d+[.)]) /, "");
   });
   let s = lines.join(" ").split(/\s+/).filter(Boolean).join(" ");
   if (!s) s = [...new Set(content.split("\n").flatMap((l) => tagSpans(l).map((t) => `#${t.value}`)))].join(" ");
@@ -52,7 +55,9 @@ function Inline(props: { line: string; onTag?: (tag: string) => void }) {
       const text = line.slice(a.start, a.end);
       out.push(
         style(
-          a.kind === "tag" ? (
+          a.kind === "icon" ? (
+            libraryIcon(a.value) ? <LibIcon name={a.value} size={18} className="inline-block align-[-0.2em]" /> : text
+          ) : a.kind === "tag" ? (
             <button type="button" onClick={() => props.onTag?.(a.value)} className="text-primary hover:underline">
               {text}
             </button>

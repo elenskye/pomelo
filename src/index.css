@@ -157,3 +157,24 @@
 /* 边写边显示的输入框（shared/editor 的 lite、markdown，Seeker 的要点）：不在编辑时把格式符号（** == ++ # > 这些）收起来，
    只看效果；点进去编辑时再显示出来。 */
 [contenteditable]:not(:focus) .md-mark { display: none; }
+
+/* ---------- 左边一列（典型页「列表型」：visual-atelier canvases/pomelo-pages 的 .lp-side） ----------
+   一行 .side-row；选中的那行里第一个放 shared/ui.tsx 的 <Picked />（一块手剪的底，data-hand="pick"），不再整行涂色。 */
+.side-list { border-right: 2px dashed var(--color-line); }
+.side-row { position: relative; isolation: isolate; display: flex; align-items: center; min-height: 36px; border-radius: 9px; }
+.side-row:not(.on):hover { background: color-mix(in srgb, var(--color-selected) 55%, transparent); }
+.side-row.on { font-weight: 700; }
+.side-picked { position: absolute; inset: 1px 0; z-index: -1; pointer-events: none; }
+.side-rule { height: 0; margin: 8px 6px; border-top: 2px dashed var(--color-line); }
+/* 拖动排序（shared/sortable）时被拖的那一行垫上纸色，不和它经过的行叠字 */
+.side-list [data-sort-id][style*="z-index: 20"] { background: var(--color-paper); border-radius: 9px; }
+
+/* ---------- 图标库（shared/iconLibrary.tsx） ---------- */
+.icon-cell { color: var(--color-ink); }
+.icon-cell:hover { background: color-mix(in srgb, var(--color-selected) 60%, transparent); }
+.icon-cell.on { background: var(--color-selected); }
+.pm-field.pm-compact.icon-field { width: 36px; padding: 0; justify-content: center; cursor: pointer; }
+
+/* ---------- 落签都挂在最上面一层（shared/tips.ts）：原地的那张收起来，挂出来的是它的替身 ---------- */
+.pm-tip-host[data-tip-up] > .pm-tip { visibility: hidden; opacity: 0; animation: none; }
+.tip-float { z-index: 2147483000; pointer-events: none; }

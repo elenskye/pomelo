@@ -60,10 +60,20 @@ export function pointAt(root: HTMLElement, pos: number): [Node, number] {
       let last: Node | null = null;
       while ((t = walker.nextNode())) {
         const n = t.textContent?.length ?? 0;
+        // a unit the caret can't enter (an icon keeping its source inside): before it or after it
+        const unit = t.parentElement?.closest<HTMLElement>('[contenteditable="false"]');
+        if (unit && line.contains(unit)) {
+          if (p <= n) return [unit.parentNode!, Array.prototype.indexOf.call(unit.parentNode!.childNodes, unit) + (p === 0 ? 0 : 1)];
+          p -= n;
+          last = t;
+          continue;
+        }
         if (p <= n) return [t, p];
         p -= n;
         last = t;
       }
+      const unit = last?.parentElement?.closest<HTMLElement>('[contenteditable="false"]');
+      if (unit && line.contains(unit)) return [unit.parentNode!, Array.prototype.indexOf.call(unit.parentNode!.childNodes, unit) + 1];
       return last ? [last, last.textContent?.length ?? 0] : [line, 0];
     }
     p -= len + 1;

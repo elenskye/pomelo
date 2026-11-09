@@ -17,7 +17,7 @@ import { localToday, slashDate } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
-import { Button, EmptyState, PageHeader, SearchInput } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, Picked, SearchInput } from "@/shared/ui";
 import { NOTES_KEY, useNoteMutations, useNotes, useOverview, useSimilarNotes, type Brief, type Note, type NoteFilter } from "./api";
 import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
 import { excerpt } from "./NoteBody";
@@ -207,13 +207,12 @@ export default function NotesPage() {
         type="button"
         aria-current={f.tag === null}
         onClick={() => go({ tag: null })}
-        className={`flex items-center gap-2 rounded-control px-2.5 py-1.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${
-          f.tag === null ? "bg-accent" : "hover:bg-muted/70"
-        }`}
+        className={`side-row shrink-0 gap-2 px-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${f.tag === null ? "on" : ""}`}
       >
+        {f.tag === null && <Picked seed={1425} />}
         <Notebook size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
         <span className="flex-1">全部笔记</span>
-        <span className="text-xs text-muted-foreground tabular-nums">{overview?.total ?? ""}</span>
+        <span className="text-xs font-normal text-muted-foreground tabular-nums">{overview?.total ?? ""}</span>
       </button>
       {tagNames.length > 0 && <TagTree tags={overview?.tags ?? []} pinned={overview?.pinned ?? []} active={f.tag} onSelect={(tag) => go({ tag })} />}
     </nav>

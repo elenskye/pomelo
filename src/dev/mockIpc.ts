@@ -218,8 +218,8 @@ const addBackup = (label: string, d = new Date(), store: Backup["store"] = "pome
 };
 
 // ---- 一步一步 (todo): mirrors todo.rs rules loosely (placement, cascade, types, 今天 / 已过期) ----
-type TGroup = { id: number; name: string; sortOrder: number; createdAt: string; updatedAt: string };
-type TGoal = { id: number; groupId: number; name: string; status: string; startDate: string | null; endDate: string | null; note: string | null; review: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type TGroup = { id: number; name: string; icon: string | null; sortOrder: number; createdAt: string; updatedAt: string };
+type TGoal = { id: number; groupId: number; name: string; icon: string | null; status: string; startDate: string | null; endDate: string | null; note: string | null; review: string | null; sortOrder: number; createdAt: string; updatedAt: string };
 type TTask = {
   id: number; groupId: number; goalId: number | null; parentId: number | null; title: string; note: string | null; link: string | null;
   planDate: string | null; startDate: string | null; dueDate: string | null; done: boolean; doneAt: string | null; collapsed: boolean;
@@ -386,13 +386,13 @@ const setDoneCount = (t: TTask, n: number | undefined) => {
   if (t.repeatTotal && t.doneBefore + logged > t.repeatTotal) throw "已经做了的次数不能多于一共几次";
 };
 const addLog = (taskId: number, day: string, amount = 1) => tLogs.push({ id: nextId++, taskId, day, amount, createdAt: now() });
-const addTGroup = (name: string) => {
-  const g = { id: nextId++, name, sortOrder: tGroups.length + 1, createdAt: now(), updatedAt: now() };
+const addTGroup = (name: string, icon: string | null = null) => {
+  const g = { id: nextId++, name, icon, sortOrder: tGroups.length + 1, createdAt: now(), updatedAt: now() };
   tGroups.push(g);
   return g;
 };
 const addTGoal = (groupId: number, name: string, p: Partial<TGoal> = {}) => {
-  const g = { id: nextId++, groupId, name, status: "active", startDate: null, endDate: null, note: null, review: null, sortOrder: tGoals.filter((x) => x.groupId === groupId).length + 1, createdAt: now(), updatedAt: now(), ...p };
+  const g = { id: nextId++, groupId, name, icon: null, status: "active", startDate: null, endDate: null, note: null, review: null, sortOrder: tGoals.filter((x) => x.groupId === groupId).length + 1, createdAt: now(), updatedAt: now(), ...p };
   tGoals.push(g);
   return g;
 };
@@ -462,8 +462,8 @@ const doneItems = (from: string, to: string) => {
   return out.sort((a, b) => (a.day + a.at).localeCompare(b.day + b.at));
 };
 {
-  const study = addTGroup("🖥️ 学业");
-  const proj = addTGroup("📌 个人项目");
+  const study = addTGroup("学业", "i:graduation");
+  const proj = addTGroup("个人项目", "i:pushpin");
   const later = addTGroup("📈 长期");
   addTTask({ groupId: study.id, title: "交 **课程报告** 第一版", done: true, doneAt: new Date(Date.now() - 2 * 86400000).toISOString() });
   addTTask({ groupId: study.id, title: "**周五** 交实验记录", dueDate: dayOffset(-2) });
@@ -473,7 +473,7 @@ const doneItems = (from: string, to: string) => {
   for (let i = 1; i <= 6; i++) addLog(weekly.id, dayOffset(-7 * i));
   const before = addTTask({ groupId: study.id, title: "**答辩前**提交：" });
   ["最终报告", "个人总结", "展示 PPT"].forEach((t, i) => addTTask({ parentId: before.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null }));
-  const site = addTGoal(proj.id, "个人网站上线", { startDate: dayOffset(-10), endDate: dayOffset(40), note: "先做简单版" });
+  const site = addTGoal(proj.id, "个人网站上线", { icon: "i:globe", startDate: dayOffset(-10), endDate: dayOffset(40), note: "先做简单版" });
   ["选框架", "写首页", "买域名"].forEach((t, i) => addTTask({ goalId: site.id, title: t, done: i === 0, doneAt: i === 0 ? now() : null, dueDate: i === 1 ? dayOffset(0) : null }));
   const jp = addTGoal(proj.id, "学日语");
   const words = addTTask({ goalId: jp.id, title: "背单词", taskType: "checkin", repeatRule: "daily", startDate: dayOffset(-10), dueDate: dayOffset(20) });
@@ -553,11 +553,12 @@ const todoHandlers: Record<string, (a: Args) => unknown> = {
     const name = String(a.name).trim();
     if (!name) throw "分组名不能为空";
     if (tGroups.some((g) => g.name === name)) throw `已经有叫「${name}」的分组了`;
-    return tGroupOut(addTGroup(name));
+    return tGroupOut(addTGroup(name, (a.icon as string | null) || null));
   }),
-  todo_group_rename: undoable("重命名分组", (a) => {
+  todo_group_rename: undoable("修改分组", (a) => {
     const g = tGroups.find((x) => x.id === a.id)!;
     g.name = String(a.name).trim();
+    if (a.icon !== undefined && a.icon !== null) g.icon = (a.icon as string) || null;
     return tGroupOut(g);
   }),
   todo_group_delete: undoable("删除分组", (a) => {
@@ -5569,6 +5570,54 @@ const siteRun = (message: string) => {
     site.history[0].state = failed ? "failure" : "success";
   });
 };
+// ---------- 看画布 (canvas.rs): a pretend bench; the frame points at 127.0.0.1:4321, where a real `dw serve` shows if one runs ----------
+let cvRunning = false;
+let cvFolder = "/Users/me/Documents/GitHub/visual-atelier";
+const CV_DEFAULT = cvFolder;
+const cvOverview = () => ({ folder: cvFolder, isDefault: cvFolder === CV_DEFAULT, problem: new URLSearchParams(location.search).get("canvas") === "missing" ? `找不到 visual-atelier 文件夹：${cvFolder}` : null, state: cvRunning ? "running" : "stopped", ours: cvRunning, url: "http://127.0.0.1:4321", error: null });
+const CV_ROWS = [
+  { name: "pomelo-explore", title: "Pomelo Explore", kind: "canvas", boards: 5, pages: [{ id: "p2", name: "Phase 2 · 最终设计" }, { id: "p3", name: "Phase 3 · 方案" }] },
+  { name: "pomelo-pages", title: "Pomelo · 首页、日历与内页", kind: "canvas", boards: 3, pages: [] },
+  { name: "vl2-phase4-questionnaire", title: "VL2 · Phase 4 问卷", kind: "page", boards: 0, pages: [] },
+];
+const CV_BOARDS: Record<string, { file: string; title: string; page: string | null }[]> = {
+  "pomelo-explore": [
+    { file: "Main.dc.html", title: "B3 · 桌面", page: "p2" },
+    { file: "P2-Pages.dc.html", title: "模块页", page: "p2" },
+    { file: "P2-Wheel.dc.html", title: "柚子瓣", page: "p2" },
+    { file: "P3-Palettes.dc.html", title: "配色", page: "p3" },
+    { file: "P3-Desk.dc.html", title: "桌面", page: "p3" },
+  ],
+  "pomelo-pages": [
+    { file: "Desk.dc.html", title: "首页完整版", page: null },
+    { file: "Calendar.dc.html", title: "日历", page: null },
+    { file: "List.dc.html", title: "列表型", page: null },
+  ],
+};
+const canvasHandlers: Record<string, (a: Args) => unknown> = {
+  canvas_overview: cvOverview,
+  canvas_start: async () => {
+    await new Promise((r) => setTimeout(r, 500));
+    if (cvOverview().problem) throw cvOverview().problem;
+    cvRunning = true;
+    return cvOverview();
+  },
+  canvas_stop: () => {
+    cvRunning = false;
+    return cvOverview();
+  },
+  canvas_list: () => {
+    if (!cvRunning) throw "连不上画布服务";
+    return CV_ROWS;
+  },
+  canvas_boards: (a) => ({ name: a.name, pages: CV_ROWS.find((r) => r.name === a.name)?.pages ?? [], boards: CV_BOARDS[a.name as string] ?? [] }),
+  canvas_set_folder: (a) => {
+    cvRunning = false;
+    cvFolder = (a.folder as string) || CV_DEFAULT;
+    return cvOverview();
+  },
+};
+
 const siteHandlers: Record<string, (a: Args) => unknown> = {
   site_overview: () => siteOverview(),
   site_changes: () => {
@@ -6104,6 +6153,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...captureHandlers,
   ...youziHandlers,
   ...siteHandlers,
+  ...canvasHandlers,
   ...workHandlers,
   ...siteAssistHandlers,
   ...pageHandlers,

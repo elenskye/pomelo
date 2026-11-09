@@ -53,6 +53,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 38, name: "youzi_keys", sql: include_str!("../migrations/0038_youzi_keys.sql") },
     Migration { version: 39, name: "bookmarks", sql: include_str!("../migrations/0039_bookmarks.sql") },
     Migration { version: 40, name: "bookmarks_in_folders", sql: include_str!("../migrations/0040_bookmarks_in_folders.sql") },
+    Migration { version: 41, name: "todo_icons", sql: include_str!("../migrations/0041_todo_icons.sql") },
 ];
 
 pub fn open(path: &Path) -> Result<Connection, String> {

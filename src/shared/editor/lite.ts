@@ -1,13 +1,14 @@
 // Markdown-lite, 念念不忘's format (also the 速记小窗's): lines = paragraphs, `- ` / `1. ` lists (2 spaces
-// per level), **bold**, ==highlight==, ++underline++, bare URLs and (optionally) #tags. The tag rule
-// mirrors notes.rs — keep them in step. `liteFlavor` draws it in LiveText the way NoteBody shows it
+// per level), **bold**, ==highlight==, ++underline++, bare URLs, (optionally) #tags and `:pm-<key>:` icons
+// (inlineIcon.ts). The tag rule mirrors notes.rs — keep them in step. `liteFlavor` draws it in LiveText the way NoteBody shows it
 // (paragraphs 0.75em apart, list items 4px, a blank line 0.9em), marks kept and dimmed.
-import type { Flavor } from "./LiveText";
+import { iconHtml, iconSpans } from "./inlineIcon";
+import type { Flavor, Format } from "./LiveText";
 
 const TAG_MAX = 50;
 const validTag = (t: string) => t.length > 0 && !t.startsWith("/") && !t.includes("//") && [...t].length <= TAG_MAX;
 
-export type Span = { start: number; end: number; kind: "tag" | "url"; value: string };
+export type Span = { start: number; end: number; kind: "tag" | "url" | "icon"; value: string };
 
 /** Tag spans in a line (`start` is the `#`). */
 export function tagSpans(line: string): Span[] {
@@ -21,9 +22,10 @@ export function tagSpans(line: string): Span[] {
 
 const URL_RE = /(?:https?:\/\/|www\.)[^\s<>"'，。；！？、）】」』]+/giu;
 
-/** Tags (unless `tags` is false) and URLs in a line, in order. */
+/** Tags (unless `tags` is false), URLs and icons in a line, in order. */
 export function atoms(line: string, tags = true): Span[] {
   const spans = tags ? tagSpans(line) : [];
+  for (const [start, end, value] of iconSpans(line)) if (!spans.some((t) => t.start < end && start < t.end)) spans.push({ start, end, kind: "icon", value });
   for (const m of line.matchAll(URL_RE)) {
     const url = m[0].replace(/[.,;:!?)\]]+$/, "");
     const s = { start: m.index, end: m.index + url.length, kind: "url" as const, value: url };
@@ -130,7 +132,8 @@ function lineHtml(line: string, tags: boolean): string {
     const a = spans.find((s) => s.start === i);
     if (a) {
       flush();
-      out += styled(text.slice(a.start, a.end), a.kind === "tag" ? "text-primary" : "text-primary underline underline-offset-2");
+      const seen = text.slice(a.start, a.end);
+      out += a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : styled(seen, a.kind === "tag" ? "text-primary" : "text-primary underline underline-offset-2");
       i = a.end;
       continue;
     }
@@ -140,6 +143,15 @@ function lineHtml(line: string, tags: boolean): string {
   flush();
   return out;
 }
+
+/** What the right-click list offers in this format. */
+const FORMATS: Format[] = [
+  { label: "加粗", keys: "⌘B", wrap: "**" },
+  { label: "高亮", keys: "⌘⇧H", wrap: "==" },
+  { label: "下划线", keys: "⌘U", wrap: "++" },
+  { label: "列表", line: "- " },
+  { label: "编号列表", line: "1. " },
+];
 
 /** NoteBody's gaps: a blank line is a 0.9em spacer; a line after text sits 0.75em below it, a list item
  * after a list item 4px. The pending line counts as text. */
@@ -166,5 +178,7 @@ export function liteFlavor(opts: { tags: boolean }): Flavor {
       { key: "u", mark: "++" },
       { key: "h", shift: true, mark: "==" },
     ],
+    formats: FORMATS,
+    linePrefix: /^ *(?:[-*]|\d+[.)]) /,
   };
 }

@@ -84,20 +84,26 @@ impl Server {
 
     /// Starts `npm run dev` unless something already answers on the port; returns at once.
     pub fn start(&self, folder: &Path, node_bin: &Path, port: u16) -> Result<(), String> {
-        let mut g = self.lock();
-        Self::reap(&mut g);
-        if port_open(port) || g.child.is_some() {
-            return Ok(());
-        }
         if !folder.join("package.json").is_file() {
             return Err("网站文件夹里没有 package.json".into());
         }
         if !folder.join("node_modules").is_dir() {
             return Err("网站还没装依赖（node_modules）：先在网站文件夹里跑一次 npm ci".into());
         }
-        g.log = Log::default();
         let port_s = port.to_string();
-        let child = tools::spawn_logged(&node_bin.join("npm"), folder, &["run", "dev", "--", "--port", &port_s], Some(node_bin), &g.log)?;
+        self.start_program(&node_bin.join("npm"), folder, &["run", "dev", "--", "--port", &port_s], node_bin, port)
+    }
+
+    /// Starts a program that will listen on `port` (看画布's bench too), unless something already answers there or
+    /// ours is still coming up; returns at once.
+    pub fn start_program(&self, program: &Path, dir: &Path, args: &[&str], node_bin: &Path, port: u16) -> Result<(), String> {
+        let mut g = self.lock();
+        Self::reap(&mut g);
+        if port_open(port) || g.child.is_some() {
+            return Ok(());
+        }
+        g.log = Log::default();
+        let child = tools::spawn_logged(program, dir, args, Some(node_bin), &g.log)?;
         (g.child, g.starting, g.error) = (Some(child), true, None);
         Ok(())
     }

@@ -19,7 +19,7 @@ import { Modal } from "@/shared/Modal";
 import { useOpenRequest, type Hit } from "@/shared/open";
 import { usePageKeys } from "@/shared/panel";
 import { isNumberArray, isStringArray, useSetting } from "@/shared/settings";
-import { Button, EmptyState, Field, PageHeader, SearchInput, Switch, TextInput } from "@/shared/ui";
+import { Button, EmptyState, Field, PageHeader, SearchInput, Switch, TextInput, Picked } from "@/shared/ui";
 import { buildTree, linksIn, pathTo, useBookmarkMutations, useBookmarks, useSiteIcons, type Node } from "./api";
 import { SiteIcon } from "./SiteIcon";
 
@@ -411,9 +411,10 @@ function TreeRow(props: { label: string; depth: number; on: boolean; hint: Hint;
       onPointerDown={props.drag?.onPointerDown}
       onClickCapture={props.drag?.onClickCapture}
       onDragStart={(e) => e.preventDefault()}
-      className={`relative flex items-center rounded-control text-sm transition-colors duration-150 ${props.hint === "into" ? "bg-accent ring-2 ring-primary/50" : props.on ? "bg-accent font-bold" : "hover:bg-muted/70"} ${props.drag?.dragging ? "opacity-40" : ""}`}
+      className={`side-row !min-h-0 text-sm ${props.hint === "into" ? "bg-accent ring-2 ring-primary/50" : props.on ? "on" : ""} ${props.drag?.dragging ? "opacity-40" : ""}`}
       style={{ paddingLeft: inset }}
     >
+      {props.on && props.hint !== "into" && <Picked seed={1428} />}
       {props.hint === "before" && <span className="absolute right-1 -top-px h-0.5 rounded-full bg-primary" style={{ left: inset + 6 }} />}
       {props.hint === "after" && <span className="absolute right-1 -bottom-px h-0.5 rounded-full bg-primary" style={{ left: inset + 6 }} />}
       {props.depth > 0 ? (

@@ -1,20 +1,21 @@
 // Left-column tags, built from full paths (#a/b/c; siblings in their dragged order, never-dragged ones
 // after them in pinyin order): pinned first-level tags first (pin order, each with its sub-tags), then
 // the rest of the tree. Each row: icon (click = change it), name, count, and a ⋯ menu — 置顶 (first
-// level only) / 换图标 / 改名 / 删除 (rename and delete rewrite the notes; Rust moves the settings along).
+// level only) / 换图标 (the icon library) / 改名 / 删除 (rename and delete rewrite the notes; Rust moves the settings along).
 // Drag a row (pointer events, like shared/sortable): onto the upper / lower part of a row = before /
 // after it among its siblings (another parent = a move, i.e. a rename); onto its middle = into it, last.
 // Pinned first-level tags reorder only among themselves. Fold state is a UI setting; the active tag's
 // ancestors always show, and the filter follows a renamed / moved tag.
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Ellipsis, Hash } from "@/shared/icons";
-import { TAG_ICONS, TagIcon } from "./tagIcons";
+import { ChevronDown, Ellipsis } from "@/shared/icons";
+import { IconDialog } from "@/shared/iconLibrary";
+import { TagIcon } from "./tagIcons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { isStringArray, useSetting } from "@/shared/settings";
-import { Button, Field, Segmented, TextInput } from "@/shared/ui";
+import { Field, Picked, Segmented, TextInput } from "@/shared/ui";
 import { useNoteMutations, type TagCount } from "./api";
 
 type Node = { path: string; name: string; count: number; icon: string | null; order: number | null; kids: Node[] };
@@ -107,45 +108,9 @@ function DeleteDialog(props: { tag: string; count: number; onClose: () => void; 
   );
 }
 
-function IconDialog(props: { tag: string; icon: string | null; onClose: () => void }) {
-  const [custom, setCustom] = useState(props.icon && !props.icon.startsWith("i:") ? props.icon : "");
+function TagIconDialog(props: { tag: string; icon: string | null; onClose: () => void }) {
   const m = useNoteMutations();
-  const pick = (icon: string | null) => m.setTag.mutate({ tag: props.tag, patch: { icon } }, { onSuccess: props.onClose });
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (custom.trim()) pick(custom.trim());
-  };
-  return (
-    <Modal title={`#${props.tag} 的图标`} onClose={props.onClose} onSubmit={submit} error={null} submitLabel="用这个 emoji">
-      <div className="grid grid-cols-8 gap-1">
-        {TAG_ICONS.map(([key, Icon]) => {
-          const on = props.icon === `i:${key}`;
-          return (
-            <button
-              key={key}
-              type="button"
-              aria-label={key}
-              aria-pressed={on}
-              onClick={() => pick(`i:${key}`)}
-              className={`grid h-9 place-items-center rounded-control outline-none transition-colors duration-150 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${on ? "bg-accent" : ""}`}
-            >
-              <Icon size={17} strokeWidth={1.75} style={{ color: "var(--module-notes)" }} />
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex items-end gap-2">
-        <Field label="其他 emoji">
-          <TextInput value={custom} onChange={(e) => setCustom(e.target.value)} maxLength={16} className="w-28 text-center text-lg" />
-        </Field>
-        {props.icon && (
-          <Button variant="ghost" onClick={() => pick(null)}>
-            <Hash size={14} /> 不用图标
-          </Button>
-        )}
-      </div>
-    </Modal>
-  );
+  return <IconDialog title={`#${props.tag} 的图标`} icon={props.icon} color="var(--module-notes)" onPick={(icon) => m.setTag.mutate({ tag: props.tag, patch: { icon } })} onClose={props.onClose} />;
 }
 
 const OPEN_KEY = "notes.tags_open";
@@ -316,9 +281,10 @@ export function TagTree(props: { tags: TagCount[]; pinned: string[]; active: str
           e.stopPropagation();
           e.preventDefault();
         }}
-        className={`group/tag flex items-center rounded-control transition-colors duration-150 ${into ? "bg-accent ring-2 ring-primary/50" : on ? "bg-accent" : "hover:bg-muted/70"} ${drag?.path === t.tag ? "opacity-40" : ""}`}
+        className={`group/tag side-row !min-h-0 ${into ? "bg-accent ring-2 ring-primary/50" : on ? "on" : ""} ${drag?.path === t.tag ? "opacity-40" : ""}`}
         style={{ paddingLeft: 6 + depth * 14 }}
       >
+        {on && !into && <Picked seed={1426} />}
         <button
           type="button"
           aria-label={`换「${t.tag}」的图标`}
@@ -403,13 +369,13 @@ export function TagTree(props: { tags: TagCount[]; pinned: string[]; active: str
       )}
       {rest.length > 0 && (
         <>
-          <div className="px-2.5 pt-4 pb-1 text-xs text-muted-foreground">标签</div>
+          {pinnedRoots.length > 0 ? <div className="px-2.5 pt-4 pb-1 text-xs text-muted-foreground">标签</div> : <div className="side-rule" />}
           <div className="space-y-0.5">{rest.map((n) => node(n, 0))}</div>
         </>
       )}
       {renaming && <RenameDialog tag={renaming.tag} count={renaming.count} onClose={() => setRenaming(null)} onDone={(to) => follow(renaming.tag, to)} />}
       {deleting && <DeleteDialog tag={deleting.tag} count={deleting.count} onClose={() => setDeleting(null)} onDone={() => follow(deleting.tag, null)} />}
-      {iconFor && <IconDialog tag={iconFor.tag} icon={iconFor.icon} onClose={() => setIconFor(null)} />}
+      {iconFor && <TagIconDialog tag={iconFor.tag} icon={iconFor.icon} onClose={() => setIconFor(null)} />}
       {drag &&
         createPortal(
           <>

@@ -35,6 +35,8 @@ fn gone(what: &str) -> String {
 pub struct Group {
     pub id: i64,
     pub name: String,
+    /// `i:<key>` from the icon library (see `common::clean_icon`), or none.
+    pub icon: Option<String>,
     pub sort_order: i64,
     /// Undone leaf tasks in the group (including its goals).
     pub open: i64,
@@ -46,13 +48,13 @@ fn group_sql() -> String {
     format!(
         "SELECT g.id, g.name, g.sort_order,
            (SELECT count(*) FROM todo_tasks t WHERE t.group_id = g.id AND t.done = 0 AND {IS_LEAF}),
-           g.created_at, g.updated_at
+           g.created_at, g.updated_at, g.icon
          FROM todo_groups g"
     )
 }
 
 fn group_row(r: &Row) -> rusqlite::Result<Group> {
-    Ok(Group { id: r.get(0)?, name: r.get(1)?, sort_order: r.get(2)?, open: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)? })
+    Ok(Group { id: r.get(0)?, name: r.get(1)?, icon: r.get(6)?, sort_order: r.get(2)?, open: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)? })
 }
 
 pub fn groups(conn: &Connection) -> Result<Vec<Group>, String> {
@@ -83,20 +85,37 @@ fn clean_group_name(conn: &Connection, name: &str, except: Option<i64>) -> Resul
     Ok(name)
 }
 
+/// (tests: a group without an icon)
+#[cfg(test)]
 pub fn create_group(conn: &Connection, name: &str) -> Result<Group, String> {
+    create_group_with(conn, name, None)
+}
+
+pub fn create_group_with(conn: &Connection, name: &str, icon: Option<String>) -> Result<Group, String> {
     let name = clean_group_name(conn, name, None)?;
+    let icon = common::clean_icon(icon)?;
     conn.execute(
-        "INSERT INTO todo_groups (name, sort_order) VALUES (?1, (SELECT coalesce(max(sort_order), 0) + 1 FROM todo_groups))",
-        [&name],
+        "INSERT INTO todo_groups (name, icon, sort_order) VALUES (?1, ?2, (SELECT coalesce(max(sort_order), 0) + 1 FROM todo_groups))",
+        params![name, icon],
     )
     .map_err(err)?;
     group(conn, conn.last_insert_rowid())
 }
 
+#[cfg(test)]
 pub fn rename_group(conn: &Connection, id: i64, name: &str) -> Result<Group, String> {
-    group(conn, id)?;
+    update_group(conn, id, name, None)
+}
+
+/// A group's name and, when given, its icon (`Some(None)` takes it off).
+pub fn update_group(conn: &Connection, id: i64, name: &str, icon: Option<Option<String>>) -> Result<Group, String> {
+    let old = group(conn, id)?;
     let name = clean_group_name(conn, name, Some(id))?;
-    conn.execute(&format!("UPDATE todo_groups SET name = ?1, updated_at = {NOW} WHERE id = ?2"), params![name, id])
+    let icon = match icon {
+        Some(i) => common::clean_icon(i)?,
+        None => old.icon,
+    };
+    conn.execute(&format!("UPDATE todo_groups SET name = ?1, icon = ?2, updated_at = {NOW} WHERE id = ?3"), params![name, icon, id])
         .map_err(err)?;
     group(conn, id)
 }
@@ -136,6 +155,8 @@ pub struct Goal {
     pub id: i64,
     pub group_id: i64,
     pub name: String,
+    /// `i:<key>` from the icon library, or none.
+    pub icon: Option<String>,
     pub status: GoalStatus,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
@@ -156,6 +177,8 @@ pub struct GoalPatch {
     pub group_id: Option<i64>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "some")]
+    pub icon: Option<Option<String>>,
     #[serde(default)]
     pub status: Option<GoalStatus>,
     #[serde(default, deserialize_with = "some")]
@@ -176,7 +199,7 @@ fn goal_sql() -> String {
         "SELECT g.id, g.group_id, g.name, g.status, g.start_date, g.end_date, g.note, g.review, g.sort_order,
            (SELECT count(*) FROM todo_tasks t WHERE t.goal_id = g.id AND {IS_LEAF}),
            (SELECT count(*) FROM todo_tasks t WHERE t.goal_id = g.id AND t.done = 1 AND {IS_LEAF}),
-           g.created_at, g.updated_at
+           g.created_at, g.updated_at, g.icon
          FROM todo_goals g"
     )
 }
@@ -186,6 +209,7 @@ fn goal_row(r: &Row) -> rusqlite::Result<Goal> {
         id: r.get(0)?,
         group_id: r.get(1)?,
         name: r.get(2)?,
+        icon: r.get(13)?,
         status: r.get(3)?,
         start_date: r.get(4)?,
         end_date: r.get(5)?,
@@ -216,6 +240,7 @@ pub fn goal(conn: &Connection, id: i64) -> Result<Goal, String> {
 struct GoalFields {
     group_id: i64,
     name: String,
+    icon: Option<String>,
     status: GoalStatus,
     start_date: Option<String>,
     end_date: Option<String>,
@@ -236,6 +261,7 @@ fn validate_goal(f: GoalFields) -> Result<GoalFields, String> {
     }
     let f = GoalFields {
         name: common::require(&f.name, "目标名", 100)?,
+        icon: common::clean_icon(f.icon)?,
         start_date: common::clean(f.start_date),
         end_date: common::clean(f.end_date),
         note: common::clean(f.note),
@@ -256,6 +282,7 @@ pub fn create_goal(conn: &Connection, patch: GoalPatch) -> Result<Goal, String> 
     let f = validate_goal(GoalFields {
         group_id,
         name: patch.name.unwrap_or_default(),
+        icon: patch.icon.flatten(),
         status: patch.status.unwrap_or_default(),
         start_date: patch.start_date.flatten(),
         end_date: patch.end_date.flatten(),
@@ -265,9 +292,9 @@ pub fn create_goal(conn: &Connection, patch: GoalPatch) -> Result<Goal, String> 
     let files = attachments::clean_ids(conn, &patch.attachments.unwrap_or_default())?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
-        "INSERT INTO todo_goals (group_id, name, status, start_date, end_date, note, review, sort_order)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT coalesce(max(sort_order), 0) + 1 FROM todo_goals WHERE group_id = ?1))",
-        params![f.group_id, f.name, f.status, f.start_date, f.end_date, f.note, f.review],
+        "INSERT INTO todo_goals (group_id, name, status, start_date, end_date, note, review, icon, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT coalesce(max(sort_order), 0) + 1 FROM todo_goals WHERE group_id = ?1))",
+        params![f.group_id, f.name, f.status, f.start_date, f.end_date, f.note, f.review, f.icon],
     )
     .map_err(err)?;
     let id = tx.last_insert_rowid();
@@ -282,6 +309,7 @@ pub fn update_goal(conn: &Connection, id: i64, patch: GoalPatch) -> Result<Goal,
     let f = validate_goal(GoalFields {
         group_id: patch.group_id.unwrap_or(old.group_id),
         name: patch.name.unwrap_or(old.name),
+        icon: patch.icon.unwrap_or(old.icon),
         status: patch.status.unwrap_or(old.status),
         start_date: patch.start_date.unwrap_or(old.start_date),
         end_date: patch.end_date.unwrap_or(old.end_date),
@@ -301,10 +329,10 @@ pub fn update_goal(conn: &Connection, id: i64, patch: GoalPatch) -> Result<Goal,
     }
     tx.execute(
         &format!(
-            "UPDATE todo_goals SET name = ?1, status = ?2, start_date = ?3, end_date = ?4, note = ?5, review = ?6,
+            "UPDATE todo_goals SET name = ?1, status = ?2, start_date = ?3, end_date = ?4, note = ?5, review = ?6, icon = ?8,
                updated_at = {NOW} WHERE id = ?7"
         ),
-        params![f.name, f.status, f.start_date, f.end_date, f.note, f.review, id],
+        params![f.name, f.status, f.start_date, f.end_date, f.note, f.review, id, f.icon],
     )
     .map_err(err)?;
     if let Some(files) = &patch.attachments {
@@ -1645,6 +1673,9 @@ pub struct LogRecord {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GoalRecord {
     pub name: String,
+    /// v39 and older: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default)]
     pub status: GoalStatus,
     #[serde(default)]
@@ -1670,6 +1701,9 @@ pub struct GoalRecord {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GroupRecord {
     pub name: String,
+    /// v39 and older: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default)]
     pub goals: Vec<GoalRecord>,
     #[serde(default)]
@@ -1756,6 +1790,7 @@ pub fn validate_records(rec: &TodoRecord) -> Result<(), String> {
     let mut names = std::collections::HashSet::new();
     for (i, g) in rec.groups.iter().enumerate() {
         let name = common::require(&g.name, "分组名", 30).map_err(|e| format!("{LABEL}第 {} 个分组：{e}", i + 1))?;
+        common::clean_icon(g.icon.clone()).map_err(|e| format!("{LABEL}「{name}」：{e}"))?;
         if !names.insert(name.clone()) {
             return Err(format!("{LABEL}：分组「{name}」重复了"));
         }
@@ -1763,6 +1798,7 @@ pub fn validate_records(rec: &TodoRecord) -> Result<(), String> {
             validate_goal(GoalFields {
                 group_id: 0,
                 name: goal.name.clone(),
+                icon: goal.icon.clone(),
                 status: goal.status.current(),
                 start_date: goal.start_date.clone(),
                 end_date: goal.end_date.clone(),
@@ -1836,22 +1872,23 @@ pub fn replace_all(conn: &Connection, rec: &TodoRecord) -> Result<usize, String>
     for (i, g) in rec.groups.iter().enumerate() {
         conn.execute(
             &format!(
-                "INSERT INTO todo_groups (name, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, coalesce(?3, {NOW}), coalesce(?4, ?3, {NOW}))"
+                "INSERT INTO todo_groups (name, sort_order, created_at, updated_at, icon)
+                 VALUES (?1, ?2, coalesce(?3, {NOW}), coalesce(?4, ?3, {NOW}), ?5)"
             ),
-            params![g.name.trim(), i as i64 + 1, g.created_at, g.updated_at],
+            params![g.name.trim(), i as i64 + 1, g.created_at, g.updated_at, common::clean_icon(g.icon.clone())?],
         )
         .map_err(err)?;
         let group_id = conn.last_insert_rowid();
         for (j, goal) in g.goals.iter().enumerate() {
             conn.execute(
                 &format!(
-                    "INSERT INTO todo_goals (group_id, name, status, start_date, end_date, note, review, sort_order, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, {NOW}), coalesce(?10, ?9, {NOW}))"
+                    "INSERT INTO todo_goals (group_id, name, status, start_date, end_date, note, review, sort_order, created_at, updated_at, icon)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, {NOW}), coalesce(?10, ?9, {NOW}), ?11)"
                 ),
                 params![
                     group_id, goal.name.trim(), goal.status.current(), common::clean(goal.start_date.clone()), common::clean(goal.end_date.clone()),
-                    common::clean(goal.note.clone()), common::clean(goal.review.clone()), j as i64 + 1, goal.created_at, goal.updated_at
+                    common::clean(goal.note.clone()), common::clean(goal.review.clone()), j as i64 + 1, goal.created_at, goal.updated_at,
+                    common::clean_icon(goal.icon.clone())?
                 ],
             )
             .map_err(err)?;
@@ -1944,6 +1981,7 @@ pub fn export(conn: &Connection) -> Result<TodoRecord, String> {
                 .map(|x| {
                     Ok(GoalRecord {
                         name: x.name.clone(),
+                        icon: x.icon.clone(),
                         status: x.status,
                         start_date: x.start_date.clone(),
                         end_date: x.end_date.clone(),
@@ -1959,6 +1997,7 @@ pub fn export(conn: &Connection) -> Result<TodoRecord, String> {
             Ok(GroupRecord {
                 tasks: task_tree(conn, &tasks(conn, Some(g.id), None)?)?,
                 name: g.name,
+                icon: g.icon,
                 goals,
                 created_at: Some(g.created_at),
                 updated_at: Some(g.updated_at),
@@ -1975,12 +2014,13 @@ pub fn todo_groups(state: State<AppState>) -> Result<Vec<Group>, String> {
     state.with_db(|c| groups(c))
 }
 #[tauri::command]
-pub fn todo_group_create(state: State<AppState>, name: String) -> Result<Group, String> {
-    state.with_undo("添加分组", |c| create_group(c, &name))
+pub fn todo_group_create(state: State<AppState>, name: String, icon: Option<String>) -> Result<Group, String> {
+    state.with_undo("添加分组", |c| create_group_with(c, &name, icon))
 }
+/// `icon`: left out = as it is; `""` = none.
 #[tauri::command]
-pub fn todo_group_rename(state: State<AppState>, id: i64, name: String) -> Result<Group, String> {
-    state.with_undo("重命名分组", |c| rename_group(c, id, &name))
+pub fn todo_group_rename(state: State<AppState>, id: i64, name: String, icon: Option<String>) -> Result<Group, String> {
+    state.with_undo("修改分组", |c| update_group(c, id, &name, icon.map(Some)))
 }
 #[tauri::command]
 pub fn todo_group_delete(state: State<AppState>, id: i64) -> Result<(), String> {

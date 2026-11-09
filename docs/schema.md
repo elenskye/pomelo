@@ -54,9 +54,9 @@
 
 规则见 `modules/todo.rs` 开头。
 
-**todo_groups**：`name`（不重名）、`sort_order`。
+**todo_groups**：`name`（不重名）、`icon`（图标库里的一个，存成 `i:<名字>`，没有就空）、`sort_order`。
 
-**todo_goals**：`group_id`、`name`、`status`（`active` / `paused` / `done`）、`start_date` · `end_date`、`note`、`review` 复盘、`sort_order`。
+**todo_goals**：`group_id`、`name`、`icon`（同分组）、`status`（`active` / `paused` / `done`）、`start_date` · `end_date`、`note`、`review` 复盘、`sort_order`。
 
 **todo_tasks**：
 
@@ -296,7 +296,7 @@ DevJanitor 的设置在 `youzi.db` 的偏好 `assistant.janitor`：不进一键�
 
 ## 数据文件（导出 / 导入）
 
-JSON，当前格式版本 39。旧文件都能读，读旧形状的规则在 `transfer.rs` 和各模块的 `serde` 默认值里，有测试。
+JSON，当前格式版本 40（40：一步一步的分组和目标带 `icon`，旧文件没有就是没图标）。旧文件都能读，读旧形状的规则在 `transfer.rs` 和各模块的 `serde` 默认值里，有测试。
 
 | 部分 | 内容 |
 |---|---|
@@ -324,6 +324,7 @@ JSON，当前格式版本 39。旧文件都能读，读旧形状的规则在 `tr
 | 36～38 | 标签拖动排序；「小拾」和模块键 `picky` 改成柚子 / `youzi` |
 | 39 | 一网打尽：`bookmarks` |
 | 40 | 一网打尽：最外层的网址收进新文件夹「未分类」（之后网址都在文件夹里） |
+| 41 | 一步一步：分组和目标的图标（`todo_groups.icon`、`todo_goals.icon`；名字不动） |
 
 **youzi.db**
 

@@ -1,7 +1,9 @@
-// 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder, fold a group's goals)
-// + right content. Modeled on GoalMap. Goals carry no icon (names can start with an emoji).
+// 一步一步: left nav (今天 · 月历 · 回看 · groups → goals; drag rows to reorder; a group that has goals folds and
+// unfolds them with the little arrow) + right content. Modeled on GoalMap. A group and a goal can wear an icon from
+// the icon library (shared/iconLibrary.tsx). The nav is the typical list page's side column (index.css .side-row).
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { CalendarCheck, CalendarDays, ChevronDown, FolderPlus, ListPlus, Plus, Sun, Target } from "@/shared/icons";
+import { CalendarCheck, CalendarDays, ChevronDown, Folder, FolderPlus, ListPlus, Plus, Sun, Target } from "@/shared/icons";
+import { StoredIcon } from "@/shared/iconLibrary";
 import { moduleById } from "@/app/modules";
 import { Dropdown } from "@/shared/Dropdown";
 import { formatDay, localToday, weekday } from "@/shared/dates";
@@ -11,7 +13,7 @@ import { isNumberArray, useSetting } from "@/shared/settings";
 import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { useSortable } from "@/shared/sortable";
-import { Button, EmptyState, PageHeader, ProgressBar } from "@/shared/ui";
+import { Button, EmptyState, PageHeader, Picked, ProgressBar } from "@/shared/ui";
 import {
   GOAL_STATUS,
   pct,
@@ -51,7 +53,8 @@ type DragProps = ReturnType<ReturnType<typeof useSortable>["handle"]>;
 
 function NavButton(props: { active: boolean; onClick: () => void; children: ReactNode; indent?: boolean; drag?: DragProps; trailing?: ReactNode }) {
   return (
-    <div {...props.drag} className={`flex items-center rounded-control transition-colors duration-150 ${props.active ? "bg-accent" : "hover:bg-muted/70"}`}>
+    <div {...props.drag} className={`side-row ${props.active ? "on" : ""}`}>
+      {props.active && <Picked seed={props.indent ? 1423 : 1421} />}
       <button
         type="button"
         aria-current={props.active}
@@ -87,7 +90,7 @@ function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (
         const goals = props.goals.filter((o) => o.groupId === g.id);
         const open = !folded.includes(g.id);
         return (
-          <div key={g.id} {...sort.item(g.id)} className="bg-background">
+          <div key={g.id} {...sort.item(g.id)}>
             <NavButton
               active={props.view.kind === "group" && props.view.id === g.id}
               onClick={() => props.go({ kind: "group", id: g.id })}
@@ -106,8 +109,9 @@ function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (
                 )
               }
             >
+              <StoredIcon icon={g.icon} size={16} color="var(--color-pen)" fallback={<Folder size={15} className="shrink-0 text-muted-foreground" />} />
               <span className="min-w-0 flex-1 truncate">{g.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{g.open || ""}</span>
+              <span className="shrink-0 text-xs font-normal text-muted-foreground">{g.open || ""}</span>
             </NavButton>
             {open && <GoalNav goals={goals} groupId={g.id} view={props.view} go={props.go} />}
           </div>
@@ -123,7 +127,7 @@ function GoalNav(props: { goals: Goal[]; groupId: number; view: View; go: (v: Vi
   return (
     <div ref={sort.listRef}>
       {props.goals.map((o) => (
-        <div key={o.id} {...sort.item(o.id)} className="bg-background">
+        <div key={o.id} {...sort.item(o.id)}>
           <NavButton
             indent
             active={props.view.kind === "goal" && props.view.id === o.id}
@@ -144,10 +148,11 @@ function GoalNavLabel({ goal }: { goal: Goal }) {
   const closed = closedGoal(goal.status);
   return (
     <>
+      <StoredIcon icon={goal.icon} size={14} color="var(--color-pen)" fallback={<Target size={13} className="shrink-0 text-muted-foreground" />} />
       <span className={`min-w-0 flex-1 truncate text-sm ${closed ? "text-muted-foreground" : ""}`}>
         {goal.name}
       </span>
-      <span className="shrink-0 text-xs text-muted-foreground">
+      <span className="shrink-0 text-xs font-normal text-muted-foreground">
         {goal.status === "active" ? `${pct(goal.done, goal.total)}%` : GOAL_STATUS[goal.status]}
       </span>
     </>
@@ -358,6 +363,7 @@ export default function TodoPage() {
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className={`flex min-w-0 items-center gap-1.5 ${closedGoal(g.status) ? "text-muted-foreground" : ""}`}>
+          <StoredIcon icon={g.icon} size={15} color="var(--color-pen)" fallback={null} />
           <span className="truncate">{g.name}</span>
           {g.status !== "active" && <span className="shrink-0 rounded bg-muted px-1.5 text-xs text-muted-foreground">{GOAL_STATUS[g.status]}</span>}
         </span>
@@ -395,7 +401,12 @@ export default function TodoPage() {
     return (
       <>
         <ViewHeader
-          title={grp.name}
+          title={
+            <span className="flex items-center gap-2">
+              <StoredIcon icon={grp.icon} size={19} color="var(--color-pen)" fallback={null} />
+              {grp.name}
+            </span>
+          }
           onEdit={() => setGroupDialog({ group: grp })}
           editLabel="编辑分组"
           sub={[openGoals.length > 0 && `${openGoals.length} 个目标`, `${grp.open} 件没做完`].filter(Boolean).join(" · ")}
@@ -415,7 +426,7 @@ export default function TodoPage() {
             </Section>
           )}
           {openRoots ? (
-            <Section title={openGoals.length > 0 ? "其他任务" : "任务"}>{tree}</Section>
+            openGoals.length > 0 ? <Section title="其他任务">{tree}</Section> : tree
           ) : placeTasks.length > 0 || doneGoals.length > 0 ? (
             tree
           ) : (
@@ -434,6 +445,7 @@ export default function TodoPage() {
         <ViewHeader
           title={
             <span className="flex items-center gap-2">
+              <StoredIcon icon={g.icon} size={19} color="var(--color-pen)" fallback={null} />
               {g.name}
               {g.status !== "active" && <span className="rounded bg-muted px-1.5 text-xs font-normal text-muted-foreground">{GOAL_STATUS[g.status]}</span>}
             </span>
@@ -477,13 +489,13 @@ export default function TodoPage() {
   // ---------- layout ----------
 
   const nav = (
-    <nav aria-label="一步一步" className="flex w-60 shrink-0 flex-col">
-      <div className="-m-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1 pr-2">
+    <nav aria-label="一步一步" className="side-list flex w-60 shrink-0 flex-col pr-4">
+      <div className="-m-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1">
         <NavButton active={view.kind === "today"} onClick={() => void go({ kind: "today" })}>
           <Sun size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">今天</span>
-          {counts && counts.overdue > 0 && <span className="text-xs text-destructive">{counts.overdue} 过期</span>}
-          {counts && <span className="text-xs text-muted-foreground">{counts.due}</span>}
+          {counts && counts.overdue > 0 && <span className="text-xs font-normal text-destructive">{counts.overdue} 过期</span>}
+          {counts && <span className="text-xs font-normal text-muted-foreground">{counts.due}</span>}
         </NavButton>
         <NavButton active={view.kind === "month"} onClick={() => void go({ kind: "month" })}>
           <CalendarDays size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
@@ -493,7 +505,7 @@ export default function TodoPage() {
           <CalendarCheck size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">回看</span>
         </NavButton>
-        <div className="px-2.5 pt-4 pb-1 text-xs text-muted-foreground">分组</div>
+        <div className="side-rule" />
         <GroupNav groups={groups} goals={goals} view={view} go={(v) => void go(v)} />
       </div>
       <Button variant="ghost" className="mt-2 justify-center text-muted-foreground" onClick={() => setGroupDialog({ group: null })}>

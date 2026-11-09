@@ -14,6 +14,7 @@ import JobsPage from "@/modules/jobs/JobsPage";
 import NotesPage from "@/modules/notes/NotesPage";
 import DaysPage from "@/modules/days/DaysPage";
 import SitePage from "@/modules/site/SitePage";
+import CanvasPage from "@/modules/canvas/CanvasPage";
 import ListPage from "@/modules/custom/ListPage";
 import ProgressPage from "@/modules/custom/ProgressPage";
 import VaultPage from "@/modules/vault/VaultPage";
@@ -27,6 +28,7 @@ import HealthPage from "@/settings/Health";
 import SettingsPage from "@/settings/SettingsPage";
 import { startAppearance } from "@/shared/appearance";
 import { startHand } from "@/shared/hand";
+import { startTips } from "@/shared/tips";
 import { ToastProvider } from "@/shared/feedback";
 import "./index.css";
 
@@ -36,11 +38,15 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   // 流畅度自测：`&perf=<端口>`（docs/testing.md）
   const perf = new URLSearchParams(location.search).get("perf");
   if (perf) void import("./dev/perf").then((m) => m.runPerf(perf));
+  // 写字的框在 WebKit 里的自测：`&edtest=<端口>`（docs/testing.md）
+  const edtest = new URLSearchParams(location.search).get("edtest");
+  if (edtest) void import("./dev/edtest").then((m) => m.runEdTest(edtest));
 }
 // the palette and light / dark chosen in 设置, before the first paint
 startAppearance();
 // the hand-drawn frames, lines and controls (data-hand), painted as they appear
 startHand();
+startTips();
 
 // Local IPC: no network retries / refetch-on-focus noise.
 const queryClient = new QueryClient({
@@ -65,6 +71,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="notes" element={<NotesPage />} />
             <Route path="days" element={<DaysPage />} />
             <Route path="site/:sub?" element={<SitePage />} />
+            <Route path="canvas" element={<CanvasPage />} />
             <Route path="list/:id" element={<ListPage />} />
             <Route path="progress/:id" element={<ProgressPage />} />
             <Route path="vault" element={<VaultPage />} />

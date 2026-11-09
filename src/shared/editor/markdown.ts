@@ -3,7 +3,8 @@
 // [links](…) inline; a line that is only an image can show the picture under it (not part of the text). ↩ continues
 // a list or quote, Tab / ⇧Tab indent a list item, ⌘B / ⌘I bold / italic. Used by 呦呦漫游's body (MdEditor) and
 // every box where I write a prompt (MdField).
-import type { Flavor } from "./LiveText";
+import { iconHtml } from "./inlineIcon";
+import type { Flavor, Format } from "./LiveText";
 
 /** An image line's URL → the picture's src (null: no picture). */
 export type ImageSrc = (url: string) => string | null;
@@ -27,9 +28,9 @@ const span = (cls: string, text: string) => (text ? (cls ? `<span class="${cls}"
 type Style = { bold?: boolean; italic?: boolean; strike?: boolean; link?: boolean };
 const cls = (s: Style) => [s.bold && "font-bold", s.italic && "italic", s.strike && "line-through", s.link && "text-primary underline underline-offset-2"].filter(Boolean).join(" ");
 
-// code span · image · link · **bold** / __bold__ · *italic* · _italic_ (not inside words) · ~~del~~ · {% tag %} · <url>
+// code span · image · link · **bold** / __bold__ · *italic* · _italic_ (not inside words) · ~~del~~ · {% tag %} · <url> · :pm-icon:
 const INLINE =
-  /(`+)(.+?)\1(?!`)|!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]*)\]\(([^)]*)\)|(\*\*|__)(?=\S)(.*?\S)\7|\*(?=[^\s*])(.*?[^\s*])\*(?!\*)|(?<![A-Za-z0-9_])_(?=\S)(.*?\S)_(?![A-Za-z0-9_])|~~(?=\S)(.*?\S)~~|\{%.*?%\}|<https?:\/\/[^>\s]+>/g;
+  /(`+)(.+?)\1(?!`)|!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]*)\]\(([^)]*)\)|(\*\*|__)(?=\S)(.*?\S)\7|\*(?=[^\s*])(.*?[^\s*])\*(?!\*)|(?<![A-Za-z0-9_])_(?=\S)(.*?\S)_(?![A-Za-z0-9_])|~~(?=\S)(.*?\S)~~|\{%.*?%\}|<https?:\/\/[^>\s]+>|:pm-([a-z0-9-]+):/g;
 
 /** A line's inline marks: every character drawn once, in order. */
 function inline(text: string, st: Style = {}): string {
@@ -46,6 +47,7 @@ function inline(text: string, st: Style = {}): string {
     else if (m[9] !== undefined) out += span(FMT, "*") + inline(m[9], { ...st, italic: true }) + span(FMT, "*");
     else if (m[10] !== undefined) out += span(FMT, "_") + inline(m[10], { ...st, italic: true }) + span(FMT, "_");
     else if (m[11] !== undefined) out += span(FMT, "~~") + inline(m[11], { ...st, strike: true }) + span(FMT, "~~");
+    else if (m[12] !== undefined) out += iconHtml(m[12]) ?? span(cls(st), all);
     else out += span(all.startsWith("<") ? "text-primary" : MARK, all);
   }
   return out + span(cls(st), text.slice(last));
@@ -83,6 +85,25 @@ function docHtml(text: string, pending: number | null, imageSrc: ImageSrc): stri
     .join("");
 }
 
+/** What the right-click list offers in Markdown. */
+const FORMATS: Format[] = [
+  { label: "大标题", line: "# " },
+  { label: "中标题", line: "## " },
+  { label: "小标题", line: "### " },
+  "-",
+  { label: "加粗", keys: "⌘B", wrap: "**" },
+  { label: "斜体", keys: "⌘I", wrap: "*" },
+  { label: "删除线", wrap: "~~" },
+  { label: "行内代码", wrap: "`" },
+  { label: "链接", around: ["[", "](https://)"] },
+  "-",
+  { label: "列表", line: "- " },
+  { label: "编号列表", line: "1. " },
+  { label: "引用", line: "> " },
+  { label: "代码块", around: ["```\n", "\n```"], block: true },
+  { label: "分隔线", insert: "---" },
+];
+
 /** Markdown on LiveText; `image`: where a line that is only an image shows its picture from (none: no picture). */
 export function markdownFlavor(image?: ImageSrc): Flavor {
   const src: ImageSrc = image ?? (() => null);
@@ -101,5 +122,7 @@ export function markdownFlavor(image?: ImageSrc): Flavor {
       { key: "b", mark: "**" },
       { key: "i", mark: "*" },
     ],
+    formats: FORMATS,
+    linePrefix: /^ *(?:#{1,6} +|[-*+] +|\d+[.)] +|>+ ?)/,
   };
 }

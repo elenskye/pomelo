@@ -32,7 +32,6 @@ pub const LABEL: &str = "念念不忘";
 pub const MAX_CHARS: usize = 50_000;
 pub const TAG_MAX: usize = 50;
 pub const MAX_REFS: usize = 50;
-pub const ICON_MAX: usize = 16;
 const EXCERPT_CHARS: usize = 60;
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -192,7 +191,27 @@ fn strip_list_marker(line: &str) -> &str {
     t
 }
 
-/// One-line preview for links between notes: no tags, markers or list bullets.
+/// The text without the icons written in it (`:pm-<key>:`, lowercase letters, digits and `-`: the interface draws
+/// one of its own icons there; src/shared/editor/inlineIcon.ts).
+pub fn without_icons(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(":pm-") {
+        let after = &rest[i + 4..];
+        let n = after.bytes().take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-').count();
+        if n > 0 && after.as_bytes().get(n) == Some(&b':') {
+            out.push_str(&rest[..i]);
+            rest = &after[n + 1..];
+        } else {
+            out.push_str(&rest[..i + 4]);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One-line preview for links between notes: no tags, markers, icons or list bullets.
 pub fn excerpt(content: &str) -> String {
     let mut plain = String::new();
     let mut last = 0;
@@ -201,7 +220,7 @@ pub fn excerpt(content: &str) -> String {
         last = b;
     }
     plain.push_str(&content[last..]);
-    let plain = plain.replace("**", "").replace("==", "").replace("++", "");
+    let plain = without_icons(&plain).replace("**", "").replace("==", "").replace("++", "");
     let words: Vec<&str> = plain.lines().map(strip_list_marker).flat_map(str::split_whitespace).collect();
     let mut s = words.join(" ");
     if s.is_empty() {
@@ -734,13 +753,7 @@ fn move_meta(conn: &Connection, from: &str, to: &str) -> Result<(), String> {
 }
 
 fn clean_icon(icon: Option<String>) -> Result<Option<String>, String> {
-    let icon = common::clean(icon);
-    if let Some(i) = &icon {
-        if i.chars().count() > ICON_MAX || i.chars().any(char::is_whitespace) {
-            return Err("图标只能是一个 emoji 或自带的图标".into());
-        }
-    }
-    Ok(icon)
+    common::clean_icon(icon)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1114,6 +1127,7 @@ mod tests {
         assert_eq!(replace_tag("#a/ x", "a", "b"), "#b/ x");
         assert_eq!(excerpt("#百言集/春盗 \n\n- **重点** ==标==\n1. 第二 ++下++"), "重点 标 第二 下");
         assert_eq!(excerpt("#只有标签 #另一个"), "#只有标签 #另一个");
+        assert_eq!(excerpt(":pm-star: 记一笔 :pm-book-open:再说，:tip: 和 :pm-: 留着"), "记一笔 再说，:tip: 和 :pm-: 留着");
         assert_eq!(excerpt(&"字".repeat(70)).chars().count(), EXCERPT_CHARS + 1);
     }
 
@@ -1223,7 +1237,7 @@ mod tests {
         set_tag(&c, "读书/摘抄", tp(json!({"icon": "📖"}))).unwrap(); // icons: any level
         set_tag(&c, "舒宇", tp(json!({"icon": "🍊"}))).unwrap();
         assert!(set_tag(&c, "没有", tp(json!({"pinned": true}))).is_err());
-        assert!(set_tag(&c, "电影", tp(json!({"icon": "太长了太长了太长了太长了太长了太长了"}))).is_err());
+        assert!(set_tag(&c, "电影", tp(json!({"icon": "太长了".repeat(11)}))).is_err());
         let o = overview(&c).unwrap();
         assert_eq!(o.pinned, ["电影", "读书"]); // pin order
         let icon = |o: &Overview, t: &str| o.tags.iter().find(|x| x.tag == t).unwrap().icon.clone();

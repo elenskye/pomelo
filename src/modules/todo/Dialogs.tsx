@@ -1,4 +1,4 @@
-// Modals for groups (name only) and goals (name, group, dates, status, note, 复盘).
+// Modals for groups (icon, name) and goals (icon, name, group, dates, status, note, 复盘). The icon is from the icon library.
 import { useState, type FormEvent } from "react";
 import { Trash2 } from "@/shared/icons";
 import { useAttachmentsOf, type FileInfo } from "@/shared/attachments/api";
@@ -7,6 +7,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { DateInput } from "@/shared/DateInput";
+import { IconField } from "@/shared/iconLibrary";
 import { Button, Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { Polish } from "@/modules/youzi/Assist";
 import { GOAL_STATUS, useTodoMutations, type Goal, type GoalStatus, type TodoGroup } from "./api";
@@ -14,6 +15,7 @@ import { GOAL_STATUS, useTodoMutations, type Goal, type GoalStatus, type TodoGro
 export function GroupDialog(props: { group: TodoGroup | null; goalCount: number; onClose: () => void; onCreated?: (g: TodoGroup) => void; onDeleted?: () => void }) {
   const { group } = props;
   const [name, setName] = useState(group?.name ?? "");
+  const [icon, setIcon] = useState(group?.icon ?? null);
   const [error, setError] = useState<string | null>(null);
   const m = useTodoMutations();
   const toast = useToast();
@@ -24,10 +26,10 @@ export function GroupDialog(props: { group: TodoGroup | null; goalCount: number;
     setError(null);
     try {
       if (group) {
-        await m.renameGroup.mutateAsync({ id: group.id, name });
+        await m.renameGroup.mutateAsync({ id: group.id, name, icon: icon ?? "" });
         toast("已保存");
       } else {
-        const g = await m.createGroup.mutateAsync(name);
+        const g = await m.createGroup.mutateAsync({ name, icon });
         toast(`已添加分组「${g.name}」`);
         props.onCreated?.(g);
       }
@@ -67,9 +69,10 @@ export function GroupDialog(props: { group: TodoGroup | null; goalCount: number;
         )
       }
     >
-      <Field label="分组名">
-        <TextInput autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={30} />
-      </Field>
+      <div className="flex items-center gap-2">
+        <IconField label="分组的图标" icon={icon} onChange={setIcon} color="var(--color-pen)" />
+        <TextInput autoFocus aria-label="分组名" value={name} onChange={(e) => setName(e.target.value)} maxLength={30} />
+      </div>
     </Modal>
   );
 }
@@ -94,6 +97,7 @@ export function GoalDialog(props: GoalDialogProps) {
 function GoalForm(props: GoalDialogProps & { files: FileInfo[] }) {
   const { goal } = props;
   const [name, setName] = useState(goal?.name ?? "");
+  const [icon, setIcon] = useState(goal?.icon ?? null);
   const [groupId, setGroupId] = useState(goal?.groupId ?? props.groupId);
   const [status, setStatus] = useState<GoalStatus>(props.presetStatus ?? goal?.status ?? "active");
   const [startDate, setStartDate] = useState(goal?.startDate ?? "");
@@ -110,7 +114,7 @@ function GoalForm(props: GoalDialogProps & { files: FileInfo[] }) {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    const patch = { name, groupId, status, startDate: startDate || null, endDate: endDate || null, note: note.trim() || null, review: review.trim() || null, attachments: files.map((f) => f.id) };
+    const patch = { name, icon, groupId, status, startDate: startDate || null, endDate: endDate || null, note: note.trim() || null, review: review.trim() || null, attachments: files.map((f) => f.id) };
     try {
       if (goal) {
         await m.updateGoal.mutateAsync({ id: goal.id, patch });
@@ -157,7 +161,10 @@ function GoalForm(props: GoalDialogProps & { files: FileInfo[] }) {
       }
     >
       <Field label="目标">
-        <TextInput autoFocus={!props.presetStatus} value={name} onChange={(e) => setName(e.target.value)} placeholder="必填" maxLength={100} />
+        <div className="flex items-center gap-2">
+          <IconField label="目标的图标" icon={icon} onChange={setIcon} color="var(--color-pen)" />
+          <TextInput autoFocus={!props.presetStatus} value={name} onChange={(e) => setName(e.target.value)} placeholder="必填" maxLength={100} />
+        </div>
       </Field>
       <Field label="分组">
         <div>

@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { startAppearance } from "@/shared/appearance";
 import { startHand } from "@/shared/hand";
+import { startTips } from "@/shared/tips";
 import { ToastProvider } from "@/shared/feedback";
 import { Capture } from "./Capture";
 import "@/index.css";
@@ -16,6 +17,7 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
 startAppearance();
 // the hand-drawn frames and controls (data-hand), as in the main window
 startHand();
+startTips();
 
 // as the main window's (问柚子 uses 柚子's queries)
 const queryClient = new QueryClient({

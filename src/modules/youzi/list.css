@@ -48,12 +48,28 @@
 .yz-slip.sel::before { background: var(--color-selected); outline: 2px dashed var(--color-pen); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) { .yz-slip::before { transition: none; } }
 
-/* 项目：文件夹那一行不是纸条，里面的对话往里缩一点 */
-.yz-head { margin-top: 2px; padding-left: 2px; border-radius: 8px; }
-.yz-head:hover { background: color-mix(in srgb, var(--color-card) 45%, transparent); }
-.yz-head.hot { outline: 2px dashed var(--color-pen); outline-offset: -2px; }
-.yz-head .yz-title { padding-left: 0; font-size: 15px; }
-.yz-sub { padding-left: 10px; }
+/* 项目：一个牛皮纸文件夹（左上角一只标签耳朵），和小纸条是一套：纸是歪的、字是正的；点文件夹就打开或合上，
+   打开时上沿露出里面一条深一点的纸，对话的小纸条摆在它下面、往里缩一点。牛皮纸明暗都是同一个颜色，上面的字用印刷的墨色。 */
+.yz-folder { width: calc(100% - 22px); height: 38px; margin: 18px 0 5px 2px; color: var(--color-print-ink); }
+.yz-folder::before {
+  content: ""; position: absolute; left: 6px; top: -9px; z-index: -2; width: 84px; height: 18px; border-radius: 7px 10px 0 0;
+  background: var(--color-kraft-flap); box-shadow: 0 1px 2px var(--color-shadow);
+  transform: rotate(var(--r, -1deg)); transform-origin: 0 100%;
+}
+.yz-folder::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: 3px 9px 7px 7px; background: var(--color-kraft);
+  box-shadow: 0 1px 2px var(--color-shadow), 0 4px 8px var(--color-shadow);
+  transform: rotate(var(--r, -1deg)); transform-origin: 0 100%; transition: transform .25s cubic-bezier(.3, 1.6, .5, 1);
+}
+.yz-folder.open::after { background: linear-gradient(var(--color-kraft-inside) 0 5px, var(--color-kraft) 5px); }
+.yz-folder:hover::after { transform: rotate(0deg) scale(1.02); }
+.yz-folder.hot::after { outline: 2px dashed var(--color-pen); outline-offset: 2px; }
+.yz-folder .yz-title { font-size: 15px; font-weight: 700; cursor: pointer; }
+.yz-folder .yz-n { flex-shrink: 0; margin-left: auto; padding-right: 2px; font-size: 12px; font-weight: 400; color: var(--color-print-ink-soft); }
+.yz-folder [aria-haspopup] { color: var(--color-print-ink-soft); }
+.yz-folder [aria-haspopup]:hover { color: var(--color-print-ink); background: color-mix(in srgb, var(--color-kraft-inside) 60%, transparent); }
+@media (prefers-reduced-motion: reduce) { .yz-folder::after { transition: none; } }
+.yz-sub { padding-left: 12px; }
 .yz-files { min-height: 26px; font-size: 13px; opacity: .8; }
 .yz-files .yz-title { padding: 2px 0 2px 12px; font-size: 13px; }
 

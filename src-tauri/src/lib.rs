@@ -5,6 +5,7 @@
 mod autostart;
 mod backup;
 mod calendar;
+mod canvas;
 mod capture;
 mod db;
 mod dock;
@@ -172,6 +173,7 @@ pub fn run() {
             let root = paths::resolve_root(&base, overridden.map(Into::into));
             let home = app.path().home_dir()?;
             app.manage(site::Site::new(site::mode(scratch), &home, &root));
+            app.manage(canvas::Canvas::new(&home, scratch));
             app.manage(youzi::assistants::janitor::Janitor::new(youzi::assistants::janitor::mode(scratch), &home, &root));
             // 一网打尽's site icons: fetched only by the real app (dev, tests and scratch data dirs stay offline)
             app.manage(icons::Icons::new(root.join("icons"), !cfg!(debug_assertions) && !scratch));
@@ -784,6 +786,12 @@ pub fn run() {
             modules::todo::todo_groups_reorder,
             modules::todo::todo_goals_reorder,
             modules::todo::todo_tasks_reorder,
+            canvas::canvas_overview,
+            canvas::canvas_start,
+            canvas::canvas_stop,
+            canvas::canvas_list,
+            canvas::canvas_boards,
+            canvas::canvas_set_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -795,6 +803,7 @@ pub fn run() {
                 youzi::chat::shutdown(app);
                 app.state::<AppState>().youzi.runtime.stop_ours_on_exit();
                 app.state::<site::Site>().on_exit();
+                app.state::<canvas::Canvas>().on_exit();
             }
             _ => {}
         });

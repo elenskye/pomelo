@@ -1,7 +1,7 @@
 // The notes on the desk (docs/design.md「首页」; visual-atelier's canvases/pomelo-pages Desk / DeskRight). Each is the
 // Design System's card, sticky note or receipt (ds.css pm-*, painted by shared/hand.ts). A note's title opens its
 // module, a row opens its record (the same hand-off as 全局搜索). Data: home_overview (home/api.ts) and today's agenda.
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { ModuleIcon } from "@/app/ModuleIcon";
 import { moduleById } from "@/app/modules";
 import { ownTint } from "@/app/looks";
@@ -268,7 +268,30 @@ export function AssetsNote(props: { points: Point[]; go: () => void }) {
 }
 
 // ---------- 念念不忘一条 ----------
+/** A long note scrolls inside the sticky: the wheel / trackpad, or the text dragged up and down (the sticky itself is
+ *  dragged by its edges and its title then). A click that wasn't a drag opens the note. */
 export function StickyNote(props: { note: DeskNoteData; open: () => void }) {
+  const dragged = useRef(false);
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    dragged.current = false;
+    if (e.button !== 0 || el.scrollHeight <= el.clientHeight + 1) return;
+    e.stopPropagation(); // the text moves, not the sticky
+    const sy = e.clientY;
+    const top = el.scrollTop;
+    const move = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientY - sy) > 3) dragged.current = true;
+      if (dragged.current) el.scrollTop = top - (ev.clientY - sy);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
   return (
     <div className="pm-note dk-sticky" data-hand="note" data-seed={746} data-tilt={-2.2} data-tapes={1}>
       <div className="dk-head" style={{ marginBottom: 6 }}>
@@ -276,7 +299,15 @@ export function StickyNote(props: { note: DeskNoteData; open: () => void }) {
         <span style={{ fontSize: 15, fontWeight: 700 }}>念念不忘</span>
       </div>
       {/* drawn like the note itself (bold, highlight, lists…), not its source; the whole text opens it */}
-      <div role="button" tabIndex={0} className="txt" onClick={props.open} onKeyDown={(e) => e.key === "Enter" && props.open()}>
+      <div
+        role="button"
+        tabIndex={0}
+        data-scroll
+        className="txt"
+        onPointerDown={onPointerDown}
+        onClick={() => !dragged.current && props.open()}
+        onKeyDown={(e) => e.key === "Enter" && props.open()}
+      >
         <NoteBody content={props.note.content} />
       </div>
       <div style={{ fontSize: 12, marginTop: 8, opacity: 0.7 }}>{ymdText(props.note.day)}</div>

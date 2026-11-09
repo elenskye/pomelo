@@ -8,7 +8,7 @@ import { useOpenRequest } from "@/shared/open";
 import { usePageKeys, usePanelSelection } from "@/shared/panel";
 import { DragHandle, useSortable } from "@/shared/sortable";
 import { StatusSelect, type StatusCode } from "@/shared/status";
-import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented } from "@/shared/ui";
+import { Button, EmptyState, IconButton, PageHeader, Picked, ProgressBar, Segmented } from "@/shared/ui";
 import { DRAWING_KEY, DRAWING_ORDER, DRAWING_STATUS, useCourses, useDrawingMutations, useLessons, type Course, type Lesson } from "./api";
 import { CourseDialog } from "./CourseDialog";
 import { LessonPanel } from "./LessonPanel";
@@ -23,8 +23,8 @@ function CourseList(props: { courses: Course[]; currentId: number | null; onSele
   const { reorderCourses } = useDrawingMutations();
   const sort = useSortable((ids) => reorderCourses.mutate(ids));
   return (
-    <nav aria-label="课程" className="flex w-56 shrink-0 flex-col">
-      <div ref={sort.listRef} className="-m-1 min-h-0 flex-1 space-y-1 overflow-y-auto p-1 pr-2">
+    <nav aria-label="课程" className="side-list flex w-56 shrink-0 flex-col pr-4">
+      <div ref={sort.listRef} className="-m-1 min-h-0 flex-1 space-y-1 overflow-y-auto p-1">
         {props.courses.map((c) => (
           <button
             key={c.id}
@@ -32,10 +32,9 @@ function CourseList(props: { courses: Course[]; currentId: number | null; onSele
             aria-current={c.id === props.currentId}
             onClick={() => props.onSelect(c.id)}
             {...sort.item(c.id)}
-            className={`group w-full space-y-1.5 rounded-control px-3 py-2.5 text-left transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              c.id === props.currentId ? "bg-accent" : "bg-background hover:bg-muted/70"
-            }`}
+            className={`group side-row !block w-full space-y-1.5 px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${c.id === props.currentId ? "on" : ""}`}
           >
+            {c.id === props.currentId && <Picked seed={1427} />}
             <div className="flex items-baseline justify-between gap-2">
               <span className="-ml-2 flex min-w-0 items-center gap-0.5">
                 {props.courses.length > 1 && <DragHandle {...sort.handle(c.id)} label="拖动课程排序" />}

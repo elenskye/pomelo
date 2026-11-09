@@ -11,6 +11,8 @@
 // - Suggest (e.g. #tags): a list at the caret while `at` finds something being typed; ↑↓, ↩ / Tab, Esc.
 //   It is fixed-positioned (under the typed trigger, or above it when there's no room below) in the
 //   page or the dialog around the box, so no scrolling box clips it.
+// - A right-click opens MdMenu at the pointer: the flavor's formats (applied to the selection, or its lines) and
+//   the two icon libraries (an icon goes in at the caret). `:pm-<key>:` is drawn as its icon (inlineIcon.ts).
 import {
   forwardRef,
   useEffect,
@@ -26,9 +28,15 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { lineStart, pointAt, select, selectionIn, serialize } from "./editable";
+import { MdMenu } from "./MdMenu";
 
 /** What ↩ continues on a line: a list item or a quote; `next` starts the new line (indent + marker). */
 export type LineKind = { kind: "list" | "quote"; indent: number; empty: boolean; next: string };
+
+/** One row of the right-click list (`"-"`: a line between groups): `wrap` puts a mark around the selection (again =
+ *  off), `line` starts each selected line with it (again = off; `1. ` counts up), `around` puts the selection between
+ *  two pieces (`block`: on lines of their own), `insert` adds a line of its own. `keys`: its shortcut, shown. */
+export type Format = "-" | ({ label: string; keys?: string } & ({ wrap: string } | { line: string } | { around: [string, string]; block?: boolean } | { insert: string }));
 
 export type Flavor = {
   /** The box's HTML, one div per line (every character drawn once). `pending`: the blank line to draw
@@ -39,6 +47,10 @@ export type Flavor = {
   line?: (line: string) => LineKind | null;
   /** ⌘-shortcuts wrapping the selection in a mark (again = unwrap): key (lowercase), with ⇧ or not. */
   wraps?: { key: string; shift?: boolean; mark: string }[];
+  /** The right-click list's formats. */
+  formats?: Format[];
+  /** What starts a line as a heading, list item or quote: a `line` format takes its place. */
+  linePrefix?: RegExp;
 };
 
 export type Suggest = {
@@ -106,6 +118,7 @@ export const LiveText = forwardRef<
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null); // caret where Esc closed the list
+  const [menu, setMenu] = useState<{ x: number; y: number; sel: [number, number] } | null>(null);
 
   /** Draw the text; `mark`: a blank line holding the (collapsed) caret is drawn as pending. */
   const draw = (sel?: [number, number], mark = true) => {
@@ -272,12 +285,38 @@ export const LiveText = forwardRef<
     replace(typing.start, caret, props.suggest.insert(item, doc.current.text.slice(caret)));
   };
 
-  const wrap = (mark: string) => {
+  const wrap = (mark: string, at?: [number, number]) => {
     const v = doc.current.text;
-    const [s, e] = selectionIn(ref.current!) ?? doc.current.sel;
+    const [s, e] = at ?? selectionIn(ref.current!) ?? doc.current.sel;
     const n = mark.length;
     if (v.slice(s - n, s) === mark && v.slice(e, e + n) === mark) replace(s - n, e + n, v.slice(s, e), [s - n, e - n]); // wrapped → unwrap
     else replace(s, e, mark + v.slice(s, e) + mark, [s + n, e + n]);
+  };
+
+  /** A format from the right-click list, on the selection it was opened over. */
+  const format = (f: Exclude<Format, "-">, [s, e]: [number, number]) => {
+    const v = doc.current.text;
+    ref.current?.focus();
+    if ("wrap" in f) return wrap(f.wrap, [s, e]);
+    if ("insert" in f) return insertLines([f.insert]);
+    // whole lines: from the start of the first selected line to the end of the last
+    const ls = lineStart(v, s);
+    const last = e > s && v[e - 1] === "\n" ? e - 1 : e;
+    const le = v.indexOf("\n", last) < 0 ? v.length : v.indexOf("\n", last);
+    if ("line" in f) {
+      const strip = (l: string) => (props.flavor.linePrefix ? l.replace(props.flavor.linePrefix, "") : l);
+      const numbered = /^\d+[.)] $/.test(f.line);
+      const has = (l: string) => (numbered ? /^ *\d+[.)] /.test(l) : l.trimStart().startsWith(f.line));
+      const lines = v.slice(ls, le).split("\n");
+      const off = lines.every((l) => !l.trim() || has(l)) && lines.some((l) => l.trim());
+      let n = 0;
+      const out = lines.map((l) => (off ? strip(l) : !l.trim() && lines.length > 1 ? l : (numbered ? `${++n}. ` : f.line) + strip(l))).join("\n");
+      return replace(ls, le, out, [ls + out.length, ls + out.length]);
+    }
+    const [a, b] = f.around;
+    if (f.block) return replace(ls, le, a + v.slice(ls, le) + b, [ls + a.length + (le - ls), ls + a.length + (le - ls)]);
+    // nothing selected: the caret between the two pieces; else the selection stays selected inside them
+    replace(s, e, a + v.slice(s, e) + b, [s + a.length, e + a.length]);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -416,10 +455,30 @@ export const LiveText = forwardRef<
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         onPointerDown={() => (pressing.current = true)}
+        onContextMenu={(e) => {
+          if (props.readOnly) return;
+          e.preventDefault();
+          pressing.current = false;
+          setMenu({ x: e.clientX, y: e.clientY, sel: selectionIn(e.currentTarget) ?? doc.current.sel });
+        }}
         style={props.style}
         className={`block w-full leading-relaxed break-words whitespace-pre-wrap outline-none ${props.className ?? ""}`}
       />
       {!value && props.placeholder && <div className="pointer-events-none absolute top-0 left-0 leading-relaxed text-muted-foreground">{props.placeholder}</div>}
+      {menu && (
+        <MdMenu
+          x={menu.x}
+          y={menu.y}
+          formats={props.flavor.formats ?? []}
+          host={ref.current?.closest("dialog") ?? document.body}
+          onFormat={(f) => format(f, menu.sel)}
+          onInsert={(text) => {
+            ref.current?.focus();
+            replace(menu.sel[0], menu.sel[1], text);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
       {host &&
         createPortal(
           <div

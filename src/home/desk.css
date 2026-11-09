@@ -62,7 +62,7 @@
 
 /* 念念不忘一条 */
 .dk-sticky { padding: 20px 20px 16px; }
-.dk-sticky .txt { font-size: 17px; max-height: calc(1.625em * 7); overflow: hidden; text-align: left; cursor: pointer; outline: none; }
+.dk-sticky .txt { font-size: 17px; max-height: calc(1.625em * 7); margin-right: -12px; padding-right: 12px; overflow-x: hidden; overflow-y: auto; text-align: left; cursor: pointer; outline: none; }
 .dk-sticky .txt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 4px; }
 .dk-sticky .txt > * { pointer-events: none; user-select: none; -webkit-user-select: none; }
 

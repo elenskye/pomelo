@@ -37,7 +37,6 @@ export function PluginsDialog(props: { onClose: () => void }) {
       </div>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <nav aria-label="插件" className="-m-1 w-52 shrink-0 overflow-y-auto border-r p-1 px-3 py-3">
-          <p className="px-2 pb-1 text-xs text-muted-foreground">技能</p>
           {skills.map((s) => (
             <button
               key={s.key}

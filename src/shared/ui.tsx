@@ -214,6 +214,11 @@ export function RefreshButton(props: { label: string; onRefresh: () => Promise<u
   );
 }
 
+/** The hand-cut backing under the chosen row of a side list (index.css .side-row): first inside a row that is `on`. */
+export function Picked(props: { seed?: number }) {
+  return <span aria-hidden className="side-picked" data-hand="pick" data-amp="1" data-pad="2" data-seed={props.seed ?? 1420} />;
+}
+
 /** Thin progress bar: done (green) + doing (amber) segments. */
 export function ProgressBar(props: { done: number; doing?: number; total: number }) {
   const pct = (n: number) => (props.total > 0 ? `${(n / props.total) * 100}%` : "0%");

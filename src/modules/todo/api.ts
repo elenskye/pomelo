@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
 
-export type TodoGroup = { id: number; name: string; sortOrder: number; open: number; createdAt: string; updatedAt: string };
+export type TodoGroup = { id: number; name: string; /** `i:<key>` from the icon library */ icon: string | null; sortOrder: number; open: number; createdAt: string; updatedAt: string };
 
 export type GoalStatus = "active" | "paused" | "done";
 export const GOAL_STATUS: Record<GoalStatus, string> = { active: "进行中", paused: "暂停", done: "已完成" };
@@ -13,6 +13,7 @@ export type Goal = {
   id: number;
   groupId: number;
   name: string;
+  icon: string | null;
   status: GoalStatus;
   startDate: string | null;
   endDate: string | null;
@@ -89,15 +90,16 @@ export type TaskPatch = Partial<
   /** Create only: the note it is made from. */
   fromNote?: number;
 };
-export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "status" | "startDate" | "endDate" | "note" | "review">> & { attachments?: number[] };
+export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "icon" | "status" | "startDate" | "endDate" | "note" | "review">> & { attachments?: number[] };
 
 /** Which place a task list shows. */
 export type Place = { groupId: number; goalId?: undefined } | { goalId: number; groupId?: undefined };
 
 const api = {
   groups: () => invoke<TodoGroup[]>("todo_groups"),
-  createGroup: (name: string) => invoke<TodoGroup>("todo_group_create", { name }),
-  renameGroup: (v: { id: number; name: string }) => invoke<TodoGroup>("todo_group_rename", v),
+  createGroup: (v: { name: string; icon: string | null }) => invoke<TodoGroup>("todo_group_create", v),
+  /** `icon`: "" takes it off. */
+  renameGroup: (v: { id: number; name: string; icon: string }) => invoke<TodoGroup>("todo_group_rename", v),
   deleteGroup: (id: number) => invoke<void>("todo_group_delete", { id }),
   goals: () => invoke<Goal[]>("todo_goals"),
   createGoal: (patch: GoalPatch) => invoke<Goal>("todo_goal_create", { patch }),

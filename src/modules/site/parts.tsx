@@ -9,7 +9,6 @@ import { AssistAction, PolishBox, useAssistOn } from "@/modules/youzi/Assist";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { useDropTarget } from "@/shared/attachments/target";
 import { Button, IconButton, Segmented, fieldClass } from "@/shared/ui";
-import { useContentIcons } from "./ContentIcons";
 import { MdEditor, type MdEditorHandle } from "./MdEditor";
 import { siteAssist, siteSrc, workApi, type Draft, type Lang } from "./api";
 
@@ -217,29 +216,19 @@ export function BodyField(props: { lang: Lang; label: string; body: string; setB
   const assistOn = useAssistOn();
   const [polishing, setPolishing] = useState(false);
   const handle = useRef<MdEditorHandle | null>(null);
-  // 内容图标: its name goes in at the caret (over the selection)
-  const icons = useContentIcons((text) => {
-    const ed = handle.current;
-    if (!ed) return;
-    const [s, e] = ed.selection();
-    ed.replaceRange(s, e, text);
-    ed.focus();
-  });
   return (
     <div>
-      {(assistOn || !props.locked) && (
+      {assistOn && (
         <div className="flex min-h-6 items-center justify-end gap-1">
-          {assistOn && props.note && <span className="mr-auto truncate text-xs text-muted-foreground">{props.note}</span>}
-          {!props.locked && icons.button}
-          {assistOn && props.draft}
-          {assistOn && !props.locked && shown(props.body).trim() && (
+          {props.note && <span className="mr-auto truncate text-xs text-muted-foreground">{props.note}</span>}
+          {props.draft}
+          {!props.locked && shown(props.body).trim() && (
             <AssistAction disabled={polishing} onClick={() => setPolishing(true)}>
               润色
             </AssistAction>
           )}
         </div>
       )}
-      {!props.locked && icons.panel}
       {polishing && (
         <div className="mb-2">
           <BodyPolish editor={handle.current} body={props.body} setBody={props.setBody} onClose={() => setPolishing(false)} />

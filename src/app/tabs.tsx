@@ -13,6 +13,7 @@ import { api } from "@/shared/ipc";
 import { moduleById, splitPath } from "./modules";
 
 const SAVED = "ui.tabs";
+const OPEN_ONCE = "dev.open";
 const MAX_STEPS = 50;
 /** Pages stacked behind the front one (more stay open but don't show). */
 export const STACK_SHOWN = 4;
@@ -108,17 +109,20 @@ export function TabsProvider(props: { children: ReactNode }) {
     return { ...s, front: page.id, pages: [...s.pages, page] };
   };
 
-  // launch: the pages from last time, stacked, the desk in front
+  // launch: the pages from last time, stacked, the desk in front — unless the setting `dev.open` names a page: that
+  // one is in front, once (testing a page in the real window without clicking there: docs/testing.md「真实窗口」)
   useEffect(() => {
-    api
-      .settingsGet<unknown>(SAVED)
-      .then((v) => {
+    Promise.all([api.settingsGet<unknown>(SAVED), api.settingsGet<unknown>(OPEN_ONCE).catch(() => null)])
+      .then(([v, once]) => {
         const paths = Array.isArray(v) ? v.filter((p): p is string => typeof p === "string" && p.startsWith("/") && !isHome(p)).slice(0, 20) : [];
-        if (!paths.length) return;
+        const first = typeof once === "string" && once.startsWith("/") && !isHome(once) ? once : null;
+        if (first) void api.settingsSet(OPEN_ONCE, null).catch(() => {});
+        if (!paths.length && !first) return;
         const seen = new Set<string>();
         const pages = paths.filter((p) => !seen.has(moduleOf(p)) && (seen.add(moduleOf(p)), true)).map((p) => ({ id: seq.current++, path: p, seen: clock.current++ }));
-        setSt({ pages, front: null, hist: ["/"], i: 0, book: false });
-        show("/");
+        const base = { pages, front: null, hist: ["/"], i: 0, book: false };
+        setSt(first ? { ...toFront(base, first), hist: ["/", first], i: 1 } : base);
+        show(first ?? "/");
       })
       .catch(() => {})
       .finally(() => setRestored(true));
