@@ -100,6 +100,8 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - 能滚动的区域用 `-m-1 … p-1`，焦点框才不会被切掉。拖动排序用鼠标事件（`src/shared/sortable`），不用浏览器自带的拖放。
 - 有焦点的输入框不能在窗口外面：WebKit 为了让它露出来会去滚能滚的东西，连整个窗口的内容都会被挪上去、回不来。从窗口外滑进来的东西（贴纸簿）等它进了窗口再给焦点，滑走前先放开。
 - 便签（`.pm-note`）的纸明暗都是浅色的，上面的强调色跟便签的墨色走（`index.css`），别在便签里用给深色纸配的颜色。
+- 手画的边（`data-hand`、自动换成手画卡的 `rounded-card border bg-card`）画在字下面一层：不画在会滚、会裁的盒子上（外面一层画边、里面一层滚），卡片里的行不另涂白底，盖在纸上的整页不涂底色（直接画在纸上）；要框的地方用手画的控件（`TextInput`、`MdField`、`Dropdown`、`PickField`、`Button`），不用 `fieldClass` 这类细边框。改了界面跑 `node scripts/ui-lint.mjs`（`docs/testing.md`「界面检查」），白板、直线框、被切的边、字出框都要清零。
+- 每一页、桌面和每个浮在上面的东西（贴纸簿、柚子瓣、找东西、问柚子的小窗）都包着出错兜底（`shared/Oops.tsx`）：画的时候出错只在那一块显示「这一页出错了」和错误（能复制），不会整个窗口白掉。新加的浮层也包一层。
 - 流畅度（`docs/testing.md`「流畅度」）：窗口是 WebKit。不放实时的 SVG 滤镜（纸纹是平铺的图）；整页大小的层不改 `z-index`、不反复新建；改了外框、纸、手画零件或动效，在 Safari 里量一遍。
 - 字体只用 `font-sans`（`index.css` 里的 `Pomelo Hand`），不直接写 `Hannotate SC`（粗体会被系统描粗发糊）。柚子消息正文用苹方是唯一的例外。
 - 面板里柚子的操作（贴 JD、拆成子任务）放在那一栏标题的右边：`Field` 的 `action` 加 `Assist.tsx` 的 `AssistAction`。
@@ -126,12 +128,12 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `src/capture/` | 速记小窗的页面（`capture.html`，Vite 的第二个入口，`main.tsx` 和主窗口一样要 `startHand()`；`capture.css` 方格纸和笔记的框；`CaptureChat.tsx` 问柚子，`CaptureTranslate.tsx` 翻译） |
 | `src/modules/<模块>/` | 各模块页面（`finance/ImportPanel.tsx` · `importApi.ts` · `importJob.ts` 导入账单，子页 `/finance/import`）；书影共用 `src/shared/collection/`；`custom/` 五花八门、循序渐进；`site/` 呦呦漫游（`SitePage.tsx` 入口和页签、`parts.tsx` 共用的、`MdEditor.tsx`、网站的内容图标在正文里右键插入 `:名字:`，清单是同步来的 `src/vendor/pomelo/content-icons.json`）；`jobs/SeekerExports.tsx` · `jobs/Interviews.tsx` 岗位面板里的 Seeker 简历（从 cv/ 选）和面试；`bookmarks/` 一网打尽（`SiteIcon.tsx` 网站图标，首页也用）；`canvas/` 有板有眼（左边画布和画板的列表，右边 frame 里是 bench 的界面） |
 | `src/modules/youzi/` | `YouziPage.tsx`（线圈本）；`ConversationList.tsx` 桌面上的小纸条、`BigPomelo.tsx` 桌面上的大柚子（经 `app/Desk.tsx` 的 `useDeskSide` 放到纸的左边）；`Transcript.tsx` · `markdown.ts`；`useChat.tsx`；`SideChat.tsx` 右侧小窗；`AskCard.tsx` 问我的卡片；`Composer.tsx` · `slots.ts`；`Manage.tsx` `Schedules.tsx` `Plugins.tsx` `Knowledge.tsx` `Work.tsx`；`Assist.tsx` 面板里的帮手；`Thinking.tsx` 思考和强度的按钮、下拉；`assistants/`（`ModelRow.tsx` 助手设置页的一行模型和思考；`Seeker.tsx` 和 `Seeker*.tsx`、`seekerApi.ts`、`seekerDraft.ts`、`seekerJobs.tsx`（模型调用离开页面也跑完，和按钮下的状态行）；`SeekerFiles.tsx` cv/ 和 material/；`select.tsx` 拖动排序和「选择」多选；`SeekerGroups.tsx` 分组改名删除、上移下移、规则「发给」和发给模型的说明；`Rater.tsx`（含设置页）· `RaterCards.tsx` 卡片页 · `RaterInterview.tsx` 面试页（准备、复盘对话窗、总结）· `raterApi.ts`；`Translate.tsx` · `translator.tsx` 和速记小窗共用的部分；`Pub2md.tsx` · `MmdPreview.tsx`；`Janitor.tsx` · `JanitorCards.tsx` · `janitorApi.ts` DevJanitor） |
-| `src/settings/` · `src/shared/` | 设置页（`Youzi.tsx` 柚子、云端模型，`Health.tsx` 体检）；共用组件（`editor/` 写字的输入框：`LiveText` 底子、`LiteEditor`（念念不忘的格式）、`lite.ts`，新模块要写字就用它；`MdMenu.tsx` 右键的格式和两个图标库、`inlineIcon.ts` 字里的图标 `:pm-<键>:`；`iconLibrary.tsx` 图标库；`tips.ts` 落签；`markdown.ts` Markdown 的样子，`MdField` 写提示词的框（新加能写提示词的地方用它）；`Dropdown` `PickField`（长列表的搜索小弹窗）`DateInput` `panel` `Modal` `sortable` `charts` `diff` `InlineMd` `open` `tags` `attachments/` 等） |
+| `src/settings/` · `src/shared/` | 设置页（`Youzi.tsx` 柚子、云端模型，`Health.tsx` 体检）；共用组件（`editor/` 写字的输入框：`LiveText` 底子、`LiteEditor`（念念不忘的格式）、`lite.ts`，新模块要写字就用它；`MdMenu.tsx` 右键的格式和两个图标库、`inlineIcon.ts` 字里的图标 `:pm-<键>:`；`iconLibrary.tsx` 图标库；`tips.ts` 落签；`markdown.ts` Markdown 的样子，`MdField` 写提示词的框（新加能写提示词的地方用它）；`Oops` 出错兜底，`Dropdown` `PickField`（长列表的搜索小弹窗）`DateInput` `panel` `Modal` `sortable` `charts` `diff` `InlineMd` `open` `tags` `attachments/` 等） |
 | `src/dev/perf.ts` | 流畅度自测（`?mock&perf=<端口>`，结果发给 `scripts/perf-listen.mjs`，见 `docs/testing.md`「流畅度」） |
 | `src/dev/edtest.ts` | 写字的框在 WebKit 里的自测（`?mock&edtest=<端口>`，见 `docs/testing.md`「写字的框」） |
 | `src/dev/drive.ts` | 在 Safari（或开发版的真窗口）里遥控页面：跑 `scripts/drive.mjs` 给的脚本，把结果发回去（`?mock&drive=<端口>`，见 `docs/testing.md`「在 Safari 里遥控」） |
 | `src/dev/mockIpc.ts` | 浏览器测试用的模拟后端（新命令要加进来；Seeker 的在 `seekerMock.ts`，一网打尽的在 `bookmarksMock.ts`，DevJanitor 的在 `janitorMock.ts`，数据 `janitorMock.json` 由 Rust 扫假 Mac 生成） |
-| `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`perf-listen.mjs`（流畅度自测的收件人）、`drive.mjs`（在 Safari 里遥控页面）、`resume-templates.ts`（生成 `src-tauri/templates/` 的内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
+| `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`perf-listen.mjs`（流畅度自测的收件人）、`drive.mjs`（在 Safari 里遥控页面）、`ui-lint.mjs`（界面检查）、`resume-templates.ts`（生成 `src-tauri/templates/` 的内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
 
 ## 新增一个模块
 

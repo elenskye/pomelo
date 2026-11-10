@@ -23,7 +23,8 @@ function autoCards() {
   for (const el of document.querySelectorAll<HTMLElement>(AUTO)) {
     if (el.closest("dialog,[role=menu],[role=listbox],[role=dialog],.pm-menu,[popover],.pm-panel")) continue;
     const r = el.getBoundingClientRect();
-    if (r.width < 160 || r.height < 44) continue;
+    // a box smaller than a row is a pill or a badge; a one-line card (体检「没有问题」, a short list) is still a card
+    if (r.width < 160 || r.height < 30) continue;
     const cs = getComputedStyle(el);
     if (cs.position === "static") el.style.position = "relative";
     const scrolls = /(auto|scroll)/.test(cs.overflowY);

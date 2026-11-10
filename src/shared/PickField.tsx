@@ -27,10 +27,10 @@ export function PickField<T extends string | number | null>(props: {
   const current = props.options.find((o) => o.value === props.value);
   const look = props.trigger
     ? "inline-flex shrink-0 items-center rounded-control px-1 py-0.5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-    : `${props.block ? "flex w-full min-w-0 justify-between" : "inline-flex max-w-full shrink-0"} items-center gap-1.5 rounded-control border bg-card py-1.5 pr-2 pl-3 text-sm whitespace-nowrap transition-colors duration-150 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50`;
+    : `pm-field pm-select pm-compact ${props.block ? "w-full min-w-0 justify-between" : "max-w-full shrink-0"} gap-1.5 pr-2 pl-3 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${open ? "is-focus" : ""}`;
   return (
     <>
-      <button type="button" aria-label={props.ariaLabel} aria-haspopup="dialog" disabled={props.disabled} onClick={() => setOpen(true)} className={look}>
+      <button type="button" aria-label={props.ariaLabel} aria-haspopup="dialog" disabled={props.disabled} onClick={() => setOpen(true)} className={look} data-hand={props.trigger ? undefined : "field"} data-r={props.trigger ? undefined : 10} data-seed={props.trigger ? undefined : 1396}>
         {props.trigger ?? (
           <>
             <span className={`min-w-0 truncate text-left ${current ? "" : "text-muted-foreground"}`} title={current?.label}>

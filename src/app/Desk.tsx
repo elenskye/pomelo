@@ -15,6 +15,7 @@ import { ModuleIcon } from "./ModuleIcon";
 import { moduleById, pageName, splitPath } from "./modules";
 import { rememberSub, subNav } from "./subpage";
 import { STACK_SHOWN, useTabs } from "./tabs";
+import { Oops } from "@/shared/Oops";
 
 /** A seed per module, so its paper's wobble stays the same. */
 const seedOf = (id: string) => 900 + ([...id].reduce((a, c) => a + c.charCodeAt(0), 0) % 97) * 3;
@@ -123,7 +124,9 @@ export function PaperStack(props: { children: ReactNode }) {
         <FolderTabs module={mod} path={path.startsWith(`/${mod}`) ? path : front.path} />
         <main className={`paper pm-sheet ${youzi ? "lined" : ""}`} data-hand="sheet" data-seed={seedOf(mod)} data-tilt="-0.3">
           <div className="paper-scroll">
-            <SideCtx.Provider value={youzi ? side : null}>{props.children}</SideCtx.Provider>
+            <SideCtx.Provider value={youzi ? side : null}>
+              <Oops where={pageName(path)} reset={path}>{props.children}</Oops>
+            </SideCtx.Provider>
           </div>
         </main>
         {youzi ? (

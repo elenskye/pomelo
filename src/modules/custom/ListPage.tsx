@@ -144,7 +144,8 @@ function ListTable(props: { fields: Field[]; items: Item[]; selectedId: number |
     );
   };
   return (
-    <div className="overflow-x-auto rounded-card border bg-card">
+    <div className="rounded-card border bg-card">
+      <div className="overflow-x-auto">
       <table className="w-full text-sm" style={{ minWidth: 240 + shown.length * 120 }}>
         <thead className="border-b text-xs text-muted-foreground">
           <tr>
@@ -171,6 +172,7 @@ function ListTable(props: { fields: Field[]; items: Item[]; selectedId: number |
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

@@ -100,7 +100,8 @@ function Checklist(props: { points: ImporterPoint[]; disabled: boolean; onChange
         {!open && <span className="min-w-0 truncate text-xs text-muted-foreground">{on.map((p) => p.text).join("；")}</span>}
       </button>
       {open && (
-        <ul className="mt-1 max-h-52 overflow-y-auto rounded-card border bg-card p-1.5">
+        <div className="mt-1 rounded-card border bg-card">
+        <ul className="max-h-52 overflow-y-auto p-1.5">
           {points.map((p, i) => (
             <li key={i} className="group flex items-center gap-2 rounded-control px-1.5 py-0.5 hover:bg-muted/60">
               <input aria-label="这次生效" type="checkbox" disabled={props.disabled} checked={p.on} onChange={() => props.onChange(points.map((x, k) => (k === i ? { ...x, on: !x.on } : x)))} className="size-4 shrink-0 accent-[var(--primary)]" />
@@ -130,6 +131,7 @@ function Checklist(props: { points: ImporterPoint[]; disabled: boolean; onChange
             )}
           </li>
         </ul>
+        </div>
       )}
     </div>
   );
@@ -184,7 +186,8 @@ function ReviewRow(props: { row: ImportRow; preview?: string; dirty: boolean; on
   );
   const ai = row.ai;
   return (
-    <aside aria-label="核对" className="-m-1 w-80 shrink-0 space-y-4 overflow-y-auto border-l p-1 pl-4">
+    <aside aria-label="核对" className="pm-panel flex w-80 shrink-0 flex-col" data-hand="card" data-seed="1503" data-amp="0.8">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <p className="font-bold">第 {row.source.rowNumber} 行</p>
@@ -364,6 +367,7 @@ function ReviewRow(props: { row: ImportRow; preview?: string; dirty: boolean; on
           ))}
         </dl>
       </details>
+      </div>
     </aside>
   );
 }
@@ -572,7 +576,7 @@ export function ImportPanel(props: { onClose: () => void; onPosted: (day: string
       toast(`改了 ${n} 笔的分类`);
     });
   return (
-    <section aria-label="导入账单" className="absolute inset-0 z-20 flex flex-col gap-3 bg-background px-6 pt-5 pb-4">
+    <section aria-label="导入账单" className="absolute inset-0 z-20 flex flex-col gap-3 px-6 pt-5 pb-4">
       <header className="flex shrink-0 flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">导入账单</h2>
         <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手 Importer" style={{ color: "var(--module-youzi)" }} />

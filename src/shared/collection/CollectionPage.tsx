@@ -166,7 +166,7 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pb-8">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-1 pb-8">
         {isPending ? null : items.length === 0 ? (
           <EmptyState title={config.emptyTitle} art={config.emptyArt} action={newButton} />
         ) : visible.length === 0 ? (

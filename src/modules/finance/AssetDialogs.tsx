@@ -6,7 +6,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { SidePanel } from "@/shared/panel";
 import { DateInput } from "@/shared/DateInput";
-import { Field, IconButton, fieldClass, inputClass, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { ACCOUNT_KINDS, useAccounts, useAssets, useFinMutations, useHoldings, type Account, type AccountKind } from "./api";
 import { AmountInput, CurrencyPicker } from "./fields";
 import { localToday } from "@/shared/dates";
@@ -90,12 +90,12 @@ export function BalanceDialog(props: { onClose: () => void }) {
             {currencies.map((c) => (
               <label key={c} className="flex items-center gap-2 text-sm whitespace-nowrap">
                 1 {CURRENCY_NAME[c]} =
-                <input
+                <TextInput
                   inputMode="decimal"
                   aria-label={`${CURRENCY_NAME[c]}汇率`}
                   value={rates[c] ?? ""}
                   onChange={(e) => setRates((x) => ({ ...x, [c]: e.target.value }))}
-                  className={`${fieldClass} w-24 tabular-nums`}
+                  className="w-24 tabular-nums"
                 />
                 人民币
               </label>
@@ -175,9 +175,9 @@ export function AccountPanel(props: { account: Account | null; onClose: () => vo
       </Field>
       {history.length > 0 && a && (
         <Field label="余额记录">
-          <ul className="rounded-card border text-sm">
+          <ul className="rounded-control text-sm" data-hand="field" data-seed="1415">
             {history.map((b) => (
-              <li key={b.day} className="flex justify-between border-b px-3 py-1.5 last:border-b-0">
+              <li key={b.day} className="flex justify-between border-b border-dashed px-3 py-1.5 last:border-b-0">
                 <span className="text-muted-foreground">{dayTitle(b.day)}</span>
                 <span className="tabular-nums">{money(b.amount, a.currency)}</span>
               </li>
@@ -255,8 +255,8 @@ export function HoldingsDialog(props: { account: Account; onClose: () => void })
           return (
             <div key={i} className={cols}>
               <TextInput aria-label="名称" value={r.name} onChange={(e) => set(i, "name", e.target.value)} maxLength={50} />
-              <input inputMode="decimal" aria-label="数量" value={r.quantity} onChange={(e) => set(i, "quantity", e.target.value)} className={`${inputClass} tabular-nums`} />
-              <input inputMode="decimal" aria-label="单价" value={r.price} onChange={(e) => set(i, "price", e.target.value)} className={`${inputClass} tabular-nums`} />
+              <TextInput inputMode="decimal" aria-label="数量" value={r.quantity} onChange={(e) => set(i, "quantity", e.target.value)} className="tabular-nums" />
+              <TextInput inputMode="decimal" aria-label="单价" value={r.price} onChange={(e) => set(i, "price", e.target.value)} className="tabular-nums" />
               <span className="truncate text-right text-sm tabular-nums">{v === null ? "—" : money(v, a.currency)}</span>
               <IconButton label="删掉这一行" danger onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
                 <X size={14} />

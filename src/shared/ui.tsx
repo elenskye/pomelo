@@ -101,8 +101,10 @@ export const fieldClass =
 export const inputClass = `w-full ${fieldClass}`;
 
 export function TextInput({ className, ...rest }: ComponentProps<"input">) {
+  // full width unless given a width of its own (w-20, w-28…)
+  const width = /(^|\s)w-/.test(className ?? "") ? "" : "w-full";
   return (
-    <span className={`${FIELD} w-full ${className ?? ""}`} data-hand="field" data-seed="1410">
+    <span className={`${FIELD} ${width} ${className ?? ""}`} data-hand="field" data-seed="1410">
       <input type="text" autoComplete="off" spellCheck={false} {...rest} />
     </span>
   );

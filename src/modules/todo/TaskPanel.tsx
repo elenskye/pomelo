@@ -20,7 +20,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { addDays, formatDay, localToday, mondayOf, parseYmd, slashDate, toYmd } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { SidePanel } from "@/shared/panel";
-import { Button, Field, IconButton, fieldClass, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Button, Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { TASK_TYPES, useLogs, useTodoMutations, type Goal, type Task, type TaskPatch, type TaskType, type TodoGroup } from "./api";
 
 type Draft = {
@@ -68,15 +68,7 @@ function RangeInput(props: { start: string; end: string; onStart: (v: string) =>
 }
 
 const NumberInput = (props: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; min?: number }) => (
-  <input
-    type="number"
-    min={props.min ?? 1}
-    aria-label={props.label}
-    value={props.value}
-    placeholder={props.placeholder}
-    onChange={(e) => props.onChange(e.target.value)}
-    className={`${fieldClass} w-24`}
-  />
+  <TextInput type="number" min={props.min ?? 1} aria-label={props.label} value={props.value} placeholder={props.placeholder} onChange={(e) => props.onChange(e.target.value)} className="w-24" />
 );
 
 /** Round toggles; at least one stays on. */

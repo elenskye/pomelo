@@ -1,21 +1,12 @@
 // Form pieces shared by 钱来钱往's panels and dialogs.
 import { Dropdown } from "@/shared/Dropdown";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
-import { fieldClass, Segmented } from "@/shared/ui";
+import { Segmented, TextInput } from "@/shared/ui";
 import { kindsModule, type Flow } from "./api";
 import { CURRENCIES, CURRENCY_NAME, type Currency } from "./money";
 
 export function AmountInput(props: { value: string; onChange: (v: string) => void; label?: string; autoFocus?: boolean; className?: string }) {
-  return (
-    <input
-      inputMode="decimal"
-      aria-label={props.label ?? "金额"}
-      autoFocus={props.autoFocus}
-      value={props.value}
-      onChange={(e) => props.onChange(e.target.value)}
-      className={`${fieldClass} tabular-nums ${props.className ?? "w-full"}`}
-    />
-  );
+  return <TextInput inputMode="decimal" aria-label={props.label ?? "金额"} autoFocus={props.autoFocus} value={props.value} onChange={(e) => props.onChange(e.target.value)} className={`tabular-nums ${props.className ?? "w-full"}`} />;
 }
 
 export function CurrencyPicker(props: { value: Currency; onChange: (c: Currency) => void; only?: Currency[] }) {

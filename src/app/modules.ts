@@ -92,6 +92,7 @@ export const ASSISTANT_MODULES: ModuleDef[] = [
     subs: [
       { value: "work", label: "Pub2MD" },
       { value: "prompt", label: "提示词" },
+      { value: "settings", label: "设置" },
     ],
   },
   {

@@ -4,7 +4,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { localToday } from "@/shared/dates";
 import { SidePanel } from "@/shared/panel";
 import { DateInput } from "@/shared/DateInput";
-import { Field, fieldClass, Segmented, TextInput } from "@/shared/ui";
+import { Field, Segmented, TextInput } from "@/shared/ui";
 import { useFinMutations, useFixed, type Entry, type Fixed, type Flow } from "./api";
 import { Dropdown } from "@/shared/Dropdown";
 import { useSources, useRefundCandidates } from "./importApi";
@@ -36,7 +36,7 @@ function MoneyFields<D extends Money>(props: { d: D; set: <K extends keyof D>(k:
         </div>
       </Field>
       <Field label="金额">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <AmountInput autoFocus={props.autoFocus} value={d.amount} onChange={(v) => set("amount", v as D["amount"])} className={`w-36 ${props.filled?.cls("amount") ?? ""}`} />
           <div className={halo("currency")}>
             <CurrencyPicker value={d.currency} onChange={(c) => set("currency", c as D["currency"])} />
@@ -294,29 +294,29 @@ export function FixedPanel(props: {
             {kind === "monthly" ? (
               <>
                 每月
-                <input type="number" min={1} max={31} aria-label="几号" value={arg} onChange={(ev) => setRule(`monthly:${num(ev.target.value, 31)}`)} className={`${fieldClass} w-20`} />号
+                <TextInput type="number" min={1} max={31} aria-label="几号" value={arg} onChange={(ev) => setRule(`monthly:${num(ev.target.value, 31)}`)} className="w-20" />号
               </>
             ) : (
               <>
                 每年
-                <input
+                <TextInput
                   type="number"
                   min={1}
                   max={12}
                   aria-label="几月"
                   value={Number(arg.slice(0, 2))}
                   onChange={(ev) => setRule(`yearly:${num(ev.target.value, 12).padStart(2, "0")}-${arg.slice(3)}`)}
-                  className={`${fieldClass} w-20`}
+                  className="w-20"
                 />
                 月
-                <input
+                <TextInput
                   type="number"
                   min={1}
                   max={31}
                   aria-label="几日"
                   value={Number(arg.slice(3))}
                   onChange={(ev) => setRule(`yearly:${arg.slice(0, 2)}-${num(ev.target.value, 31).padStart(2, "0")}`)}
-                  className={`${fieldClass} w-20`}
+                  className="w-20"
                 />
                 日
               </>

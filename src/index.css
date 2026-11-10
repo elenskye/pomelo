@@ -130,6 +130,9 @@
 .pm-field input::placeholder, .pm-field textarea::placeholder { color: var(--color-ink-soft); opacity: 1; }
 .pm-field.pm-area { height: auto; align-items: stretch; padding: 6px 10px; }
 .pm-field.pm-area textarea { min-height: 3.2em; }
+/* 分段的框按里面的字画：一格不缩（中文按字算最窄宽度，挤一挤就比字还窄，字和荧光笔伸到框外），放不下时整排换到下一行 */
+.pm-seg { min-width: max-content; }
+.pm-seg-item { white-space: nowrap; }
 .pm-seg.pm-compact { height: 32px; }
 .pm-seg.pm-compact .pm-seg-item { height: 26px; min-width: 0; padding: 0 10px; font-size: 14px; }
 .pm-seg.pm-compact .pm-seg-hl { height: 26px; }
@@ -152,6 +155,16 @@
   --status-doing-bg: color-mix(in srgb, var(--color-on-sticky) 14%, transparent);
 }
 .pm-note .text-primary { font-weight: 700; }
+/* #标签（念念不忘的卡片和写字的框）：墨色的字，下面划一道这套配色的荧光笔（站主 2026-11-10 定，五套配色一样；
+   深色模式下的荧光笔是深一档的，墨字压得住）。便签上照旧是加粗的墨字（便签纸不跟明暗走，深色的荧光笔在上面发闷） */
+.pm-hashtag {
+  color: var(--foreground);
+  background: linear-gradient(transparent 56%, var(--color-marker) 56%, var(--color-marker) 94%, transparent 94%);
+  padding: 0 0.12em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.pm-note .pm-hashtag { background: none; padding: 0; font-weight: 700; }
 
 .task-title { position: relative; }
 .task-title:not(.done) > [data-hand-painted] { display: none; }

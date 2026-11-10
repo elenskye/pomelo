@@ -190,7 +190,7 @@ function PrepCard(p: Props & { prep: RaterPrep; first: boolean; write: Write }) 
     {x.advice && <p className="whitespace-pre-wrap">{x.advice}</p>}
     {sheet != null
       ? <div className="space-y-2"><TextArea aria-label="速查卡" rows={18} className="font-mono text-xs" value={sheet} onChange={(e) => setSheet(e.target.value)} /><div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setSheet(null)}>取消</Button><Button variant="primary" disabled={p.busy || !sheet.trim()} onClick={() => void p.write(() => interviewApi.prepSave({ ...x, sheet }), () => setSheet(null))}>保存</Button></div></div>
-      : <div className="rounded-control border bg-background px-4 py-3"><MarkdownView source={x.sheet} /></div>}
+      : <div className="rounded-card border bg-card px-4 py-3"><MarkdownView source={x.sheet} /></div>}
     <div className="flex flex-wrap gap-2"><Button onClick={() => setSaving(true)}><FileDown size={14} />另存 Word</Button>{picks.length > 0 && <Button disabled={p.busy} onClick={practice}><Play size={14} />用这些题练一轮</Button>}</div>
     {picks.length > 0 && <div className="space-y-1"><p className="text-xs text-muted-foreground">挑的题 {picks.length}</p><ol className="list-decimal space-y-0.5 pl-5">{picks.map((q) => <li key={q.id}>{q.question}<span className="ml-2 text-xs text-muted-foreground">{q.category}</span></li>)}</ol></div>}
     {x.follows.length > 0 && <div className="space-y-2"><p className="text-xs text-muted-foreground">可能的追问 {x.follows.length}</p><ul className="space-y-2">{x.follows.map((f, i) => <FollowItem key={i} f={f} busy={p.busy} keep={() => void p.write(() => interviewApi.prepKeep(x.id, i))} />)}</ul></div>}
@@ -247,7 +247,7 @@ function ReviewCard(p: Props & { review: RaterReview; first: boolean; write: Wri
     <ol className="space-y-2">{r.items.map((it: RaterAsked, i) => <li key={i} className="space-y-0.5"><p className="font-medium">{i + 1}. {it.question}</p>{it.answer && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">我答：</span>{it.answer}</p>}{it.feedback && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">反应：</span>{it.feedback}</p>}</li>)}</ol>
     {r.feedback && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">面试官的反馈：</span>{r.feedback}</p>}
     {r.thoughts && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">我的判断：</span>{r.thoughts}</p>}
-    {r.analysis && <section className="space-y-2 rounded-control border bg-background px-3 py-2">
+    {r.analysis && <section className="space-y-2 rounded-card border bg-card px-3 py-2">
       <h4 className="flex items-center gap-1.5 font-bold"><Sparkles size={14} className="text-[var(--module-youzi)]" />对照准备{r.analysis.model && <span className="font-normal text-xs text-muted-foreground">{r.analysis.model}</span>}</h4>
       <AnalysisView a={r.analysis} asked={(m) => r.items[m.asked]?.question ?? ""} busy={p.busy} keep={(i) => void p.write(() => interviewApi.reviewKeep(r.id, i))} rule={(i) => void p.write(() => interviewApi.reviewRule(r.id, i))} />
     </section>}

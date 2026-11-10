@@ -30,6 +30,7 @@ import { startAppearance } from "@/shared/appearance";
 import { startHand } from "@/shared/hand";
 import { startTips } from "@/shared/tips";
 import { ToastProvider } from "@/shared/feedback";
+import { Oops } from "@/shared/Oops";
 import "./index.css";
 
 // Browser-only UI testing: `pnpm dev` → http://localhost:1420/?mock (tree-shaken from builds).
@@ -81,6 +82,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
+      <Oops where="窗口" look="window">
       <HashRouter>
         <Routes>
           <Route element={<App />}>
@@ -114,6 +116,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           </Route>
         </Routes>
       </HashRouter>
+      </Oops>
       </ToastProvider>
     </QueryClientProvider>
   </React.StrictMode>,

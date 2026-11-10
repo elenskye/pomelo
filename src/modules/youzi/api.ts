@@ -260,6 +260,8 @@ export type Pub2mdSettings = {
   skip: Pub2mdPart[];
   /** 另存为 (Mathpix converts at the end). */
   formats: Pub2mdFormat[];
+  /** 使用说明 under the page (Markdown); null = the page's own (Pub2md.tsx ABOUT). */
+  about?: string | null;
 };
 export type Pub2mdRecent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
 export type Pub2mdProgress = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null };

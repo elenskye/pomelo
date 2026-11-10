@@ -13,6 +13,7 @@ import { ThinkingButton, fromLevel } from "../Thinking";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { LanguagePickers, TranslateOutput, useTranslator } from "./translator";
 import { MdField } from "@/shared/editor/MdField";
+import { chipLook } from "./select";
 
 export function TranslatePage() {
   const [tab, setTab] = useSubPage<"translate" | "prompt">("translate");
@@ -115,7 +116,7 @@ function PromptTab(props: { data: TranslateView; settings: TranslateSettings; on
                     role="radio"
                     aria-checked={on}
                     onClick={() => pick(g.key, c.key)}
-                    className={`rounded-control border px-2.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring ${on ? "border-primary bg-accent text-accent-foreground" : "hover:bg-muted"}`}
+                    {...chipLook(on)}
                   >
                     {c.label}
                   </button>

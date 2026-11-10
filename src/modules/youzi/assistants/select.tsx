@@ -50,15 +50,19 @@ export function useSelect(ids: string[]) {
 /** A picked card or row (Pub2MD's look: the border and background say it's on). */
 export const picked = (on: boolean) => (on ? "border-primary bg-accent text-accent-foreground" : "");
 
-/** A choice that is on or off (Pub2MD's chips): the background shows it. */
+/** The look of a choice chip: a hand-drawn button, filled with the 选中 color when on (Pub2MD, Translator, Seeker). */
+export const chipLook = (on: boolean) => ({ className: `pm-btn pm-btn--plain h-8 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${on ? "font-bold" : ""}`, "data-hand": "button", "data-fill": on ? "selected" : "card", "data-seed": 1433 });
+
+/** A choice that is on or off (Pub2MD's chips): the fill shows it. */
 export function Chip(props: { on: boolean; onClick: () => void; disabled?: boolean; className?: string; children: ReactNode }) {
-  return <button type="button" role="checkbox" aria-checked={props.on} disabled={props.disabled} onClick={props.onClick} className={`rounded-control border px-2.5 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${props.on ? "border-primary bg-accent text-accent-foreground" : "hover:bg-muted"} ${props.className ?? ""}`}>{props.children}</button>;
+  const look = chipLook(props.on);
+  return <button type="button" role="checkbox" aria-checked={props.on} disabled={props.disabled} onClick={props.onClick} {...look} className={`${look.className} ${props.className ?? ""}`}>{props.children}</button>;
 }
 
 /** A row that is picked or not, the whole row the button (its background shows it). `framed`: a card
  * with its border when off too. */
 export function PickRow(props: { on: boolean; onClick: (e: MouseEvent) => void; disabled?: boolean; framed?: boolean; className?: string; label?: string; children: ReactNode }) {
-  return <button type="button" role="checkbox" aria-checked={props.on} aria-label={props.label} disabled={props.disabled} onClick={props.onClick} className={`flex w-full min-w-0 rounded-control border text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${props.on ? "border-primary bg-accent text-accent-foreground" : props.framed ? "hover:bg-muted" : "border-transparent hover:bg-muted"} ${props.className ?? ""}`}>{props.children}</button>;
+  return <button type="button" role="checkbox" aria-checked={props.on} aria-label={props.label} disabled={props.disabled} onClick={props.onClick} data-hand={props.framed ? "field" : undefined} data-fill={props.framed ? (props.on ? "selected" : "card") : undefined} data-seed={props.framed ? 1434 : undefined} className={`flex w-full min-w-0 rounded-control text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${props.framed ? "" : props.on ? "bg-accent text-accent-foreground" : "hover:bg-muted"} ${props.className ?? ""}`}>{props.children}</button>;
 }
 
 /** The toolbar's 「选择」. */

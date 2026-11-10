@@ -133,7 +133,7 @@ function lineHtml(line: string, tags: boolean): string {
     if (a) {
       flush();
       const seen = text.slice(a.start, a.end);
-      out += a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : styled(seen, a.kind === "tag" ? "text-primary" : "text-primary underline underline-offset-2");
+      out += a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : styled(seen, a.kind === "tag" ? "pm-hashtag" : "text-primary underline underline-offset-2");
       i = a.end;
       continue;
     }

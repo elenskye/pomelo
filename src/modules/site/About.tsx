@@ -14,7 +14,7 @@ function Timeline(props: { rows: Entry[]; set: (rows: Entry[]) => void; locked?:
   return (
     <div className="space-y-2">
       {props.rows.map((e, i) => (
-        <div key={i} className="flex gap-2 rounded-card border p-2">
+        <div key={i} className="flex gap-2 rounded-card border bg-card p-2">
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="grid grid-cols-3 gap-1.5">
               <TextInput {...SITE_ICONS} aria-label="职位 / 身份" placeholder="职位 / 身份" value={e.role} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { role: x.target.value }))} className="py-1 text-xs" />

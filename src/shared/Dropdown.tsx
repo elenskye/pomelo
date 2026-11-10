@@ -200,9 +200,11 @@ export function Dropdown<T>(props: {
         }}
         onKeyDown={onKeyDown}
         // the default trigger is the Design System's select: a hand-drawn field with the arrow flipping over
-        data-hand={props.triggerClassName ? undefined : "field"}
+        // a trigger dressed as a button (pm-btn) gets the hand-drawn button frame
+        data-hand={props.triggerClassName ? (props.triggerClassName.includes("pm-btn") ? "button" : undefined) : "field"}
+        data-fill={props.triggerClassName?.includes("pm-btn") ? "card" : undefined}
         data-r={props.triggerClassName ? undefined : 10}
-        data-seed={props.triggerClassName ? undefined : 1395}
+        data-seed={props.triggerClassName ? (props.triggerClassName.includes("pm-btn") ? 1432 : undefined) : 1395}
         className={
           props.triggerClassName ??
           `pm-field pm-select pm-compact ${props.block ? "w-full min-w-0 justify-between" : "shrink-0"} gap-1.5 pr-2 pl-3 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring ${open ? "is-focus" : ""}`

@@ -154,6 +154,9 @@ impl Format {
     }
 }
 
+/// 使用说明's length (a few paragraphs and a table).
+const ABOUT_CHARS: usize = 4000;
+
 /// The backup model at first: DeepSeek Flash (柚子's default cloud model).
 pub const BACKUP: &str = "cloud:deepseek-flash";
 
@@ -191,6 +194,8 @@ pub struct Settings {
     pub skip: Vec<mmd::Part>,
     /// 另存为: also turned into these.
     pub formats: Vec<Format>,
+    /// 使用说明 under the page (Markdown, 设置 edits it); None = the page's own.
+    pub about: Option<String>,
 }
 
 impl Default for Settings {
@@ -214,6 +219,7 @@ impl Default for Settings {
             refine: false,
             skip: vec![mmd::Part::Front, mmd::Part::Acknowledgments, mmd::Part::References, mmd::Part::Appendix],
             formats: vec![Format::Docx],
+            about: None,
         }
     }
 }
@@ -234,6 +240,10 @@ pub fn checked(mut s: Settings) -> Result<Settings, String> {
     s.domains = known_domains(&s.domains);
     if s.prompt.chars().count() > PROMPT_CHARS {
         return Err(format!("自己写的要求最多 {PROMPT_CHARS} 字"));
+    }
+    s.about = s.about.map(|t| t.trim_end().to_string()).filter(|t| !t.trim().is_empty());
+    if s.about.as_deref().is_some_and(|t| t.chars().count() > ABOUT_CHARS) {
+        return Err(format!("使用说明最多 {ABOUT_CHARS} 字"));
     }
     s.skip.sort_by_key(|p| *p as u8);
     s.skip.dedup();
@@ -778,6 +788,11 @@ mod tests {
         assert_eq!((old.domains, old.style.as_str(), old.supervisor_level), (vec!["cs".to_string()], "academic", Level::word("high")));
         let saved: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
         assert_eq!(saved.domains, s.domains);
+        // 使用说明: blank is the page's own; a save from before has none; too long is turned down
+        assert_eq!(checked(Settings { about: Some("  \n ".into()), ..Default::default() }).unwrap().about, None);
+        assert_eq!(checked(Settings { about: Some("## 我的说明\n\n- 一条  \n".into()), ..Default::default() }).unwrap().about.as_deref(), Some("## 我的说明\n\n- 一条"));
+        assert!(checked(Settings { about: Some("说".repeat(ABOUT_CHARS + 1)), ..Default::default() }).is_err());
+        assert_eq!(old.about, None);
         let job: job::Job = serde_json::from_str(r#"{"name":"旧的","domain":"math"}"#).unwrap();
         assert_eq!(job.domains, ["math"]);
         let c = memory_db();

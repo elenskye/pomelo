@@ -1,12 +1,12 @@
-// Pub2MD (助手; rules in Rust assistants/pub2md/). Two tabs, like Translator's. Pub2MD: settings saved as
-// they change (做哪几步, 输出格式, 另存为, 双语, 翻译 (语言, 不翻的部分, 联网查术语), 精修, the Worker's and the
-// Supervisor's model and thinking level, the backup model, 同时几块, 存到哪), the Mathpix keys (not in the mock), files picked
+// Pub2MD (助手; rules in Rust assistants/pub2md/). Three tabs. Pub2MD: the run's options saved as they change
+// (做哪几步, 输出格式, 另存为, 双语, 翻译 (语言, 不翻的部分, 联网查术语), 精修, 同时几块), files picked
 // or dropped anywhere on the page (shown as the documents they will be, sent with 发送), the document at work (step, chunks, requests, time; 停止), what waits,
 // and the last 10 documents (an .mmd / .md result opens in the preview, other files and the folder with
-// their app; 继续 or 删除 a stopped one: its folder to the Trash), and at the bottom what it does and the model
-// pairs the real tests settled on (ABOUT, PAIRS). 提示词: the user's own paragraph, 文体 and 领域, and what each model is told.
+// their app; 继续 or 删除 a stopped one: its folder to the Trash), and at the bottom the 使用说明 (Markdown; ABOUT
+// until edited). 提示词: the user's own paragraph, 文体 and 领域, and what each model is told. 设置: the Worker's and
+// the Supervisor's model and thinking level, the backup model, 存到哪, the Mathpix keys (not in the mock), the 使用说明.
 // The work goes on in Rust when the page is left: the page polls while something is at work.
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FileText, FolderOpen, X } from "@/shared/icons";
@@ -22,8 +22,13 @@ import { LevelPicker } from "../Thinking";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { watchJob } from "@/app/Pomelo";
 import { MdField } from "@/shared/editor/MdField";
+import { Row, Section } from "@/settings/layout";
+import { MarkdownView } from "../MarkdownView";
+import "./pub2md.css";
+import { chipLook } from "./select";
 
 export const PUB2MD_KEY = ["youzi", "pub2md"];
+type Tab = "work" | "prompt" | "settings";
 const EXTENSIONS = ["pdf", "docx", "doc", "png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif", "md", "mmd", "txt", "markdown"];
 const LANGS: { value: Pub2mdSettings["lang"]; label: string }[] = [
   { value: "enZh", label: "英文 → 简体中文" },
@@ -75,8 +80,8 @@ export function Pub2mdPage() {
   useEffect(() => {
     if (data) setSettings((x) => x ?? data.settings);
   }, [data]);
-  const [tab, setTab] = useSubPage<"work" | "prompt">("pub2md");
-  useSubNav("pub2md", (p) => setTab(p as "work" | "prompt"));
+  const [tab, setTab] = useSubPage<Tab>("pub2md");
+  useSubNav("pub2md", (p) => setTab(p as Tab));
   const [preview, setPreview] = useState<{ folder: string; file: string } | null>(null);
   const typing = useRef<ReturnType<typeof setTimeout>>(undefined);
   const set = (v: Pub2mdView) => qc.setQueryData(PUB2MD_KEY, v);
@@ -133,10 +138,10 @@ export function Pub2mdPage() {
   return (
     <div ref={page} className={`flex min-h-0 min-w-0 flex-1 flex-col px-8 pb-1 ${dropping ? "bg-accent/40" : ""}`}>
       {tab === "prompt" && <PromptTab data={data} settings={settings} onChange={change} />}
+      {tab === "settings" && <SettingsTab data={data} settings={settings} onChange={change} onFolder={() => void folder()} onView={set} />}
       <div className={`-m-1 mx-auto min-h-0 w-full max-w-4xl flex-1 flex-col gap-4 overflow-y-auto p-1 pb-6 text-sm ${tab === "work" ? "flex" : "hidden"}`}>
-        <Options settings={settings} onChange={change} data={data} onFolder={() => void folder()} />
-        {!data.mock && <MathpixKeys saved={data.mathpix} onView={set} />}
-        <div className="flex items-center gap-3">
+        <Options settings={settings} onChange={change} data={data} />
+        <div className="flex flex-wrap items-center gap-3">
           <Button onClick={() => void pick()} disabled={!data.mock && !data.mathpix}>
             选择文件…
           </Button>
@@ -144,6 +149,14 @@ export function Pub2mdPage() {
             发送
           </Button>
           <span className="text-muted-foreground">PDF · Word · 图片 · MD · TXT</span>
+          {!data.mock && !data.mathpix && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              · 还没填 Mathpix 的 Key
+              <Button variant="ghost" onClick={() => setTab("settings")}>
+                去设置
+              </Button>
+            </span>
+          )}
         </div>
         {staged.length > 0 && (
           <section aria-label="待发送" className="flex flex-col gap-1">
@@ -172,7 +185,7 @@ export function Pub2mdPage() {
           </section>
         )}
         <Recent data={data} onOpen={show} onResume={(f) => void youziApi.pub2mdResume(f).then((v) => (set(v), watchPub2md(v)), fail)} onDelete={(r) => void remove(r)} />
-        <About />
+        <About text={settings.about ?? ABOUT} />
       </div>
       {confirmDialog}
       {preview && shown && <PreviewDialog recent={shown} file={preview.file} onFile={(file) => setPreview({ ...preview, file })} onOpen={open} onClose={() => setPreview(null)} />}
@@ -183,8 +196,7 @@ export function Pub2mdPage() {
 function ModelRow(props: { name: string; model: string | null; level: Level; onChange: (model: string | null, level: Level) => void }) {
   const { models, keep } = useModels(props.model, props.level !== "off");
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-20 shrink-0 text-muted-foreground">{props.name}</span>
+    <div className="flex flex-wrap items-center gap-2">
       <Dropdown<string | null> ariaLabel={`${props.name} 的模型`} value={props.model} options={models} foldKey="models" onChange={(m) => props.onChange(m, props.level)} menuMaxHeight={360} />
       <LevelPicker label={`${props.name} 的思考`} model={props.model} value={props.level} onChange={(l) => props.onChange(keep(props.model, l !== "off"), l)} />
     </div>
@@ -196,15 +208,10 @@ function BackupRow(props: { value: string; onChange: (v: string) => void }) {
   const status = useYouziStatus().data;
   const options: DropdownOption<string>[] = [...modelOptions(status).filter((o) => o.value.startsWith("cloud:")), { value: "", label: "不用" }];
   if (!options.some((o) => o.value === props.value)) options.unshift({ value: props.value, label: "（已经不在了）" });
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-20 shrink-0 text-muted-foreground">备用模型</span>
-      <Dropdown<string> ariaLabel="备用模型" value={props.value} options={options} foldKey="models" onChange={props.onChange} menuMaxHeight={360} />
-    </div>
-  );
+  return <Dropdown<string> ariaLabel="备用模型" value={props.value} options={options} foldKey="models" onChange={props.onChange} menuMaxHeight={360} />;
 }
 
-function Options(props: { settings: Pub2mdSettings; onChange: (s: Pub2mdSettings) => void; data: Pub2mdView; onFolder: () => void }) {
+function Options(props: { settings: Pub2mdSettings; onChange: (s: Pub2mdSettings) => void; data: Pub2mdView }) {
   const s = props.settings;
   const clean = s.steps !== "extract";
   const translate = s.steps === "translate";
@@ -288,20 +295,6 @@ function Options(props: { settings: Pub2mdSettings; onChange: (s: Pub2mdSettings
           </label>
         </div>
       )}
-      {clean && (
-        <>
-          <ModelRow name="Worker" model={s.worker} level={s.workerLevel} onChange={(worker, workerLevel) => props.onChange({ ...s, worker, workerLevel })} />
-          <ModelRow name="Supervisor" model={s.supervisor} level={s.supervisorLevel} onChange={(supervisor, supervisorLevel) => props.onChange({ ...s, supervisor, supervisorLevel })} />
-          <BackupRow value={s.backup} onChange={(backup) => props.onChange({ ...s, backup })} />
-        </>
-      )}
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="w-20 shrink-0 text-muted-foreground">存到</span>
-        <span className="min-w-0 truncate font-mono text-xs" title={props.data.folder}>
-          {props.data.folder}
-        </span>
-        <Button onClick={props.onFolder}>更改…</Button>
-      </div>
     </section>
   );
 }
@@ -313,8 +306,7 @@ function MathpixKeys(props: { saved: boolean; onView: (v: Pub2mdView) => void })
   const [key, setKey] = useState("");
   if (props.saved && !editing)
     return (
-      <div className="flex items-center gap-2">
-        <span className="w-20 shrink-0 text-muted-foreground">Mathpix</span>
+      <div className="flex flex-wrap items-center gap-2">
         <span>Key 已保存</span>
         <Button onClick={() => setEditing(true)}>更新</Button>
         <Button onClick={() => void youziApi.pub2mdKeysRemove().then(props.onView, (e) => toast(errorText(e), "error"))}>移除</Button>
@@ -339,7 +331,6 @@ function MathpixKeys(props: { saved: boolean; onView: (v: Pub2mdView) => void })
         save();
       }}
     >
-      <span className="w-20 shrink-0 text-muted-foreground">Mathpix</span>
       <TextInput aria-label="Mathpix App ID" placeholder="App ID" value={id} onChange={(e) => setId(e.target.value)} className="max-w-48 font-mono" />
       <TextInput type="password" aria-label="Mathpix App Key" placeholder="App Key" value={key} onChange={(e) => setKey(e.target.value)} className="max-w-64 font-mono" />
       <Button type="submit" variant="primary" disabled={!id.trim() || !key.trim()}>
@@ -355,7 +346,7 @@ function Current(props: { data: Pub2mdView; onStop: () => void; onOpen: (folder:
   const percent = c.chunks ? Math.round((c.done / c.chunks) * 100) : 0;
   const requests = c.workerRequests + c.supervisorRequests;
   return (
-    <section aria-label="正在做的" className="flex flex-col gap-2 rounded-control border bg-card p-3">
+    <section aria-label="正在做的" className="flex flex-col gap-2 rounded-card border bg-card p-3">
       <div className="flex items-center gap-2">
         <span className="min-w-0 truncate font-medium">{c.name}</span>
         <span className="shrink-0 animate-pulse text-muted-foreground">{c.step}</span>
@@ -390,32 +381,64 @@ function Current(props: { data: Pub2mdView; onStop: () => void; onOpen: (folder:
   );
 }
 
-const ABOUT = "PDF、Word、图片经 Mathpix 识别，分块整理、翻译成中文。Worker 逐块做；Supervisor 审定切块、定术语表、排查出错的块、通读全文，开精修时再逐块审一遍。";
+/** 使用说明 until 设置 changes it: what it does and the model pairs the real tests settled on
+ *  (~/Downloads/Pub2MD 测试/测试记录.md). */
+const ABOUT = `PDF、Word、图片经 Mathpix 识别，分块整理、翻译成中文。Worker 逐块做；Supervisor 审定切块、定术语表、排查出错的块、通读全文，开精修时再逐块审一遍。
 
-/** [用途, 搭配, 测出来的情况] — from the real tests (~/Downloads/Pub2MD 测试/测试记录.md). */
-const PAIRS: [string, string, string][] = [
-  ["日常", "GPT-6.1 Sol（思考 中）+ DeepSeek Flash", "35 页论文约 4 分钟、0.5 美元"],
-  ["Claude", "Claude Sonnet 5.5（思考 高）+ DeepSeek Flash", "Sonnet 5.5 要开高思考，通读才够细；比 Sol 贵约一半"],
-  ["精修", "交作业、交稿时开", "多改出漏译和意思偏差，费用约翻倍；日常阅读不必开"],
-  ["短论文", "Sol + GLM-5.3 FlashX（思考选「总是」）", "公式编号补得最全；长文慢、贵"],
-  ["备用模型", "DeepSeek Flash", "被内容审核拦下或请求一直失败时接手"],
-];
+- **日常**：GPT-6.1 Sol（思考 中）+ DeepSeek Flash · 35 页论文约 4 分钟、0.5 美元
+- **Claude**：Claude Sonnet 5.5（思考 高）+ DeepSeek Flash · Sonnet 5.5 要开高思考，通读才够细；比 Sol 贵约一半
+- **精修**：交作业、交稿时开 · 多改出漏译和意思偏差，费用约翻倍；日常阅读不必开
+- **短论文**：Sol + GLM-5.3 FlashX（思考选「总是」） · 公式编号补得最全；长文慢、贵
+- **备用模型**：DeepSeek Flash · 被内容审核拦下或请求一直失败时接手`;
 
-function About() {
+function About(props: { text: string }) {
   return (
-    <section aria-label="关于 Pub2MD" className="flex flex-col gap-2 border-t pt-4 text-xs text-muted-foreground">
-      <p>{ABOUT}</p>
-      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-        {PAIRS.map(([use, pair, note]) => (
-          <Fragment key={use}>
-            <span>{use}</span>
-            <span>
-              <span className="text-foreground">{pair}</span> · {note}
-            </span>
-          </Fragment>
-        ))}
-      </div>
+    <section aria-label="使用说明" className="border-t pt-4">
+      <MarkdownView source={props.text} className="p2-about" />
     </section>
+  );
+}
+
+/** 设置: the models, where results go, the Mathpix keys and the 使用说明 (saved as they change). */
+function SettingsTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChange: (s: Pub2mdSettings, later?: boolean) => void; onFolder: () => void; onView: (v: Pub2mdView) => void }) {
+  const s = props.settings;
+  return (
+    <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1 text-sm">
+      <div className="mx-auto max-w-3xl py-5">
+        <Section title="模型">
+          <Row label="Worker">
+            <ModelRow name="Worker" model={s.worker} level={s.workerLevel} onChange={(worker, workerLevel) => props.onChange({ ...s, worker, workerLevel })} />
+          </Row>
+          <Row label="Supervisor">
+            <ModelRow name="Supervisor" model={s.supervisor} level={s.supervisorLevel} onChange={(supervisor, supervisorLevel) => props.onChange({ ...s, supervisor, supervisorLevel })} />
+          </Row>
+          <Row label="备用模型">
+            <BackupRow value={s.backup} onChange={(backup) => props.onChange({ ...s, backup })} />
+          </Row>
+        </Section>
+        <Section title="文件">
+          <Row label="存到" actions={<Button onClick={props.onFolder}>更改…</Button>}>
+            <span className="selectable block truncate text-xs" title={props.data.folder}>
+              {props.data.folder}
+            </span>
+          </Row>
+          {!props.data.mock && (
+            <Row label="Mathpix">
+              <MathpixKeys saved={props.data.mathpix} onView={props.onView} />
+            </Row>
+          )}
+        </Section>
+        <section className="mb-6">
+          <div className="mb-2 flex items-end justify-between gap-4 px-1">
+            <h2 className="text-sm text-muted-foreground">使用说明</h2>
+            <Button variant="ghost" disabled={s.about == null} onClick={() => props.onChange({ ...s, about: null })}>
+              恢复默认
+            </Button>
+          </div>
+          <MdField label="使用说明" rows={12} value={s.about ?? ABOUT} onChange={(t) => props.onChange({ ...s, about: t === ABOUT || !t.trim() ? null : t }, true)} />
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -459,7 +482,7 @@ function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: strin
 
 function PromptTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChange: (s: Pub2mdSettings, later?: boolean) => void }) {
   const s = props.settings;
-  const told = useQuery({ queryKey: ["youzi", "pub2md-prompts", JSON.stringify({ ...s, folder: null })], queryFn: () => youziApi.pub2mdPrompts(s) });
+  const told = useQuery({ queryKey: ["youzi", "pub2md-prompts", JSON.stringify({ ...s, folder: null, about: null })], queryFn: () => youziApi.pub2mdPrompts(s) });
   // 文体: one; 领域: several (an interdisciplinary text), none = 通用
   const rows: { name: string; many: boolean; choices: [string, string][]; on: (key: string) => boolean; pick: (key: string) => Pub2mdSettings }[] = [
     { name: "文体", many: false, choices: props.data.styles, on: (k) => s.style === k, pick: (k) => ({ ...s, style: k }) },
@@ -491,7 +514,7 @@ function PromptTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChange
                     role={g.many ? "checkbox" : "radio"}
                     aria-checked={on}
                     onClick={() => props.onChange(g.pick(key))}
-                    className={`rounded-control border px-2.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring ${on ? "border-primary bg-accent text-accent-foreground" : "hover:bg-muted"}`}
+                    {...chipLook(on)}
                   >
                     {label}
                   </button>

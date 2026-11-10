@@ -177,8 +177,18 @@
 [data-auto-card] { isolation: isolate; border-color: transparent !important; background-color: transparent !important; }
 [data-auto-card]:not([data-auto-scroll]) { overflow: visible !important; }
 [data-auto-card] > [data-hand-painted] { background: var(--color-card); border-radius: 14px; box-shadow: var(--shadow-card); }
+/* 选中的卡片（Seeker「选择」时）：原来的底色交给画出来的那一层 */
+[data-auto-card].bg-accent > [data-hand-painted] { background: var(--color-selected); }
+/* 卡片里的行、格子不另涂白底：卡片的底就在画出来的那一层（在字下面），行的白底会盖住半条手画的边，往里抖的地方看着像断了。
+   菜单、弹窗、钉在顶上的表头照旧 */
+:is([data-auto-card], .pm-panel, [data-hand=card]) .bg-card:not([data-hand], [data-auto-card], .sticky, [popover], [popover] *, dialog, dialog *, [role=menu], [role=menu] *, [role=listbox], [role=listbox] *) { background-color: transparent; }
+/* 选中、指着的那一行涂了底色：两边（首行、末行连上下）让出 3px，底色不压在卡片的手画边上（表格的行除外） */
+:is([data-auto-card], [data-hand=card]):not(table) > :is([class*="bg-accent"], [class*="bg-primary/"], [class*="bg-muted"]):not([data-hand], [data-hand-painted], [popover]),
+:is([data-auto-card], [data-hand=card]):not(table) > :not([data-hand-painted]) > :is([class*="bg-accent"], [class*="bg-primary/"], [class*="bg-muted"]):not([data-hand], [popover]) { clip-path: inset(0 3px); }
+:is([data-auto-card], [data-hand=card]):not(table) > :nth-child(1 of :not([data-hand-painted])):is([class*="bg-accent"], [class*="bg-primary/"], [class*="bg-muted"]):not([data-hand]) { clip-path: inset(3px 3px 0); }
+:is([data-auto-card], [data-hand=card]):not(table) > :nth-last-child(1 of :not([data-hand-painted])):is([class*="bg-accent"], [class*="bg-primary/"], [class*="bg-muted"]):not([data-hand]) { clip-path: inset(0 3px 3px); }
 [data-auto-card] .border-b, [data-auto-card] .border-t { border-style: dashed; border-color: var(--color-line); }
-[data-auto-card] .divide-y > :not(:last-child) { border-bottom-style: dashed; border-color: var(--color-line); }
+:is([data-auto-card] .divide-y, [data-auto-card].divide-y) > :not(:last-child) { border-bottom-style: dashed; border-color: var(--color-line); }
 /* 右边滑出的面板：手画的卡片，投影深一点 */
 .pm-panel { isolation: isolate; }
 .pm-panel > [data-hand-painted] { background: var(--color-card); border-radius: 16px; box-shadow: 0 2px 4px var(--color-shadow), 0 18px 40px var(--color-shadow); }

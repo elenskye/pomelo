@@ -28,7 +28,7 @@ export function AppearanceSection() {
                 onClick={() => set({ palette: p.id })}
                 className={`flex w-[104px] flex-col gap-1.5 rounded-control p-1.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring ${on ? "bg-accent" : "hover:bg-muted"}`}
               >
-                <span className="relative block h-14 overflow-hidden rounded-md border" style={{ background: p.desk[mode] }} aria-hidden>
+                <span data-nolint className="relative block h-14 overflow-hidden rounded-md border" style={{ background: p.desk[mode] }} aria-hidden>
                   <span className="absolute inset-x-2 top-2 bottom-0 rounded-t-[5px]" style={{ background: p.paper[mode] }} />
                   <span className="absolute left-4 right-6 top-6 h-1.5 rounded-full" style={{ background: p.marker[mode], opacity: 0.9 }} />
                   <span className="absolute left-4 right-8 top-[26px] h-[2px] rounded-full" style={{ background: p.pen[mode] }} />

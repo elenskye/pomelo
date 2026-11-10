@@ -125,7 +125,7 @@ export function TranslateOutput(props: { data: TranslateView; className: string 
     );
   const stopped = data.error === "已停止";
   return (
-    <section aria-label="译文" className={`flex flex-col rounded-control border bg-card ${props.className}`}>
+    <section aria-label="译文" className={`flex flex-col rounded-control ${props.className}`} data-hand="field" data-seed="1414">
       <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
         {data.running ? (
           <span className="animate-pulse">{data.status ?? "正在翻译…"}</span>
@@ -148,7 +148,7 @@ export function TranslateOutput(props: { data: TranslateView; className: string 
           {copied ? <span className="text-xs">✓</span> : <Copy size={14} strokeWidth={1.5} />}
         </button>
       </div>
-      <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <p className="selectable px-3 pb-3 font-reading text-[15px] leading-relaxed whitespace-pre-wrap">{data.output}</p>
       </div>
     </section>

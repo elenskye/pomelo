@@ -9,7 +9,7 @@ import { AssistAction, PolishBox, useAssistOn } from "@/modules/youzi/Assist";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { useDropTarget } from "@/shared/attachments/target";
 import { MdMenu } from "@/shared/editor/MdMenu";
-import { Button, IconButton, Segmented, fieldClass } from "@/shared/ui";
+import { Button, IconButton, Segmented, TextInput } from "@/shared/ui";
 import { MdEditor, type MdEditorHandle } from "./MdEditor";
 import { siteAssist, siteSrc, workApi, type Draft, type Lang } from "./api";
 
@@ -285,7 +285,7 @@ export function useSiteIconMenu() {
 
 /** A text box of its own width (TextInput is always full width). */
 export function SizedInput({ className, ...rest }: ComponentProps<"input">) {
-  return <input type="text" autoComplete="off" spellCheck={false} className={`${fieldClass} ${className ?? ""}`} {...rest} />;
+  return <TextInput className={className} {...rest} />;
 }
 
 // ---------- rows ----------

@@ -93,7 +93,7 @@ export function ChatSearch(props: { onOpen: (hit: ChatHit, query: string) => voi
 
   return (
     <div className="-m-1 flex min-h-0 flex-1 flex-col p-1">
-      <div className="flex items-center gap-1.5 rounded-control border bg-card px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-ring">
+      <div className="pm-field pm-compact flex items-center gap-1.5" data-hand="field" data-seed="1418">
         <Search size={14} className="shrink-0 text-muted-foreground" />
         <input
           ref={input}

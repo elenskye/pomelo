@@ -29,13 +29,16 @@ export default function FinancePage() {
   });
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} />
-      <div className="flex min-h-0 flex-1 gap-6 px-8 pb-6">
-        <section className="flex min-w-0 flex-1 flex-col">
-          {(view === "entries" || view === "import") && <EntriesView focus={focus} showMonth={posted} onImport={() => setView("import")} />}
-          {view === "assets" && <AssetsView focus={focus} />}
-          {view === "reports" && <ReportsView />}
-        </section>
+      {/* under 导入账单 收支 stays as it was, out of sight: the import lies on the paper itself, not on a white board */}
+      <div className={`contents ${view === "import" ? "invisible" : ""}`}>
+        <PageHeader icon={m.icon} color={m.color} title={m.label} />
+        <div className="flex min-h-0 flex-1 gap-6 px-8 pb-6">
+          <section className="flex min-w-0 flex-1 flex-col">
+            {(view === "entries" || view === "import") && <EntriesView focus={focus} showMonth={posted} onImport={() => setView("import")} />}
+            {view === "assets" && <AssetsView focus={focus} />}
+            {view === "reports" && <ReportsView />}
+          </section>
+        </div>
       </div>
       {view === "import" && <ImportPanel onClose={() => setView("entries")} onPosted={(day) => setPosted(day.slice(0, 7))} />}
     </div>

@@ -120,7 +120,7 @@ function Sections(props: { v: CareerVersion; set: (patch: Partial<CareerVersion>
   return (
     <div className="space-y-3">
       {secs.map((s, i) => (
-        <div key={i} className="space-y-2 rounded-card border p-3">
+        <div key={i} className="space-y-2 rounded-card border bg-card p-3">
           <div className="flex items-center gap-2">
             <TextInput aria-label="模块标题" placeholder="模块标题" value={s.title} onChange={(e) => setSec(i, { title: e.target.value })} className="min-w-0 flex-1 font-bold" />
             <RowControls i={i} n={secs.length} onMove={(to) => props.set({ sections: moved(secs, i, to) })} onRemove={() => props.set({ sections: secs.filter((_, j) => j !== i) })} removeLabel="删除模块" />

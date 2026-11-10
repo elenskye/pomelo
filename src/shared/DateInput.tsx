@@ -6,7 +6,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "@/shared/icons";
 import { addDays, localToday, mondayOf, toYmd } from "./dates";
-import { fieldClass } from "./ui";
 
 const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -102,7 +101,9 @@ export function DateInput(props: {
             setOpen(true);
           }
         }}
-        className={`${fieldClass} inline-flex items-center gap-2 tabular-nums ${open ? "ring-2 ring-ring" : ""} ${props.className ?? ""}`}
+        className={`pm-field pm-compact inline-flex items-center gap-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring ${open ? "is-focus" : ""} ${props.className ?? ""}`}
+        data-hand="field"
+        data-seed="1416"
       >
         <span className={props.value ? "" : "text-muted-foreground"}>{props.value ? slash(props.value) : props.month ? "年 / 月" : "年 / 月 / 日"}</span>
         <CalendarDays size={14} className="ml-auto shrink-0 text-muted-foreground" />

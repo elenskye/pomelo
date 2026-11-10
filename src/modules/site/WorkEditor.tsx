@@ -100,7 +100,7 @@ function GalleryDialog(props: { work: Work; onClose: () => void; onDone: (g: Gal
         {items.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">画廊还空着</p>}
         <div className="space-y-3">
           {items.map((g, i) => (
-            <div key={`${g.image}-${i}`} className="flex gap-3 rounded-card border p-2">
+            <div key={`${g.image}-${i}`} className="flex gap-3 rounded-card border bg-card p-2">
               <img src={siteSrc(g.image)} alt="" className="size-24 shrink-0 rounded-control bg-muted object-cover" />
               <div className="min-w-0 flex-1 space-y-1.5">
                 {langs.map((l) => (
@@ -173,7 +173,7 @@ function Cover(props: { work: Work; set: (cover: string | null) => void; addImag
   const cover = props.work.cover;
   return (
     <div className="space-y-1.5">
-      <div ref={box} className={`overflow-hidden rounded-control border ${dropping ? "ring-2 ring-primary" : ""}`}>
+      <div ref={box} data-nolint className={`overflow-hidden rounded-control border ${dropping ? "ring-2 ring-primary" : ""}`}>
         {cover ? <img src={siteSrc(cover)} alt="封面" className="aspect-[16/10] w-full bg-muted object-cover" /> : <div className="flex aspect-[16/10] items-center justify-center border-dashed text-xs text-muted-foreground">没有封面</div>}
       </div>
       <div className="flex flex-wrap gap-x-1 text-xs">
@@ -228,7 +228,7 @@ function SharedFields(props: { work: Work; tax: Taxonomy; set: (patch: Partial<W
         <Cover work={w} set={(cover) => props.set({ cover })} addImages={props.addImages} onError={props.onError} onPickAsset={props.onPickAsset} />
       </Field>
       <Field label="画廊">
-        <button type="button" onClick={props.onGallery} className="flex items-center justify-between rounded-control border px-3 py-1.5 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
+        <button type="button" onClick={props.onGallery} className="pm-btn pm-btn--plain h-8 justify-between gap-3 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" data-hand="button" data-fill="card" data-seed="1435">
           <span>{w.gallery.length ? `${w.gallery.length} 张` : "没有"}</span>
           <span className="text-xs text-muted-foreground">编辑…</span>
         </button>

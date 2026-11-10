@@ -25,6 +25,7 @@ import { SearchBox } from "./Search";
 import { TabsProvider, useTabs } from "./tabs";
 import { TopBar } from "./TopBar";
 import "./frame.css";
+import { Oops } from "@/shared/Oops";
 
 // 柚子's 小窗 brings the Markdown / formula libraries: loaded the first time it opens
 const SideChat = lazy(() => import("@/modules/youzi/SideChat").then((m) => ({ default: m.SideChat })));
@@ -370,20 +371,27 @@ function Shell() {
         >
           {tabs.home ? (
             <div className="deskhome">
-              <div className="deskpage">{ok && <Outlet />}</div>
+              <div className="deskpage">{ok && <Oops where="首页" reset={path}><Outlet /></Oops>}</div>
               {ok && <DeskCommon />}
             </div>
           ) : (
             <PaperStack>{ok && <Outlet />}</PaperStack>
           )}
-          {tabs.book && ok && <StickerBook onClose={() => tabs.setBook(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />}
+          {tabs.book && ok && (
+            <Oops where="贴纸簿" look="layer" onClose={() => tabs.setBook(false)}>
+              <StickerBook onClose={() => tabs.setBook(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />
+            </Oops>
+          )}
         </div>
         {chat && (
-          <Suspense fallback={null}>
-            <SideChat context={context} floating={floating} leaving={chatLeaving} ask={ask} onClose={() => setChatOpen(false)} />
-          </Suspense>
+          <Oops where="问柚子" look="layer" onClose={() => setChatOpen(false)}>
+            <Suspense fallback={null}>
+              <SideChat context={context} floating={floating} leaving={chatLeaving} ask={ask} onClose={() => setChatOpen(false)} />
+            </Suspense>
+          </Oops>
         )}
         {bloom && ok && (
+          <Oops where="柚子瓣" look="layer" onClose={() => setBloom(null)}>
           <Bloom
             anchor={bloom}
             onClose={() => setBloom(null)}
@@ -393,11 +401,16 @@ function Shell() {
                 : null
             }
           />
+          </Oops>
         )}
       </div>
       <DragChip />
       <CheerLayer />
-      {searching && <SearchBox onClose={() => setSearching(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />}
+      {searching && (
+        <Oops where="找东西" look="layer" onClose={() => setSearching(false)}>
+          <SearchBox onClose={() => setSearching(false)} onAsk={ok && !hidden.includes("youzi") && !path.startsWith("/youzi") ? askChat : null} />
+        </Oops>
+      )}
     </div>
   );
 }
