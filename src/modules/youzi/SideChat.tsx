@@ -158,8 +158,12 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
   return (
     <aside
       aria-label="柚子"
-      // grows out of the top bar's 问柚子 and shrinks back into it (motion part chat-pop)
-      className={`pm-chat-pop ${props.leaving ? "is-closing" : "is-open"} flex w-[380px] shrink-0 flex-col overflow-hidden rounded-[14px] border bg-background ${props.floating ? "absolute inset-y-3.5 right-4 z-20 shadow-2xl" : "sheet relative mr-4 ml-1"}`}
+      // grows out of the top bar's 问柚子 and shrinks back into it (motion part chat-pop); a hand-drawn card like the
+      // detail panel (its edge and paper are the painted layer: frame.css .pm-sidechat)
+      className={`pm-chat-pop pm-sidechat ${props.leaving ? "is-closing" : "is-open"} flex w-[380px] shrink-0 flex-col ${props.floating ? "is-floating absolute inset-y-3.5 right-4 z-20" : "relative mr-4 ml-1"}`}
+      data-hand="card"
+      data-seed="1530"
+      data-amp="0.8"
     >
       <header className="flex h-14 shrink-0 items-end gap-1.5 px-4 pb-3">
         <Bird size={16} strokeWidth={1.75} className="mb-1.5 shrink-0" style={{ color: "var(--module-youzi)" }} />

@@ -87,12 +87,15 @@ export function Unlock(props: { color: string; status: VaultStatus; autoTouch: b
       setBusy(null);
     }
   };
-  // Touch ID straight away on arrival
+  // Touch ID straight away on arrival — a moment later, and only if the page is still here (a page mounted for a
+  // frame while another one takes the front must not start the system prompt)
   useEffect(() => {
-    if (props.autoTouch && props.status.touch && !tried.current) {
+    if (!props.autoTouch || !props.status.touch || tried.current) return;
+    const t = setTimeout(() => {
       tried.current = true;
       void touch();
-    }
+    }, 150);
+    return () => clearTimeout(t);
   }, [props.status.touch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (e: FormEvent) => {

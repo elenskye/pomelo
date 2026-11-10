@@ -15,9 +15,9 @@ const WATCHED = ["data-hand", "data-seed", "data-fill", "data-tilt", "data-r", "
 
 /** The white boxes on a module's paper (tables, lists, cards: `rounded-card border bg-card`) become the Design
  *  System's card — a hand-drawn edge, the typical pages of visual-atelier's canvases/pomelo-pages — without touching
- *  each page: marked data-auto-card + data-hand="card" here (frame.css styles them). Menus, dialogs, pills and boxes
+ *  each page (and in 问柚子's 小窗, a hand-drawn card itself): marked data-auto-card + data-hand="card" here (frame.css styles them). Menus, dialogs, pills and boxes
  *  smaller than a row are left alone; a box that scrolls keeps its overflow (its edge stays inside). */
-const AUTO = ".pm-sheet .rounded-card.border.bg-card:not([data-hand]):not([data-no-hand])";
+const AUTO = ":is(.pm-sheet, .pm-sidechat) .rounded-card.border.bg-card:not([data-hand]):not([data-no-hand])";
 let autoSeed = 2000;
 function autoCards() {
   for (const el of document.querySelectorAll<HTMLElement>(AUTO)) {

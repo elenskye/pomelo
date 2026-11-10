@@ -248,7 +248,7 @@ export const Composer = forwardRef<
             )}
         </div>
       )}
-      <div className={`rounded-card border bg-card focus-within:ring-2 focus-within:ring-ring ${props.dropping ? "ring-2 ring-primary/60" : ""}`}>
+      <div className={`pm-composer rounded-card border bg-card ${props.dropping ? "ring-2 ring-primary/60" : ""}`}>
         {props.chips}
         <div className="relative px-4 pt-2">
           {marks.length > 0 && (

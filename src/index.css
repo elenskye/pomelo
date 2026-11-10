@@ -166,6 +166,7 @@
 }
 .pm-note .pm-hashtag { background: none; padding: 0; font-weight: 700; }
 
+/* .task-title: also 出门走走's packed items (modules/packing/PackingPage.tsx TripRow), the line without the 果冻弹 */
 .task-title { position: relative; }
 .task-title:not(.done) > [data-hand-painted] { display: none; }
 .task-title.is-pop > [data-hand-painted] path { stroke-dasharray: 1 2; animation: pm-strike .35s .2s ease-out both; }

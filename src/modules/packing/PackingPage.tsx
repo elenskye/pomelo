@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { reducedMotion } from "@/shared/hand";
 import { CheckCircle2, Circle, Pencil, Plus, Sparkles, Tags, X } from "@/shared/icons";
 import { moduleById } from "@/app/modules";
 import { errorText, useToast } from "@/shared/feedback";
@@ -91,6 +92,60 @@ function RowActions(props: { name: string; onEdit: () => void; onDelete: () => v
       <IconButton label={`删除「${props.name}」`} danger onClick={props.onDelete}>
         <X size={14} />
       </IconButton>
+    </div>
+  );
+}
+
+/** The ink line's draw-in (index.css .task-title.is-pop: .2 s late, .35 s long). */
+const STRIKE_MS = 560;
+
+/** A trip's item: a click packs / unpacks it. Packing strikes the name out with the hand-drawn ink line (the todo
+ *  tick's stroke, without its 果冻弹); under 还没装 the row stays until the line is drawn, then goes. */
+function TripRow(props: { it: PackItem; grip: ReactNode; hold: boolean; onPacked: (packed: boolean) => void; actions: ReactNode }) {
+  const it = props.it;
+  const [ticking, setTicking] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => void (alive.current = false);
+  }, []);
+  const packed = !!it.packed || ticking;
+  const toggle = () => {
+    if (ticking) return;
+    if (it.packed || reducedMotion()) return props.onPacked(!it.packed);
+    setTicking(true);
+    // saved even when the page was left meanwhile
+    if (props.hold) setTimeout(() => props.onPacked(true), STRIKE_MS);
+    else props.onPacked(true);
+    setTimeout(() => alive.current && setTicking(false), STRIKE_MS + 100);
+  };
+  return (
+    <div
+      role="checkbox"
+      aria-checked={packed}
+      tabIndex={0}
+      onClick={toggle}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          toggle();
+        }
+      }}
+      className="group flex min-h-10 cursor-pointer items-center gap-3 border-b bg-card py-1.5 pr-3 pl-1 outline-none transition-colors duration-150 hover:bg-muted/70 focus-visible:bg-muted/70"
+    >
+      <span className="flex w-3 shrink-0 justify-center">{props.grip}</span>
+      {packed ? (
+        <CheckCircle2 size={18} strokeWidth={1.75} className="shrink-0" style={{ color: "var(--status-done-fg)" }} />
+      ) : (
+        <Circle size={18} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className={`task-title ${packed ? "done text-muted-foreground" : ""} ${ticking ? "is-pop" : ""}`} data-hand="strike" data-seed={1405 + (it.id % 7)}>
+          {it.name}
+        </span>
+        {it.note && <span className="ml-2 text-xs text-muted-foreground">{it.note}</span>}
+      </span>
+      <div onClick={(e) => e.stopPropagation()}>{props.actions}</div>
     </div>
   );
 }
@@ -199,34 +254,14 @@ export default function PackingPage() {
   const visible = tab === "trips" && onlyUnpacked ? items.filter((i) => !i.packed) : items;
 
   const tripRow = (it: PackItem, grip: ReactNode) => (
-    <div
+    <TripRow
       key={it.id}
-      role="checkbox"
-      aria-checked={!!it.packed}
-      tabIndex={0}
-      onClick={() => mut.quickUpdateItem.mutate({ list: "trip", id: it.id, patch: { packed: !it.packed } })}
-      onKeyDown={(e) => {
-        if (e.key === " " || e.key === "Enter") {
-          e.preventDefault();
-          mut.quickUpdateItem.mutate({ list: "trip", id: it.id, patch: { packed: !it.packed } });
-        }
-      }}
-      className="group flex min-h-10 cursor-pointer items-center gap-3 border-b bg-card py-1.5 pr-3 pl-1 outline-none transition-colors duration-150 hover:bg-muted/70 focus-visible:bg-muted/70"
-    >
-      <span className="flex w-3 shrink-0 justify-center">{grip}</span>
-      {it.packed ? (
-        <CheckCircle2 size={18} strokeWidth={1.75} className="shrink-0" style={{ color: "var(--status-done-fg)" }} />
-      ) : (
-        <Circle size={18} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
-      )}
-      <span className={`min-w-0 flex-1 ${it.packed ? "text-muted-foreground line-through decoration-1" : ""}`}>
-        {it.name}
-        {it.note && <span className="ml-2 text-xs text-muted-foreground no-underline">{it.note}</span>}
-      </span>
-      <div onClick={(e) => e.stopPropagation()}>
-        <RowActions name={it.name} onEdit={() => void panel.request(it.id)} onDelete={() => removeItem(it)} />
-      </div>
-    </div>
+      it={it}
+      grip={grip}
+      hold={onlyUnpacked}
+      onPacked={(packed) => mut.quickUpdateItem.mutate({ list: "trip", id: it.id, patch: { packed } })}
+      actions={<RowActions name={it.name} onEdit={() => void panel.request(it.id)} onDelete={() => removeItem(it)} />}
+    />
   );
 
   const templateRow = (it: PackItem, grip: ReactNode) => (

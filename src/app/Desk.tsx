@@ -101,6 +101,10 @@ export function PaperStack(props: { children: ReactNode }) {
   const mod = splitPath(front.path).module;
   const def = moduleById(mod);
   const youzi = mod === "youzi";
+  // the front page and the address change in two renders (closing or opening a page): until the address is this
+  // page's, the paper stays blank — else the old page mounts here for a frame and runs its effects again
+  // (芝麻开门 met locked would start Touch ID as the page closes)
+  const ours = splitPath(path).module === mod;
   const places = new Map(pile ? pile.split(",").map((id, j) => [Number(id), j]) : []);
   const stacked = behind.filter((p) => places.has(p.id)).sort((a, b) => a.id - b.id);
   return (
@@ -125,7 +129,7 @@ export function PaperStack(props: { children: ReactNode }) {
         <main className={`paper pm-sheet ${youzi ? "lined" : ""}`} data-hand="sheet" data-seed={seedOf(mod)} data-tilt="-0.3">
           <div className="paper-scroll">
             <SideCtx.Provider value={youzi ? side : null}>
-              <Oops where={pageName(path)} reset={path}>{props.children}</Oops>
+              {ours && <Oops where={pageName(path)} reset={path}>{props.children}</Oops>}
             </SideCtx.Provider>
           </div>
         </main>

@@ -192,3 +192,10 @@
 /* 右边滑出的面板：手画的卡片，投影深一点 */
 .pm-panel { isolation: isolate; }
 .pm-panel > [data-hand-painted] { background: var(--color-card); border-radius: 16px; box-shadow: 0 2px 4px var(--color-shadow), 0 18px 40px var(--color-shadow); }
+/* 问柚子的小窗（modules/youzi/SideChat.tsx）：和右边的面板一样是手画的卡片；浮在页上时投影深一点 */
+.pm-sidechat { isolation: isolate; }
+.pm-sidechat > [data-hand-painted] { background: var(--color-card); border-radius: 16px; box-shadow: var(--shadow-card); }
+.pm-sidechat.is-floating > [data-hand-painted] { box-shadow: 0 2px 4px var(--color-shadow), 0 18px 40px var(--color-shadow); }
+/* 问柚子的输入框（Composer，柚子页和小窗）：纸上自动换成手画卡，有焦点时和手画的输入框一样把线描粗，不另套直线的焦点框 */
+.pm-composer:focus-within > [data-hand-painted] path[stroke] { stroke-width: var(--pm-sw-focus); }
+.pm-composer:not([data-auto-card]):focus-within { box-shadow: 0 0 0 2px var(--ring); }
