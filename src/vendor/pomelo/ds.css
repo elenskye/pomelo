@@ -865,6 +865,8 @@
 
 /* ---------- 便签 ---------- */
 .pm-note { position: relative; padding: var(--space-4); color: var(--color-on-sticky); }
+/* 便签的纸明暗都是浅色：便签上的字、次要的字、链接都跟便签的墨色走，不用给深色纸配的浅色（APCA：墨 Lc 87，次要的字 Lc 69） */
+.pm-note { --color-ink: var(--color-on-sticky); --color-ink-soft: color-mix(in srgb, var(--color-on-sticky) 72%, var(--color-sticky)); --color-link: var(--color-on-sticky); }
 .pm-note > [data-hand-painted] { background: var(--color-sticky); box-shadow: var(--shadow-note); }
 
 /* ---------- 小票：白纸、锯齿底边、虚线分段、数字右对齐 ---------- */
@@ -1040,6 +1042,20 @@
 @keyframes pm-book-down { 0% { transform: none; } 100% { transform: translateY(calc(var(--pm-book-from, 700px) + 60px)) rotate(4deg); } }
 @media (prefers-reduced-motion: reduce) {
   .pm-scrim.is-open, .pm-scrim.is-closing, .pm-book.is-open, .pm-book.is-closing { animation: none !important; transition: none !important; }
+}
+
+/* ---------- 动效 · 问柚子 · 小窗从柚子那里长出来（chat-pop，calm） ---------- */
+/* 问柚子：小窗从顶栏右上角的柚子那里长出来（0.42 秒，纸的回弹）：先小小地歪着，长过头一点再落平；
+   收起时缩回柚子那里（.is-closing，0.2 秒，放完再拿掉）。--pm-chat-from 是从哪儿长出来（相对小窗自己，
+   默认右上角外面一点：顶栏的「问柚子」）。 */
+.pm-chat-pop { transform-origin: var(--pm-chat-from, calc(100% - 26px) -30px); }
+.pm-chat-pop.is-open { animation: pm-chat-pop .42s cubic-bezier(.25, 1.2, .5, 1) both; }
+.pm-chat-pop.is-closing { animation: pm-chat-away .2s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
+@keyframes pm-chat-pop { 0% { opacity: 0; transform: scale(.24, .16) rotate(7deg); } 40% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+@keyframes pm-chat-away { 0% { opacity: 1; transform: none; } 100% { opacity: 0; transform: scale(.24, .16) rotate(7deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .pm-chat-pop.is-open { animation: none !important; }
+  .pm-chat-pop.is-closing { animation: none !important; opacity: 0; }
 }
 
 /* ---------- 动效 · 勾选 · 果冻弹、划线自己画出来（check，calm） ---------- */

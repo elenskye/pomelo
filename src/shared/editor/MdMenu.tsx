@@ -22,9 +22,13 @@ const SITE_ICONS = (list as { icons: ContentIcon[] }).icons;
 
 type Item = Exclude<Format, "-">;
 
-export function MdMenu(props: { x: number; y: number; formats: Format[]; host: Element; onFormat: (f: Item) => void; onInsert: (text: string) => void; onClose: () => void }) {
+/** `libraries`: which icon libraries the list offers (both by default). A list with no formats and one library opens
+ *  straight in that library (the website's plain text boxes: 网站图标 only — the website draws nothing else there). */
+export function MdMenu(props: { x: number; y: number; formats: Format[]; libraries?: ("pomelo" | "site")[]; host: Element; onFormat: (f: Item) => void; onInsert: (text: string) => void; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<"formats" | "pomelo" | "site">("formats");
+  const libs = props.libraries ?? ["pomelo", "site"];
+  const only = props.formats.length === 0 && libs.length === 1 ? libs[0] : null;
+  const [view, setView] = useState<"formats" | "pomelo" | "site">(only ?? "formats");
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -38,7 +42,7 @@ export function MdMenu(props: { x: number; y: number; formats: Format[]; host: E
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
-      if (view === "formats") props.onClose();
+      if (view === "formats" || only) props.onClose();
       else setView("formats");
     };
     window.addEventListener("pointerdown", away, true);
@@ -56,13 +60,16 @@ export function MdMenu(props: { x: number; y: number; formats: Format[]; host: E
     props.onClose();
     f();
   };
-  const back = (title: string) => (
-    <button type="button" className="pm-menu-item md-menu-item md-menu-back" onClick={() => setView("formats")}>
-      <span className="flex items-center gap-1">
-        <ChevronLeft size={14} /> {title}
-      </span>
-    </button>
-  );
+  const back = (title: string) =>
+    only ? (
+      <div className="pm-menu-item md-menu-item md-menu-back">{title}</div>
+    ) : (
+      <button type="button" className="pm-menu-item md-menu-item md-menu-back" onClick={() => setView("formats")}>
+        <span className="flex items-center gap-1">
+          <ChevronLeft size={14} /> {title}
+        </span>
+      </button>
+    );
   return createPortal(
     <div
       ref={ref}
@@ -86,14 +93,18 @@ export function MdMenu(props: { x: number; y: number; formats: Format[]; host: E
             ),
           )}
           {props.formats.length > 0 && <div className="md-menu-rule" />}
-          <button type="button" role="menuitem" aria-haspopup="true" className="pm-menu-item md-menu-item" onClick={() => setView("pomelo")}>
-            <span>柚儿园图标</span>
-            <ChevronRight size={14} className="md-menu-keys" />
-          </button>
-          <button type="button" role="menuitem" aria-haspopup="true" className="pm-menu-item md-menu-item" onClick={() => setView("site")}>
-            <span>网站图标</span>
-            <ChevronRight size={14} className="md-menu-keys" />
-          </button>
+          {libs.includes("pomelo") && (
+            <button type="button" role="menuitem" aria-haspopup="true" className="pm-menu-item md-menu-item" onClick={() => setView("pomelo")}>
+              <span>柚儿园图标</span>
+              <ChevronRight size={14} className="md-menu-keys" />
+            </button>
+          )}
+          {libs.includes("site") && (
+            <button type="button" role="menuitem" aria-haspopup="true" className="pm-menu-item md-menu-item" onClick={() => setView("site")}>
+              <span>网站图标</span>
+              <ChevronRight size={14} className="md-menu-keys" />
+            </button>
+          )}
         </>
       )}
       {view === "pomelo" && (

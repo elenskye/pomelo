@@ -161,7 +161,7 @@
 - **资源库**（`images.rs`、`registry.rs`）：内容只写引用，保存时检查引用的是资源库里的文件。加文件都走 `site_files_add`：超过 1.5 MB 的图片用 `sips` 转 JPEG、缩长边；资源库里有一模一样的就用它，网站别处有一样的就拒绝；否则存进资源库并按去处自动登记。删之前照网站 `asset-reference-report.mjs` 的规则扫引用。界面经 `pomelo-site://localhost/<网址>` 显示网站里的图片（只认 `public/` 下的）。
 - **预览和编辑器**：Rust 开一个 `site-preview` 窗口装本地服务的那一页（它不能调用 Pomelo 的命令）；编辑器 `MdEditor.tsx` 是共用输入框（见「写字的输入框」）的 Markdown Flavor。
 
-## 看画布
+## 有板有眼
 
 - **Pomelo 不存画布**：`canvas.rs` 只记文件夹（设置 `canvas.folder`，默认 `~/Documents/GitHub/visual-atelier`）和上次看的那块（`canvas.last`）；不进 `pomelo.db` 的表、备份、导出、撤销、搜索，柚子不读。
 - **画布服务**是 visual-atelier 的 bench（`node bench/bin/dw.js serve --port N --json`，只听 127.0.0.1），Node 按它的 `.nvmrc` 在 nvm 里找（和呦呦漫游同一套 `site/tools.rs`、`site/server.rs`）。Pomelo 用它给别的程序的接口（它的 `bench/README.md`「给别的程序用」）：`GET /api/status` 认出是不是它（`app: visual-atelier-bench`），`GET /api/canvases`、`/api/canvases/<名字>` 列画布和画板，`POST /api/stop` 停掉。端口上有别处启动的就直接用；不是它（或是没有 `/api/status` 的旧服务）就说端口被占着。正式版用 bench 自己的 4321；开发版、测试、临时数据目录的打包版用 4331，不碰正式的那个。Pomelo 启动的在退出时整组停掉。

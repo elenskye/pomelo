@@ -8,6 +8,7 @@ import { ArrowDown, ArrowUp, ImagePlus, MoreHorizontal, X } from "@/shared/icons
 import { AssistAction, PolishBox, useAssistOn } from "@/modules/youzi/Assist";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { useDropTarget } from "@/shared/attachments/target";
+import { MdMenu } from "@/shared/editor/MdMenu";
 import { Button, IconButton, Segmented, fieldClass } from "@/shared/ui";
 import { MdEditor, type MdEditorHandle } from "./MdEditor";
 import { siteAssist, siteSrc, workApi, type Draft, type Lang } from "./api";
@@ -250,6 +251,36 @@ export function BodyField(props: { lang: Lang; label: string; body: string; setB
       </div>
     </div>
   );
+}
+
+/** The website's plain text boxes (关于我, 职业) that take its content icons: a right-click on a box marked
+ *  `{...SITE_ICONS}` inside `box` opens the same strip of paper as the Markdown boxes, with 网站图标 only — the website
+ *  draws `:name:` in these fields and nothing else (no Markdown, no 柚儿园图标). The icon goes in at the selection,
+ *  as typing would (the box's own ⌘Z takes it back). Spread `box` on the page's root and render `menu`. */
+export const SITE_ICONS = { "data-site-icons": "" };
+export function useSiteIconMenu() {
+  type Box = HTMLInputElement | HTMLTextAreaElement;
+  const [at, setAt] = useState<{ x: number; y: number; el: Box; sel: [number, number] } | null>(null);
+  const onContextMenu = (e: React.MouseEvent) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) || !el.matches("[data-site-icons]") || el.readOnly || el.disabled) return;
+    e.preventDefault();
+    setAt({ x: e.clientX, y: e.clientY, el, sel: [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length] });
+  };
+  const insert = (text: string) => {
+    if (!at) return;
+    const { el, sel } = at;
+    el.focus();
+    el.setSelectionRange(sel[0], sel[1]);
+    if (document.execCommand("insertText", false, text)) return;
+    // no editing command here: set it the way React hears
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, el.value.slice(0, sel[0]) + text + el.value.slice(sel[1]));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.setSelectionRange(sel[0] + text.length, sel[0] + text.length);
+  };
+  const menu = at && <MdMenu x={at.x} y={at.y} formats={[]} libraries={["site"]} host={at.el.closest("dialog[open]") ?? document.body} onFormat={() => {}} onInsert={insert} onClose={() => setAt(null)} />;
+  return { box: { onContextMenu }, menu };
 }
 
 /** A text box of its own width (TextInput is always full width). */

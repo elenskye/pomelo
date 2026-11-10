@@ -44,14 +44,31 @@ export function StickerBook(props: { onClose: () => void; onAsk: ((text: string)
   const close = () => {
     if (closing) return;
     if (reducedMotion()) return props.onClose();
+    // the field lets go before the book slides away (see the focus below)
+    input.current?.blur();
     setClosing(true);
     setTimeout(props.onClose, CLOSE_MS);
   };
   const go = (m: string) => tabs.open(`/${m}`);
   useEffect(() => {
-    input.current?.focus({ preventScroll: true });
+    // The field takes the focus once it has slid into the window, never while it is outside it (the book comes up
+    // from below the window and leaves that way): WebKit reveals a focused field by scrolling whatever it can —
+    // this box (the book then stood too high), and with the box unscrollable, the window's whole content, which
+    // stayed pushed up until the app was restarted. preventScroll alone doesn't stop it.
+    let raf = 0;
+    const focus = () => {
+      const el = input.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.top >= 0 && r.bottom <= window.innerHeight) el.focus({ preventScroll: true });
+      else raf = requestAnimationFrame(focus);
+    };
+    focus();
     const t = setTimeout(() => setWow(false), 900);
-    return () => clearTimeout(t);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
   }, []);
   const closeRef = useRef(close);
   closeRef.current = close;

@@ -7,7 +7,7 @@ import { useConfirm } from "@/shared/feedback";
 import { useSetting } from "@/shared/settings";
 import { Field, TextArea, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type About, type AboutVersion, type Entry, type Lang } from "./api";
-import { AddRow, BodyField, DocBar, DraftAction, ImageList, RowControls, addTo, moved, replaced, shown, stored, useDoc, useEnglishDraft, usePreview, type View } from "./parts";
+import { AddRow, BodyField, DocBar, DraftAction, ImageList, RowControls, SITE_ICONS, addTo, moved, replaced, shown, stored, useDoc, useEnglishDraft, usePreview, useSiteIconMenu, type View } from "./parts";
 import { AssetPicker } from "./WorkEditor";
 
 function Timeline(props: { rows: Entry[]; set: (rows: Entry[]) => void; locked?: boolean }) {
@@ -17,12 +17,12 @@ function Timeline(props: { rows: Entry[]; set: (rows: Entry[]) => void; locked?:
         <div key={i} className="flex gap-2 rounded-card border p-2">
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="grid grid-cols-3 gap-1.5">
-              <TextInput aria-label="职位 / 身份" placeholder="职位 / 身份" value={e.role} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { role: x.target.value }))} className="py-1 text-xs" />
-              <TextInput aria-label="公司 / 学校" placeholder="公司 / 学校" value={e.org} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { org: x.target.value }))} className="py-1 text-xs" />
+              <TextInput {...SITE_ICONS} aria-label="职位 / 身份" placeholder="职位 / 身份" value={e.role} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { role: x.target.value }))} className="py-1 text-xs" />
+              <TextInput {...SITE_ICONS} aria-label="公司 / 学校" placeholder="公司 / 学校" value={e.org} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { org: x.target.value }))} className="py-1 text-xs" />
               <TextInput aria-label="时间段" placeholder="时间段" value={e.period} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { period: x.target.value }))} className="py-1 text-xs" />
             </div>
             <Polish module="site" value={e.description} onChange={(t) => props.set(replaced(props.rows, i, { description: t }))}>
-              <TextArea aria-label="一句话简介" placeholder="一句话简介" rows={2} value={e.description} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { description: x.target.value }))} className="text-xs" />
+              <TextArea {...SITE_ICONS} aria-label="一句话简介" placeholder="一句话简介" rows={2} value={e.description} readOnly={props.locked} onChange={(x) => props.set(replaced(props.rows, i, { description: x.target.value }))} className="text-xs" />
             </Polish>
           </div>
           {!props.locked && <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />}
@@ -40,6 +40,7 @@ export function AboutPage(props: { setDirty: (d: boolean) => void; onError: (e: 
   const doc = useDoc<About>([...SITE_KEY, "about"], pageApi.about, pageApi.aboutSave, props.setDirty, props.onError, props.onChanged);
   const { previewing, preview } = usePreview(props.onError);
   const english = useEnglishDraft("about", (m) => doc.setDraft((d) => (d?.en && m.body ? { ...d, en: { ...d.en, story: stored(shown(m.body)) } } : d)), props.onError, !!doc.draft);
+  const icons = useSiteIconMenu();
   const d = doc.draft;
   if (!d) return null;
   const langs: Lang[] = view === "both" ? ["zh", "en"] : [view];
@@ -51,7 +52,7 @@ export function AboutPage(props: { setDirty: (d: boolean) => void; onError: (e: 
     await english.start({ title: "", summary: "", body: d.zh.story });
   };
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t">
+    <div className="flex min-h-0 flex-1 flex-col border-t" {...icons.box}>
       <DocBar
         view={view}
         setView={setView}
@@ -74,7 +75,7 @@ export function AboutPage(props: { setDirty: (d: boolean) => void; onError: (e: 
                 <div key={l} className="space-y-5">
                   <Field label="一点背景">
                     <Polish module="site" value={v.contextIntro} onChange={(t) => setV(l)({ contextIntro: t })}>
-                      <TextArea rows={4} value={v.contextIntro} readOnly={locked} onChange={(e) => setV(l)({ contextIntro: e.target.value })} className="text-[13px]" />
+                      <TextArea {...SITE_ICONS} rows={4} value={v.contextIntro} readOnly={locked} onChange={(e) => setV(l)({ contextIntro: e.target.value })} className="text-[13px]" />
                     </Polish>
                   </Field>
                   <Field label="时间轴">
@@ -119,6 +120,7 @@ export function AboutPage(props: { setDirty: (d: boolean) => void; onError: (e: 
         />
       )}
       {confirmDialog}
+      {icons.menu}
     </div>
   );
 }

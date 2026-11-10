@@ -15,7 +15,6 @@ import { fetchAgenda, useAgenda, useTodoMutations, type Task } from "@/modules/t
 import { ActionCircle } from "@/modules/todo/TaskList";
 import { cheerOver } from "@/shared/cheer";
 import { errorText, useToast } from "@/shared/feedback";
-import { flash } from "@/shared/hand";
 import { HandIcon, Tape, Tip } from "@/shared/handParts";
 import { NoteBody } from "@/modules/notes/NoteBody";
 import { InlineMd } from "@/shared/InlineMd";
@@ -81,6 +80,13 @@ export function TodoNote(props: { today: string; onOpen: (t: Task) => void; go: 
   const open = [...a.overdue, ...a.due];
   const rows = [...open, ...a.doneToday].slice(0, 5);
   const more = open.length + a.doneToday.length - rows.length;
+  // struck while its tick bounces (ActionCircle saves it after the bounce)
+  const [ticking, setTicking] = useState<number | null>(null);
+  const tick = (t: Task) => {
+    if (t.taskType === "checkin") return;
+    setTicking(t.id);
+    setTimeout(() => setTicking((id) => (id === t.id ? null : id)), 1000);
+  };
   const toggle = (t: Task, el: HTMLElement | null) => {
     const done = !(t.done || (t.taskType === "checkin" && t.loggedToday));
     m.setDone.mutate(
@@ -88,7 +94,6 @@ export function TodoNote(props: { today: string; onOpen: (t: Task) => void; go: 
       {
         onSuccess: () => {
           if (!done) return;
-          if (t.taskType !== "checkin") flash(el, "is-pop", 700);
           void fetchAgenda(props.today)
             .then((x) => {
               if (!x.overdue.length && !x.due.length && x.doneToday.length) cheerOver(el?.closest("[data-tasks]") as HTMLElement, "今天的事都做完啦！");
@@ -104,13 +109,13 @@ export function TodoNote(props: { today: string; onOpen: (t: Task) => void; go: 
       <div data-tasks>
         {rows.length === 0 && <p className="dk-empty">今天没有安排，喝杯茶吧</p>}
         {rows.map((t) => {
-          const struck = t.done && t.taskType !== "checkin";
+          const struck = (t.done || ticking === t.id) && t.taskType !== "checkin";
           const late = !t.done && t.dueDate !== null && t.dueDate < props.today;
           return (
             <div key={t.id} className="dk-row">
-              <ActionCircle task={t} onToggle={() => toggle(t, document.getElementById(`dk-t${t.id}`))} />
+              <ActionCircle task={t} onToggle={() => toggle(t, document.getElementById(`dk-t${t.id}`))} onTick={() => tick(t)} />
               <button type="button" className="t" onClick={() => props.onOpen(t)}>
-                <span id={`dk-t${t.id}`} className={`task-title ${struck ? "done" : ""}`} style={struck ? { color: "var(--color-ink-soft)" } : undefined} data-hand="strike" data-seed={1405 + (t.id % 7)}>
+                <span id={`dk-t${t.id}`} className={`task-title ${struck ? "done" : ""} ${ticking === t.id ? "is-pop" : ""}`} style={struck ? { color: "var(--color-ink-soft)" } : undefined} data-hand="strike" data-seed={1405 + (t.id % 7)}>
                   <InlineMd text={t.title} />
                 </span>
               </button>

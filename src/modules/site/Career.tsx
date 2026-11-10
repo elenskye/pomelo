@@ -8,7 +8,7 @@ import { Polish } from "@/modules/youzi/Assist";
 import { useSetting } from "@/shared/settings";
 import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type Career, type CareerVersion, type Detailed, type Lang, type Section, type Simple } from "./api";
-import { AddRow, BodyField, DocBar, RowControls, SizedInput, addTo, moved, pickFiles, replaced, useDoc, usePreview, type View } from "./parts";
+import { AddRow, BodyField, DocBar, RowControls, SITE_ICONS, SizedInput, addTo, moved, pickFiles, replaced, useDoc, usePreview, useSiteIconMenu, type View } from "./parts";
 import { AssetPicker } from "./WorkEditor";
 
 const MODES: { value: Section["mode"]; label: string }[] = [
@@ -36,7 +36,7 @@ function Resumes(props: { lang: Lang; v: CareerVersion; set: (patch: Partial<Car
     <div className="space-y-2">
       {rows.map((r, i) => (
         <div key={i} className="flex items-center gap-2">
-          <SizedInput aria-label="按钮文字" placeholder="按钮文字" value={r.label} onChange={(e) => props.set({ resumes: replaced(rows, i, { label: e.target.value }) })} className={`w-44 shrink-0 ${small}`} />
+          <SizedInput {...SITE_ICONS} aria-label="按钮文字" placeholder="按钮文字" value={r.label} onChange={(e) => props.set({ resumes: replaced(rows, i, { label: e.target.value }) })} className={`w-44 shrink-0 ${small}`} />
           <button type="button" onClick={() => choose(i)} title={r.file} className="min-w-0 flex-1 truncate rounded-control border px-2 py-1 text-left font-mono text-xs text-muted-foreground hover:bg-muted">
             {r.file.split("/").pop() || "选择文件…"}
           </button>
@@ -74,8 +74,8 @@ function SimpleRows(props: { rows: Simple[]; set: (rows: Simple[]) => void }) {
       {props.rows.map((r, i) => (
         <div key={i} className="flex gap-2">
           <div className="min-w-0 flex-1 space-y-1">
-            <TextInput aria-label="小标题" placeholder="小标题" value={r.heading} onChange={(e) => props.set(replaced(props.rows, i, { heading: e.target.value }))} className={small} />
-            <TextArea aria-label="内容要点" placeholder="内容要点" rows={2} value={r.items} onChange={(e) => props.set(replaced(props.rows, i, { items: e.target.value }))} className="text-xs" />
+            <TextInput {...SITE_ICONS} aria-label="小标题" placeholder="小标题" value={r.heading} onChange={(e) => props.set(replaced(props.rows, i, { heading: e.target.value }))} className={small} />
+            <TextArea {...SITE_ICONS} aria-label="内容要点" placeholder="内容要点" rows={2} value={r.items} onChange={(e) => props.set(replaced(props.rows, i, { items: e.target.value }))} className="text-xs" />
           </div>
           <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />
         </div>
@@ -93,10 +93,10 @@ function DetailedRows(props: { rows: Detailed[]; set: (rows: Detailed[]) => void
           <div className="min-w-0 flex-1 space-y-1">
             <div className="grid grid-cols-3 gap-1">
               <TextInput aria-label="时间段" placeholder="时间段" value={r.period} onChange={(e) => props.set(replaced(props.rows, i, { period: e.target.value }))} className={small} />
-              <TextInput aria-label="角色 / 名称" placeholder="角色 / 名称" value={r.role} onChange={(e) => props.set(replaced(props.rows, i, { role: e.target.value }))} className={small} />
-              <TextInput aria-label="机构 / 项目" placeholder="机构 / 项目" value={r.org} onChange={(e) => props.set(replaced(props.rows, i, { org: e.target.value }))} className={small} />
+              <TextInput {...SITE_ICONS} aria-label="角色 / 名称" placeholder="角色 / 名称" value={r.role} onChange={(e) => props.set(replaced(props.rows, i, { role: e.target.value }))} className={small} />
+              <TextInput {...SITE_ICONS} aria-label="机构 / 项目" placeholder="机构 / 项目" value={r.org} onChange={(e) => props.set(replaced(props.rows, i, { org: e.target.value }))} className={small} />
             </div>
-            <TextArea aria-label="要点（一行一条）" placeholder="要点" rows={3} value={r.bullets.join("\n")} onChange={(e) => props.set(replaced(props.rows, i, { bullets: e.target.value.split("\n") }))} className="text-xs" />
+            <TextArea {...SITE_ICONS} aria-label="要点（一行一条）" placeholder="要点" rows={3} value={r.bullets.join("\n")} onChange={(e) => props.set(replaced(props.rows, i, { bullets: e.target.value.split("\n") }))} className="text-xs" />
           </div>
           <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />
         </div>
@@ -139,12 +139,13 @@ export function CareerPage(props: { setDirty: (d: boolean) => void; onError: (e:
   const [view, setView] = useSetting<View>("ui.site_work_view", "zh", (v): v is View => v === "zh" || v === "en" || v === "both");
   const doc = useDoc<Career>([...SITE_KEY, "career"], pageApi.career, pageApi.careerSave, props.setDirty, props.onError, props.onChanged);
   const { previewing, preview } = usePreview(props.onError);
+  const icons = useSiteIconMenu();
   const d = doc.draft;
   if (!d) return null;
   const langs: Lang[] = view === "both" ? ["zh", "en"] : [view];
   const setV = (l: Lang) => (patch: Partial<CareerVersion>) => doc.setDraft((x) => (x && x[l] ? { ...x, [l]: { ...x[l]!, ...patch } } : x));
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t">
+    <div className="flex min-h-0 flex-1 flex-col border-t" {...icons.box}>
       <DocBar
         view={view}
         setView={setView}
@@ -185,6 +186,7 @@ export function CareerPage(props: { setDirty: (d: boolean) => void; onError: (e:
           })}
         </div>
       </div>
+      {icons.menu}
     </div>
   );
 }

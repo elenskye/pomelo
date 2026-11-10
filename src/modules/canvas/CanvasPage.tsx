@@ -1,4 +1,4 @@
-// 看画布: visual-atelier's canvases inside Pomelo (Dawn Plan · Phase 8). The canvases are shown by that repository's
+// 有板有眼: visual-atelier's canvases inside Pomelo (Dawn Plan · Phase 8). The canvases are shown by that repository's
 // own viewer, the bench — a local server whose page is the canvas UI. Here: 启动 / 停止 it (Rust, canvas.rs), a
 // side column of the canvases (the open one lists its boards, by page), and the bench's UI in a frame beside it —
 // pan and zoom, pages, one board full size, Tweaks, 批准 all happen in there, nothing opens a browser.

@@ -94,7 +94,7 @@ impl Server {
         self.start_program(&node_bin.join("npm"), folder, &["run", "dev", "--", "--port", &port_s], node_bin, port)
     }
 
-    /// Starts a program that will listen on `port` (看画布's bench too), unless something already answers there or
+    /// Starts a program that will listen on `port` (有板有眼's bench too), unless something already answers there or
     /// ours is still coming up; returns at once.
     pub fn start_program(&self, program: &Path, dir: &Path, args: &[&str], node_bin: &Path, port: u16) -> Result<(), String> {
         let mut g = self.lock();

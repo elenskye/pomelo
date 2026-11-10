@@ -77,6 +77,12 @@
     height: 100%;
     overflow: hidden;
   }
+  /* clip, not hidden: a hidden box can still be scrolled by code (WebKit revealing a focused field), a clipped one
+     can't; main.tsx's pinShell puts back whatever moves all the same */
+  body,
+  #root {
+    overflow: clip;
+  }
   * {
     overscroll-behavior: none;
   }
@@ -137,6 +143,16 @@
 /* the todo checkbox and its strike (modules/todo/TaskList.tsx): Design System checkbox; the title's ink line shows when done,
    drawn in when just ticked (the check part's own keyframes) */
 .pm-check.pm-check-only { width: auto; min-height: 0; gap: 0; }
+/* 便签的纸明暗都是浅色的：纸上的强调色（标签、链接）在便签上跟着便签的墨色走，不用给深色纸配的浅色
+   （深色模式下每套配色的强调色都是浅的，写在便签上和纸融在一起） */
+.pm-note {
+  --primary: var(--color-on-sticky); --color-primary: var(--color-on-sticky); --color-link: var(--color-on-sticky);
+  --foreground: var(--color-on-sticky); --color-foreground: var(--color-on-sticky);
+  --muted-foreground: color-mix(in srgb, var(--color-on-sticky) 72%, var(--color-sticky)); --color-muted-foreground: color-mix(in srgb, var(--color-on-sticky) 72%, var(--color-sticky));
+  --status-doing-bg: color-mix(in srgb, var(--color-on-sticky) 14%, transparent);
+}
+.pm-note .text-primary { font-weight: 700; }
+
 .task-title { position: relative; }
 .task-title:not(.done) > [data-hand-painted] { display: none; }
 .task-title.is-pop > [data-hand-painted] path { stroke-dasharray: 1 2; animation: pm-strike .35s .2s ease-out both; }

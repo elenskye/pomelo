@@ -63,8 +63,8 @@ export const MODULES: ModuleDef[] = [
       { value: "site", label: "站点" },
     ],
   },
-  // 看画布 keeps no data of its own (visual-atelier's canvases, shown by its bench: modules/canvas)
-  { id: "canvas", label: "看画布", icon: Shapes, color: "var(--module-canvas)" },
+  // 有板有眼 keeps no data of its own (visual-atelier's canvases, shown by its bench: modules/canvas)
+  { id: "canvas", label: "有板有眼", icon: Shapes, color: "var(--module-canvas)" },
   { id: "vault", label: "芝麻开门", icon: KeyRound, color: "var(--module-vault)" },
   { id: "bookmarks", label: "一网打尽", icon: Globe, color: "var(--module-bookmarks)" },
   { id: "youzi", label: "柚子", icon: Bird, color: "var(--module-youzi)" },

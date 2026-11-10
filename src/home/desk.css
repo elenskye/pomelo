@@ -34,7 +34,8 @@
 
 /* 今日简报 */
 .dk-brief { padding: 18px 22px 16px 34px; }
-.dk-brief .brief-body { max-height: 228px; overflow-y: auto; font-size: 15px; line-height: 1.85; }
+/* 字和滚动条之间留一条：滚动条画在右边这 14 里，不压字（WebKit 里它出现时字不重排，会被盖住一截） */
+.dk-brief .brief-body { max-height: 228px; margin-right: -14px; padding-right: 14px; overflow-x: hidden; overflow-y: auto; font-size: 15px; line-height: 1.85; }
 .dk-brief .brief-body p { margin: 0 0 4px; }
 
 /* 今天的待办 */

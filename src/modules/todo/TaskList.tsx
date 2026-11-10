@@ -2,10 +2,10 @@
 // A row shows only the title and the due date (a repeat task's current occurrence). Circle = the
 // type's quick action (Rust decides what it means): check, finish this occurrence, check in today,
 // or +1. Row click = edit; drag the row = reorder among siblings; 「1/3 ⌄」 on the right = fold.
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Link2, ListPlus, X } from "@/shared/icons";
 import { cheerOver } from "@/shared/cheer";
-import { flash } from "@/shared/hand";
+import { flash, reducedMotion } from "@/shared/hand";
 import { slashDate } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { InlineMd } from "@/shared/InlineMd";
@@ -34,12 +34,26 @@ function Pie(props: { ratio: number }) {
   );
 }
 
+/** How long a just-ticked row stays where it is, ticked, before the tick is really saved: the jelly bounce (0.6s) and the
+ *  strike drawing itself need the row to stay put, and a done task moves down to 已完成 the moment it is saved. */
+const TICK_HOLD = 600;
+const TICK_SETTLE = 400;
+
 /** The task type's quick action. A tick is the Design System checkbox (a sticker that jelly-bounces when ticked, its
- *  yuzu fill pops and the tick draws itself; motion part check); a 进度条 task shows its pie instead. */
-export function ActionCircle(props: { task: Task; onToggle: () => void }) {
+ *  yuzu fill pops and the tick draws itself; motion part check); a 进度条 task shows its pie instead.
+ *  Ticking shows at once and is saved (`onToggle`) after the bounce; `onTick` says the bounce began (strike the title). */
+export function ActionCircle(props: { task: Task; onToggle: () => void; onTick?: () => void }) {
   const t = props.task;
   const ref = useRef<HTMLButtonElement>(null);
-  const checked = t.done || (t.taskType === "checkin" && t.loggedToday);
+  const saved = t.done || (t.taskType === "checkin" && t.loggedToday);
+  const [held, setHeld] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => void (alive.current = false);
+  }, []);
+  useEffect(() => setHeld(false), [saved]);
+  const checked = saved || held;
   const label = t.done
     ? `把「${t.title}」标为没做完`
     : { normal: `完成「${t.title}」`, repeat: `完成这一次「${t.title}」`, checkin: t.loggedToday ? `取消今天的打卡` : `今天打卡「${t.title}」`, progress: `「${t.title}」+1` }[t.taskType];
@@ -53,8 +67,15 @@ export function ActionCircle(props: { task: Task; onToggle: () => void }) {
       aria-label={label}
       onClick={(e) => {
         e.stopPropagation();
-        if (!checked && !pie) flash(ref.current, "is-pop", 620);
-        props.onToggle();
+        if (held) return;
+        if (saved || pie || reducedMotion()) return props.onToggle();
+        setHeld(true);
+        props.onTick?.();
+        flash(ref.current, "is-pop", 620);
+        // saved even when the page was left meanwhile; then the task says what it is (a repeat's next time and a
+        // save that failed are not ticked)
+        setTimeout(props.onToggle, TICK_HOLD);
+        setTimeout(() => alive.current && setHeld(false), TICK_HOLD + TICK_SETTLE);
       }}
       className={`shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring ${pie ? "" : "pm-check pm-check-only"}`}
     >
@@ -101,7 +122,14 @@ function TaskRow(p: RowProps) {
   const t = p.task;
   const row = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLSpanElement>(null);
-  /** Ticked: the ink line strikes the title out (motion part check's stroke); the day's last one → 全做完 (done-cheer). */
+  /** Ticked: the ink line strikes the title out while the tick bounces (motion part check's stroke); the day's last one → 全做完 (done-cheer). */
+  const [ticking, setTicking] = useState(false);
+  useEffect(() => setTicking(false), [t.done]);
+  const tick = () => {
+    if (t.taskType === "checkin") return;
+    setTicking(true);
+    setTimeout(() => row.current && setTicking(false), TICK_HOLD + TICK_SETTLE);
+  };
   const toggle = () => {
     const done = !(t.done || (t.taskType === "checkin" && t.loggedToday));
     m.setDone.mutate(
@@ -109,7 +137,6 @@ function TaskRow(p: RowProps) {
       {
         onSuccess: () => {
           if (!done) return;
-          if (t.taskType !== "checkin") flash(title.current, "is-pop", 700);
           void fetchAgenda(p.today)
             .then((a) => {
               if (!a.overdue.length && !a.due.length && a.doneToday.length) cheerOver(row.current?.closest("[data-tasks]") ?? row.current, "今天的事都做完啦！");
@@ -119,7 +146,7 @@ function TaskRow(p: RowProps) {
       },
     );
   };
-  const struck = t.done && t.taskType !== "checkin";
+  const struck = (t.done || ticking) && t.taskType !== "checkin";
   const late = !t.done && t.dueDate !== null && t.dueDate < p.today;
   return (
     <div
@@ -131,9 +158,9 @@ function TaskRow(p: RowProps) {
         p.selected ? "bg-accent" : "bg-card hover:bg-muted/70"
       }`}
     >
-      <ActionCircle task={t} onToggle={toggle} />
+      <ActionCircle task={t} onToggle={toggle} onTick={tick} />
       <div className="min-w-0 flex-1">
-        <span ref={title} className={`task-title ${struck ? "done text-muted-foreground" : ""}`} data-hand="strike" data-seed={1405 + (t.id % 7)}>
+        <span ref={title} className={`task-title ${struck ? "done text-muted-foreground" : ""} ${ticking ? "is-pop" : ""}`} data-hand="strike" data-seed={1405 + (t.id % 7)}>
           <InlineMd text={t.title} />
         </span>
         {t.dueDate && (

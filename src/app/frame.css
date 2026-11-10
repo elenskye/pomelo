@@ -139,8 +139,9 @@
 .pslot { position: absolute; left: 10px; right: 10px; top: 54px; height: 22px; z-index: 3; }
 .ps-body { position: absolute; inset: 0; border-radius: 11px; background: var(--color-pen); box-shadow: 0 3px 6px var(--color-shadow); }
 .ps-mouth { position: absolute; left: 40px; right: 40px; top: 9px; height: 4px; border-radius: 2px; background: rgba(0, 0, 0, .45); }
-.rcwrap { position: absolute; left: 36px; right: 36px; top: 65px; bottom: 40px; overflow: hidden; pointer-events: none; }
-.rcpt { position: relative; pointer-events: auto; }
+/* 这一层不写 pointer-events: none：WebKit 里它下面的列表就收不到滚轮了（点纸外面关掉由它自己的点击管） */
+.rcwrap { position: absolute; left: 36px; right: 36px; top: 65px; bottom: 40px; overflow: hidden; }
+.rcpt { position: relative; }
 .rpaper { position: absolute; inset: 0; background: var(--color-card); box-shadow: 0 0 0 1px var(--color-line) inset; }
 .rin { position: relative; display: flex; flex-direction: column; max-height: calc(100vh - 110px); padding: 20px 18px 30px; }
 .rhead, .rfoot { font-size: 12px; line-height: 18px; text-align: center; color: var(--color-ink-soft); }

@@ -1,4 +1,4 @@
-//! 看画布: visual-atelier's canvases, looked at inside Pomelo. Pomelo keeps none of it — the canvases are files in the
+//! 有板有眼: visual-atelier's canvases, looked at inside Pomelo. Pomelo keeps none of it — the canvases are files in the
 //! visual-atelier folder (`~/Documents/GitHub/visual-atelier`, or the folder in the setting `canvas.folder`), shown
 //! by that repository's own viewer, the bench: `node bench/bin/dw.js serve`, a server on 127.0.0.1 whose page is the
 //! canvas UI (pan, pages, one board full size, Tweaks, 批准). Pomelo starts it, asks it what there is, shows its page

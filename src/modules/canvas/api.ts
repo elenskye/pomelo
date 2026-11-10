@@ -1,4 +1,4 @@
-// Typed wrappers for Rust canvas_* commands (src-tauri/src/canvas.rs) + React Query hooks. 看画布 keeps nothing:
+// Typed wrappers for Rust canvas_* commands (src-tauri/src/canvas.rs) + React Query hooks. 有板有眼 keeps nothing:
 // Rust starts, asks and stops visual-atelier's bench; the page shows the bench's own UI in a frame.
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";

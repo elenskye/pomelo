@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { reducedMotion } from "@/shared/hand";
 import { listen } from "@tauri-apps/api/event";
 import { Outlet, useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -279,8 +280,28 @@ function Shell() {
   const [hidden] = useHiddenModules();
   const path = useLocation().pathname;
   const chatUsable = ok && !hidden.includes("youzi") && !path.startsWith("/youzi");
-  const [chatOpen, setChatOpen] = useState(false);
-  const toggleChat = useCallback(() => setChatOpen((o) => !o), []);
+  const [chatOpen, setChatOpenNow] = useState(false);
+  // closing: the 小窗 shrinks back into the pomelo first (motion part chat-pop, 0.2s), then goes
+  const [chatLeaving, setChatLeaving] = useState(false);
+  const chatWant = useRef(false);
+  const chatTimer = useRef(0);
+  const setChatOpen = useCallback((open: boolean | ((o: boolean) => boolean)) => {
+    const next = typeof open === "function" ? open(chatWant.current) : open;
+    if (next === chatWant.current) return;
+    chatWant.current = next;
+    window.clearTimeout(chatTimer.current);
+    if (next || reducedMotion()) {
+      setChatLeaving(false);
+      setChatOpenNow(next);
+      return;
+    }
+    setChatLeaving(true);
+    chatTimer.current = window.setTimeout(() => {
+      setChatLeaving(false);
+      setChatOpenNow(false);
+    }, 200);
+  }, []);
+  const toggleChat = useCallback(() => setChatOpen((o) => !o), [setChatOpen]);
   useChatKey(chatUsable, toggleChat);
   const floating = useMedia(FLOAT_QUERY);
   const published = usePublishedContext();
@@ -359,7 +380,7 @@ function Shell() {
         </div>
         {chat && (
           <Suspense fallback={null}>
-            <SideChat context={context} floating={floating} ask={ask} onClose={() => setChatOpen(false)} />
+            <SideChat context={context} floating={floating} leaving={chatLeaving} ask={ask} onClose={() => setChatOpen(false)} />
           </Suspense>
         )}
         {bloom && ok && (

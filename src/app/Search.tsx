@@ -12,6 +12,7 @@ import { errorText } from "@/shared/feedback";
 import { reducedMotion } from "@/shared/hand";
 import { HandIcon } from "@/shared/handParts";
 import { ModuleIcon } from "./ModuleIcon";
+import type { ModuleDef } from "./modules";
 import { money, type Currency } from "@/modules/finance/money";
 import { slashDate } from "@/shared/dates";
 import { searchAll, searchSimilar, type Hit } from "@/shared/open";
@@ -27,6 +28,35 @@ function detail(h: Hit): string | null {
   if (h.kind === "note" && h.day) return slashDate(h.day);
   if (h.kind === "task" && h.day) return `${h.detail} · ${slashDate(h.day)}`;
   return h.detail;
+}
+
+/** One found record. It prints once (motion receipt-print's row): the delay it had when it appeared stays its delay,
+ *  and the motion comes off when it has printed. Left on, WebKit kept a late row at the step before last (its lower
+ *  third cut off) — the list re-numbers as I type and nothing repaints a row after its last step. */
+function Row(props: { hit: Hit; index: number; on: boolean; module?: ModuleDef; onPoint: () => void; onOpen: () => void }) {
+  const first = useRef(props.index).current;
+  const [printed, setPrinted] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setPrinted(true), 700);
+    return () => clearTimeout(t);
+  }, []);
+  const d = detail(props.hit);
+  return (
+    <div
+      role="option"
+      aria-selected={props.on}
+      data-index={props.index}
+      onMouseMove={props.onPoint}
+      onClick={props.onOpen}
+      onAnimationEnd={(e) => e.animationName === "pm-print-row" && setPrinted(true)}
+      className={`srow ${printed ? "" : "pm-print-row"} ${props.on ? "on" : ""}`}
+      style={printed ? undefined : ({ "--pm-i": first } as React.CSSProperties)}
+    >
+      {props.module && <ModuleIcon def={props.module} size={18} />}
+      <span className="rt">{props.hit.title}</span>
+      {d && <span className="rd">{d}</span>}
+    </div>
+  );
 }
 
 /** The receipt's torn bottom edge. */
@@ -102,23 +132,16 @@ export function SearchBox(props: { onClose: () => void; onAsk?: ((text: string) 
   const row = (h: Hit, near: boolean) => {
     i += 1;
     const index = i;
-    const d = detail(h);
-    const m = near ? modules.find((x) => x.id === h.module) : undefined;
     return (
-      <div
+      <Row
         key={`${near ? "near-" + h.module : ""}${h.kind}${h.id}`}
-        role="option"
-        aria-selected={index === active}
-        data-index={index}
-        onMouseMove={() => setActive(index)}
-        onClick={() => open(h)}
-        className={`srow pm-print-row ${index === active ? "on" : ""}`}
-        style={{ "--pm-i": index } as React.CSSProperties}
-      >
-        {m && <ModuleIcon def={m} size={18} />}
-        <span className="rt">{h.title}</span>
-        {d && <span className="rd">{d}</span>}
-      </div>
+        hit={h}
+        index={index}
+        on={index === active}
+        module={near ? modules.find((x) => x.id === h.module) : undefined}
+        onPoint={() => setActive(index)}
+        onOpen={() => open(h)}
+      />
     );
   };
   const n = hits.length;
@@ -138,7 +161,7 @@ export function SearchBox(props: { onClose: () => void; onAsk?: ((text: string) 
           <div className="ps-body" />
           <div className="ps-mouth" />
         </div>
-        <div className="rcwrap">
+        <div className="rcwrap" onClick={(e) => e.target === e.currentTarget && close()}>
           <div ref={paper} className="rcpt pm-print-paper">
             <div className="rpaper" style={{ clipPath: TORN }} />
             <div className="rin">

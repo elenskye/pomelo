@@ -41,7 +41,31 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   // 写字的框在 WebKit 里的自测：`&edtest=<端口>`（docs/testing.md）
   const edtest = new URLSearchParams(location.search).get("edtest");
   if (edtest) void import("./dev/edtest").then((m) => m.runEdTest(edtest));
+  // 在 Safari 里遥控：`&drive=<端口>`（docs/testing.md）
+  const drive = new URLSearchParams(location.search).get("drive");
+  if (drive) void import("./dev/drive").then((m) => m.runDrive(drive));
 }
+// 开发版的真窗口里也能遥控：`VITE_DRIVE=<端口> pnpm app:dev`（docs/testing.md）
+if (import.meta.env.DEV && import.meta.env.VITE_DRIVE && !new URLSearchParams(location.search).has("mock")) {
+  const port = String(import.meta.env.VITE_DRIVE);
+  void import("./dev/drive").then((m) => m.runDrive(port));
+}
+// The window's content never scrolls as a whole (index.css): if WebKit moves it anyway — revealing a focused field
+// that slid out of the window did, and the top bar stayed pushed out until a restart — it goes straight back.
+function pinShell() {
+  const root = document.getElementById("root");
+  const back = () => {
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    for (const el of [document.documentElement, document.body, root, root?.firstElementChild]) {
+      if (el && (el.scrollTop || el.scrollLeft)) el.scrollTop = el.scrollLeft = 0;
+    }
+  };
+  window.addEventListener("scroll", back, { passive: true });
+  for (const el of [document.body, root]) el?.addEventListener("scroll", back, { passive: true });
+  window.addEventListener("focusin", () => requestAnimationFrame(back));
+  window.addEventListener("resize", back);
+}
+pinShell();
 // the palette and light / dark chosen in 设置, before the first paint
 startAppearance();
 // the hand-drawn frames, lines and controls (data-hand), painted as they appear

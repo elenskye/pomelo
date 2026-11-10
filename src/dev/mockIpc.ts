@@ -5570,7 +5570,7 @@ const siteRun = (message: string) => {
     site.history[0].state = failed ? "failure" : "success";
   });
 };
-// ---------- 看画布 (canvas.rs): a pretend bench; the frame points at 127.0.0.1:4321, where a real `dw serve` shows if one runs ----------
+// ---------- 有板有眼 (canvas.rs): a pretend bench; the frame points at 127.0.0.1:4321, where a real `dw serve` shows if one runs ----------
 let cvRunning = false;
 let cvFolder = "/Users/me/Documents/GitHub/visual-atelier";
 const CV_DEFAULT = cvFolder;
