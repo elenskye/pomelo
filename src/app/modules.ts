@@ -1,7 +1,7 @@
 // Module registry. Add new modules here (id = route path segment).
 // MODULES hold data (search, export, 柚子 read them); the 助手 are 柚子's, shown as modules in the 模块坞, the
 // 索引签 and the 柚子瓣 (their data and code stay in 柚子; hiding 柚子 hides them too).
-import { Bird, BookOpen, CalendarDays, Briefcase, BrushCleaning, CalendarHeart, Clapperboard, Compass, Feather, FileInput, FileUser, Globe, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, Settings, Shapes, Wallet, type IconType } from "@/shared/icons";
+import { Bird, BookOpen, CalendarDays, Briefcase, BrushCleaning, CalendarHeart, Clapperboard, Compass, Feather, FileInput, FileUser, Globe, MessageCircleQuestion, Footprints, House, KeyRound, Languages, LayoutGrid, Luggage, Palette, ScanText, ScrollText, Settings, Shapes, Wallet, type IconType } from "@/shared/icons";
 
 export type ModuleDef = {
   id: string;
@@ -140,6 +140,8 @@ export const ASSISTANT_MODULES: ModuleDef[] = [
       { value: "settings", label: "设置" },
     ],
   },
+  // Atlas: 年度总结 as a 年度小报 (its own page, modules/atlas/; the writing is 柚子's 年度总结 schedule)
+  { id: "atlas", label: "Atlas", icon: ScrollText, color: "var(--module-atlas)", assistant: true },
 ];
 
 /** Pages that aren't modules: 首页, 模块坞, 设置. */

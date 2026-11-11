@@ -1540,7 +1540,7 @@
 .pm-whisper { position: relative; }
 .pm-whisper-under { position: absolute; inset: 0; }
 .pm-whisper-under > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transform: rotate(var(--pm-tilt, 8deg)); }
-.pm-whisper-text { position: absolute; left: 22%; top: 44%; width: 62%; font-size: 13px; font-weight: 700; line-height: 17px; color: var(--color-pen); text-align: center; }
+.pm-whisper-text { position: absolute; left: 17.5%; top: 44%; width: 62%; font-size: 13px; font-weight: 700; line-height: 17px; color: var(--color-pen); text-align: center; }
 .pm-whisper-peel { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; cursor: pointer; touch-action: none; border-radius: 50%; }
 .pm-whisper-peel:focus-visible { outline: 2.5px dashed var(--color-pen); outline-offset: 1px; }
 .pm-whisper-front, .pm-whisper-back { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }

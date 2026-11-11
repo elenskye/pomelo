@@ -10,6 +10,7 @@ import { addDays, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/youzi/assistants/seekerApi";
 import type { SkillFlowNode } from "@/modules/youzi/api";
 import { janitorCards, janitorChat, janitorHandlers, janitorLive, janitorReply } from "./janitorMock";
+import { atlasHandlers } from "./atlasMock";
 import { bm, bookmarkHandlers, bookmarksHome } from "./bookmarksMock";
 import { seekerHandlers, seekerMock } from "./seekerMock";
 import type { RaterRecord, RaterReview } from "@/modules/youzi/assistants/raterApi";
@@ -6154,6 +6155,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   ...youziHandlers,
   ...siteHandlers,
   ...canvasHandlers,
+  ...atlasHandlers,
   ...workHandlers,
   ...siteAssistHandlers,
   ...pageHandlers,

@@ -76,12 +76,13 @@ function Card(props: { seed: number; tilt: number; tapes?: number; tint?: string
 export function TodoNote(props: { today: string; onOpen: (t: Task) => void; go: () => void }) {
   const { data: a } = useAgenda(props.today);
   const m = useTodoMutations();
+  // struck while its tick bounces (ActionCircle saves it after the bounce). Before the early return: a hook after it
+  // only runs once the agenda has arrived, and React throws (#310) on the render that adds it
+  const [ticking, setTicking] = useState<number | null>(null);
   if (!a) return null;
   const open = [...a.overdue, ...a.due];
   const rows = [...open, ...a.doneToday].slice(0, 5);
   const more = open.length + a.doneToday.length - rows.length;
-  // struck while its tick bounces (ActionCircle saves it after the bounce)
-  const [ticking, setTicking] = useState<number | null>(null);
   const tick = (t: Task) => {
     if (t.taskType === "checkin") return;
     setTicking(t.id);

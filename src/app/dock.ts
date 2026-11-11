@@ -32,7 +32,7 @@ export const DEFAULT: Layout = {
     { id: "c1", name: "日常", tone: 0, mods: ["todo", "notes", "days", "finance", "packing"] },
     { id: INTEREST, name: "兴趣", tone: 1, mods: ["books", "films", "drawing", "site", "canvas"] },
     { id: "c4", name: "求职", tone: 2, mods: ["jobs", "seeker", "rater"] },
-    { id: "c6", name: "柚子", tone: 3, mods: ["youzi", "translate", "pub2md", "importer"] },
+    { id: "c6", name: "柚子", tone: 3, mods: ["youzi", "translate", "pub2md", "importer", "atlas"] },
     { id: "c7", name: "工具", tone: 4, mods: ["vault", "bookmarks", "janitor"] },
   ],
   pinned: ["todo", "notes", "jobs", "seeker", "youzi"],

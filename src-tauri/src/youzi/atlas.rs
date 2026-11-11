@@ -9,8 +9,14 @@
 //!   offered only when there's something for it; 序章 and 终章 always), a line or two each and the
 //!   records it quotes, only from the snapshot (回声: one note of each year, same day). Words only:
 //!   numbers, dates and ranks are Rust's. Unknown scenes / records are dropped; scenes keep SCENES' order.
+//! - 和柚子聊的事: the model also sorts the conversations into topics, each with a kind from TOPIC_KINDS
+//!   (else `other`). It never picks a drawing: the design draws a kind's own bubble when it has one and a
+//!   plain one otherwise, so any year's topics can be drawn. How often is counted here (the refs).
 //! - Never fails the letter: a failed scenes step keeps the snapshot with the error.
-//! - Until Atlas's page exists, shown folded under the letter (`preview`).
+//! - Every run keeps its own row (history): `design` is the design it was made for (DESIGN then), and
+//!   Atlas always draws it with that one, also after a newer design exists; a year done again (补做) is one
+//!   more row. Only the user deletes rows (`atlas_delete`, undoable): no AI tool, no schedule.
+//! - Also shown folded under the letter (`preview`).
 
 use super::context::{self, Counter};
 use super::data::{self, Access, YearMoney};
@@ -24,6 +30,29 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Starts the scenes' system message (the mock model answers by it).
 pub const MARK: &str = "【Atlas · 各幕】";
+
+/// The design new runs are made for: `<id>@<version>` of a release in src/vendor/pomelo/atlas/ (synced from
+/// visual-atelier schemes/pomelo/atlas/releases/). Changed when a newer design is adopted; old rows keep theirs.
+pub const DESIGN: &str = "tabloid@1.0.0";
+
+/// What a year's talks with 柚子 are sorted into (key, what belongs). A design draws each its own way.
+pub const TOPIC_KINDS: &[(&str, &str)] = &[
+    ("cook", "做饭、吃喝"),
+    ("work", "求职、面试、工作"),
+    ("code", "代码、技术"),
+    ("travel", "旅行、出门"),
+    ("pet", "宠物"),
+    ("sleep", "睡眠、熬夜"),
+    ("love", "感情、亲密关系"),
+    ("money", "钱、理财、消费"),
+    ("study", "学习、读书、考试"),
+    ("health", "身体、运动、健康"),
+    ("mood", "心情、烦恼"),
+    ("family", "家人、朋友"),
+];
+/// Topics a year shows at most; characters of a topic's name.
+const TOPICS: usize = 6;
+const TOPIC_CHARS: usize = 6;
 
 /// (key, title, what it shows), in the journey's order.
 pub const SCENES: &[(&str, &str, &str)] = &[
@@ -75,6 +104,23 @@ pub struct Habit {
     pub title: String,
     pub days: i64,
     pub longest: i64,
+    /// The day the longest run starts on.
+    #[serde(default)]
+    pub longest_from: Option<String>,
+    /// Days checked in each week of the year (week 0 = January 1–7 …).
+    #[serde(default)]
+    pub weeks: Vec<i64>,
+}
+
+/// A stone of 求职这一年: how many applications got that far (投出 → the 进行中 statuses most reached → Offer).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStage {
+    pub label: String,
+    pub n: i64,
+    pub unit: String,
+    #[serde(default)]
+    pub got: bool,
 }
 
 /// A record a scene may show: `kind` note / goal / trip / offer / day / book / film / course / talk.
@@ -97,7 +143,7 @@ pub struct Echo {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Snapshot {
     pub year: String,
     pub until: Option<String>,
@@ -110,6 +156,17 @@ pub struct Snapshot {
     pub echo: Vec<Echo>,
     /// The scenes there's something for (keys, SCENES' order).
     pub offered: Vec<String>,
+    pub job_stages: Vec<JobStage>,
+}
+
+/// A topic of the year's talks: `kind` from TOPIC_KINDS or "other"; `n` conversations (`refs`, talk keys).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Topic {
+    pub name: String,
+    pub kind: String,
+    pub n: i64,
+    pub refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,6 +175,9 @@ pub struct Scene {
     pub key: String,
     pub lines: Vec<String>,
     pub refs: Vec<String>,
+    /// 和柚子聊的事 only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<Topic>,
 }
 
 fn rows<T>(c: &Connection, sql: &str, args: impl rusqlite::Params, f: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>) -> Result<Vec<T>, String> {
@@ -134,6 +194,18 @@ struct Pomelo {
     habits: Vec<Habit>,
     money: Option<YearMoney>,
     echo: Vec<Echo>,
+    job_stages: Vec<JobStage>,
+}
+
+/// Days checked per week of the year (week 0 = January 1–7).
+fn weeks_of(days: &[String]) -> Vec<i64> {
+    let mut out = vec![0; 53];
+    for d in days {
+        let (y, m, day): (i64, u32, usize) = (d[..4].parse().unwrap_or(1970), d[5..7].parse().unwrap_or(1), d[8..10].parse().unwrap_or(1));
+        let before: usize = (1..m).map(|x| crate::modules::common::days_in_month(y, x) as usize).sum();
+        out[((before + day - 1) / 7).min(52)] += 1;
+    }
+    out
 }
 
 fn rec(kind: &str, id: i64, day: Option<String>, text: String) -> Record {
@@ -185,10 +257,12 @@ fn pomelo_part(c: &Connection, access: &Access, year: &str, from: &str, to: &str
             bump(&mut p, &day, false);
             p.records.push(rec("goal", id, Some(day), name));
         }
-        p.habits = todo::checkins_between(c, from, to)?.into_iter().map(|h| Habit { title: h.title, days: h.days, longest: h.longest }).collect();
+        p.habits = todo::checkins_between(c, from, to)?.into_iter().map(|h| Habit { title: h.title, days: h.days, longest: h.longest, longest_from: h.longest_from, weeks: weeks_of(&h.on) }).collect();
     }
     if access.allows("jobs") {
         let statuses = jobs::statuses(c)?;
+        let (mut moved, mut got) = (0, 0);
+        let mut reached: HashMap<i64, i64> = HashMap::new();
         for j in jobs::jobs(c, to)? {
             let inside: Vec<(&str, bool)> = j
                 .steps
@@ -199,9 +273,31 @@ fn pomelo_part(c: &Connection, access: &Access, year: &str, from: &str, to: &str
             for (d, _) in &inside {
                 bump(&mut p, d, false);
             }
+            if !inside.is_empty() {
+                moved += 1;
+                got += inside.iter().any(|x| x.1) as i64;
+                let mut seen = HashSet::new();
+                for s in j.steps.iter().filter(|s| s.done && s.done_on.as_deref().is_some_and(|d| d >= from && d <= to)) {
+                    if seen.insert(s.status_id) {
+                        *reached.entry(s.status_id).or_default() += 1;
+                    }
+                }
+            }
             if let Some((d, _)) = inside.iter().filter(|x| x.1).max() {
                 let title = [Some(j.company.trim()), j.position.as_deref().map(str::trim).filter(|x| !x.is_empty())].into_iter().flatten().collect::<Vec<_>>().join(" · ");
                 p.records.push(rec("offer", j.id, Some(d.to_string()), title));
+            }
+        }
+        // 投出 → the two 进行中 statuses most applications reached (in the status list's order) → Offer
+        if moved > 0 {
+            p.job_stages.push(JobStage { label: "有进展".into(), n: moved, unit: "份".into(), got: false });
+            let mut active: Vec<&jobs::Status> = statuses.iter().filter(|s| s.stage == jobs::Stage::Active && reached.get(&s.id).is_some_and(|n| *n > 0)).collect();
+            active.sort_by_key(|s| std::cmp::Reverse(reached[&s.id]));
+            active.truncate(2);
+            active.sort_by_key(|s| s.sort_order);
+            p.job_stages.extend(active.into_iter().map(|s| JobStage { label: s.name.clone(), n: reached[&s.id], unit: "份".into(), got: false }));
+            if got > 0 {
+                p.job_stages.push(JobStage { label: "Offer".into(), n: got, unit: "个".into(), got: true });
             }
         }
     }
@@ -288,6 +384,7 @@ pub(crate) fn snapshot(sink: &impl Sink, access: &Access, year: &str, facts: &Fa
         records: p.records,
         echo: p.echo,
         offered,
+        job_stages: p.job_stages,
     })
 }
 
@@ -314,8 +411,11 @@ fn messages(snap: &Snapshot, facts: &Facts, letter: &str, stride: usize) -> Vec<
          - 从【可以写的幕】里挑这一年值得讲的，按给的顺序；序章和终章一定要有，没什么可说的幕就不写。\n\
          - 每一幕写 1～2 句话，每句不超过 40 个字，口吻和信一样，对着「你」说；不写数字、日期、排名和百分比（程序会显示），只根据给你的内容，不要编。\n\
          - 每一幕可以从【可以引用的记录】里挑 0～3 条，写编号（像 note:12）：「留下的日子」挑 1 条最能代表这一年的笔记；「几个具体时刻」挑 2～6 条；「去年的回声」从【两年同一天】里挑同一天的今年 1 条、去年 1 条；别的幕挑和它有关的。\n\
-         - 只输出 JSON，不要别的文字：{{\"scenes\":[{{\"key\":\"prologue\",\"lines\":[\"……\"],\"refs\":[]}}]}}",
-        snap.year
+         - 写了「和柚子聊的事」（talks）时，再给它一个 topics：把【可以引用的记录】里 talk 开头的对话按话题归成 2～{TOPICS} 组（每个对话最多进一组，归不进去的不管），每组写名字 name（不超过 {TOPIC_CHARS} 个字，像「做饭」「面试」）、类别 kind（只能从这些里挑：{kinds}；都不合适就写 other）、这一组的对话编号 refs。\n\
+         - 「终章」可以写 2～4 句，像一封短信的开头、中间和结尾。\n\
+         - 只输出 JSON，不要别的文字：{{\"scenes\":[{{\"key\":\"prologue\",\"lines\":[\"……\"],\"refs\":[]}},{{\"key\":\"talks\",\"lines\":[\"……\"],\"refs\":[],\"topics\":[{{\"name\":\"做饭\",\"kind\":\"cook\",\"refs\":[\"talk:3\",\"talk:8\"]}}]}}]}}",
+        snap.year,
+        kinds = TOPIC_KINDS.iter().map(|(k, what)| format!("{k}（{what}）")).collect::<Vec<_>>().join("、")
     );
     let echo_keys: HashSet<&str> = snap.echo.iter().flat_map(|e| e.this.iter().chain(&e.last)).map(String::as_str).collect();
     let mut n = 0;
@@ -357,6 +457,17 @@ pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
         lines: Vec<String>,
         #[serde(default)]
         refs: Vec<String>,
+        #[serde(default)]
+        topics: Vec<RawTopic>,
+    }
+    #[derive(Deserialize)]
+    struct RawTopic {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        refs: Vec<String>,
     }
     let bad = || "模型写的各幕读不出来（不是要的 JSON）".to_string();
     let (a, b) = (reply.find('{').ok_or_else(bad)?, reply.rfind('}').ok_or_else(bad)?);
@@ -365,7 +476,7 @@ pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
     let mut out = vec![];
     for (key, _, _) in SCENES.iter().filter(|s| snap.offered.iter().any(|k| k == s.0)) {
         let Some(s) = raw.scenes.iter().find(|s| s.key.trim() == *key) else { continue };
-        let lines: Vec<String> = s.lines.iter().map(|l| clip(l.trim(), LINE_CHARS)).filter(|l| !l.is_empty()).take(LINES).collect();
+        let lines: Vec<String> = s.lines.iter().map(|l| clip(l.trim(), LINE_CHARS)).filter(|l| !l.is_empty()).take(if *key == "finale" { LINES + 1 } else { LINES }).collect();
         let mut seen = HashSet::new();
         let mut refs: Vec<String> = s.refs.iter().map(|r| r.trim().to_string()).filter(|r| records.contains_key(r.as_str()) && seen.insert(r.clone())).collect();
         match *key {
@@ -388,8 +499,24 @@ pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
             }
             _ => refs.truncate(3),
         }
-        if !lines.is_empty() || !refs.is_empty() {
-            out.push(Scene { key: key.to_string(), lines, refs });
+        // topics: only talks, each conversation in one topic; how often = the conversations it names
+        let mut topics = vec![];
+        if *key == "talks" {
+            let mut taken = HashSet::new();
+            for t in &s.topics {
+                let name: String = t.name.split_whitespace().collect::<String>().chars().take(TOPIC_CHARS).collect();
+                let refs: Vec<String> = t.refs.iter().map(|r| r.trim().to_string()).filter(|r| records.get(r.as_str()).is_some_and(|x| x.kind == "talk") && taken.insert(r.clone())).collect();
+                if name.is_empty() || refs.is_empty() {
+                    continue;
+                }
+                let kind = TOPIC_KINDS.iter().find(|k| k.0 == t.kind.trim()).map_or("other", |k| k.0);
+                topics.push(Topic { name, kind: kind.into(), n: refs.len() as i64, refs });
+            }
+            topics.sort_by_key(|t| std::cmp::Reverse(t.n));
+            topics.truncate(TOPICS);
+        }
+        if !lines.is_empty() || !refs.is_empty() || !topics.is_empty() {
+            out.push(Scene { key: key.to_string(), lines, refs, topics });
         }
     }
     if out.is_empty() {
@@ -449,6 +576,7 @@ pub(crate) async fn write(sink: &mut impl Sink, target: &Target, model: (&str, &
     }
 }
 
+/// One more row of history (the same run writing again replaces its own).
 pub fn save(c: &Connection, run_id: Option<i64>, snap: &Snapshot, letter: &str, scenes: &Result<Vec<Scene>, String>, model: (&str, &str)) -> Result<(), String> {
     let snapshot = serde_json::to_string(snap).map_err(err)?;
     let (scenes, error) = match scenes {
@@ -456,10 +584,10 @@ pub fn save(c: &Connection, run_id: Option<i64>, snap: &Snapshot, letter: &str, 
         Err(e) => (None, Some(e.clone())),
     };
     c.execute(
-        "INSERT INTO year_atlas (run_id, year, until, letter, snapshot, scenes, error, model, model_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO year_atlas (run_id, year, until, letter, snapshot, scenes, error, model, model_name, design) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT (run_id) DO UPDATE SET year = excluded.year, until = excluded.until, letter = excluded.letter, snapshot = excluded.snapshot,
-           scenes = excluded.scenes, error = excluded.error, model = excluded.model, model_name = excluded.model_name, created_at = excluded.created_at",
-        params![run_id, snap.year, snap.until, letter, snapshot, scenes, error, model.0, model.1],
+           scenes = excluded.scenes, error = excluded.error, model = excluded.model, model_name = excluded.model_name, design = excluded.design, created_at = excluded.created_at",
+        params![run_id, snap.year, snap.until, letter, snapshot, scenes, error, model.0, model.1, DESIGN],
     )
     .map(|_| ())
     .map_err(err)
@@ -486,7 +614,167 @@ pub fn of_run(c: &Connection, run_id: i64) -> Result<Option<Saved>, String> {
     .transpose()
 }
 
-/// Folded under the letter until Atlas's page exists: (label, Markdown).
+// ---------- Atlas's page: every run kept (history), opened with the design it was made for ----------
+
+/// A row of the history.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Entry {
+    pub id: i64,
+    pub year: String,
+    pub until: Option<String>,
+    pub created_at: String,
+    /// `<id>@<version>`; rows from before designs had names count as the first one.
+    pub design: String,
+    /// Scenes told (0: that step failed, `error`).
+    pub scenes: i64,
+    pub error: Option<String>,
+    pub model_name: String,
+    /// Its conversation under 定时 (None once deleted).
+    pub session_id: Option<i64>,
+}
+
+/// Rows written before `design` existed were made for the first design.
+const FIRST_DESIGN: &str = "tabloid@1.0.0";
+
+pub fn list(c: &Connection) -> Result<Vec<Entry>, String> {
+    rows(
+        c,
+        "SELECT a.id, a.year, a.until, a.created_at, a.design, a.scenes, a.error, a.model_name, r.session_id
+         FROM year_atlas a LEFT JOIN runs r ON r.id = a.run_id ORDER BY a.year DESC, a.id DESC",
+        [],
+        |r| {
+            let scenes: Option<String> = r.get(5)?;
+            Ok(Entry {
+                id: r.get(0)?,
+                year: r.get(1)?,
+                until: r.get(2)?,
+                created_at: r.get(3)?,
+                design: r.get::<_, Option<String>>(4)?.unwrap_or_else(|| FIRST_DESIGN.into()),
+                scenes: scenes.and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok()).map_or(0, |v| v.len() as i64),
+                error: r.get(6)?,
+                model_name: r.get(7)?,
+                session_id: r.get(8)?,
+            })
+        },
+    )
+}
+
+/// One run in full, as a design draws it (visual-atelier schemes/pomelo/atlas/README.md「数据」).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Full {
+    pub id: i64,
+    pub year: String,
+    pub until: Option<String>,
+    pub created_at: String,
+    pub design: String,
+    pub model_name: String,
+    pub letter: String,
+    pub snapshot: Snapshot,
+    pub scenes: Option<Vec<Scene>>,
+    pub error: Option<String>,
+}
+
+pub fn get(c: &Connection, id: i64) -> Result<Full, String> {
+    let row = c
+        .query_row("SELECT year, until, created_at, design, model_name, letter, snapshot, scenes, error FROM year_atlas WHERE id = ?1", [id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, Option<String>>(7)?, r.get::<_, Option<String>>(8)?))
+        })
+        .optional()
+        .map_err(err)?
+        .ok_or("找不到这一份年度小报，可能已经被删除了")?;
+    Ok(Full {
+        id,
+        year: row.0,
+        until: row.1,
+        created_at: row.2,
+        design: row.3.unwrap_or_else(|| FIRST_DESIGN.into()),
+        model_name: row.4,
+        letter: row.5,
+        snapshot: serde_json::from_str(&row.6).map_err(|e| format!("Atlas 的快照读不出来：{e}"))?,
+        scenes: row.7.map(|s| serde_json::from_str(&s).map_err(|e| format!("Atlas 的各幕读不出来：{e}"))).transpose()?,
+        error: row.8,
+    })
+}
+
+pub fn delete(c: &Connection, id: i64) -> Result<(), String> {
+    match c.execute("DELETE FROM year_atlas WHERE id = ?1", [id]).map_err(err)? {
+        0 => Err("找不到这一份年度小报，可能已经被删除了".into()),
+        _ => Ok(()),
+    }
+}
+
+/// A year with records and how many (notes, things done, trips): what 补做 can be asked for.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YearCount {
+    pub year: String,
+    pub records: i64,
+}
+
+pub fn years(c: &Connection) -> Result<Vec<YearCount>, String> {
+    rows(
+        c,
+        "SELECT y, count(*) FROM (
+           SELECT strftime('%Y', created_at, 'localtime') AS y FROM notes
+           UNION ALL SELECT strftime('%Y', done_at, 'localtime') FROM todo_tasks WHERE done = 1 AND done_at IS NOT NULL
+           UNION ALL SELECT substr(depart_on, 1, 4) FROM trips WHERE depart_on IS NOT NULL)
+         WHERE y IS NOT NULL GROUP BY y ORDER BY y DESC",
+        [],
+        |r| Ok(YearCount { year: r.get(0)?, records: r.get(1)? }),
+    )
+}
+
+/// 首页's envelope in the new year's first week (1 月 1～7 日): the newest whole-year run of the year just ended
+/// (id, year). None on other days, or when that year has none.
+pub fn envelope(c: &Connection, today: &str) -> Result<Option<(i64, String)>, String> {
+    if &today[5..7] != "01" || &today[8..10] > "07" {
+        return Ok(None);
+    }
+    let last = (today[..4].parse::<i64>().unwrap_or(1970) - 1).to_string();
+    c.query_row("SELECT id, year FROM year_atlas WHERE year = ?1 AND until IS NULL ORDER BY id DESC LIMIT 1", [&last], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(err)
+}
+
+/// The year a 年度总结 is being written for right now (schedule.rs sets it around the run).
+static WRITING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub(crate) fn set_writing(year: Option<String>) {
+    *WRITING.lock().unwrap_or_else(|e| e.into_inner()) = year;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overview {
+    pub entries: Vec<Entry>,
+    pub years: Vec<YearCount>,
+    pub writing: Option<String>,
+    pub today: String,
+    /// The design new runs are made for.
+    pub design: String,
+    /// The run 首页's envelope opens (the new year's first week).
+    pub envelope: Option<i64>,
+}
+
+#[tauri::command]
+pub fn atlas_overview(state: tauri::State<crate::AppState>) -> Result<Overview, String> {
+    let (today, years) = state.with_db(|c| Ok((todo::today(c)?, years(c)?)))?;
+    let (entries, envelope) = state.youzi.with_db(|c| Ok((list(c)?, envelope(c, &today)?.map(|e| e.0))))?;
+    Ok(Overview { entries, years, writing: WRITING.lock().unwrap_or_else(|e| e.into_inner()).clone(), today, design: DESIGN.into(), envelope })
+}
+
+#[tauri::command]
+pub fn atlas_get(state: tauri::State<crate::AppState>, id: i64) -> Result<Full, String> {
+    state.youzi.with_db(|c| get(c, id))
+}
+
+/// Only from Atlas's page (the user): never an AI tool, never a schedule.
+#[tauri::command]
+pub fn atlas_delete(state: tauri::State<crate::AppState>, id: i64) -> Result<(), String> {
+    state.with_youzi_undo("删除年度小报", |c| delete(c, id))
+}
+
+/// Folded under the letter: (label, Markdown).
 pub fn preview(c: &Connection, run_id: i64) -> Result<Option<(String, String)>, String> {
     let Some(saved) = of_run(c, run_id)? else { return Ok(None) };
     let Some(scenes) = saved.scenes else {
@@ -527,7 +815,14 @@ pub fn mock_reply(user: &str) -> String {
                 "echo" => echo.iter().take(2).cloned().collect(),
                 _ => vec![],
             };
-            serde_json::json!({ "key": k, "lines": [format!("（模拟）这是「{k}」这一幕的话。")], "refs": refs })
+            let mut scene = serde_json::json!({ "key": k, "lines": [format!("（模拟）这是「{k}」这一幕的话。")], "refs": refs });
+            if k == "talks" {
+                // the conversations dealt out to three topics: one with its own bubble, one unknown kind, one other
+                let talks = first(&["talk"], usize::MAX);
+                let group = |i: usize| talks.iter().enumerate().filter(|(j, _)| j % 3 == i).map(|(_, r)| r.clone()).collect::<Vec<_>>();
+                scene["topics"] = serde_json::json!([{ "name": "做饭", "kind": "cook", "refs": group(0) }, { "name": "塔罗", "kind": "tarot", "refs": group(1) }, { "name": "闲聊", "kind": "other", "refs": group(2) }]);
+            }
+            scene
         })
         .collect();
     serde_json::json!({ "scenes": scenes }).to_string()
@@ -607,5 +902,82 @@ mod tests {
         assert_eq!(out[1].refs, ["note:1", "note:2"]);
         assert!(parse("不是 JSON", &snap).is_err());
         assert!(parse(r#"{"scenes":[{"key":"works","lines":["x"]}]}"#, &snap).is_err());
+    }
+
+    #[test]
+    fn topics_get_a_known_kind_and_are_counted_here() {
+        let talk = |id: i64, t: &str| rec("talk", id, Some("2026-04-01".into()), t.into());
+        let snap = Snapshot {
+            year: "2026".into(),
+            offered: ["prologue", "talks", "finale"].map(String::from).to_vec(),
+            records: vec![talk(1, "番茄炒蛋"), talk(2, "便当"), talk(3, "面试"), talk(4, "塔罗"), talk(5, "搬家"), rec("note", 9, Some("2026-04-02".into()), "笔记".into())],
+            ..Default::default()
+        };
+        // an unknown kind → other; a note isn't a conversation; a conversation counts once; an empty topic goes;
+        // the model's own count is ignored; the name is cut
+        let reply = r#"{"scenes":[{"key":"talks","lines":["聊了不少"],"topics":[
+            {"name":"塔罗","kind":"tarot","refs":["talk:4"],"n":99},
+            {"name":"做饭","kind":"cook","refs":["talk:1","talk:2","note:9","talk:1"]},
+            {"name":"求职和面试的那些事","kind":" work ","refs":["talk:3","talk:2"]},
+            {"name":"空的","kind":"pet","refs":["talk:77"]}]},{"key":"finale","lines":["一","二","三","四","五"]}]}"#;
+        let out = parse(reply, &snap).unwrap();
+        let t = &out[0].topics;
+        assert_eq!(t.iter().map(|x| (x.name.as_str(), x.kind.as_str(), x.n)).collect::<Vec<_>>(), [("做饭", "cook", 2), ("塔罗", "other", 1), ("求职和面试的", "work", 1)]);
+        assert_eq!(t[0].refs, ["talk:1", "talk:2"]);
+        assert_eq!(out[1].lines.len(), 4); // 终章 may say a little more
+        assert!(out[1].topics.is_empty());
+        // the mock model's topics come through the same check
+        let user = "【可以写的幕】\n- prologue 序章：x\n- talks 和柚子聊的事：x\n- finale 终章：x\n\n【可以引用的记录】\n- talk:1（2026 年 4 月 1 日） 番茄炒蛋\n- talk:2（2026 年 4 月 1 日） 便当\n- talk:3（2026 年 4 月 1 日） 面试\n\n【刚写的信】\n信";
+        let mock = parse(&mock_reply(user), &snap).unwrap();
+        let topics = &mock.iter().find(|s| s.key == "talks").unwrap().topics;
+        assert_eq!(topics.iter().map(|x| (x.kind.as_str(), x.n)).collect::<Vec<_>>(), [("cook", 1), ("other", 1), ("other", 1)]);
+    }
+
+    #[test]
+    fn every_run_is_kept_and_only_deleted_by_id() {
+        let c = crate::youzi::store::tests::memory_db();
+        let snap = Snapshot { year: "2025".into(), ..Default::default() };
+        let scenes = Ok(vec![Scene { key: "prologue".into(), lines: vec!["开场".into()], refs: vec![], topics: vec![] }]);
+        save(&c, None, &snap, "第一封", &scenes, ("cloud:x", "X")).unwrap();
+        // the same year done again (补做) is one more row
+        save(&c, None, &snap, "第二封", &Err("各幕没写成".into()), ("cloud:x", "X")).unwrap();
+        // a row from before designs had names, in the old shapes (no topics, no weeks, no job stages)
+        c.execute(
+            "INSERT INTO year_atlas (year, letter, snapshot, scenes, model, model_name) VALUES ('2024', '旧的', ?1, ?2, 'local:x', 'X')",
+            params![r#"{"year":"2024","until":null,"numbers":[],"extras":[],"heat":[],"habits":[{"title":"拉伸","days":3,"longest":2}],"money":null,"records":[],"echo":[],"offered":["prologue"]}"#, r#"[{"key":"prologue","lines":["旧"],"refs":[]}]"#],
+        )
+        .unwrap();
+        let all = list(&c).unwrap();
+        assert_eq!(all.iter().map(|e| (e.year.as_str(), e.scenes, e.design.as_str())).collect::<Vec<_>>(), [("2025", 0, DESIGN), ("2025", 1, DESIGN), ("2024", 1, FIRST_DESIGN)]);
+        assert_eq!(all[0].error.as_deref(), Some("各幕没写成"));
+        let old = get(&c, all[2].id).unwrap();
+        assert_eq!(old.letter, "旧的");
+        assert_eq!(old.snapshot.habits[0].weeks, Vec::<i64>::new());
+        assert!(old.snapshot.job_stages.is_empty() && old.scenes.unwrap()[0].topics.is_empty());
+        // the envelope: only in the new year's first week, the newest whole-year run of the year just ended
+        assert_eq!(envelope(&c, "2026-01-03").unwrap(), Some((all[0].id, "2025".into())));
+        assert_eq!(envelope(&c, "2026-01-08").unwrap(), None);
+        assert_eq!(envelope(&c, "2027-01-01").unwrap(), None);
+        delete(&c, all[1].id).unwrap();
+        assert_eq!(list(&c).unwrap().len(), 2);
+        assert!(delete(&c, all[1].id).is_err() && get(&c, all[1].id).is_err());
+    }
+
+    #[test]
+    fn weeks_and_job_stages_in_the_snapshot() {
+        assert_eq!(weeks_of(&["2026-01-01".into(), "2026-01-07".into(), "2026-01-08".into(), "2026-12-31".into()])[..2], [2, 1]);
+        assert_eq!(weeks_of(&["2026-12-31".into()])[52], 1);
+        let mut s = sink(seeded_for_atlas(), Target::Mock { thinking: false });
+        let target = s.target.clone();
+        tauri::async_runtime::block_on(crate::youzi::yearly::compose(&mut s, &target, ("local:x", "X"), 32_768, false, None, &Access::default(), "2026", "2026-10-12", "", "写")).unwrap();
+        let full = get(&s.youzi, list(&s.youzi).unwrap()[0].id).unwrap();
+        assert_eq!(full.design, DESIGN);
+        for h in &full.snapshot.habits {
+            assert_eq!(h.weeks.iter().sum::<i64>(), h.days);
+            assert!(h.longest_from.is_some());
+        }
+        // what the page gets is camelCase, with the letter
+        let json = serde_json::to_value(&full).unwrap();
+        assert!(json["createdAt"].is_string() && json["snapshot"]["jobStages"].is_array() && json["letter"].is_string());
     }
 }

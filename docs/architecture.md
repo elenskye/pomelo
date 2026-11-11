@@ -167,6 +167,14 @@
 - **画布服务**是 visual-atelier 的 bench（`node bench/bin/dw.js serve --port N --json`，只听 127.0.0.1），Node 按它的 `.nvmrc` 在 nvm 里找（和呦呦漫游同一套 `site/tools.rs`、`site/server.rs`）。Pomelo 用它给别的程序的接口（它的 `bench/README.md`「给别的程序用」）：`GET /api/status` 认出是不是它（`app: visual-atelier-bench`），`GET /api/canvases`、`/api/canvases/<名字>` 列画布和画板，`POST /api/stop` 停掉。端口上有别处启动的就直接用；不是它（或是没有 `/api/status` 的旧服务）就说端口被占着。正式版用 bench 自己的 4321；开发版、测试、临时数据目录的打包版用 4331，不碰正式的那个。Pomelo 启动的在退出时整组停掉。
 - **页面**（`modules/canvas/`）：画布界面放在一个 frame 里（地址是 bench 的 `/#/<画布>?page=&board=`）。左边点了就把 frame 的地址换掉（`location.replace`，不留历史）；bench 的界面每换一次地方给外面发一条消息（`{ source: "dw", type: "route" }`），左边跟着选中。Rust 这边因为页面跨不了域取不到 bench 的 JSON，所以列表由 Rust 去问。
 
+## Atlas
+
+- **数据在 Rust**（`youzi/atlas.rs`）：每次年度总结写完信，存一份「呈现结果」：Rust 数好的数字和记录的快照，加同一个模型给各幕写的话。每运行一次多一行（`year_atlas`），就是历史。补做某一年、立即运行都走年度总结那个定时任务的流程和模型（`schedule.rs` 的 `atlas_run`）。
+- **画在设计里**：设计是 visual-atelier 冻结的快照，一份一个文件（`src/vendor/pomelo/atlas/<名字>-<版本>/design.js`，同步来的，不手改）。Rust 的 `DESIGN` 是新写的那一份记的设计；每一行记着自己的，打开时照它记的那一版画（`modules/atlas/designs.ts` 按名字和版本找，打开小报时才加载）。出了新设计：同步新的快照、改 `DESIGN`，旧的快照留着。
+- **小报放在一个 frame 里**（`Journey.tsx`）：frame 的文档是快照自己带的（样式、上墨的脚本都是冻结那天的），所以外面的样式进不来、里面的出不去，旧的小报不会被后来的界面改动弄坏。同一个来源，页面直接把数据交给它，它把「在模块里打开」「收进抽屉」「Esc」告诉页面。
+- **模型只做三件事**：给每一幕写一两句话、挑要引用的记录、把聊天的话题归类。数字、日期、图、用哪个泡泡都不归它；它写的东西 Rust 都照快照查一遍，不认识的丢掉。
+- **删除只在页上**：`atlas_delete`（进撤销）。没有删它的 AI 工具，定时任务也不删。
+
 ## 首页和每天的例行检查
 
 - **首页**：数字和清单由 `home.rs` 每次打开时现算（只读，不存东西），隐藏的模块不算；今天的待办直接用一步一步的列表。

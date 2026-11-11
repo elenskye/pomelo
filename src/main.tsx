@@ -23,6 +23,8 @@ import BookmarksPage from "@/modules/bookmarks/BookmarksPage";
 const YouziPage = lazy(() => import("@/modules/youzi/YouziPage"));
 // 柚子's 助手 as modules (v0.7)
 const AssistantModule = lazy(() => import("@/modules/youzi/assistants"));
+// Atlas: 年度小报 (its designs load when one is opened)
+const AtlasPage = lazy(() => import("@/modules/atlas/AtlasPage"));
 import TodoPage from "@/modules/todo/TodoPage";
 import HealthPage from "@/settings/Health";
 import SettingsPage from "@/settings/SettingsPage";
@@ -108,6 +110,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="seeker/:sub?" element={<Suspense fallback={null}><AssistantModule which="seeker" /></Suspense>} />
             <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
             <Route path="janitor/:sub?" element={<Suspense fallback={null}><AssistantModule which="janitor" /></Suspense>} />
+            <Route path="atlas" element={<Suspense fallback={null}><AtlasPage /></Suspense>} />
             <Route path="importer" element={<Navigate to="/finance/import" replace />} />
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="settings" element={<SettingsPage />} />

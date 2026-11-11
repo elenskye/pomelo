@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 共 45 张表，当前版本 40；柚子的数据在单独的 `youzi.db`（版本 40），搜索索引在 `search.db`（版本 3），DevJanitor 的扫描结果在 `janitor.db`（版本 1）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
+`pomelo.db` 共 45 张表，当前版本 40；柚子的数据在单独的 `youzi.db`（版本 41），搜索索引在 `search.db`（版本 3），DevJanitor 的扫描结果在 `janitor.db`（版本 1）。这里写表、字段和需求里没写的计算规则；细则都在 Rust 里，各模块文件开头有摘要。每个版本改了什么见文末。
 
 ## 通用约定
 
@@ -268,7 +268,7 @@
 
 **briefs**（今日简报，每天一行）：`day`、`content`、`state`（`writing` / `done` / `failed`）、`error`、`model` · `model_name`、`left_out` 没读的模块、`mood` 当天的心情（`calm` / `busy` / `good` / `worry` / `plain` 一般，从简报最后一行「心情：…」取出来，正文里不留；没有就空）。重写和失败时 `content` 留着上一次的；退出时还在写的，下次重新写。不进撤销、不导出。
 
-**month_summaries**（每月小结，只给年度总结用）：`month`、`content`、`fingerprint`（读的记录和写法的指纹，没变就直接用）、`model` · `model_name`。**run_month_notes**：一次年度总结用到的每月小结（照抄一份）。**year_runs**：一次年度总结写的是哪一年。后两张删对话时一起删。**year_atlas**（Atlas 的「呈现结果」，规则见 `youzi/atlas.rs` 开头）：`run_id`（写它的那次，删对话后变空，这一行留着）、`year`、`until`（今年没过完时写到哪天，空 = 全年）、`letter` 信的一份、`snapshot`（JSON：数字和去年同期、之最、每天几条记录、打卡、钱、能引用的记录 `note:12` 这样的编号带原文、两年同一天的笔记、有内容的幕）、`scenes`（JSON：每一幕的话和引用的编号；没写成时空，原因在 `error`）、`model` · `model_name`。
+**month_summaries**（每月小结，只给年度总结用）：`month`、`content`、`fingerprint`（读的记录和写法的指纹，没变就直接用）、`model` · `model_name`。**run_month_notes**：一次年度总结用到的每月小结（照抄一份）。**year_runs**：一次年度总结写的是哪一年。后两张删对话时一起删。**year_atlas**（Atlas 的「呈现结果」，规则见 `youzi/atlas.rs` 开头）：`run_id`（写它的那次，删对话后变空，这一行留着）、`year`、`until`（今年没过完时写到哪天，空 = 全年）、`letter` 信的一份、`snapshot`（JSON：数字和去年同期、之最、每天几条记录、打卡、钱、能引用的记录 `note:12` 这样的编号带原文、两年同一天的笔记、有内容的幕）、`scenes`（JSON：每一幕的话和引用的编号；「和柚子聊的事」另有 `topics`：话题的名字、类别、次数和它的对话编号；没写成时空，原因在 `error`）、`model` · `model_name`、`design`（这一份是照哪一版设计做的，`tabloid@1.0.0` 这样；空 = 有这一栏以前写的，算第一版）。**每运行一次多一行**，同一年可以有好几行（补做、再写一份），都留着；只有 Atlas 的页能删（`atlas_delete`，能撤销）。快照里后来加的东西（每周打卡几天 `weeks`、最长一段从哪天起 `longestFrom`、求职走到哪几步 `jobStages`）旧的行里没有，读的时候当空。话题的类别是固定的 12 个（`atlas.rs` 的 `TOPIC_KINDS`），模型写了别的算 `other`；次数是程序数的。
 
 ## 搜索索引（search.db）
 
@@ -339,6 +339,7 @@ JSON，当前格式版本 40（40：一步一步的分组和目标带 `icon`，�
 | 32～35 | 思考强度（对话、定时任务）；问我（`run_asks`）；Excel 工具箱 |
 | 36～38 | 改名柚子（我写的提示词和模块键；对话内容不动）；Atlas 的底子 `year_atlas` |
 | 39 | DevJanitor 的 Agent：`janitor_rules`、`janitor_cards` |
+| 41 | Atlas：`year_atlas.design`（每一份记着照哪一版设计做的） |
 | 40 | 对话列表没有「定时」分组了：定时任务写的对话在「最近」里，原来在「定时」里排的位置清掉（`sort_order`、`manual_lists` 的 `scheduled`） |
 
 **search.db**：1 是搜索索引；2 加知识库（`kb_docs`、`kb_chunks`）；3 柚子的记录改记 `youzi`（重建一次）。

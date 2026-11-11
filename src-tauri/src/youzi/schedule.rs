@@ -440,8 +440,11 @@ async fn run(app: &AppHandle, id: i64, slot: Option<String>) -> Result<(), Strin
             let mut b = p.with_db(|c| begin(c, &s, &at, &route.model, &route.name))?;
             b.request.read_only = true;
             b.request.notice = notice;
-            if s.builtin.as_deref() == Some(super::yearly::BUILTIN) {
-                b.request.yearly = Some(year_of(slot.as_deref().unwrap_or(&at)));
+            let yearly = s.builtin.as_deref() == Some(super::yearly::BUILTIN);
+            if yearly {
+                let year = year_of(slot.as_deref().unwrap_or(&at));
+                super::atlas::set_writing(Some(year.clone()));
+                b.request.yearly = Some(year);
             } else {
                 b.request.system = [b.request.system.as_str(), &note(&s.name, &s.rule, &at)].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n\n");
             }
@@ -449,6 +452,9 @@ async fn run(app: &AppHandle, id: i64, slot: Option<String>) -> Result<(), Strin
             chat::start(app, b, route, Channel::new(|_| Ok(())));
             while p.runs.holds(run_id) {
                 tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            if yearly {
+                super::atlas::set_writing(None);
             }
         }
         Err(e) => {
@@ -560,6 +566,34 @@ pub fn youzi_schedule_run(app: AppHandle, id: i64) -> Result<(), String> {
         if let Err(e) = run(&app, id, None).await {
             eprintln!("schedule {id} failed: {e}");
         }
+        drop(claim);
+    });
+    Ok(())
+}
+
+/// Atlas: writes 年度总结 for `year` now (None = this year up to today; a past year = 补做, the whole year), with the
+/// 年度总结 schedule's model and settings. One more row of Atlas's history either way.
+#[tauri::command]
+pub fn atlas_run(app: AppHandle, year: Option<String>) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let today = st.with_db(|c| crate::modules::todo::today(c))?;
+    let slot = match year {
+        Some(y) => {
+            if y.len() != 4 || y.parse::<i64>().is_err() || y.as_str() > &today[..4] || y.as_str() < "2000" {
+                return Err("这一年做不了年度总结。".into());
+            }
+            // a past year: as if run on its last evening (year_of); this year: now, up to today
+            (y.as_str() < &today[..4]).then(|| format!("{y}-12-31 21:00"))
+        }
+        None => None,
+    };
+    let id = st.youzi.with_db(|c| list(c, &now(c)?))?.into_iter().find(|s| s.builtin.as_deref() == Some(super::yearly::BUILTIN)).map(|s| s.id).ok_or("「年度总结」这个定时任务被删掉了，Atlas 靠它写。在柚子的「定时」里把它恢复回来再试。")?;
+    let claim = Claim::take(id).ok_or("有一个定时任务正在运行，等它写完再试。")?;
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = run(&app, id, slot).await {
+            eprintln!("atlas run failed: {e}");
+        }
+        super::atlas::set_writing(None);
         drop(claim);
     });
     Ok(())

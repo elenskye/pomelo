@@ -1406,6 +1406,10 @@ pub struct Checkins {
     pub days: i64,
     /// The longest run of scheduled days all checked.
     pub longest: i64,
+    /// The day that run starts on.
+    pub longest_from: Option<String>,
+    /// The days checked, in order.
+    pub on: Vec<String>,
 }
 
 /// Check-in tasks with days checked in [from, to], most days first.
@@ -1420,15 +1424,26 @@ pub fn checkins_between(conn: &Connection, from: &str, to: &str) -> Result<Vec<C
         let days: Vec<String> = days_of.query_map(params![id, from, to], |r| r.get(0)).map_err(err)?.collect::<Result<_, _>>().map_err(err)?;
         let rule = rule.as_deref().and_then(|r| Rule::parse(r).ok());
         let (mut run, mut longest, mut d) = (0, 0, days[0].clone());
+        let (mut run_from, mut longest_from) = (None, None);
         let last = days[days.len() - 1].clone();
         while d <= last {
             if rule.as_ref().is_none_or(|r| r.scheduled(&d)) {
-                run = if days.binary_search(&d).is_ok() { run + 1 } else { 0 };
-                longest = longest.max(run);
+                if days.binary_search(&d).is_ok() {
+                    if run == 0 {
+                        run_from = Some(d.clone());
+                    }
+                    run += 1;
+                } else {
+                    run = 0;
+                }
+                if run > longest {
+                    longest = run;
+                    longest_from = run_from.clone();
+                }
             }
             d = common::add_days(&d, 1);
         }
-        out.push(Checkins { title, days: days.len() as i64, longest });
+        out.push(Checkins { title, days: days.len() as i64, longest, longest_from, on: days });
     }
     out.sort_by(|a, b| (b.days, b.longest).cmp(&(a.days, a.longest)));
     Ok(out)
