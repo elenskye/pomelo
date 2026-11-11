@@ -34,6 +34,7 @@ export const CornerDownRight = make("corner-down-right");
 export const RefreshCw = make("refresh-cw");
 export const RotateCcw = make("rotate-ccw");
 export const History = make("history");
+export const TimeTravel = make("time-travel");
 export const Repeat = make("repeat");
 export const Maximize2 = make("maximize-2");
 export const ExternalLink = make("external-link");

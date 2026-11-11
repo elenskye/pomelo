@@ -515,8 +515,18 @@ async fn tick(app: &AppHandle, first: bool) -> bool {
     more
 }
 
+/// POMELO_NO_INDEX=1: nothing is indexed in the background (the search index, 知识库's folders).
+pub fn quiet() -> bool {
+    std::env::var_os("POMELO_NO_INDEX").is_some()
+}
+
 /// The indexer: a tick every 2 s, back to back while a fill has more to do.
 pub fn spawn(app: AppHandle) {
+    // a scratch copy run with real models (docs/testing.md「Atlas」真模型): no index, so it never starts the
+    // embedding service for it
+    if quiet() {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let mut first = true;
         loop {

@@ -32,6 +32,20 @@ const parts = (key: string) => key.split("@")[1]?.split(".").map(Number) ?? [];
 /** The releases in the app, newest last (by version, then name). */
 export const designKeys = () => [...loaders.keys()].sort((a, b) => { const [x, y] = [parts(a), parts(b)]; return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || a.localeCompare(b); });
 
+/** What a release says about itself (its design.json): when it was frozen and what it is. */
+type Meta = { id: string; name: string; version: string; frozen: string | null; note: string };
+const metas = import.meta.glob<Meta>("../../vendor/pomelo/atlas/*/design.json", { eager: true, import: "default" });
+/** Every release in the app, newest first (Atlas's 样式 view). */
+export function designList(): (Meta & { key: string })[] {
+  const byKey = new Map(Object.values(metas).map((m) => [`${m.id}@${m.version}`, m]));
+  return designKeys()
+    .reverse()
+    .map((key) => {
+      const [id, version] = key.split("@");
+      return { id, name: id.charAt(0).toUpperCase() + id.slice(1), version: version ?? "", frozen: null, note: "", ...byKey.get(key), key };
+    });
+}
+
 /** The design a run was made for; a key the app doesn't have (it shouldn't happen) falls back to the newest. */
 export async function loadDesign(key: string): Promise<Design> {
   const load = loaders.get(key) ?? loaders.get(designKeys().at(-1) ?? "");

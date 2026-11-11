@@ -15,10 +15,11 @@ export const atlasHandlers: Record<string, (a: Record<string, unknown>) => unkno
     entries: [...all]
       .sort((a, b) => b.year.localeCompare(a.year) || b.id - a.id)
       .map((r) => ({ id: r.id, year: r.year, until: r.until, createdAt: r.createdAt, design: r.design, scenes: r.scenes?.length ?? 0, error: r.error, modelName: r.modelName, sessionId: null })),
-    years: [{ year: "2026", records: 956 }, { year: "2025", records: 700 }, { year: "2024", records: 212 }, { year: "2023", records: 38 }],
+    // enough years for the row to scroll sideways
+    years: [{ year: "2026", records: 956 }, { year: "2025", records: 700 }, { year: "2024", records: 212 }, { year: "2023", records: 38 }, ...["2022", "2021", "2020", "2019", "2018", "2017", "2016"].map((year, i) => ({ year, records: 30 - i * 4 }))],
     writing,
     today: today(),
-    design: "tabloid@1.0.0",
+    design: "tabloid@1.0.1",
     envelope: envelope() ? (all.find((r) => r.year === "2025" && !r.until)?.id ?? null) : null,
   }),
   atlas_get: (a) => {
@@ -38,7 +39,7 @@ export const atlasHandlers: Record<string, (a: Record<string, unknown>) => unkno
     setTimeout(() => {
       const from = all.find((r) => r.year === year) ?? all[0] ?? (runs as unknown as Run[])[0];
       const copy = JSON.parse(JSON.stringify(from).replaceAll(from.year, year)) as Run;
-      all.push({ ...copy, id: seq++, year, until: year === today().slice(0, 4) ? today() : null, createdAt: new Date().toISOString() });
+      all.push({ ...copy, id: seq++, year, design: "tabloid@1.0.1", until: year === today().slice(0, 4) ? today() : null, createdAt: new Date().toISOString() });
       writing = null;
     }, 3000);
   },

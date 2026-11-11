@@ -338,7 +338,7 @@ pub fn spawn_monitor(app: AppHandle) {
             if tick % 30 == 5 {
                 tauri::async_runtime::spawn(schedule::check(app.clone()));
             }
-            if tick % knowledge::SCAN_EVERY == knowledge::SCAN_EVERY - 1 && st.youzi.is_open() {
+            if tick % knowledge::SCAN_EVERY == knowledge::SCAN_EVERY - 1 && st.youzi.is_open() && !crate::search::indexer::quiet() {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move { knowledge::scan(&app).await });
             }

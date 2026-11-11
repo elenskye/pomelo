@@ -11,7 +11,8 @@ import { reducedMotion } from "@/shared/hand";
 import { useAtlasRun } from "./api";
 import { loadDesign, type Design, type Hooks, type Mounted } from "./designs";
 
-export function Journey(props: { id: number; desk: boolean; onOpenRecord: (key: string) => void; onClose: () => void }) {
+/** `design`: draw it with this design instead of the run's own (Atlas's 样式 view: a look at a design). */
+export function Journey(props: { id: number; desk: boolean; design?: string; onOpenRecord: (key: string) => void; onClose: () => void }) {
   const { data: run, error } = useAtlasRun(props.id);
   const frame = useRef<HTMLIFrameElement>(null);
   const [design, setDesign] = useState<Design | null>(null);
@@ -23,11 +24,11 @@ export function Journey(props: { id: number; desk: boolean; onOpenRecord: (key: 
   useEffect(() => {
     if (!run) return;
     let gone = false;
-    void loadDesign(run.design)
+    void loadDesign(props.design ?? run.design)
       .then((d) => !gone && setDesign(d))
       .catch((e) => !gone && setFailed(errorText(e)));
     return () => void (gone = true);
-  }, [run]);
+  }, [run, props.design]);
 
   useEffect(() => {
     const el = frame.current;

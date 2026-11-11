@@ -22,6 +22,8 @@ const ROUTES = ['/', '/todo', '/books', '/films', '/drawing', '/packing', '/fina
 
 // extra states: [route, label, async (page) => void]
 const EXTRA = [
+  ['/atlas', 'a year', async (p) => p.getByRole('button', { name: /^时间穿梭：2025/ }).click({ timeout: 2000 })],
+  ['/atlas', 'designs', async (p) => { const back = p.locator('.pm-page-head button', { hasText: '全部年份' }); if (await back.count()) await back.click(); await p.locator('.pm-page-head button', { hasText: '样式' }).click({ timeout: 2000 }); }],
   ['/finance', 'entry panel', async (p) => p.locator('.pm-sheet tbody tr').first().click({ timeout: 2000 })],
   ['/finance', 'new entry', async (p) => p.getByRole('button', { name: /记一笔|新记录|添加/ }).first().click({ timeout: 2000 })],
   ['/finance/assets', 'account panel', async (p) => p.locator('.pm-sheet tbody tr').first().click({ timeout: 2000 })],

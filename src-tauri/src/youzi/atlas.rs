@@ -33,7 +33,7 @@ pub const MARK: &str = "【Atlas · 各幕】";
 
 /// The design new runs are made for: `<id>@<version>` of a release in src/vendor/pomelo/atlas/ (synced from
 /// visual-atelier schemes/pomelo/atlas/releases/). Changed when a newer design is adopted; old rows keep theirs.
-pub const DESIGN: &str = "tabloid@1.0.0";
+pub const DESIGN: &str = "tabloid@1.0.1";
 
 /// What a year's talks with 柚子 are sorted into (key, what belongs). A design draws each its own way.
 pub const TOPIC_KINDS: &[(&str, &str)] = &[
@@ -69,8 +69,15 @@ pub const SCENES: &[(&str, &str, &str)] = &[
     ("finale", "终章", "柚子的来信"),
 ];
 
-/// The reply's room (thinking extra).
-const SCENE_TOKENS: i64 = 4000;
+/// The reply's room (thinking extra): the scenes, and for every conversation the topics name (up to TALKS_MOST).
+const SCENE_TOKENS: i64 = 6000;
+const TALK_TOKENS: i64 = 10;
+const TALKS_MOST: i64 = 20_000;
+/// A cloud model's room for thinking on the first try (doubled on each later one).
+const CLOUD_THINK: i64 = 24_576;
+/// How often the scenes are asked for before giving up (a reply that can't be read is asked for again).
+const TRIES: usize = 3;
+const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
 /// Characters of a note the model sees (the snapshot keeps it whole).
 const NOTE_CHARS: usize = 100;
 /// Same-day pairs offered at most.
@@ -410,10 +417,12 @@ fn messages(snap: &Snapshot, facts: &Facts, letter: &str, stride: usize) -> Vec<
         "{MARK}你是柚子，用户自己的生活记录 App「柚儿园」里的助手。你刚给用户写完 {} 年的年度总结（在最后）。Atlas 会把这一年做成一段往下走的视觉旅程，一幕讲一件事；每一幕的数字、日期、图和列表都由程序画，你只写话、挑记录。\n\
          - 从【可以写的幕】里挑这一年值得讲的，按给的顺序；序章和终章一定要有，没什么可说的幕就不写。\n\
          - 每一幕写 1～2 句话，每句不超过 40 个字，口吻和信一样，对着「你」说；不写数字、日期、排名和百分比（程序会显示），只根据给你的内容，不要编。\n\
-         - 每一幕可以从【可以引用的记录】里挑 0～3 条，写编号（像 note:12）：「留下的日子」挑 1 条最能代表这一年的笔记；「几个具体时刻」挑 2～6 条；「去年的回声」从【两年同一天】里挑同一天的今年 1 条、去年 1 条；别的幕挑和它有关的。\n\
+         - 每一幕可以从【可以引用的记录】里挑几条，写编号（像 note:12）。页上只画这一幕认的那几类，别的类挑了也不出现，所以话也只说挑中的这几条：「留下的日子」（days）挑 1 条最能代表这一年的笔记 note；「书影相遇」（works）挑 1～3 条 book、film；「几个具体时刻」（moments）只挑 goal、trip、offer、day，2～6 条，笔记里写的事不算；「去年的回声」（echo）从【两年同一天】里挑同一天的今年 1 条、去年 1 条；「创作」（drawing）挑 course；「求职这一年」（jobs）挑 offer；「和柚子聊的事」（talks）挑 talk；别的幕不用挑。\n\
+         - 「和柚子聊的事」（talks）的话印在柚子的一个小泡泡里：只写 1 句，不超过 28 个字。\n\
          - 写了「和柚子聊的事」（talks）时，再给它一个 topics：把【可以引用的记录】里 talk 开头的对话按话题归成 2～{TOPICS} 组（每个对话最多进一组，归不进去的不管），每组写名字 name（不超过 {TOPIC_CHARS} 个字，像「做饭」「面试」）、类别 kind（只能从这些里挑：{kinds}；都不合适就写 other）、这一组的对话编号 refs。\n\
          - 「终章」可以写 2～4 句，像一封短信的开头、中间和结尾。\n\
-         - 只输出 JSON，不要别的文字：{{\"scenes\":[{{\"key\":\"prologue\",\"lines\":[\"……\"],\"refs\":[]}},{{\"key\":\"talks\",\"lines\":[\"……\"],\"refs\":[],\"topics\":[{{\"name\":\"做饭\",\"kind\":\"cook\",\"refs\":[\"talk:3\",\"talk:8\"]}}]}}]}}",
+         - 话里要引用原话、书名时用「」或《》，不要用英文双引号（会把 JSON 弄坏）。\n\
+         - 只输出一个 JSON 对象，从 {{ 开始、到 }} 结束，不要代码块、不要别的文字：{{\"scenes\":[{{\"key\":\"prologue\",\"lines\":[\"……\"],\"refs\":[]}},{{\"key\":\"talks\",\"lines\":[\"……\"],\"refs\":[],\"topics\":[{{\"name\":\"做饭\",\"kind\":\"cook\",\"refs\":[\"talk:3\",\"talk:8\"]}}]}}]}}",
         snap.year,
         kinds = TOPIC_KINDS.iter().map(|(k, what)| format!("{k}（{what}）")).collect::<Vec<_>>().join("、")
     );
@@ -444,38 +453,159 @@ fn messages(snap: &Snapshot, facts: &Facts, letter: &str, stride: usize) -> Vec<
     vec![Msg::new("system", &system), Msg::new("user", &parts.join("\n\n"))]
 }
 
+/// A scene as the model wrote it, whatever shape it chose (read leniently: `raw_scenes`).
+struct RawScene {
+    key: String,
+    lines: Vec<String>,
+    refs: Vec<String>,
+    topics: Vec<RawTopic>,
+}
+struct RawTopic {
+    name: String,
+    kind: String,
+    refs: Vec<String>,
+}
+
+/// A scene's key from what the model called it: the key, or its title (「序章」).
+fn scene_key(s: &str) -> Option<&'static str> {
+    let s = s.trim();
+    SCENES.iter().find(|x| x.0.eq_ignore_ascii_case(s) || x.1 == s).map(|x| x.0)
+}
+
+/// A string, a number, or a list of them, as strings (anything else: nothing).
+fn strings(v: &serde_json::Value) -> Vec<String> {
+    match v {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Number(n) => vec![n.to_string()],
+        serde_json::Value::Array(a) => a.iter().flat_map(strings).collect(),
+        _ => vec![],
+    }
+}
+
+fn field<'a>(o: &'a serde_json::Map<String, serde_json::Value>, names: &[&str]) -> Option<&'a serde_json::Value> {
+    names.iter().find_map(|n| o.get(*n))
+}
+
+fn raw_scene(key: Option<&str>, v: &serde_json::Value) -> Option<RawScene> {
+    let o = match v {
+        serde_json::Value::Object(o) => o,
+        // `"prologue": "一句话"` / `"prologue": ["一句", "两句"]`
+        serde_json::Value::String(_) | serde_json::Value::Array(_) => return key.map(|k| RawScene { key: k.into(), lines: strings(v), refs: vec![], topics: vec![] }),
+        _ => return None,
+    };
+    let key = key.map(String::from).or_else(|| field(o, &["key", "scene", "id"]).and_then(|k| k.as_str()).map(String::from))?;
+    let topics = field(o, &["topics"])
+        .and_then(|t| t.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_object())
+                .map(|t| RawTopic {
+                    name: field(t, &["name", "topic", "title"]).map(strings).unwrap_or_default().join(""),
+                    kind: field(t, &["kind", "type", "category"]).and_then(|k| k.as_str()).unwrap_or_default().trim().to_lowercase(),
+                    // `3` for `talk:3`
+                    refs: field(t, &["refs", "talks", "ids"]).map(strings).unwrap_or_default().into_iter().map(|r| if !r.is_empty() && r.bytes().all(|b| b.is_ascii_digit()) { format!("talk:{r}") } else { r }).collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(RawScene {
+        key,
+        lines: field(o, &["lines", "line", "text", "words"]).map(strings).unwrap_or_default().iter().flat_map(|l| l.lines().map(String::from).collect::<Vec<_>>()).collect(),
+        refs: field(o, &["refs", "ref", "records"]).map(strings).unwrap_or_default(),
+        topics,
+    })
+}
+
+/// The scenes in a JSON value: `{"scenes": [...]}` (what's asked for), the list alone, or scenes by their key.
+/// A lone scene, a list of words or of topics holds none.
+fn raw_scenes(v: &serde_json::Value) -> Vec<RawScene> {
+    match v {
+        serde_json::Value::Object(o) => match o.get("scenes") {
+            Some(serde_json::Value::Array(a)) => a.iter().filter_map(|x| raw_scene(None, x)).collect(),
+            Some(serde_json::Value::Object(m)) => m.iter().filter_map(|(k, x)| raw_scene(Some(k), x)).collect(),
+            _ => o.iter().filter(|(k, _)| scene_key(k).is_some()).filter_map(|(k, x)| raw_scene(Some(k), x)).collect(),
+        },
+        serde_json::Value::Array(a) if a.iter().any(|x| x.get("key").is_some_and(|k| k.is_string())) => a.iter().filter_map(|x| raw_scene(None, x)).collect(),
+        _ => vec![],
+    }
+}
+
+/// Mends what models most often get wrong in JSON: a `"` inside a sentence (it closes the string only before
+/// `,` `}` `]` `:` or the end), a line break inside a string, a comma before a closing bracket, 「“ ”」 around a string.
+fn repair(text: &str) -> String {
+    let cs: Vec<char> = text.chars().collect();
+    let solid = |from: usize| cs.get(from..).and_then(|rest| rest.iter().copied().find(|c| !c.is_whitespace()));
+    let mut out = String::with_capacity(text.len() + 16);
+    // the character that closes the string we're in
+    let mut closer: Option<char> = None;
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        match closer {
+            Some(end) => match c {
+                '\\' => {
+                    out.push(c);
+                    if let Some(n) = cs.get(i + 1) {
+                        out.push(*n);
+                        i += 1;
+                    }
+                }
+                c if c == end && matches!(solid(i + 1), None | Some(',' | '}' | ']' | ':')) => {
+                    closer = None;
+                    out.push('"');
+                }
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {}
+                _ => out.push(c),
+            },
+            None => match c {
+                '"' => {
+                    closer = Some('"');
+                    out.push('"');
+                }
+                '“' => {
+                    closer = Some('”');
+                    out.push('"');
+                }
+                ',' if matches!(solid(i + 1), Some('}' | ']')) => {}
+                _ => out.push(c),
+            },
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The first JSON value in `text` that holds scenes: models put words or a code fence around it, and a `{` may
+/// come before it. Err: why the first try at it didn't read.
+fn scenes_in(text: &str) -> Result<Vec<RawScene>, String> {
+    let mut why = None;
+    for (i, _) in text.char_indices().filter(|(_, c)| *c == '{' || *c == '[').take(60) {
+        match serde_json::Deserializer::from_str(&text[i..]).into_iter::<serde_json::Value>().next() {
+            Some(Ok(v)) => {
+                let found = raw_scenes(&v);
+                if !found.is_empty() {
+                    return Ok(found);
+                }
+            }
+            Some(Err(e)) if why.is_none() => why = Some(e.to_string()),
+            _ => {}
+        }
+    }
+    Err(why.unwrap_or_else(|| "里面没有各幕".into()))
+}
+
+pub(crate) const NOT_JSON: &str = "模型写的各幕读不出来（不是要的 JSON）";
+
 /// The model's scenes, checked against the snapshot.
 pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
-    #[derive(Deserialize)]
-    struct Raw {
-        scenes: Vec<RawScene>,
-    }
-    #[derive(Deserialize)]
-    struct RawScene {
-        key: String,
-        #[serde(default)]
-        lines: Vec<String>,
-        #[serde(default)]
-        refs: Vec<String>,
-        #[serde(default)]
-        topics: Vec<RawTopic>,
-    }
-    #[derive(Deserialize)]
-    struct RawTopic {
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        kind: String,
-        #[serde(default)]
-        refs: Vec<String>,
-    }
-    let bad = || "模型写的各幕读不出来（不是要的 JSON）".to_string();
-    let (a, b) = (reply.find('{').ok_or_else(bad)?, reply.rfind('}').ok_or_else(bad)?);
-    let raw: Raw = serde_json::from_str(reply.get(a..=b).ok_or_else(bad)?).map_err(|_| bad())?;
+    let raw = scenes_in(reply).or_else(|_| scenes_in(&repair(reply))).map_err(|_| NOT_JSON.to_string())?;
     let records: HashMap<&str, &Record> = snap.records.iter().map(|r| (r.key.as_str(), r)).collect();
     let mut out = vec![];
     for (key, _, _) in SCENES.iter().filter(|s| snap.offered.iter().any(|k| k == s.0)) {
-        let Some(s) = raw.scenes.iter().find(|s| s.key.trim() == *key) else { continue };
+        let Some(s) = raw.iter().find(|s| scene_key(&s.key) == Some(*key)) else { continue };
         let lines: Vec<String> = s.lines.iter().map(|l| clip(l.trim(), LINE_CHARS)).filter(|l| !l.is_empty()).take(if *key == "finale" { LINES + 1 } else { LINES }).collect();
         let mut seen = HashSet::new();
         let mut refs: Vec<String> = s.refs.iter().map(|r| r.trim().to_string()).filter(|r| records.contains_key(r.as_str()) && seen.insert(r.clone())).collect();
@@ -509,7 +639,7 @@ pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
                 if name.is_empty() || refs.is_empty() {
                     continue;
                 }
-                let kind = TOPIC_KINDS.iter().find(|k| k.0 == t.kind.trim()).map_or("other", |k| k.0);
+                let kind = TOPIC_KINDS.iter().find(|k| k.0 == t.kind).map_or("other", |k| k.0);
                 topics.push(Topic { name, kind: kind.into(), n: refs.len() as i64, refs });
             }
             topics.sort_by_key(|t| std::cmp::Reverse(t.n));
@@ -525,6 +655,24 @@ pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
     Ok(out)
 }
 
+/// A reply read, or why not: (what the user is told, what the model is told before it tries again).
+fn read(reply: &str, finish: &str, snap: &Snapshot) -> Result<Vec<Scene>, (String, String)> {
+    if reply.trim().is_empty() {
+        let cut = if finish == "length" { "，回复的长度都用在思考上了" } else { "" };
+        return Err((format!("模型没有写出各幕（回复是空的{cut}）。"), "上一次你什么都没输出。这次直接输出 JSON。".into()));
+    }
+    parse(reply, snap).map_err(|e| {
+        if finish == "length" {
+            ("模型写各幕时到了回复长度的上限，没写完。".into(), "上一次写到一半就到了回复长度的上限。这次写短一些：每一幕一句话，不要解释，直接输出 JSON。".into())
+        } else {
+            let hint = format!("上一次的输出读不出来：{}。这次只输出一个合法的 JSON 对象，从 {{ 开始、到 }} 结束，不要代码块和别的文字；话里要引用原话时用「」，不要用英文双引号。", e.trim_end_matches('。'));
+            // what it did write, so the reason can be told from Atlas's page
+            let shown = if e == NOT_JSON { format!("{NOT_JSON}，它回的开头是：{}", clip(reply, 60)) } else { e };
+            (shown, hint)
+        }
+    })
+}
+
 async fn size(counter: &Counter, messages: &[Msg]) -> i64 {
     let mut used = context::PROMPT_OVERHEAD;
     for m in messages {
@@ -533,15 +681,62 @@ async fn size(counter: &Counter, messages: &[Msg]) -> i64 {
     used
 }
 
-/// Asks the model for the scenes (thinning the notes it sees until the request fits).
+/// One answer, whole: the text, why it stopped (`stop`, `length`…) and what it used.
+async fn say(target: &Target, messages: Vec<Msg>, max_tokens: i64, thinking: bool, effort: Option<String>) -> Result<(String, String, Option<(i64, i64)>), String> {
+    let (mut out, mut finish, mut usage) = (String::new(), String::new(), None);
+    // room_fixed: the cap already has the thinking's room
+    let streamed = super::provider::stream(target.clone(), messages, super::provider::Options { max_tokens: Some(max_tokens), thinking: Some(thinking), effort, room_fixed: true, ..Default::default() }, |e| match e {
+        super::provider::Event::Content(t) => out.push_str(&t),
+        super::provider::Event::Finished(r) => finish = r,
+        super::provider::Event::Usage { prompt, completion } => usage = Some((prompt, completion)),
+        _ => {}
+    });
+    match tokio::time::timeout(ANSWER_LIMIT, streamed).await {
+        Ok(r) => r?,
+        Err(_) => return Err("模型 10 分钟都没写完各幕（云端可能正忙）。".into()),
+    }
+    Ok((out.trim().to_string(), finish, usage))
+}
+
+/// Testing with real models (docs/testing.md「Atlas」): POMELO_ATLAS_DUMP=<folder> keeps every request and what
+/// came back. Never set in everyday use.
+fn dump(attempt: usize, messages: &[Msg], reply: &Result<(String, String, Option<(i64, i64)>), String>) {
+    let Some(dir) = std::env::var_os("POMELO_ATLAS_DUMP").map(std::path::PathBuf::from) else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let _ = std::fs::write(dir.join(format!("{at}-{attempt}-request.txt")), messages.iter().map(|m| format!("[{}]\n{}", m.role, m.content)).collect::<Vec<_>>().join("\n\n"));
+    let text = match reply {
+        Ok((out, finish, usage)) => format!("finish: {finish}\nusage: {usage:?}\n\n{out}"),
+        Err(e) => format!("error: {e}"),
+    };
+    let _ = std::fs::write(dir.join(format!("{at}-{attempt}-reply.txt")), text);
+}
+
+/// Asks the model for the scenes (thinning the notes it sees until the request fits). A reply that can't be read
+/// (empty, cut off, not JSON) is asked for again, told what went wrong and without thinking, `TRIES` times in all.
 async fn ask(sink: &impl Sink, target: &Target, window: i64, thinking: bool, snap: &Snapshot, facts: &Facts, letter: &str) -> Result<Vec<Scene>, String> {
     let counter = Counter::for_target(target);
-    let room = SCENE_TOKENS + if thinking { context::think_room(window) } else { 0 };
+    // the topics name every conversation they hold
+    let talks = snap.records.iter().filter(|r| r.kind == "talk").count() as i64;
+    // (a small window — a local model — gives a third of itself at most: the year has to fit too)
+    let answer = (SCENE_TOKENS + (talks * TALK_TOKENS).min(TALKS_MOST)).min((window / 3).max(2048));
+    // Thinking is counted in the reply's cap. A cloud model that can't switch it off (GLM, GPT) thinks as long as it
+    // likes: with a small cap the whole reply went on thinking and nothing was written. So: room for it on every try
+    // that thinks, more on the later ones, which also ask for as little thinking as the model can do.
+    let thinks = |on: bool| match target {
+        Target::Cloud { model, .. } => model.thinking.thinks(on),
+        _ => on,
+    };
+    let think_room = |attempt: usize| match (thinks(thinking && attempt == 0), target) {
+        (false, _) => 0,
+        (true, Target::Cloud { .. }) => CLOUD_THINK << attempt.min(2),
+        (true, _) => context::think_room(window),
+    };
     let notes = snap.records.iter().filter(|r| r.kind == "note").count();
     let mut stride = 1;
     let request = loop {
         let m = messages(snap, facts, letter, stride);
-        if size(&counter, &m).await + room <= window {
+        if size(&counter, &m).await + answer + think_room(0) <= window {
             break m;
         }
         if notes / stride < 10 {
@@ -549,9 +744,29 @@ async fn ask(sink: &impl Sink, target: &Target, window: i64, thinking: bool, sna
         }
         stride *= 2;
     };
-    let (out, usage) = super::brief::ask(target, request, room, thinking, None).await?;
-    sink.asked(usage);
-    parse(&out, snap)
+    let mut missed = String::new();
+    for attempt in 0..TRIES {
+        let mut m = request.clone();
+        let think = thinking && attempt == 0;
+        if attempt > 0 {
+            m[1].content.push_str(&format!("\n\n【再写一次】{missed}"));
+        }
+        let reply = say(target, m.clone(), answer + think_room(attempt), think, (attempt > 0).then(|| "low".to_string())).await;
+        dump(attempt, &m, &reply);
+        let (out, finish, usage) = reply?;
+        sink.asked(usage);
+        match read(&out, &finish, snap) {
+            Ok(scenes) => return Ok(scenes),
+            Err((shown, hint)) => {
+                eprintln!("Atlas scenes of {}, try {}: {shown}", snap.year, attempt + 1);
+                missed = hint;
+                if attempt + 1 == TRIES {
+                    return Err(format!("{}（试了 {TRIES} 次）", shown.trim_end_matches('。')));
+                }
+            }
+        }
+    }
+    Err(NOT_JSON.into())
 }
 
 /// After the letter: the snapshot, then the scenes; saved either way (a failed step with its error).
@@ -931,6 +1146,34 @@ mod tests {
         let mock = parse(&mock_reply(user), &snap).unwrap();
         let topics = &mock.iter().find(|s| s.key == "talks").unwrap().topics;
         assert_eq!(topics.iter().map(|x| (x.kind.as_str(), x.n)).collect::<Vec<_>>(), [("cook", 1), ("other", 1), ("other", 1)]);
+    }
+
+    #[test]
+    fn replies_in_other_shapes_are_still_read() {
+        let talk = |id: i64, t: &str| rec("talk", id, Some("2026-04-01".into()), t.into());
+        let snap = Snapshot { year: "2026".into(), offered: ["prologue", "talks", "finale"].map(String::from).to_vec(), records: vec![talk(1, "面"), talk(2, "汤")], ..Default::default() };
+        // words and a stray `{` around it, a code fence, a `"` inside a sentence, null refs, a line break inside a
+        // string, a comma before the closing bracket
+        let broken = "想了想 {先看看}\n```json\n{\"scenes\":[{\"key\":\"prologue\",\"lines\":[\"你说\"慢慢来\"，就真的慢下来了\"],\"refs\":null},{\"key\":\"finale\",\"lines\":\"第一句\n第二句\",}]}\n```\n就这些 }";
+        let out = parse(broken, &snap).unwrap();
+        assert_eq!(out[0].lines, ["你说\"慢慢来\"，就真的慢下来了"]);
+        assert_eq!(out[1].lines, ["第一句", "第二句"]);
+        // scenes by key (titles too), a sentence instead of a list, numbers for the conversations, other names
+        let keyed = r#"{"序章":"开场","talks":{"lines":["聊了不少"],"topics":[{"topic":"吃的","type":"Cook","talks":[1,2]}]},"终章":["再见"]}"#;
+        let out = parse(keyed, &snap).unwrap();
+        assert_eq!(out.iter().map(|s| s.key.as_str()).collect::<Vec<_>>(), ["prologue", "talks", "finale"]);
+        assert_eq!(out[1].topics, [Topic { name: "吃的".into(), kind: "cook".into(), n: 2, refs: vec!["talk:1".into(), "talk:2".into()] }]);
+        // the list alone; 「“ ”」 around the strings
+        assert_eq!(parse(r#"[{"key":"prologue","lines":["开场"]}]"#, &snap).unwrap().len(), 1);
+        assert_eq!(parse("{“scenes”:[{“key”:“finale”,“lines”:[“再见”]}]}", &snap).unwrap()[0].lines, ["再见"]);
+        // one scene alone, or a list of topics, isn't the scenes
+        assert_eq!(parse(r#"{"key":"prologue","lines":["开场"]}"#, &snap).unwrap_err(), NOT_JSON);
+        // why a reply gave nothing, as the user is told
+        assert!(read("", "length", &snap).unwrap_err().0.contains("回复是空的，回复的长度都用在思考上了"));
+        assert!(read(r#"{"scenes":[{"key":"prologue","lines":["开"#, "length", &snap).unwrap_err().0.contains("上限"));
+        let (shown, hint) = read("我写不出来", "stop", &snap).unwrap_err();
+        assert!(shown == format!("{NOT_JSON}，它回的开头是：我写不出来") && hint.contains("英文双引号"));
+        assert!(read(keyed, "stop", &snap).is_ok());
     }
 
     #[test]

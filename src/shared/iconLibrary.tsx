@@ -24,7 +24,7 @@ const RENAMED: Record<string, string> = { pin: "pushpin", notebook: "notebook-pl
 const GROUPS: [string, string[]][] = [
   ["写和读", ["book-open", "library", "library-big", "notebook", "notebook-plain", "pen", "pencil", "feather", "square-pen", "scroll-text", "file-text", "quote", "languages", "graduation", "lightbulb", "brain", "message", "message-square", "message-circle-question"]],
   ["记号", ["bookmark", "tag", "tags", "target", "star", "sparkle", "sparkles", "flame", "heart", "pushpin", "pin", "hash", "paperclip", "link-2", "lock", "key-round", "fingerprint", "eye", "bell-ring", "triangle-alert", "circle-question-mark", "trophy", "puzzle", "shapes"]],
-  ["自然和时间", ["citrus", "sprout", "flower", "leaf", "moon", "sun", "cloud", "mountain", "calendar", "calendar-heart", "calendar-check", "alarm-clock", "hourglass", "history", "repeat"]],
+  ["自然和时间", ["citrus", "sprout", "flower", "leaf", "moon", "sun", "cloud", "mountain", "calendar", "calendar-heart", "calendar-check", "alarm-clock", "hourglass", "history", "time-travel", "repeat"]],
   ["生活", ["house", "coffee", "food", "shopping-bag", "gift", "shirt", "cat", "smile", "user", "users", "health", "stethoscope", "dumbbell", "footprints", "luggage", "plane", "globe", "compass"]],
   ["兴趣", ["film", "tv", "music", "headphones", "palette", "game", "camera", "image-plus"]],
   ["工作和工具", ["briefcase", "wallet", "trending-up", "file-user", "code", "wrench", "keyboard", "hard-drive", "database-backup", "brush-cleaning", "settings", "settings-2", "sliders-horizontal", "wand-sparkles", "scan-text", "search", "send", "archive", "folder", "folder-open", "list-checks", "layout-grid"]],
