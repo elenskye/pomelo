@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { flash, reducedMotion } from "@/shared/hand";
 import { HandIcon, Tip } from "@/shared/handParts";
+import { hangAt } from "@/shared/tips";
 import { CatName, liveKey, liveText, ModuleRow, useModuleMenu } from "./DockPage";
 import { catTint, useDock } from "./dock";
 import { Menu } from "./Menu";
@@ -146,6 +147,11 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
   const matches = term ? layout.flatMap((w) => w.mods).filter((m) => dock.defs.get(m)!.label.toLowerCase().includes(term)) : [];
   const first = matches[0] ?? null;
   const hidden = dock.hidden.filter((m) => dock.defs.has(m));
+  // the found ones show their name in place: its string starts on the sticker itself
+  const found = matches.join(" ");
+  useLayoutEffect(() => {
+    for (const h of whl.current?.querySelectorAll<HTMLElement>(".slotlift.is-hover") ?? []) hangAt(h);
+  }, [found]);
   // 小彩蛋: type 「柚子」 and it spins round once
   useEffect(() => {
     if (q.trim() === "柚子" && !reducedMotion()) flash(whl.current, "is-spin", 920);

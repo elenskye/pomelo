@@ -1,13 +1,15 @@
 // Atlas: 柚子's 年度总结 as a 年度小报 (requirements「以后 · Atlas」; the designs come frozen from visual-atelier, designs.ts).
 // Three views on one page (the header's 「全部年份」 goes back):
-// - the years: one cover a year, in a row that scrolls sideways; a cover is its newest run (which design it was made
-//   for is printed on it) and a click opens that one. Under it the 时间穿梭 button goes to the year's own view;
+// - the years: one cover a year, in a row that scrolls sideways; a cover is its newest run and a click opens that one.
+//   The design the run is drawn with draws the cover too (`design.cover`, Tabloid 1.0.2 on: the year, the design's name
+//   and version, 「截至某日」); a design without one gets the plain printed card. Under it 时间穿梭 goes to the year's view;
 // - a year: every run ever written for it (a year done again — 补做 — is one more run, older ones stay), newest first,
 //   each a cover; a click opens it, × deletes it (Rust atlas_delete, undoable: no AI tool, no schedule can);
-// - 样式: every design the app carries, newest first; a click draws the newest run made for it (or, with none, the
-//   newest run there is) with that design, to look at it. A run itself is always drawn with the design it was made for.
+// - 样式: every design the app carries, newest first; a click draws the newest run drawn with it (or, with none, the
+//   newest run there is) with that design, to look at it. A run is drawn with the newest release of the line it was made
+//   for (designs.ts `resolve`: a patch replaces the earlier ones, so 1.0.0 and 1.0.1 runs show as 1.0.2).
 // 立即运行 writes this year up to today; 补做 writes a past year. The 小报 opens over the desk (Journey.tsx).
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { moduleById } from "@/app/modules";
 import { useTabs } from "@/app/tabs";
@@ -18,7 +20,7 @@ import { api as ipc } from "@/shared/ipc";
 import { useOpenRequest, type Hit } from "@/shared/open";
 import { Button, EmptyState, IconButton, PageHeader } from "@/shared/ui";
 import { ATLAS_KEY, atlasApi, OVERVIEW_KEY, useAtlasOverview, type Entry } from "./api";
-import { designLabel, designList } from "./designs";
+import { designLabel, designList, loadDesign, resolve, type Design } from "./designs";
 import { Journey } from "./Journey";
 import "./atlas.css";
 
@@ -37,17 +39,41 @@ const TILTS = [-2, 1.5, -1];
 
 type View = { at: "years" } | { at: "year"; year: string } | { at: "designs" };
 
-/** A printed cover: `big` (the year, or a design's version) under `small`, `foot` in the corner, `stamp` when the year wasn't over. */
-function Cover(props: { big: string; small: string; foot?: string; stamp?: string; stack?: boolean; tilt: number }) {
+/** A design (designs.ts `resolve`), once loaded. */
+function useDesign(key: string) {
+  const [design, setDesign] = useState<Design | null>(null);
+  useEffect(() => {
+    let gone = false;
+    void loadDesign(key)
+      .then((d) => !gone && setDesign(d))
+      .catch(() => {});
+    return () => void (gone = true);
+  }, [key]);
+  return design;
+}
+
+/** A run's cover as its design draws it (`design` is the run's; the year, `until` for 「截至某日」); `stack` slips a
+ *  sheet under it (the year has more runs). Until the design is loaded, or for one that draws no cover: a plain
+ *  printed card with the year and the design's name. */
+function Cover(props: { design: string; year: string; until: string | null; stack?: boolean; tilt: number }) {
+  const design = useDesign(props.design);
+  // made once per look: each call numbers its pictures' ids anew
+  const html = useMemo(() => design?.cover?.({ year: props.year, until: props.until }) ?? null, [design, props.year, props.until]);
   return (
     <span className="atlas-cover" style={{ "--tilt": `${props.tilt}deg` } as React.CSSProperties}>
       {props.stack && <span className="atlas-cover-under" aria-hidden />}
-      <span className="atlas-cover-paper" aria-hidden />
-      <span className="atlas-cover-name">{props.small}</span>
-      <span className="atlas-cover-year">{props.big}</span>
-      <span className="atlas-cover-bar" aria-hidden />
-      {props.stamp && <span className="atlas-cover-stamp">{props.stamp}</span>}
-      {props.foot && <span className="atlas-cover-foot">{props.foot}</span>}
+      {html ? (
+        <span className="atlas-cover-art" aria-hidden dangerouslySetInnerHTML={{ __html: html }} />
+      ) : (
+        <>
+          <span className="atlas-cover-paper" aria-hidden />
+          <span className="atlas-cover-name">柚子的年度小报</span>
+          <span className="atlas-cover-year">{props.year}</span>
+          <span className="atlas-cover-bar" aria-hidden />
+          {props.until && <span className="atlas-cover-stamp">截至 {md(props.until)}</span>}
+          <span className="atlas-cover-foot">{designLabel(props.design)}</span>
+        </>
+      )}
     </span>
   );
 }
@@ -257,7 +283,7 @@ export default function AtlasPage() {
                   <div key={y} role="listitem" className="atlas-item">
                     {latest ? (
                       <button type="button" className="pm-press" aria-label={`翻开 ${y} 年最新的一份`} onClick={() => setOpen({ id: latest.id, desk: false })}>
-                        <Cover big={y} small="柚子的年度小报" foot={designLabel(latest.design)} stamp={latest.until ? `截至 ${md(latest.until)}` : undefined} stack={list.length > 1} tilt={TILTS[i % 3]} />
+                        <Cover design={latest.design} year={y} until={latest.until} stack={list.length > 1} tilt={TILTS[i % 3]} />
                       </button>
                     ) : (
                       <span className="atlas-cover is-none">{writing ? "正在写…" : "还没写"}</span>
@@ -297,7 +323,7 @@ export default function AtlasPage() {
             {runs.map((e, i) => (
               <div key={e.id} role="listitem" className="atlas-item is-run">
                 <button type="button" className="pm-press" aria-label={`翻开 ${wrote(e)} 写的这一份`} onClick={() => setOpen({ id: e.id, desk: false })}>
-                  <Cover big={e.year} small="柚子的年度小报" foot={designLabel(e.design)} stamp={e.until ? `截至 ${md(e.until)}` : undefined} tilt={TILTS[i % 3]} />
+                  <Cover design={e.design} year={e.year} until={e.until} tilt={TILTS[i % 3]} />
                 </button>
                 <div className="mt-3 flex items-center justify-between gap-1">
                   <span className="font-bold whitespace-nowrap tabular-nums">{wrote(e)}</span>
@@ -317,19 +343,23 @@ export default function AtlasPage() {
         {at.at === "designs" && (
           <Strip label="Atlas 的每一版样式">
             {designList().map((d, i) => {
-              const made = o.entries.filter((e) => e.design === d.key).sort(newest);
+              // the runs drawn with it: made for it, or for an earlier patch of its line
+              const made = o.entries.filter((e) => resolve(e.design) === d.key).sort(newest);
               // looked at with the newest run made for it, else with the newest run there is
               const sample = made[0] ?? [...o.entries].sort(newest)[0];
               return (
                 <div key={d.key} role="listitem" className="atlas-item is-design">
                   <button type="button" className="pm-press" disabled={!sample} aria-label={`用 ${designLabel(d.key)} 翻开一份看看`} onClick={() => sample && setOpen({ id: sample.id, desk: false, design: d.key })}>
-                    <Cover big={d.version} small={d.name} foot={d.frozen ? `${d.frozen} 定稿` : undefined} tilt={TILTS[i % 3]} />
+                    <Cover design={d.key} year={sample?.year ?? thisYear} until={null} tilt={TILTS[i % 3]} />
                   </button>
                   <div className="mt-3 font-bold tabular-nums">
                     {designLabel(d.key)}
-                    {d.key === o.design && <span className="ml-2 text-xs font-normal text-muted-foreground">新做的用这一版</span>}
+                    {d.key === resolve(o.design) && <span className="ml-2 text-xs font-normal text-muted-foreground">新做的用这一版</span>}
                   </div>
-                  <div className="text-xs text-muted-foreground">{made.length ? `${made.length} 份是照它做的` : "还没有照它做的"}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {d.frozen ? `${d.frozen} 定稿 · ` : ""}
+                    {made.length ? `${made.length} 份照它画` : "还没有照它画的"}
+                  </div>
                   {d.note && <p className="mt-1 text-xs leading-5 text-muted-foreground">{d.note}</p>}
                 </div>
               );

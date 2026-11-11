@@ -56,9 +56,10 @@ const lint = () => {
     if (r.width * r.height < 0.12 * sr.width * sr.height && !(r.width > 220 && r.height > 320)) continue;
     out.push({ kind: 'board', el: name(el), w: Math.round(r.width), h: Math.round(r.height), bg: cs.backgroundColor });
   }
-  // 2. plain CSS boxes: drawn by the browser (straight lines), not by hand
+  // 2. plain CSS boxes: drawn by the browser (straight lines), not by hand. Atlas's covers are drawn by a frozen design
+  //    (its 「截至」 stamp is a rubber stamp on purpose) and checked in visual-atelier, like the 小报 in its frame.
   for (const el of root.querySelectorAll('*')) {
-    if (el.closest('[data-hand-painted],[data-nolint]') || el.dataset.hand || el.hasAttribute('data-auto-card') || !vis(el)) continue;
+    if (el.closest('[data-hand-painted],[data-nolint],.atlas-cover-art') || el.dataset.hand || el.hasAttribute('data-auto-card') || !vis(el)) continue;
     // small chips (附件、文件名的小签) keep a fine line on purpose
     if (el.tagName === 'BUTTON' && el.getBoundingClientRect().height <= 34 && el.getBoundingClientRect().width <= 240) continue;
     if (/^(INPUT|IMG|IFRAME|VIDEO|CANVAS|TEXTAREA|SELECT|svg|path)$/i.test(el.tagName)) continue;

@@ -9,13 +9,16 @@
 //!   offered only when there's something for it; 序章 and 终章 always), a line or two each and the
 //!   records it quotes, only from the snapshot (回声: one note of each year, same day). Words only:
 //!   numbers, dates and ranks are Rust's. Unknown scenes / records are dropped; scenes keep SCENES' order.
+//!   序章's records are the few that moved the user most this year (dated this year): the design draws their days as
+//!   pink stars on the star map, joined with the brightest days (Tabloid 1.0.2 on; older runs picked none).
 //! - 和柚子聊的事: the model also sorts the conversations into topics, each with a kind from TOPIC_KINDS
 //!   (else `other`). It never picks a drawing: the design draws a kind's own bubble when it has one and a
 //!   plain one otherwise, so any year's topics can be drawn. How often is counted here (the refs).
 //! - Never fails the letter: a failed scenes step keeps the snapshot with the error.
-//! - Every run keeps its own row (history): `design` is the design it was made for (DESIGN then), and
-//!   Atlas always draws it with that one, also after a newer design exists; a year done again (补做) is one
-//!   more row. Only the user deletes rows (`atlas_delete`, undoable): no AI tool, no schedule.
+//! - Every run keeps its own row (history): `design` is the design it was made for (DESIGN then). Atlas draws it
+//!   with the newest release of that line (same first two numbers: a patch replaces the earlier ones, visual-atelier
+//!   schemes/pomelo/atlas/README.md), so the row is never rewritten; a new line (1.1.0) leaves older rows alone. A
+//!   year done again (补做) is one more row. Only the user deletes rows (`atlas_delete`, undoable): no AI tool, no schedule.
 //! - Also shown folded under the letter (`preview`).
 
 use super::context::{self, Counter};
@@ -32,8 +35,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 pub const MARK: &str = "【Atlas · 各幕】";
 
 /// The design new runs are made for: `<id>@<version>` of a release in src/vendor/pomelo/atlas/ (synced from
-/// visual-atelier schemes/pomelo/atlas/releases/). Changed when a newer design is adopted; old rows keep theirs.
-pub const DESIGN: &str = "tabloid@1.0.1";
+/// visual-atelier schemes/pomelo/atlas/releases/). Changed when a newer design is adopted; old rows keep theirs (and are
+/// drawn with the newest release of their line, src/modules/atlas/designs.ts `resolve`).
+pub const DESIGN: &str = "tabloid@1.0.2";
+/// Records 序章 marks at most (pink stars).
+const MOVED: usize = 5;
 
 /// What a year's talks with 柚子 are sorted into (key, what belongs). A design draws each its own way.
 pub const TOPIC_KINDS: &[(&str, &str)] = &[
@@ -417,7 +423,7 @@ fn messages(snap: &Snapshot, facts: &Facts, letter: &str, stride: usize) -> Vec<
         "{MARK}你是柚子，用户自己的生活记录 App「柚儿园」里的助手。你刚给用户写完 {} 年的年度总结（在最后）。Atlas 会把这一年做成一段往下走的视觉旅程，一幕讲一件事；每一幕的数字、日期、图和列表都由程序画，你只写话、挑记录。\n\
          - 从【可以写的幕】里挑这一年值得讲的，按给的顺序；序章和终章一定要有，没什么可说的幕就不写。\n\
          - 每一幕写 1～2 句话，每句不超过 40 个字，口吻和信一样，对着「你」说；不写数字、日期、排名和百分比（程序会显示），只根据给你的内容，不要编。\n\
-         - 每一幕可以从【可以引用的记录】里挑几条，写编号（像 note:12）。页上只画这一幕认的那几类，别的类挑了也不出现，所以话也只说挑中的这几条：「留下的日子」（days）挑 1 条最能代表这一年的笔记 note；「书影相遇」（works）挑 1～3 条 book、film；「几个具体时刻」（moments）只挑 goal、trip、offer、day，2～6 条，笔记里写的事不算；「去年的回声」（echo）从【两年同一天】里挑同一天的今年 1 条、去年 1 条；「创作」（drawing）挑 course；「求职这一年」（jobs）挑 offer；「和柚子聊的事」（talks）挑 talk；别的幕不用挑。\n\
+         - 每一幕可以从【可以引用的记录】里挑几条，写编号（像 note:12）。页上只画这一幕认的那几类，别的类挑了也不出现，所以话也只说挑中的这几条：「留下的日子」（days）挑 1 条最能代表这一年的笔记 note；「书影相遇」（works）挑 1～3 条 book、film；「几个具体时刻」（moments）只挑 goal、trip、offer、day，2～6 条，笔记里写的事不算；「去年的回声」（echo）从【两年同一天】里挑同一天的今年 1 条、去年 1 条；「创作」（drawing）挑 course；「求职这一年」（jobs）挑 offer；「和柚子聊的事」（talks）挑 talk；「序章」（prologue）挑 3～{MOVED} 条这一年对你最重要、最触动你的记录（哪一类都行，要有今年的日子：和亲近的人之间的事、家人、离别和重逢、做成的大事、让你哭或笑的那天这类；它们会在星图上画成粉色的星星，和记得最多的几天连在一起），序章的话不用一条条说它们；别的幕不用挑。\n\
          - 「和柚子聊的事」（talks）的话印在柚子的一个小泡泡里：只写 1 句，不超过 28 个字。\n\
          - 写了「和柚子聊的事」（talks）时，再给它一个 topics：把【可以引用的记录】里 talk 开头的对话按话题归成 2～{TOPICS} 组（每个对话最多进一组，归不进去的不管），每组写名字 name（不超过 {TOPIC_CHARS} 个字，像「做饭」「面试」）、类别 kind（只能从这些里挑：{kinds}；都不合适就写 other）、这一组的对话编号 refs。\n\
          - 「终章」可以写 2～4 句，像一封短信的开头、中间和结尾。\n\
@@ -625,6 +631,12 @@ pub fn parse(reply: &str, snap: &Snapshot) -> Result<Vec<Scene>, String> {
             "moments" => {
                 refs.retain(|r| ["goal", "trip", "offer", "day"].contains(&records[r.as_str()].kind.as_str()));
                 refs.truncate(6);
+                refs.sort_by(|x, y| records[x.as_str()].day.cmp(&records[y.as_str()].day));
+            }
+            // the ones that moved you: a day of this year each (they go on the star map), by date
+            "prologue" => {
+                refs.retain(|r| records[r.as_str()].day.as_deref().is_some_and(|d| d.starts_with(snap.year.as_str())));
+                refs.truncate(MOVED);
                 refs.sort_by(|x, y| records[x.as_str()].day.cmp(&records[y.as_str()].day));
             }
             _ => refs.truncate(3),
@@ -1028,6 +1040,7 @@ pub fn mock_reply(user: &str) -> String {
                 "drawing" => first(&["course"], 1),
                 "talks" => first(&["talk"], 2),
                 "echo" => echo.iter().take(2).cloned().collect(),
+                "prologue" => first(&["note", "day", "trip"], 3),
                 _ => vec![],
             };
             let mut scene = serde_json::json!({ "key": k, "lines": [format!("（模拟）这是「{k}」这一幕的话。")], "refs": refs });
@@ -1117,6 +1130,32 @@ mod tests {
         assert_eq!(out[1].refs, ["note:1", "note:2"]);
         assert!(parse("不是 JSON", &snap).is_err());
         assert!(parse(r#"{"scenes":[{"key":"works","lines":["x"]}]}"#, &snap).is_err());
+    }
+
+    #[test]
+    fn prologue_keeps_this_years_dated_records_by_date() {
+        let snap = Snapshot {
+            year: "2026".into(),
+            offered: ["prologue", "finale"].map(String::from).to_vec(),
+            records: vec![
+                rec("note", 1, Some("2026-09-10".into()), "和她去看海".into()),
+                rec("note", 2, Some("2025-03-10".into()), "去年".into()),
+                rec("book", 3, None, "《书》".into()),
+                rec("day", 4, Some("2026-02-14".into()), "在一起一周年".into()),
+                rec("trip", 5, Some("2026-05-01".into()), "回家".into()),
+                rec("goal", 6, Some("2026-06-01".into()), "跑完半马".into()),
+                rec("talk", 7, Some("2026-07-01".into()), "睡不着".into()),
+                rec("offer", 8, Some("2026-08-01".into()), "柚子科技".into()),
+            ],
+            ..Default::default()
+        };
+        let reply = r#"{"scenes":[{"key":"prologue","lines":["开场"],"refs":["note:1","note:2","book:3","day:4","note:1","trip:5","goal:6","talk:7","offer:8"]}]}"#;
+        let out = parse(reply, &snap).unwrap();
+        // last year's note and the undated book go; at most five, then by date
+        assert_eq!(out[0].refs, ["day:4", "trip:5", "goal:6", "talk:7", "note:1"]);
+        let user = "【可以写的幕】\n- prologue 序章：x\n- finale 终章：x\n\n【可以引用的记录】\n- note:1（2026 年 9 月 10 日） 看海\n- day:4（2026 年 2 月 14 日） 一周年\n\n【刚写的信】\n信";
+        let mock = parse(&mock_reply(user), &snap).unwrap();
+        assert_eq!(mock[0].refs, ["day:4", "note:1"]);
     }
 
     #[test]
