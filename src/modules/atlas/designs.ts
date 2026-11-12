@@ -5,7 +5,7 @@
 // Which releases count (visual-atelier schemes/pomelo/atlas/README.md, 2026-11-11): a patch replaces the earlier ones
 // of its line (same first two numbers) — 1.0.1 → 1.0.2 leaves only 1.0.2 in the app —, a new minor or major is a new
 // line and both stay. So a run keeps the design it was made for (`design`, `tabloid@1.0.0`) and is drawn with the
-// newest release of that line the app has (`resolve`): 1.0.x runs with 1.0.2; a later 1.1.0 leaves them alone.
+// newest release of that line the app has (`resolve`): 1.0.x runs with 1.0.3 now; a later 1.1.0 leaves them alone.
 export type Hooks = { openRecord?: (key: string) => void; onClose?: () => void; onEscape?: () => void };
 export type Mounted = { root: HTMLElement; set: (o: { palette?: string; theme?: string; reduce?: boolean }) => void; destroy: () => void };
 export type Design = {

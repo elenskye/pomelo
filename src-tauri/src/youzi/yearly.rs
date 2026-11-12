@@ -21,7 +21,9 @@
 //!   empty months / parts in a sentence; nothing about how it was read. The schedule's prompt (定时 shows
 //!   `FLOW` instead) comes last and wins.
 //! - The year: the run's time (one in January → the year just ended, schedule.rs `year_of`); kept
-//!   with the run (`year_runs`) for 首页's new-year card (`card`) and next year's comparison.
+//!   with the run (`year_runs`) for 首页's new-year card (`card`) and next year's comparison. The letter
+//!   is kept twice, in its conversation and in Atlas (`year_atlas.letter`): with the conversation deleted,
+//!   both read Atlas's copy (`letter_of`).
 //! - Model rules as other 定时任务; for a cloud model the modules not sent are left out and said at
 //!   the top. Stopped midway: the months done are kept and reused next time.
 //! - Then Atlas's 「呈现结果」 (atlas.rs): the same model writes the scenes; that step failing never
@@ -128,19 +130,27 @@ pub fn mark_year(conn: &Connection, run_id: i64, year: &str) -> Result<(), Strin
 #[serde(rename_all = "camelCase")]
 pub struct Letter {
     pub year: String,
-    pub session_id: i64,
+    /// Its conversation under 定时; None: the conversation was deleted and this is Atlas's copy.
+    pub session_id: Option<i64>,
     pub content: String,
 }
 
 /// The latest finished 年度总结 of `year`. `whole`: only one written in its December or later (the
-/// year was over); `with_private`: also from a 私密 conversation.
+/// year was over); `with_private`: also from a 私密 conversation. The letter lives twice: in its conversation
+/// and in Atlas (`year_atlas.letter`, written right after it). A conversation deleted takes only its own copy:
+/// a run whose conversation is gone is read from Atlas's (nothing says whether it was 私密 any more).
 pub fn letter_of(conn: &Connection, year: &str, whole: bool, with_private: bool) -> Result<Option<Letter>, String> {
     conn.query_row(
-        "SELECT m.session_id, m.content FROM year_runs y JOIN runs r ON r.id = y.run_id JOIN messages m ON m.run_id = r.id AND m.role = 'assistant'
-          JOIN sessions s ON s.id = m.session_id
-         WHERE y.year = ?1 AND r.state = 'completed' AND m.state = 'complete' AND trim(m.content) <> ''
-           AND (NOT ?2 OR date(r.started_at, 'localtime') >= ?1 || '-12-01') AND (?3 OR NOT s.private)
-         ORDER BY r.id DESC LIMIT 1",
+        "SELECT sid, content FROM (
+           SELECT m.session_id AS sid, m.content AS content, r.started_at AS at FROM year_runs y JOIN runs r ON r.id = y.run_id
+             JOIN messages m ON m.run_id = r.id AND m.role = 'assistant' JOIN sessions s ON s.id = m.session_id
+            WHERE y.year = ?1 AND r.state = 'completed' AND m.state = 'complete' AND trim(m.content) <> ''
+              AND (NOT ?2 OR date(r.started_at, 'localtime') >= ?1 || '-12-01') AND (?3 OR NOT s.private)
+           UNION ALL
+           SELECT NULL, a.letter, a.created_at FROM year_atlas a
+            WHERE a.run_id IS NULL AND a.year = ?1 AND trim(a.letter) <> ''
+              AND (NOT ?2 OR a.until IS NULL OR a.until >= ?1 || '-12-01'))
+         ORDER BY at DESC LIMIT 1",
         params![year, whole, with_private],
         |r| Ok(Letter { year: year.into(), session_id: r.get(0)?, content: r.get(1)? }),
     )
@@ -800,13 +810,44 @@ pub(crate) mod tests {
         // the card: only 1 月 1～7 日, only a letter written in December or later
         assert_eq!(card(&s.youzi, "2026-01-03").unwrap(), None);
         let whole = letter(&s.youzi, "2025", "2025-12-31T13:00:00.000Z", "**这一年的关键词**：全年");
-        assert_eq!(card(&s.youzi, "2026-01-03").unwrap().map(|l| (l.year, l.session_id)), Some(("2025".to_string(), whole)));
+        assert_eq!(card(&s.youzi, "2026-01-03").unwrap().map(|l| (l.year, l.session_id)), Some(("2025".to_string(), Some(whole))));
         assert_eq!(card(&s.youzi, "2026-01-08").unwrap(), None);
         assert_eq!(card(&s.youzi, "2025-12-31").unwrap(), None);
         // a 私密 one still shows on the card, but isn't read for the comparison
         crate::youzi::library::set_private(&s.youzi, &[whole], true).unwrap();
         assert!(card(&s.youzi, "2026-01-07").unwrap().is_some());
-        assert_eq!(letter_of(&s.youzi, "2025", false, false).unwrap().map(|l| l.session_id), Some(mid));
+        assert_eq!(letter_of(&s.youzi, "2025", false, false).unwrap().map(|l| l.session_id), Some(Some(mid)));
+    }
+
+    #[test]
+    fn a_letter_whose_conversation_was_deleted_is_read_from_atlas() {
+        let mut s = sink(seeded_for_atlas(), Target::Mock { thinking: false });
+        let target = s.target.clone();
+        // a whole 2025 written on New Year's Day: Atlas's copy (the test sink keeps no conversation) …
+        tauri::async_runtime::block_on(compose(&mut s, &target, ("local:x", "X"), 32_768, false, None, &Access::default(), "2025", "2026-01-01", "", "写我这一年")).unwrap();
+        let (id, text): (i64, String) = s.youzi.query_row("SELECT id, letter FROM year_atlas WHERE year = '2025'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        // … and the same letter in its conversation under 定时, as the app keeps it
+        let session = letter(&s.youzi, "2025", "2025-12-31T17:00:00.000Z", &text);
+        s.youzi
+            .execute("UPDATE year_atlas SET run_id = (SELECT id FROM runs WHERE session_id = ?1), created_at = '2025-12-31T17:05:00.000Z' WHERE id = ?2", params![session, id])
+            .unwrap();
+        assert_eq!(letter_of(&s.youzi, "2025", true, true).unwrap().map(|l| l.session_id), Some(Some(session)));
+        // the 年度总结 deleted from the history (最近's 删除): Atlas keeps its run and the whole letter
+        crate::youzi::library::delete(&s.youzi, &[session]).unwrap();
+        let run: Option<i64> = s.youzi.query_row("SELECT run_id FROM year_atlas WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(run, None);
+        assert_eq!(crate::youzi::atlas::get(&s.youzi, id).unwrap().letter, text);
+        // next year's letter and 首页's card read Atlas's copy
+        let copy = letter_of(&s.youzi, "2025", false, false).unwrap().unwrap();
+        assert_eq!((copy.session_id, copy.content.as_str()), (None, text.as_str()));
+        assert_eq!(card(&s.youzi, "2026-01-02").unwrap().map(|l| l.content), Some(text.clone()));
+        // a newer one still in its conversation wins; a copy written mid-year isn't a whole year
+        let newer = letter(&s.youzi, "2025", "2026-01-05T02:00:00.000Z", "**这一年的关键词**：又写了一封");
+        assert_eq!(letter_of(&s.youzi, "2025", false, false).unwrap().map(|l| l.session_id), Some(Some(newer)));
+        s.youzi.execute("UPDATE year_atlas SET until = '2025-06-30'", []).unwrap();
+        crate::youzi::library::delete(&s.youzi, &[newer]).unwrap();
+        assert_eq!(card(&s.youzi, "2026-01-02").unwrap(), None);
+        assert_eq!(letter_of(&s.youzi, "2025", false, false).unwrap().map(|l| l.content), Some(text));
     }
 
     #[test]

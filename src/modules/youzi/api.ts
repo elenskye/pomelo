@@ -669,7 +669,8 @@ export const useBrief = (enabled = true) =>
   useQuery({ queryKey: BRIEF_KEY, queryFn: youziApi.brief, enabled, refetchInterval: (q) => (q.state.data?.state === "writing" ? 1500 : false) });
 
 /** 年度总结 (Rust yearly.rs): 首页 shows last year's in the new year's first week. */
-export type YearLetter = { year: string; sessionId: number; content: string };
+/** sessionId null: its conversation was deleted (the letter is Atlas's copy) */
+export type YearLetter = { year: string; sessionId: number | null; content: string };
 export const YEAR_CARD_KEY = ["youzi", "year-card"];
 export const useYearCard = () => useQuery({ queryKey: YEAR_CARD_KEY, queryFn: youziApi.yearCard });
 

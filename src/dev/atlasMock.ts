@@ -19,7 +19,7 @@ export const atlasHandlers: Record<string, (a: Record<string, unknown>) => unkno
     years: [{ year: "2026", records: 956 }, { year: "2025", records: 700 }, { year: "2024", records: 212 }, { year: "2023", records: 38 }, ...["2022", "2021", "2020", "2019", "2018", "2017", "2016"].map((year, i) => ({ year, records: 30 - i * 4 }))],
     writing,
     today: today(),
-    design: "tabloid@1.0.2",
+    design: "tabloid@1.0.3",
     envelope: envelope() ? (all.find((r) => r.year === "2025" && !r.until)?.id ?? null) : null,
   }),
   atlas_get: (a) => {
@@ -39,7 +39,7 @@ export const atlasHandlers: Record<string, (a: Record<string, unknown>) => unkno
     setTimeout(() => {
       const from = all.find((r) => r.year === year) ?? all[0] ?? (runs as unknown as Run[])[0];
       const copy = JSON.parse(JSON.stringify(from).replaceAll(from.year, year)) as Run;
-      all.push({ ...copy, id: seq++, year, design: "tabloid@1.0.2", until: year === today().slice(0, 4) ? today() : null, createdAt: new Date().toISOString() });
+      all.push({ ...copy, id: seq++, year, design: "tabloid@1.0.3", until: year === today().slice(0, 4) ? today() : null, createdAt: new Date().toISOString() });
       writing = null;
     }, 3000);
   },

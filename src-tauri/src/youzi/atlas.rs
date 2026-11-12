@@ -37,7 +37,7 @@ pub const MARK: &str = "【Atlas · 各幕】";
 /// The design new runs are made for: `<id>@<version>` of a release in src/vendor/pomelo/atlas/ (synced from
 /// visual-atelier schemes/pomelo/atlas/releases/). Changed when a newer design is adopted; old rows keep theirs (and are
 /// drawn with the newest release of their line, src/modules/atlas/designs.ts `resolve`).
-pub const DESIGN: &str = "tabloid@1.0.2";
+pub const DESIGN: &str = "tabloid@1.0.3";
 /// Records 序章 marks at most (pink stars).
 const MOVED: usize = 5;
 

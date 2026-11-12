@@ -1,6 +1,6 @@
 // src/dev/atlasMock.json: the made-up 「呈现结果」 the browser mock (?mock#/atlas) shows — visual-atelier's sample
-// year (schemes/pomelo/atlas/tabloid/sample.mjs), in three runs: 2026 written up to today (Tabloid 1.0.2), 2025 twice (made
-// with 1.0.1 and 1.0.0: both are drawn with 1.0.2, the newest of their line).
+// year (schemes/pomelo/atlas/tabloid/sample.mjs), in three runs: 2026 written up to today (Tabloid 1.0.3), 2025 twice (made
+// with 1.0.2 and 1.0.0: both are drawn with 1.0.3, the newest of their line).
 // Run when the sample or the data shape changes:  node scripts/atlas-mock.mjs
 import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -12,8 +12,8 @@ const { sampleYear } = await import(pathToFileURL(path.join(va, "schemes/pomelo/
 const shift = (run, year) => JSON.parse(JSON.stringify(run).replaceAll("2025", "#LAST#").replaceAll("2026", String(year)).replaceAll("#LAST#", String(year - 1)));
 const runs = [
   // the newest one made with the newest design; the older two were made with earlier patches of its line
-  { ...sampleYear({ partial: true }), id: 3, design: "tabloid@1.0.2" },
-  { ...shift(sampleYear({ other: true, skip: ["jobs"] }), 2025), id: 2, design: "tabloid@1.0.1", createdAt: "2026-03-02T12:00:00.000Z" },
+  { ...sampleYear({ partial: true }), id: 3, design: "tabloid@1.0.3" },
+  { ...shift(sampleYear({ other: true, skip: ["jobs"] }), 2025), id: 2, design: "tabloid@1.0.2", createdAt: "2026-03-02T12:00:00.000Z" },
   { ...shift(sampleYear({ skip: ["drawing", "money"] }), 2025), id: 1, createdAt: "2025-12-31T13:20:00.000Z" },
 ];
 writeFileSync("src/dev/atlasMock.json", JSON.stringify(runs));

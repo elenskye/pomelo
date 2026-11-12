@@ -87,7 +87,8 @@ export function Journey(props: { id: number; desk: boolean; design?: string; onO
           </div>
         </div>
       ) : (
-        <iframe ref={frame} title="年度小报" className="absolute inset-0 size-full border-0" />
+        // named by aria-label, not title: WebKit shows an iframe's title as a gray tooltip wherever the pointer rests in it
+        <iframe ref={frame} aria-label="年度小报" className="absolute inset-0 size-full border-0" />
       )}
     </div>,
     layer,
