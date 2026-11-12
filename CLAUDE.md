@@ -18,19 +18,21 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 - **优化清单**：我写在 `docs/pomelo-improve-N.rtf`（`textutil -convert txt -stdout` 读），也可能直接在对话里给。逐条做完后移到 `docs/archive/`，更新 `roadmap.md`。
 - **汇报**：中文、简洁：每条改了什么、我自己选的地方、旧数据会怎么变、怎么验证的。
-- **正式版**：`pnpm app:install` 只在我同意时执行，装之前先做升级测试（`docs/testing.md`）。Dawn Plan 里每个 Phase 做完算我同意：直接做升级测试再装（2026-11-07 我定）。版本号（设置「关于」里显示的）跟着在做的版本走，开新版本时把 `package.json`、`src-tauri/Cargo.toml`、`tauri.conf.json` 三处一起改。
+- **正式版**：`pnpm app:install` 只在我同意时执行，装之前先做升级测试（`docs/testing.md`）。计划里每一段做完算我同意：直接做升级测试再装（2026-11-07 我定，11-12 计划分开后照旧）。版本号（设置「关于」里显示的）跟着在做的版本走，开新版本时把 `package.json`、`src-tauri/Cargo.toml`、`tauri.conf.json` 三处一起改。
 - **Git**：我说了才提交；提交信息一行，照我的写法（`v0.7: merge seeklo`、`v0.6 refined`）。不推送。
 - **代码格式**：没有格式化配置，照周围的写法手动排（长行）；不跑 prettier 这类工具。
 
-## v0.9 视觉 · Dawn Plan
+## visual-atelier（视觉）
 
-- 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。2026-11-07 起同一个 Agent 两边一起做，计划在 `docs/roadmap.md`「Dawn Plan」，和那边的 `ROADMAP.md` 里的一模一样（两个仓库唯一允许重复的内容，改要一起改）。那边的规矩在它的 `CLAUDE.md`。
-- 资产单向同步过来（那边打 tag 后 `sync`，每个 Phase 一次），放在 `src/vendor/pomelo/`：颜色变量 `pomelo.css`、颜色常量 `tokens.ts`、手画零件的画法 `handmade.js`，连 `VERSION` 和 `SHA256SUMS` 一起，不手改；要改回那边改。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
-- 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push 仍由我做；每个 Phase 做完 Agent 直接做升级测试并 `pnpm app:install`。
+- 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。2026-11-12 起两边各一个会话（我定的）：Pomelo 的会话照 `docs/roadmap.md` 做，那边的会话照它的 `ROADMAP.md` 做。Dawn Plan（11-07～11-12 一个 Agent 两边一起做）的记录在 `docs/archive/v0.9-dawn-plan.md`。
+- **Pomelo 的会话在 visual-atelier 能动的**：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`；还有那边 `CHANGELOG.md` 里自己的条目、`ROADMAP.md`「现在」里 Pomelo 那一行。别的（`bench/`、别的 `tooling/`、`package.json`……）归那边的会话，要改先问我。在那边做事照它的 `CLAUDE.md`（「几个会话怎么分」）。
+- **新设计**（我 11-12 定）：先在现用账号的云端画布上出样子，我在那里批；批了再把成品导入 visual-atelier：源进 `canvases/pomelo-<名字>/`，资产进 `schemes/pomelo/`。然后发版、我打 tag、核对 tag、同步。Pomelo 方案的发版、Design System「Pomelo 柚儿园」的发布、同步进来，都由 Pomelo 的会话做。
+- 资产单向同步过来（我打 tag 后核对再 `sync`），放在 `src/vendor/pomelo/`：颜色变量 `pomelo.css`、颜色常量 `tokens.ts`、手画零件的画法 `handmade.js`，连 `VERSION` 和 `SHA256SUMS` 一起，不手改；要改回那边改。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
+- 这边的文档、代码、`package.json`、版本号 Agent 都可以直接改（2026-11-07 我定）；commit、push 仍由我做；每一段做完 Agent 直接做升级测试并 `pnpm app:install`。
 - 界面小图标从 `@/shared/icons` 取（自己画的 149 个，同步在 `src/vendor/pomelo/marks/icons/`，名字沿用以前 Lucide 的 `Plus`、`Trash2`…）；项目里没有 lucide-react 了，不要再装。要新图标：回 visual-atelier 在 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行。
 - 图标：柚子的表情、「问柚子」按钮、模块贴纸在 `src/vendor/pomelo/marks/`，用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark` 画（每次换一套 id，同一张能放很多次）；菜单栏的模板图和 App 图标也从那里来。
-- 已定的要求见 `docs/requirements.md`「以后」；视觉和做界面的规矩在 `docs/design.md`（开发指南并在里面）。
-- **Atlas 的设计是冻结的快照**（`src/vendor/pomelo/atlas/<名字>-<版本>/`，同步来的）：一版都不删、不改；每一份年度总结照它记的那一版画，小修（1.0.1）也不给旧的用（2026-11-11 我定）。新设计：visual-atelier 定稿（名字和版本号我定）、冻结、同步，再改 `youzi/atlas.rs` 的 `DESIGN`。给「呈现结果」加东西只能加，旧的行和旧的快照都要还读得了。年度小报只有我能删：不做删它的 AI 工具，后台任务也不删。
+- 视觉和做界面的规矩在 `docs/design.md`（开发指南并在里面）。
+- **Atlas 的设计是冻结的快照**（`src/vendor/pomelo/atlas/<名字>-<版本>/`，同步来的），不改。只升最后一位的小修替掉同一条线里旧的那份，照旧的做的几份改照新的画；升了前两位的新定稿两份都留，旧的几份还照旧的画（2026-11-11 我定，改了当天上午「小修也不给旧的用」的说法）。新设计：visual-atelier 定稿（名字和版本号我定）、冻结、同步，再改 `youzi/atlas.rs` 的 `DESIGN`。给「呈现结果」加东西只能加，旧的行和旧的快照都要还读得了。年度小报只有我能删：不做删它的 AI 工具，后台任务也不删。
 
 ## 只在主目录做
 
@@ -162,4 +164,4 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## 环境
 
 - macOS，Apple M3，18 GB 内存。Node 24、pnpm（`~/Library/pnpm/bin`）、Rust（`~/.cargo/bin`），非交互终端里要先加进 PATH。
-- 辅助脚本用 TypeScript（Node），不引入 Python。问卷页：照 `visual-atelier` 的 `canvases/vl2-phase4-questionnaire/survey.html` 改 `PAGES`，页面声明 `db`，答案在页面存储的 `survey/answers`。`docs/archive/` 里的 docx 是以前的问卷，不再新做。
+- 辅助脚本用 TypeScript（Node），不引入 Python。问卷页：照 visual-atelier 的 `questionnaire` Skill（`skills/questionnaire/SKILL.md`；那边 Phase 1 做通用模板，做好之前照 `canvases/vl2-phase4-questionnaire/survey.html`）改 `PAGES`，页面声明 `db`，答案在页面存储的 `survey/answers`。`docs/archive/` 里的 docx 是以前的问卷，不再新做。

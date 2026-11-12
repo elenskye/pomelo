@@ -51,9 +51,10 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
   const [q, setQ] = useState("");
   const [closing, setClosing] = useState(false);
   const [wow, setWow] = useState(true);
-  // the opening's pop is over: its animations are taken off (still), so WebKit paints the stickers again in the
-  // wheel's own layer — the layer each pop left behind could keep a half-clear square where a sticker's shadow
-  // filter reaches (念念不忘's slim leaf showed it), until turning the wheel repainted it
+  // the opening's pop is over (still): each sticker is built afresh. WebKit keeps a sticker's SVG shadow filter
+  // drawn at the size it first had — tiny, mid-pop — and stretches it: a blurred, half-white square over the filter's
+  // area (念念不忘's slim leaf leaves most of it bare, so it shows). Turning the wheel cleared it only because
+  // --pm-a is inherited, so every sticker's style changed and WebKit drew the shadow again.
   const [still, setStill] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [editCat, setEditCat] = useState<string | null>(null);
@@ -221,7 +222,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
   return (
     <div ref={box} className={`jp pm-scrim ${state}`} role="dialog" aria-label="柚子瓣" onClick={(e) => e.target === e.currentTarget && close()}>
       <div className="wheelbox">
-        <div ref={whl} className={`whl pm-wheel ${state} ${still ? "is-still" : ""}`} onPointerDown={onPointerDown}>
+        <div ref={whl} className={`whl pm-wheel ${state}`} onPointerDown={onPointerDown}>
           <svg className="pm-wheel-art" width="680" height="680" aria-hidden>
             <g className="spin pm-wheel-turn">
               <path d={art.rindFill} fill="var(--color-yuzu)" fillRule="evenodd" transform="translate(1.6 2)" />
@@ -260,7 +261,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
                   >
                     <div className="slotin">
                       <div className={`slotlift pm-tip-host ${hit ? "is-hover" : ""}`}>
-                        <span className="ic pm-lift">
+                        <span className="ic pm-lift" key={still ? "still" : "pop"}>
                           <span style={{ transform: `rotate(${[-6, 5, -3, 7, -5][i % 5]}deg)`, display: "inline-flex" }}>
                             <ModuleIcon def={def} size={W.ICON} />
                           </span>
