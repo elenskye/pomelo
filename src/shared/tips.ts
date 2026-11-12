@@ -5,9 +5,10 @@
 // [data-tip-up]; hidden, not removed, so nothing around it moves). The copy swings with the Design System's own keyframes; near the window's edge the tag slides in
 // along its string. A host given `is-hover` by code (柚子瓣's typed match) still shows its own tip in place (`hangAt`).
 // The string hangs a little under the drawing itself, not under the host's box (whose padding left a gap): `inkBottom`
-// finds where the icon's or sticker's lines end straight under the host's middle (or the host's own box, when pointing
-// at it paints a background behind the icon). A host that moves when pointed at (a page in the stack slides out and
-// its sticker tilts) is followed until it settles, so the string stays under it.
+// finds where the icon's or sticker's lines end straight under the host's middle. Only the drawing counts: not the
+// light square an icon button gets when pointed at, not a line waiting unseen (the open page's underline, opacity 0).
+// A host that moves when pointed at (a page in the stack slides out and its sticker tilts) is followed until it
+// settles, so the string stays under it.
 let host: HTMLElement | null = null;
 let float: HTMLElement | null = null;
 let watch = 0;
@@ -24,15 +25,20 @@ const painted = (c: string) => !!c && c !== "none" && c !== "transparent" && !/^
 
 /** The lowest point (screen y) where the host's own drawing is under x (its middle); null: nothing drawn there. Each
  *  SVG shape is tested where it is painted (fill or stroke), so a tilted sticker or a thin icon is met where it really is;
- *  a shape whose position can't be trusted (getScreenCTM disagreeing with the layout) counts by its box. A host whose
- *  own box is painted (an icon button's hover background) counts as drawn down to its bottom. */
+ *  a shape whose position can't be trusted (getScreenCTM disagreeing with the layout) counts by its box. The host's
+ *  own background (an icon button's hover square) is not the drawing, and a shape inside something fully transparent
+ *  is not seen (opacity isn't inherited, so every wrapper up to the host is asked). */
 export function inkBottom(h: Element, x: number): number | null {
   let best: number | null = null;
-  const hs = getComputedStyle(h);
-  if (painted(hs.backgroundColor) || hs.backgroundImage !== "none") {
-    const r = h.getBoundingClientRect();
-    if (r.left <= x && x <= r.right && r.height) best = r.bottom;
-  }
+  const clear = new Map<Element, boolean>();
+  const unseen = (el: Element) => {
+    for (let e: Element | null = el.parentElement; e && e !== h; e = e.parentElement) {
+      let c = clear.get(e);
+      if (c === undefined) clear.set(e, (c = getComputedStyle(e).opacity === "0"));
+      if (c) return true;
+    }
+    return false;
+  };
   for (const el of h.querySelectorAll<SVGGeometryElement>(SHAPES)) {
     if (!(el instanceof SVGGeometryElement) || el.closest(".pm-tip, defs, symbol, clipPath, mask, pattern, marker, filter")) continue;
     const box = el.getBoundingClientRect();
@@ -42,7 +48,7 @@ export function inkBottom(h: Element, x: number): number | null {
     const sw = parseFloat(cs.strokeWidth) || 0;
     const fill = painted(cs.fill) && parseFloat(cs.fillOpacity) !== 0;
     const stroke = painted(cs.stroke) && sw > 0 && parseFloat(cs.strokeOpacity) !== 0;
-    if ((!fill && !stroke) || box.left - sw > x || box.right + sw < x || (best !== null && box.bottom + sw <= best)) continue;
+    if ((!fill && !stroke) || box.left - sw > x || box.right + sw < x || (best !== null && box.bottom + sw <= best) || unseen(el)) continue;
     const svg = el.ownerSVGElement;
     const m = el.getScreenCTM();
     let trusted = !!(svg && m);

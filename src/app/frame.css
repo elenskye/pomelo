@@ -124,6 +124,8 @@
 .slotlift .ic { display: flex; }
 .slot.dim { opacity: .16; }
 .slot.hit .slotlift .ic { filter: drop-shadow(0 0 6px var(--color-marker)); }
+/* 开完了（Bloom 的 still）：摘掉开场的动画。弹出来的那层留着时，WebKit 里贴纸阴影滤镜的范围会显出一块半透明的方形，转一下才重画掉 */
+.whl.pm-wheel.is-open.is-still, .whl.pm-wheel.is-open.is-still .pm-wheel-slot { animation: none; }
 .wl { position: absolute; width: 80px; text-align: center; }
 .wl > span { display: inline-block; transform: rotate(calc(-1 * var(--pm-a))); font-size: 15px; font-weight: 700; line-height: 26px; }
 .pithc { position: absolute; left: 213px; top: 213px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 254px; height: 254px; }

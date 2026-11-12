@@ -51,6 +51,10 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
   const [q, setQ] = useState("");
   const [closing, setClosing] = useState(false);
   const [wow, setWow] = useState(true);
+  // the opening's pop is over: its animations are taken off (still), so WebKit paints the stickers again in the
+  // wheel's own layer — the layer each pop left behind could keep a half-clear square where a sticker's shadow
+  // filter reaches (念念不忘's slim leaf showed it), until turning the wheel repainted it
+  const [still, setStill] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [editCat, setEditCat] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -109,6 +113,11 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
   const cats = dock.layout.cats.map((c) => ({ c, mods: c.mods.filter((m) => !dock.isHidden(m)) }));
   const slots = cats.reduce((n, x) => n + Math.max(x.mods.length, 1), 0) || 1;
   const step = 360 / slots;
+  const mods = cats.reduce((n, x) => n + x.mods.length, 0);
+  useEffect(() => {
+    const t = setTimeout(() => setStill(true), 300 + mods * 11 + 350 + 100);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const layout = useMemo(() => {
     let a = -90 - (Math.max(cats[0]?.mods.length ?? 1, 1) * step) / 2;
     return cats.map(({ c, mods }) => {
@@ -212,7 +221,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
   return (
     <div ref={box} className={`jp pm-scrim ${state}`} role="dialog" aria-label="柚子瓣" onClick={(e) => e.target === e.currentTarget && close()}>
       <div className="wheelbox">
-        <div ref={whl} className={`whl pm-wheel ${state}`} onPointerDown={onPointerDown}>
+        <div ref={whl} className={`whl pm-wheel ${state} ${still ? "is-still" : ""}`} onPointerDown={onPointerDown}>
           <svg className="pm-wheel-art" width="680" height="680" aria-hidden>
             <g className="spin pm-wheel-turn">
               <path d={art.rindFill} fill="var(--color-yuzu)" fillRule="evenodd" transform="translate(1.6 2)" />
