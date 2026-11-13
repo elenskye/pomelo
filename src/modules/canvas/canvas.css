@@ -22,3 +22,11 @@ button.cv-fold:focus-visible { outline: 2px solid var(--color-primary); outline-
 .cv-page:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .cv-frame { position: relative; display: flex; overflow: hidden; }
 .cv-frame > iframe { position: relative; flex: 1; width: 100%; height: 100%; border: 0; border-radius: 12px; background: var(--color-card); }
+/* 改名、删除：行尾的「⋯」指着这一行才露出来；左栏顶上一条「撤销」 */
+.cv-more { display: grid; width: 22px; height: 22px; flex-shrink: 0; place-items: center; border-radius: 6px; color: var(--color-ink-soft); opacity: 0; outline: none; }
+.cv-item:hover .cv-more, .cv-page-row:hover .cv-more, .cv-more:focus-visible { opacity: 1; }
+.cv-more:hover { color: var(--color-ink); background: color-mix(in srgb, var(--color-selected) 55%, transparent); }
+.cv-more:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.cv-undo { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 6px 10px; border-radius: 9px; background: color-mix(in srgb, var(--color-selected) 70%, transparent); font-size: 13px; }
+.cv-undo button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; font-weight: 700; color: var(--color-ink); outline: none; }
+.cv-undo button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 4px; }

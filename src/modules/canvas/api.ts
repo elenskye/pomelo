@@ -23,6 +23,8 @@ export type CanvasRow = { name: string; title: string; kind: Kind; sub: string; 
 /** The bench's four lists, always in this order: Design System, Motion Deck, Explore Deck, Questionnaire. */
 export type Section = { id: "ds" | "motion" | "explore" | "questionnaire"; title: string; items: CanvasRow[] };
 export type Board = { file: string; title: string; page: string | null };
+/** After a rename, delete or undo: `id` is what the undo of a delete needs (the bench's trash). */
+export type Changed = { id: string | null; canvas: string; page: string | null; title: string };
 export type Detail = { name: string; pages: Page[]; boards: Board[] };
 
 export const canvasApi = {
@@ -33,6 +35,11 @@ export const canvasApi = {
   boards: (name: string) => invoke<Detail>("canvas_boards", { name }),
   /** "" = the default folder */
   setFolder: (folder: string) => invoke<Overview>("canvas_set_folder", { folder }),
+  /** New title for a canvas (or a page of it, with `page`). */
+  rename: (name: string, title: string, page: string | null = null) => invoke<Changed>("canvas_rename", { name, title, page }),
+  /** Into visual-atelier's trash; `restore(id)` puts it back. */
+  remove: (name: string, page: string | null = null) => invoke<Changed>("canvas_delete", { name, page }),
+  restore: (id: string) => invoke<Changed>("canvas_restore", { id }),
 };
 
 export const CANVAS_KEY = ["canvas"];

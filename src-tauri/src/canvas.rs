@@ -5,7 +5,9 @@
 //! in a frame and stops it, all through the interface the bench gives other programs (its README「给别的程序用」):
 //!   `dw serve --port N --json` · `GET /api/status` (says `app: visual-atelier-bench`) · `GET /api/index` (four
 //!   lists: Design System, Motion Deck, Explore Deck, Questionnaire; a bench from before it has only
-//!   `GET /api/canvases`) · `GET /api/canvases/<name>` · `POST /api/stop` (JSON).
+//!   `GET /api/canvases`) · `GET /api/canvases/<name>` · `POST /api/stop` (JSON) · and since api 3, renaming and
+//!   deleting (站主 2026-11-13): `POST /api/canvases/<name>/rename|delete|page-rename|page-delete`,
+//!   `POST /api/trash/restore` (the undo). Deleting moves things into visual-atelier's own trash, never here.
 //! Running = a bench answers on the port. One started elsewhere (a terminal, an agent) is used as it is; 停止 asks
 //! whichever is there to stop. Ours also stops when Pomelo quits. Something else on the port is a problem, said so.
 //! Nothing here is data: no table, no backup, export, undo, search, and 柚子 doesn't read it.
@@ -59,8 +61,9 @@ fn http(port: u16, method: &str, path: &str, body: Option<&str>, timeout: Durati
     s.set_read_timeout(Some(timeout)).map_err(fail)?;
     s.set_write_timeout(Some(timeout)).map_err(fail)?;
     let body = body.unwrap_or("");
-    let head = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", body.len());
-    s.write_all(head.as_bytes()).and_then(|_| s.write_all(body.as_bytes())).map_err(fail)?;
+    // head and body in one write: a short request arrives whole, nothing is left unread when the answer closes
+    let req = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+    s.write_all(req.as_bytes()).map_err(fail)?;
     let mut raw = Vec::new();
     s.read_to_end(&mut raw).map_err(fail)?;
     let text = String::from_utf8_lossy(&raw);
@@ -356,6 +359,65 @@ pub fn detail_of(name: &str, v: &Value) -> Detail {
     Detail { name: name.to_string(), pages, boards }
 }
 
+/// What a rename, delete or undo came back with: the trash id a delete can be undone with, the canvas, the page
+/// (when it was one) and its title.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Changed {
+    pub id: Option<String>,
+    pub canvas: String,
+    pub page: Option<String>,
+    pub title: String,
+}
+
+/// `POST` a JSON body; the bench answers JSON, and `{ message }` when it refuses (said as it says it).
+fn post_json(port: u16, path: &str, body: &Value) -> Result<Value, String> {
+    let (status, text) = http(port, "POST", path, Some(&body.to_string()), Duration::from_secs(15))?;
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    match status {
+        200 => Ok(v),
+        // no such address at all (not a JSON refusal): a bench from before it could rename and delete
+        404 if v.is_null() => Err("画布服务是旧的，还不会改名和删除：点「停止」再「启动」一次".into()),
+        _ => Err(v["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("画布服务回了 {status}"))),
+    }
+}
+
+fn changed_of(v: &Value, canvas: &str) -> Changed {
+    let page = v["page"].as_str().map(str::to_string).or_else(|| v["page"]["id"].as_str().map(str::to_string));
+    Changed { id: v["id"].as_str().map(str::to_string), canvas: v["canvas"].as_str().unwrap_or(canvas).to_string(), page, title: text(&v["title"]) }
+}
+
+/// New title for a canvas, or for one of its pages.
+pub fn rename(port: u16, name: &str, page: Option<&str>, title: &str) -> Result<Changed, String> {
+    if !valid_name(name) {
+        return Err("没有这块画布".into());
+    }
+    let v = match page {
+        Some(p) => post_json(port, &format!("/api/canvases/{name}/page-rename"), &serde_json::json!({ "page": p, "name": title }))?,
+        None => post_json(port, &format!("/api/canvases/{name}/rename"), &serde_json::json!({ "title": title }))?,
+    };
+    Ok(changed_of(&v, name))
+}
+
+/// Deletes a canvas, or one of its pages (into visual-atelier's trash; `restore` with the id puts it back).
+pub fn delete(port: u16, name: &str, page: Option<&str>) -> Result<Changed, String> {
+    if !valid_name(name) {
+        return Err("没有这块画布".into());
+    }
+    let v = match page {
+        Some(p) => post_json(port, &format!("/api/canvases/{name}/page-delete"), &serde_json::json!({ "page": p }))?,
+        None => post_json(port, &format!("/api/canvases/{name}/delete"), &serde_json::json!({}))?,
+    };
+    Ok(changed_of(&v, name))
+}
+
+pub fn restore(port: u16, id: &str) -> Result<Changed, String> {
+    let v = post_json(port, "/api/trash/restore", &serde_json::json!({ "id": id }))?;
+    let mut c = changed_of(&v, "");
+    c.id = None;
+    Ok(c)
+}
+
 fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
@@ -404,6 +466,21 @@ pub async fn canvas_boards(app: AppHandle, name: String) -> Result<Detail, Strin
         Ok(detail_of(&name, &get_json(a.state::<Canvas>().port, &format!("/api/canvases/{name}"))?))
     })
     .await
+}
+
+#[tauri::command]
+pub async fn canvas_rename(app: AppHandle, name: String, page: Option<String>, title: String) -> Result<Changed, String> {
+    blocking(app, move |a| rename(a.state::<Canvas>().port, &name, page.as_deref(), &title)).await
+}
+
+#[tauri::command]
+pub async fn canvas_delete(app: AppHandle, name: String, page: Option<String>) -> Result<Changed, String> {
+    blocking(app, move |a| delete(a.state::<Canvas>().port, &name, page.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn canvas_restore(app: AppHandle, id: String) -> Result<Changed, String> {
+    blocking(app, move |a| restore(a.state::<Canvas>().port, &id)).await
 }
 
 /// Another visual-atelier folder (empty = the default one). The bench we started stops first: it shows the old folder.
@@ -470,6 +547,10 @@ mod tests {
                 .to_string(),
             ),
             ("POST", "/api/stop") => (200, json!({"ok": true}).to_string()),
+            ("POST", "/api/canvases/pomelo-explore/rename") => (200, json!({"name": "pomelo-explore", "kind": "canvas", "title": "新名字"}).to_string()),
+            ("POST", "/api/canvases/pomelo-explore/page-delete") => (200, json!({"id": "20261113-1-pomelo-explore--x1", "what": "page", "canvas": "pomelo-explore", "page": "x1", "title": "探索 1"}).to_string()),
+            ("POST", "/api/canvases/pomelo-explore/page-rename") => (404, json!({"code": "not_found", "message": "没有这一页：x9"}).to_string()),
+            ("POST", "/api/trash/restore") => (200, json!({"id": "20261113-1-pomelo-explore--x1", "what": "page", "canvas": "pomelo-explore", "page": {"id": "x1", "name": "探索 1"}, "title": "探索 1"}).to_string()),
             _ => (404, "Not Found".into()),
         }
     }
@@ -506,6 +587,17 @@ mod tests {
             flat(secs),
             [(s("explore"), s("pomelo-explore"), s("canvas"), 13, 1, s("13 张板")), (s("questionnaire"), s("survey"), s("page"), 0, 0, s("问卷页"))]
         );
+        // renaming and deleting: JSON in, the bench's own words back when it refuses
+        assert_eq!(rename(port, "pomelo-explore", None, "新名字").unwrap().title, "新名字");
+        let gone = delete(port, "pomelo-explore", Some("x1")).unwrap();
+        assert_eq!((gone.id.as_deref(), gone.page.as_deref(), gone.title.as_str()), (Some("20261113-1-pomelo-explore--x1"), Some("x1"), "探索 1"));
+        assert_eq!(rename(port, "pomelo-explore", Some("x9"), "x").unwrap_err(), "没有这一页：x9");
+        let back = restore(port, "20261113-1-pomelo-explore--x1").unwrap();
+        assert_eq!((back.canvas.as_str(), back.page.as_deref(), back.id), ("pomelo-explore", Some("x1"), None));
+        assert!(delete(port, "../x", None).is_err());
+        // a bench from before it could: said so
+        assert!(delete(port, "survey", None).unwrap_err().contains("画布服务是旧的"));
+        assert!(asked.lock().unwrap().contains(&"POST /api/canvases/pomelo-explore/rename json".to_string()));
         // 停止 asks it to stop, as JSON (a form post is refused by the bench)
         stop(&c);
         assert!(asked.lock().unwrap().contains(&"POST /api/stop json".to_string()));
