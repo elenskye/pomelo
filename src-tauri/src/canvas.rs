@@ -3,8 +3,9 @@
 //! by that repository's own viewer, the bench: `node bench/bin/dw.js serve`, a server on 127.0.0.1 whose page is the
 //! canvas UI (pan, pages, one board full size, Tweaks, 批准). Pomelo starts it, asks it what there is, shows its page
 //! in a frame and stops it, all through the interface the bench gives other programs (its README「给别的程序用」):
-//!   `dw serve --port N --json` · `GET /api/status` (says `app: visual-atelier-bench`) · `GET /api/canvases` ·
-//!   `GET /api/canvases/<name>` · `POST /api/stop` (JSON).
+//!   `dw serve --port N --json` · `GET /api/status` (says `app: visual-atelier-bench`) · `GET /api/index` (four
+//!   lists: Design System, Motion Deck, Explore Deck, Questionnaire; a bench from before it has only
+//!   `GET /api/canvases`) · `GET /api/canvases/<name>` · `POST /api/stop` (JSON).
 //! Running = a bench answers on the port. One started elsewhere (a terminal, an agent) is used as it is; 停止 asks
 //! whichever is there to stop. Ours also stops when Pomelo quits. Something else on the port is a problem, said so.
 //! Nothing here is data: no table, no backup, export, undo, search, and 柚子 doesn't read it.
@@ -224,11 +225,26 @@ pub struct Page {
 pub struct CanvasRow {
     pub name: String,
     pub title: String,
-    /// canvas (boards on pages) | page (one page of its own: a 问卷)
+    /// ds (a Design System) | motion (a scheme's Motion Deck) | canvas (an Explore Deck: boards on pages) |
+    /// page (a Questionnaire: one page of its own)
     pub kind: String,
+    /// The line under the title, as the bench words it (「45 张板 · 12 页」「39 个零件」).
+    pub sub: String,
     pub boards: usize,
     pub pages: Vec<Page>,
 }
+
+/// One of the four lists, in the bench's order.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Section {
+    /// ds | motion | explore | questionnaire
+    pub id: String,
+    pub title: String,
+    pub items: Vec<CanvasRow>,
+}
+
+const SECTIONS: [(&str, &str); 4] = [("ds", "Design System"), ("motion", "Motion Deck"), ("explore", "Explore Deck"), ("questionnaire", "Questionnaire")];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -255,13 +271,64 @@ fn pages_of(v: &Value) -> Vec<Page> {
     v.as_array().map(|a| a.iter().map(|p| Page { id: text(&p["id"]), name: text(&p["name"]) }).filter(|p| !p.id.is_empty()).collect()).unwrap_or_default()
 }
 
-/// `GET /api/canvases` as rows.
-pub fn rows_of(v: &Value) -> Vec<CanvasRow> {
-    let Some(list) = v["canvases"].as_array() else { return Vec::new() };
-    list.iter()
-        .map(|c| CanvasRow { name: text(&c["name"]), title: text(&c["title"]), kind: text(&c["kind"]), boards: c["boards"].as_u64().unwrap_or(0) as usize, pages: pages_of(&c["pages"]) })
-        .filter(|c| !c.name.is_empty())
+fn row_of(c: &Value, kind: &str) -> CanvasRow {
+    let boards = c["boards"].as_u64().unwrap_or(0) as usize;
+    let pages = pages_of(&c["pages"]);
+    let sub = c["sub"].as_str().map(str::to_string).unwrap_or_else(|| match kind {
+        "page" => "问卷页".into(),
+        "canvas" if pages.len() > 1 => format!("{boards} 张板 · {} 页", pages.len()),
+        "canvas" => format!("{boards} 张板"),
+        _ => String::new(),
+    });
+    CanvasRow { name: text(&c["name"]), title: text(&c["title"]), kind: kind.into(), sub, boards, pages }
+}
+
+/// `GET /api/index` as the four lists (one the bench doesn't send comes back empty, so the page always has four).
+pub fn sections_of(v: &Value) -> Vec<Section> {
+    SECTIONS
+        .iter()
+        .map(|(id, title)| {
+            let sec = v["sections"].as_array().and_then(|a| a.iter().find(|s| s["id"] == *id));
+            let items = sec
+                .and_then(|s| s["items"].as_array())
+                .map(|list| {
+                    list.iter()
+                        .map(|c| {
+                            let kind = match *id {
+                                "ds" | "motion" => (*id).to_string(),
+                                "questionnaire" => c["kind"].as_str().unwrap_or("page").to_string(),
+                                _ => c["kind"].as_str().unwrap_or("canvas").to_string(),
+                            };
+                            row_of(c, &kind)
+                        })
+                        .filter(|c| !c.name.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Section { id: (*id).into(), title: sec.and_then(|s| s["title"].as_str()).unwrap_or(title).to_string(), items }
+        })
         .collect()
+}
+
+/// A bench from before the four lists (api 1): `GET /api/canvases`, the canvases as Explore Decks and the pages as
+/// Questionnaires.
+pub fn sections_from_canvases(v: &Value) -> Vec<Section> {
+    let rows: Vec<CanvasRow> = v["canvases"].as_array().map(|l| l.iter().map(|c| row_of(c, c["kind"].as_str().unwrap_or("canvas"))).filter(|c| !c.name.is_empty()).collect()).unwrap_or_default();
+    SECTIONS
+        .iter()
+        .map(|(id, title)| Section {
+            id: (*id).into(),
+            title: (*title).into(),
+            items: rows.iter().filter(|r| (*id == "explore" && r.kind == "canvas") || (*id == "questionnaire" && r.kind == "page")).cloned().collect(),
+        })
+        .collect()
+}
+
+fn list(port: u16) -> Result<Vec<Section>, String> {
+    match get_json(port, "/api/index") {
+        Ok(v) => Ok(sections_of(&v)),
+        Err(_) => Ok(sections_from_canvases(&get_json(port, "/api/canvases")?)),
+    }
 }
 
 /// `GET /api/canvases/<name>` as its pages and its boards in the canvas's own order.
@@ -324,8 +391,8 @@ pub async fn canvas_stop(app: AppHandle) -> Result<Overview, String> {
 }
 
 #[tauri::command]
-pub async fn canvas_list(app: AppHandle) -> Result<Vec<CanvasRow>, String> {
-    blocking(app, |a| Ok(rows_of(&get_json(a.state::<Canvas>().port, "/api/canvases")?))).await
+pub async fn canvas_list(app: AppHandle) -> Result<Vec<Section>, String> {
+    blocking(app, |a| list(a.state::<Canvas>().port)).await
 }
 
 #[tauri::command]
@@ -392,6 +459,16 @@ mod tests {
         match (method, path) {
             ("GET", "/api/status") => (200, json!({"app": BENCH_APP, "api": 1, "pid": 7, "stoppable": true}).to_string()),
             ("GET", "/api/canvases") => (200, json!({"canvases": [{"name": "pomelo-explore", "kind": "canvas", "title": "Pomelo Explore", "boards": 13, "pages": [{"id": "p2", "name": "Phase 2 · 最终设计"}]}, {"name": "survey", "kind": "page", "title": "问卷", "entry": "survey.html"}]}).to_string()),
+            ("GET", "/api/index") => (
+                200,
+                json!({"sections": [
+                    {"id": "ds", "title": "Design System", "items": [{"name": "pomelo", "title": "Pomelo 柚儿园", "sub": "schemes · pomelo", "route": "/ds/pomelo"}]},
+                    {"id": "motion", "title": "Motion Deck", "items": [{"name": "pomelo", "title": "Pomelo 柚儿园", "parts": 39, "sub": "39 个零件"}]},
+                    {"id": "explore", "title": "Explore Deck", "items": [{"name": "pomelo-explore", "kind": "canvas", "title": "Pomelo Explore", "boards": 13, "pages": [{"id": "p2", "name": "Phase 2 · 最终设计"}], "sub": "13 张板"}]},
+                    {"id": "questionnaire", "title": "Questionnaire", "items": [{"name": "survey", "kind": "page", "title": "问卷", "sub": "问卷页"}]}
+                ]})
+                .to_string(),
+            ),
             ("POST", "/api/stop") => (200, json!({"ok": true}).to_string()),
             _ => (404, "Not Found".into()),
         }
@@ -410,8 +487,25 @@ mod tests {
         // one started elsewhere: running, not ours, and the folder's problems don't matter while it runs
         assert_eq!((o.state, o.ours, o.problem.clone(), o.url.as_str()), ("running", false, None, format!("http://127.0.0.1:{port}").as_str()));
         start(&c, &folder).unwrap(); // already there: nothing to start
-        let rows = rows_of(&get_json(port, "/api/canvases").unwrap());
-        assert_eq!(rows.iter().map(|r| (r.name.as_str(), r.kind.as_str(), r.boards, r.pages.len())).collect::<Vec<_>>(), [("pomelo-explore", "canvas", 13, 1), ("survey", "page", 0, 0)]);
+        let flat = |secs: Vec<Section>| secs.into_iter().flat_map(|s| s.items.into_iter().map(move |r| (s.id.clone(), r.name, r.kind, r.boards, r.pages.len(), r.sub))).collect::<Vec<_>>();
+        let s = |x: &str| x.to_string();
+        // the four lists, in the bench's order; the same Pomelo name can be a Design System and a Motion Deck
+        assert_eq!(
+            flat(list(port).unwrap()),
+            [
+                (s("ds"), s("pomelo"), s("ds"), 0, 0, s("schemes · pomelo")),
+                (s("motion"), s("pomelo"), s("motion"), 0, 0, s("39 个零件")),
+                (s("explore"), s("pomelo-explore"), s("canvas"), 13, 1, s("13 张板")),
+                (s("questionnaire"), s("survey"), s("page"), 0, 0, s("问卷页"))
+            ]
+        );
+        // a bench from before /api/index: canvases and pages only, still under the four titles
+        let secs = sections_from_canvases(&get_json(port, "/api/canvases").unwrap());
+        assert_eq!(secs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["Design System", "Motion Deck", "Explore Deck", "Questionnaire"]);
+        assert_eq!(
+            flat(secs),
+            [(s("explore"), s("pomelo-explore"), s("canvas"), 13, 1, s("13 张板")), (s("questionnaire"), s("survey"), s("page"), 0, 0, s("问卷页"))]
+        );
         // 停止 asks it to stop, as JSON (a form post is refused by the bench)
         stop(&c);
         assert!(asked.lock().unwrap().contains(&"POST /api/stop json".to_string()));
@@ -485,10 +579,11 @@ mod tests {
         println!("画布服务 {:.1}s", t.elapsed().as_secs_f32());
         let o = overview_of(&c, &folder, true);
         assert_eq!((o.state, o.ours, o.problem), ("running", true, None));
-        let rows = rows_of(&get_json(port, "/api/canvases").unwrap());
-        assert!(rows.iter().any(|r| r.name == "pomelo-explore"));
+        let secs = list(port).unwrap();
+        assert_eq!(secs.len(), 4);
+        assert!(secs[2].items.iter().any(|r| r.name == "pomelo-explore"));
         let d = detail_of("pomelo-explore", &get_json(port, "/api/canvases/pomelo-explore").unwrap());
-        println!("{} 块画布；pomelo-explore：{} 页 {} 张板", rows.len(), d.pages.len(), d.boards.len());
+        println!("{}；pomelo-explore：{} 页 {} 张板", secs.iter().map(|s| format!("{} {}", s.title, s.items.len())).collect::<Vec<_>>().join("、"), d.pages.len(), d.boards.len());
         assert!(d.boards.len() > 5 && d.boards.iter().all(|b| b.page.is_some()));
         stop(&c);
         assert!(!server::port_open(port));

@@ -17,7 +17,11 @@ export type Overview = {
   error: string | null;
 };
 export type Page = { id: string; name: string };
-export type CanvasRow = { name: string; title: string; kind: "canvas" | "page"; boards: number; pages: Page[] };
+/** ds: a Design System · motion: a scheme's Motion Deck · canvas: an Explore Deck (boards on pages) · page: a Questionnaire */
+export type Kind = "ds" | "motion" | "canvas" | "page";
+export type CanvasRow = { name: string; title: string; kind: Kind; sub: string; boards: number; pages: Page[] };
+/** The bench's four lists, always in this order: Design System, Motion Deck, Explore Deck, Questionnaire. */
+export type Section = { id: "ds" | "motion" | "explore" | "questionnaire"; title: string; items: CanvasRow[] };
 export type Board = { file: string; title: string; page: string | null };
 export type Detail = { name: string; pages: Page[]; boards: Board[] };
 
@@ -25,7 +29,7 @@ export const canvasApi = {
   overview: () => invoke<Overview>("canvas_overview"),
   start: () => invoke<Overview>("canvas_start"),
   stop: () => invoke<Overview>("canvas_stop"),
-  list: () => invoke<CanvasRow[]>("canvas_list"),
+  list: () => invoke<Section[]>("canvas_list"),
   boards: (name: string) => invoke<Detail>("canvas_boards", { name }),
   /** "" = the default folder */
   setFolder: (folder: string) => invoke<Overview>("canvas_set_folder", { folder }),
@@ -39,9 +43,11 @@ export const useCanvasOverview = () => useQuery({ queryKey: OVERVIEW_KEY, queryF
 export const useCanvasList = (running: boolean) => useQuery({ queryKey: [...CANVAS_KEY, "list"], queryFn: canvasApi.list, enabled: running });
 export const useCanvasBoards = (running: boolean, name: string | null) => useQuery({ queryKey: [...CANVAS_KEY, "boards", name], queryFn: () => canvasApi.boards(name!), enabled: running && !!name });
 
-/** Where a canvas (a page of it, one board full size) is in the bench's UI; a 问卷 page is its own page. */
+/** Where a thing is in the bench's UI (a canvas: a page of it, one board full size); a 问卷 page is its own page. */
 export function addressOf(base: string, row: { name: string; kind: string }, at: { page?: string | null; board?: string | null } = {}) {
   if (row.kind === "page") return `${base}/c/${row.name}/`;
+  if (row.kind === "ds") return `${base}/#/ds/${row.name}`;
+  if (row.kind === "motion") return `${base}/#/motion/${row.name}`;
   const p = new URLSearchParams();
   if (at.page) p.set("page", at.page);
   if (at.board) p.set("board", at.board);
