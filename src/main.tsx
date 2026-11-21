@@ -1,0 +1,138 @@
+import React, { Suspense, lazy } from "react";
+import ReactDOM from "react-dom/client";
+import { HashRouter, Navigate, Route, Routes } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { App } from "@/app/App";
+import BooksPage from "@/modules/books/BooksPage";
+import GamesPage from "@/modules/games/GamesPage";
+import FilmsPage from "@/modules/films/FilmsPage";
+import DrawingPage from "@/modules/drawing/DrawingPage";
+import PackingPage from "@/modules/packing/PackingPage";
+import HomePage from "@/home/HomePage";
+import CalendarPage from "@/calendar/CalendarPage";
+import FinancePage from "@/modules/finance/FinancePage";
+import JobsPage from "@/modules/jobs/JobsPage";
+import NotesPage from "@/modules/notes/NotesPage";
+import ArticlesPage from "@/modules/articles/ArticlesPage";
+import DaysPage from "@/modules/days/DaysPage";
+import SitePage from "@/modules/site/SitePage";
+import CanvasPage from "@/modules/canvas/CanvasPage";
+import ListPage from "@/modules/custom/ListPage";
+import ProgressPage from "@/modules/custom/ProgressPage";
+import VaultPage from "@/modules/vault/VaultPage";
+import BookmarksPage from "@/modules/bookmarks/BookmarksPage";
+// 柚子 brings Markdown / highlighting / formulas: loaded when first opened
+const YouziPage = lazy(() => import("@/modules/youzi/YouziPage"));
+// 柚子's 助手 as modules (v0.7)
+const AssistantModule = lazy(() => import("@/modules/youzi/assistants"));
+// Atlas: 年度小报 (its designs load when one is opened)
+const AtlasPage = lazy(() => import("@/modules/atlas/AtlasPage"));
+import TodoPage from "@/modules/todo/TodoPage";
+import SettingsPage from "@/settings/SettingsPage";
+import { startAppearance } from "@/shared/appearance";
+import { startHand } from "@/shared/hand";
+import { startTips } from "@/shared/tips";
+import { ToastProvider } from "@/shared/feedback";
+import { Oops } from "@/shared/Oops";
+import "./index.css";
+
+// Browser-only UI testing: `pnpm dev` → http://localhost:1420/?mock (tree-shaken from builds).
+if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
+  await (await import("./dev/mockIpc")).installMockIpc();
+  // 流畅度自测：`&perf=<端口>`（docs/testing.md）
+  const perf = new URLSearchParams(location.search).get("perf");
+  if (perf) void import("./dev/perf").then((m) => m.runPerf(perf));
+  // 写字的框在 WebKit 里的自测：`&edtest=<端口>`（docs/testing.md）
+  const edtest = new URLSearchParams(location.search).get("edtest");
+  if (edtest) void import("./dev/edtest").then((m) => m.runEdTest(edtest));
+  // 在 Safari 里遥控：`&drive=<端口>`（docs/testing.md）
+  const drive = new URLSearchParams(location.search).get("drive");
+  if (drive) void import("./dev/drive").then((m) => m.runDrive(drive));
+}
+// 开发版的真窗口里也能遥控：`VITE_DRIVE=<端口> pnpm app:dev`（docs/testing.md）
+if (import.meta.env.DEV && import.meta.env.VITE_DRIVE && !new URLSearchParams(location.search).has("mock")) {
+  const port = String(import.meta.env.VITE_DRIVE);
+  void import("./dev/drive").then((m) => m.runDrive(port));
+}
+// The window's content never scrolls as a whole (index.css): if WebKit moves it anyway — revealing a focused field
+// that slid out of the window did, and the top bar stayed pushed out until a restart — it goes straight back.
+function pinShell() {
+  const root = document.getElementById("root");
+  const back = () => {
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    for (const el of [document.documentElement, document.body, root, root?.firstElementChild]) {
+      if (el && (el.scrollTop || el.scrollLeft)) el.scrollTop = el.scrollLeft = 0;
+    }
+  };
+  window.addEventListener("scroll", back, { passive: true });
+  for (const el of [document.body, root]) el?.addEventListener("scroll", back, { passive: true });
+  window.addEventListener("focusin", () => requestAnimationFrame(back));
+  window.addEventListener("resize", back);
+}
+pinShell();
+// the palette and light / dark chosen in 设置, before the first paint
+startAppearance();
+// the hand-drawn frames, lines and controls (data-hand), painted as they appear
+startHand();
+startTips();
+// WebKit's own right-click menu (Back, Reload) means nothing in the app: only text being written or picked keeps it
+// (cut, copy, paste, look up); places with a menu of their own already took the event
+window.addEventListener("contextmenu", (e) => {
+  if (e.defaultPrevented) return;
+  const t = e.target instanceof Element ? e.target : null;
+  if (t?.closest("input, textarea, [contenteditable=''], [contenteditable='true'], .selectable")) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+  e.preventDefault();
+});
+
+// Local IPC: no network retries / refetch-on-focus noise.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, staleTime: Infinity } },
+});
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+      <Oops where="窗口" look="window">
+      <HashRouter>
+        <Routes>
+          <Route element={<App />}>
+            <Route index element={<HomePage />} />
+            <Route path="todo" element={<TodoPage />} />
+            <Route path="books" element={<BooksPage />} />
+            <Route path="games" element={<GamesPage />} />
+            <Route path="films" element={<FilmsPage />} />
+            <Route path="drawing" element={<DrawingPage />} />
+            <Route path="packing" element={<PackingPage />} />
+            <Route path="finance/:sub?" element={<FinancePage />} />
+            <Route path="jobs/:sub?" element={<JobsPage />} />
+            <Route path="notes" element={<NotesPage />} />
+            <Route path="articles/:sub?" element={<ArticlesPage />} />
+            <Route path="days" element={<DaysPage />} />
+            <Route path="site/:sub?" element={<SitePage />} />
+            <Route path="canvas" element={<CanvasPage />} />
+            <Route path="list/:id" element={<ListPage />} />
+            <Route path="progress/:id" element={<ProgressPage />} />
+            <Route path="vault" element={<VaultPage />} />
+            <Route path="bookmarks" element={<BookmarksPage />} />
+            <Route path="youzi" element={<Suspense fallback={null}><YouziPage /></Suspense>} />
+            <Route path="translate/:sub?" element={<Suspense fallback={null}><AssistantModule which="translate" /></Suspense>} />
+            <Route path="pub2md/:sub?" element={<Suspense fallback={null}><AssistantModule which="pub2md" /></Suspense>} />
+            <Route path="seeker/:sub?" element={<Suspense fallback={null}><AssistantModule which="seeker" /></Suspense>} />
+            <Route path="rater/:sub?" element={<Suspense fallback={null}><AssistantModule which="rater" /></Suspense>} />
+            <Route path="janitor/:sub?" element={<Suspense fallback={null}><AssistantModule which="janitor" /></Suspense>} />
+            <Route path="atlas" element={<Suspense fallback={null}><AtlasPage /></Suspense>} />
+            <Route path="importer" element={<Navigate to="/finance/import" replace />} />
+            <Route path="calendar" element={<CalendarPage />} />
+            <Route path="settings/:sub?" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </HashRouter>
+      </Oops>
+      </ToastProvider>
+    </QueryClientProvider>
+  </React.StrictMode>,
+);

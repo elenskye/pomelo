@@ -1,0 +1,94 @@
+/* 见字如面's PDF pages (src/print, print.rs): A4 at 1 CSS px = 1 pt, the two looks of the canvas 「见字如面」 (visual-
+   atelier canvases/pomelo-explore/notes: Notes-PDF-Pomelo, Notes-PDF-Print). 柚儿园 follows the palette (light);
+   印刷's colours are fixed. The article's lines are the writing box's (articles.css), every mark hidden. */
+/* nothing clips (index.css clips the app's body to the window; the pages are absolute while drawn) */
+html, body { margin: 0; padding: 0; background: transparent; overflow: visible !important; height: auto !important; }
+.pv-host { position: relative; }
+.pv-measure { position: absolute; left: 0; top: 0; }
+.pv-page { position: relative; width: 595px; height: 842px; overflow: hidden; box-sizing: border-box; }
+/* drawing: one page at a time, at the window's top-left */
+.pv-live .pv-page { position: absolute; left: 0; top: 0; }
+.pv-live .pv-page:not(.on) { display: none; }
+/* the browser's look at it (print.html?mock) */
+html:has(.pv-preview), body.pv-preview { overflow: auto !important; height: auto !important; }
+.pv-preview { padding: 24px; background: #8a8a86; }
+.pv-preview .pv-host { display: flex; flex-direction: column; gap: 24px; }
+.pv-preview .pv-page { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18), 0 18px 40px rgba(0, 0, 0, 0.18); }
+/* Word's pictures: drawn alone at the top-left */
+.pv-snap { position: absolute; left: 0; top: 0; display: inline-block; padding: 2px; background: #fff; }
+
+.pv-in { position: absolute; overflow: hidden; }
+.pv-head { position: absolute; display: flex; justify-content: space-between; gap: 16px; font-size: 9px; line-height: 14px; padding-bottom: 5px; }
+.pv-head .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-foot { position: absolute; left: 0; right: 0; display: flex; justify-content: center; font-size: 10px; line-height: 14px; }
+.pv-top { padding-bottom: 4px; }
+.pv-title { position: relative; z-index: 0; margin: 0; width: fit-content; max-width: 100%; }
+.pv-meta { margin-top: 4px; }
+.pv-toc { margin: 14px 0 6px; padding: 10px 14px 12px; border-radius: 10px; }
+.pv-toct { font-weight: 700; font-size: 12px; margin-bottom: 3px; }
+.pv-tocl { display: flex; align-items: baseline; gap: 6px; font-size: 11px; line-height: 20px; }
+.pv-tocl .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-tocl i { flex: 1; min-width: 12px; border-bottom: 1.2px dotted currentColor; opacity: 0.55; transform: translateY(-3px); }
+.pv-tocl .n { font-variant-numeric: tabular-nums; }
+
+/* the lines: 11 pt, nothing of the writing box but the text */
+.pv-text { --ar-size: 11px; --ar-leading: 1.85; --gut: 0px; min-height: 0 !important; color: var(--foreground); }
+.pv-text .mk, .pv-text .hg, .pv-text .fold, .pv-text .folded, .pv-text .msrc, .pv-text .srchid, .pv-text .srcline, .pv-text .tsep { display: none !important; }
+.pv-text > .ln:first-child { margin-top: 0; }
+.pv-text .ln.gap { height: 0.55em; line-height: 0.55em; }
+.pv-text .h1 { --hs: 1.8; }
+.pv-text .h2 { --hs: 1.55; }
+.pv-text .h3 { --hs: 1.27; }
+.pv-text .h4 { --hs: 1.12; }
+.pv-text .h { margin-top: 0.6em; line-height: 1.4; }
+.pv-text .hr { height: 1.2em; }
+.pv-text .hr::after { left: 0; }
+.pv-text .tr { white-space: normal; }
+.pv-text .td { box-sizing: border-box; }
+.pv-text .img img, .pv-text .img-inline img { max-height: 560px; border-radius: 8px; }
+.pv-text .diagram svg { max-width: 100%; max-height: 560px; }
+.pv-text .formula, .pv-text .diagram { overflow: hidden; }
+.pv-text .pm-lk, .pv-text .pm-lkw { color: inherit; background: none; padding: 0; text-decoration: none; }
+.pv-text .pm-lk-mk { display: none; }
+.pv-text .box { width: 0.95em; height: 0.95em; }
+/* highlights as solid colour (the editor's default one is a gradient) */
+.pv-text .hl-def { background: none; box-shadow: inset 0 -0.55em 0 var(--pm-marker); }
+
+/* ---------- 柚儿园: the paper, the hand font, the palette ---------- */
+/* the grid is a tiled picture (layout.ts): CSS gradients with hard stops don't come out right in WebKit's PDF */
+.pv-page.pv-pomelo { background-color: var(--color-paper); background-size: 16px 16px; color: var(--color-ink); }
+.pv-pomelo .pv-in { inset: 64px 62px 64px 66px; }
+.pv-pomelo .pv-head { left: 66px; right: 62px; top: 30px; font-family: var(--font-hand); color: var(--color-ink-soft); border-bottom: 1.3px dashed var(--color-line); }
+.pv-pomelo .pv-foot { bottom: 26px; font-family: var(--font-hand); color: var(--color-ink); }
+.pv-num { position: relative; width: 24px; height: 24px; display: grid; place-items: center; font-size: 11px; }
+.pv-slap { position: absolute; right: 60px; top: 56px; transform: rotate(-8deg); }
+.pv-pomelo .pv-title { font-family: var(--font-hand); font-size: 30px; line-height: 40px; font-weight: 700; padding-right: 56px; }
+.pv-tm { position: absolute; left: -4px; right: 52px; bottom: 2px; height: 14px; z-index: -1; }
+.pv-pomelo .pv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-family: var(--font-hand); font-size: 11px; line-height: 16px; color: var(--color-ink-soft); }
+.pv-tag { box-shadow: inset 0 -0.45em 0 var(--color-marker); padding: 0 0.12em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.pv-pomelo .pv-toc { border: 1.3px dashed var(--color-line); background: color-mix(in srgb, var(--color-card) 80%, transparent); }
+.pv-pomelo .pv-toct, .pv-pomelo .pv-tocl { font-family: var(--font-hand); }
+.pv-pomelo .pv-toct { font-size: 14px; }
+.pv-pomelo .pv-text .h { font-family: var(--font-hand); }
+
+/* ---------- 印刷: white paper, 宋体 body, 黑体 headings, fixed greys ---------- */
+.pv-print {
+  --foreground: var(--color-print-ink); --muted-foreground: var(--color-print-ink-soft); --border: #c9c9c2; --muted: #eeeeea; --card: #ffffff;
+  --pm-pen: #555555; --pm-link: #3a4a8a; --pm-marker: #f3e7a3; --pm-yuzu: #f2d66b; --pm-art-ink: #22261f; --pm-up: #3d6b4a; --destructive: #9b3b3b;
+  --chart-2: #6b5a3a; --chart-3: #8a4a3a; --chart-4: #3a4a8a;
+  --pm-cat-mint-bg: #dcefe3; --pm-cat-pink-bg: #f6dde3; --pm-cat-sky-bg: #dde9f6; --pm-cat-grape-bg: #e8e0f3;
+  --pm-cat-sky-tint: #f1f1ec; --pm-cat-mint-tint: #f1f1ec; --pm-cat-grape-tint: #f1f1ec; --pm-cat-orange-tint: #f1f1ec; --pm-cat-pink-tint: #f1f1ec;
+  --pm-cat-sky: #9a9a94; --pm-cat-mint: #9a9a94; --pm-cat-grape: #9a9a94; --pm-cat-orange: #9a9a94; --pm-cat-pink: #9a9a94;
+}
+.pv-page.pv-print { background: var(--color-print-paper); color: var(--color-print-ink); }
+.pv-print .pv-in { inset: 76px 72px 76px 76px; }
+.pv-print .pv-text { font-family: "Songti SC", "STSong", serif; --ar-leading: 1.9; }
+.pv-print .pv-text .h, .pv-print .pv-text .co-head, .pv-print .pv-text .tr.th, .pv-print .pv-title, .pv-print .pv-meta, .pv-print .pv-head, .pv-print .pv-toct { font-family: "PingFang SC", sans-serif; }
+.pv-print .pv-text .h { font-weight: 600; }
+.pv-print .pv-head { left: 76px; right: 72px; top: 36px; color: var(--color-print-ink-soft); border-bottom: 0.8px solid #bdbdb6; }
+.pv-print .pv-foot { bottom: 34px; font-family: "Songti SC", serif; color: var(--color-print-ink-soft); }
+.pv-print .pv-title { font-size: 24px; line-height: 34px; font-weight: 600; text-align: center; margin: 0 auto; }
+.pv-print .pv-meta { text-align: center; font-size: 9.5px; color: var(--color-print-ink-soft); }
+.pv-print .pv-toc { background: none; border-top: 0.8px solid #bdbdb6; border-bottom: 0.8px solid #bdbdb6; border-radius: 0; padding: 8px 0 10px; }
+.pv-print .pv-toct { text-align: center; letter-spacing: 0.3em; }
+.pv-print .pv-tocl { font-family: "Songti SC", serif; }

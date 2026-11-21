@@ -1,0 +1,356 @@
+//! 类型 lists per module, user-editable (add / rename / delete / reorder).
+//! Items store `kind_id` (FK ON DELETE SET NULL → 未分类; a second list on the same items names its column,
+//! `table.column`, like 玩物有志's 平台). Import/export uses kind *names*.
+
+use super::common::{self, err};
+use crate::AppState;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+use tauri::State;
+
+/// module key → item tables that reference kinds (counts sum over all of them); `table.column` when the column
+/// isn't `kind_id`.
+const TABLES: &[(&str, &[&str])] = &[
+    ("books", &["books"]),
+    ("films", &["films"]),
+    ("games", &["games"]),                       // 类型
+    ("game_platform", &["games.platform_id"]),   // 平台
+    ("drawing", &["drawing_lessons"]),
+    ("packing", &["packing_template_items", "trip_items"]), // 类别
+    ("fin_out", &["fin_entries", "fin_fixed"]), // 支出分类 (budgets cascade on delete)
+    ("fin_in", &["fin_entries", "fin_fixed"]),  // 收入分类
+    ("job_channel", &["jobs"]),                // 渠道
+];
+
+/// 循序渐进 modules: each its own list, keyed like the module ("progress/<id>").
+const PROGRESS: &[&str] = &["progress_lessons"];
+
+fn tables(module: &str) -> Result<&'static [&'static str], String> {
+    if module.strip_prefix("progress/").is_some_and(|id| id.parse::<i64>().is_ok()) {
+        return Ok(PROGRESS);
+    }
+    TABLES
+        .iter()
+        .find(|(m, _)| *m == module)
+        .map(|(_, t)| *t)
+        .ok_or_else(|| format!("未知模块：{module}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Kind {
+    pub id: i64,
+    pub module: String,
+    pub name: String,
+    pub sort_order: i64,
+    /// Items currently using this kind.
+    pub count: i64,
+}
+
+pub fn list(conn: &Connection, module: &str) -> Result<Vec<Kind>, String> {
+    let count = tables(module)?
+        .iter()
+        .map(|t| {
+            let (t, col) = t.split_once('.').unwrap_or((t, "kind_id"));
+            format!("(SELECT count(*) FROM {t} WHERE {col} = k.id)")
+        })
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let mut st = conn
+        .prepare(&format!(
+            "SELECT k.id, k.module, k.name, k.sort_order, {count}
+             FROM kinds k WHERE k.module = ?1 ORDER BY k.sort_order, k.id"
+        ))
+        .map_err(err)?;
+    let rows = st
+        .query_map([module], |r| {
+            Ok(Kind { id: r.get(0)?, module: r.get(1)?, name: r.get(2)?, sort_order: r.get(3)?, count: r.get(4)? })
+        })
+        .map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
+fn module_of(conn: &Connection, id: i64) -> Result<Option<String>, String> {
+    conn.query_row("SELECT module FROM kinds WHERE id = ?1", [id], |r| r.get(0))
+        .optional()
+        .map_err(err)
+}
+
+fn get(conn: &Connection, id: i64) -> Result<Kind, String> {
+    let module = module_of(conn, id)?.ok_or("找不到这个类型，可能已经被删除了")?;
+    list(conn, &module)?.into_iter().find(|k| k.id == id).ok_or_else(|| "找不到这个类型".into())
+}
+
+fn clean_name(conn: &Connection, module: &str, name: &str, except: Option<i64>) -> Result<String, String> {
+    let name = common::require(name, "名称", 20)?;
+    let dup: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM kinds WHERE module = ?1 AND name = ?2 AND id != coalesce(?3, -1)",
+            params![module, name, except],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if dup > 0 {
+        return Err(format!("「{name}」已经有了，换个名字吧"));
+    }
+    Ok(name)
+}
+
+pub fn create(conn: &Connection, module: &str, name: &str) -> Result<Kind, String> {
+    tables(module)?;
+    if let Some(id) = module.strip_prefix("progress/").and_then(|id| id.parse().ok()) {
+        super::custom::of(conn, super::custom::Template::Progress, id)?;
+    }
+    let name = clean_name(conn, module, name, None)?;
+    conn.execute(
+        "INSERT INTO kinds (module, name, sort_order)
+         VALUES (?1, ?2, (SELECT coalesce(max(sort_order), 0) + 1 FROM kinds WHERE module = ?1))",
+        params![module, name],
+    )
+    .map_err(err)?;
+    get(conn, conn.last_insert_rowid())
+}
+
+pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<Kind, String> {
+    let k = get(conn, id)?;
+    let name = clean_name(conn, &k.module, name, Some(id))?;
+    conn.execute(
+        "UPDATE kinds SET name = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
+        params![name, id],
+    )
+    .map_err(err)?;
+    get(conn, id)
+}
+
+/// Items of this kind become 未分类 (FK ON DELETE SET NULL).
+pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
+    match conn.execute("DELETE FROM kinds WHERE id = ?1", [id]).map_err(err)? {
+        0 => Err("找不到这个类型，可能已经被删除了".into()),
+        _ => Ok(()),
+    }
+}
+
+/// `ids` must be exactly the module's kinds, in the new order.
+pub fn reorder(conn: &Connection, module: &str, ids: &[i64]) -> Result<Vec<Kind>, String> {
+    let mut current: Vec<i64> = list(conn, module)?.iter().map(|k| k.id).collect();
+    let mut wanted = ids.to_vec();
+    current.sort_unstable();
+    wanted.sort_unstable();
+    if current != wanted {
+        return Err("类型列表已经变了，请重新打开后再试".into());
+    }
+    let tx = common::Tx::begin(conn)?;
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute("UPDATE kinds SET sort_order = ?1 WHERE id = ?2", params![i as i64 + 1, id])
+            .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
+    list(conn, module)
+}
+
+/// Validates an item's kind_id belongs to `module` (None = 未分类 is always fine).
+pub fn check(conn: &Connection, module: &str, kind_id: Option<i64>) -> Result<(), String> {
+    match kind_id {
+        Some(id) if module_of(conn, id)?.as_deref() != Some(module) => Err("选择的类型不存在，可能已经被删除了".into()),
+        _ => Ok(()),
+    }
+}
+
+/// v0.1 fixed codes (phase 3 files) → names.
+fn legacy(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "fiction" => "虚构",
+        "nonfiction" => "非虚构",
+        "comic" => "漫画",
+        "other" => "其他",
+        "movie" => "电影",
+        "series" => "剧集",
+        "anime" => "动漫",
+        _ => return None,
+    })
+}
+
+pub fn check_name(name: &Option<String>) -> Result<(), String> {
+    match name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(n) => common::require(n, "类型名称", 20).map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+/// Import helper: kind name (or legacy code) → id, creating the kind if missing. Blank → None.
+pub fn resolve(conn: &Connection, module: &str, name: Option<&str>) -> Result<Option<i64>, String> {
+    let Some(raw) = name.map(str::trim).filter(|s| !s.is_empty()) else { return Ok(None) };
+    let name = legacy(raw).unwrap_or(raw);
+    let found: Option<i64> = conn
+        .query_row("SELECT id FROM kinds WHERE module = ?1 AND name = ?2", params![module, name], |r| r.get(0))
+        .optional()
+        .map_err(err)?;
+    match found {
+        Some(id) => Ok(Some(id)),
+        None => create(conn, module, name).map(|k| Some(k.id)),
+    }
+}
+
+// ---------- import / export: top-level `"kinds": {"books": ["虚构", ...], ...}` (order = sort_order) ----------
+
+pub fn modules() -> impl Iterator<Item = &'static str> {
+    TABLES.iter().map(|(m, _)| *m)
+}
+
+/// id → name, for writing export records.
+pub fn name_map(conn: &Connection, module: &str) -> Result<std::collections::HashMap<i64, String>, String> {
+    Ok(list(conn, module)?.into_iter().map(|k| (k.id, k.name)).collect())
+}
+
+pub fn export(conn: &Connection) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    modules().map(|m| Ok((m.to_string(), list(conn, m)?.into_iter().map(|k| k.name).collect()))).collect()
+}
+
+pub fn validate_names(label: &str, names: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for n in names {
+        let n = common::require(n, "类型名称", 20).map_err(|e| format!("{label}的类型列表：{e}"))?;
+        if !seen.insert(n.clone()) {
+            return Err(format!("{label}的类型列表：「{n}」重复了"));
+        }
+    }
+    Ok(())
+}
+
+/// Import: make `module`'s kinds exactly `names`, in order. Same-name kinds keep their id;
+/// kinds not listed are deleted (their items → 未分类). Caller owns the transaction.
+pub fn replace_names(conn: &Connection, module: &str, names: &[String]) -> Result<(), String> {
+    let wanted: Vec<&str> = names.iter().map(|n| n.trim()).collect();
+    for k in list(conn, module)? {
+        if !wanted.contains(&k.name.as_str()) {
+            delete(conn, k.id)?;
+        }
+    }
+    for (i, name) in wanted.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO kinds (module, name, sort_order) VALUES (?1, ?2, ?3)
+             ON CONFLICT(module, name) DO UPDATE SET sort_order = excluded.sort_order",
+            params![module, name, i as i64 + 1],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
+}
+
+// ---------- commands ----------
+
+#[tauri::command]
+pub fn kinds_list(state: State<AppState>, module: String) -> Result<Vec<Kind>, String> {
+    state.with_db(|c| list(c, &module))
+}
+
+#[tauri::command]
+pub fn kinds_create(state: State<AppState>, module: String, name: String) -> Result<Kind, String> {
+    state.with_undo("添加类型", |c| create(c, &module, &name))
+}
+
+#[tauri::command]
+pub fn kinds_rename(state: State<AppState>, id: i64, name: String) -> Result<Kind, String> {
+    state.with_undo("重命名类型", |c| rename(c, id, &name))
+}
+
+#[tauri::command]
+pub fn kinds_delete(state: State<AppState>, id: i64) -> Result<(), String> {
+    state.with_undo("删除类型", |c| delete(c, id))
+}
+
+#[tauri::command]
+pub fn kinds_reorder(state: State<AppState>, module: String, ids: Vec<i64>) -> Result<Vec<Kind>, String> {
+    state.with_undo("调整类型顺序", |c| reorder(c, &module, &ids))
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::db::tests::memory_db;
+
+    pub fn kind_id(c: &Connection, module: &str, name: &str) -> i64 {
+        list(c, module).unwrap().into_iter().find(|k| k.name == name).unwrap().id
+    }
+
+    #[test]
+    fn seeded_lists() {
+        let c = memory_db();
+        let names = |m| list(&c, m).unwrap().into_iter().map(|k| k.name).collect::<Vec<_>>();
+        assert_eq!(names("books"), ["虚构", "非虚构", "漫画", "其他"]);
+        assert_eq!(names("films"), ["电影", "剧集", "动漫"]);
+        assert_eq!(names("drawing"), ["正课", "DLC 跟画", "LIVE 辅导"]);
+        assert_eq!(names("packing"), ["重要物品", "随身", "护理", "兴趣"]);
+        assert!(list(&c, "nope").is_err());
+    }
+
+    #[test]
+    fn create_rename_unique() {
+        let c = memory_db();
+        let k = create(&c, "books", " 杂志 ").unwrap();
+        assert_eq!((k.name.as_str(), k.sort_order, k.count), ("杂志", 5, 0));
+        assert!(create(&c, "books", "杂志").unwrap_err().contains("已经有了"));
+        assert!(create(&c, "films", "杂志").is_ok()); // unique per module only
+        assert!(create(&c, "books", " ").is_err());
+        assert_eq!(rename(&c, k.id, "期刊").unwrap().name, "期刊");
+        assert!(rename(&c, k.id, "虚构").is_err());
+        assert_eq!(rename(&c, k.id, "期刊").unwrap().name, "期刊"); // same name ok
+    }
+
+    #[test]
+    fn delete_uncategorizes_items() {
+        let c = memory_db();
+        let comic = kind_id(&c, "books", "漫画");
+        c.execute("INSERT INTO books (title, kind_id) VALUES ('海贼王', ?1)", [comic]).unwrap();
+        assert_eq!(list(&c, "books").unwrap().iter().find(|k| k.id == comic).unwrap().count, 1);
+        delete(&c, comic).unwrap();
+        let kid: Option<i64> = c.query_row("SELECT kind_id FROM books", [], |r| r.get(0)).unwrap();
+        assert_eq!(kid, None);
+        assert!(delete(&c, comic).is_err());
+    }
+
+    #[test]
+    fn reorder_and_check() {
+        let c = memory_db();
+        let ids: Vec<i64> = list(&c, "films").unwrap().iter().map(|k| k.id).rev().collect();
+        let out = reorder(&c, "films", &ids).unwrap();
+        assert_eq!(out.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(), ["动漫", "剧集", "电影"]);
+        assert!(reorder(&c, "films", &ids[..2]).is_err());
+        assert!(check(&c, "films", Some(ids[0])).is_ok());
+        assert!(check(&c, "books", Some(ids[0])).is_err());
+        assert!(check(&c, "books", None).is_ok());
+    }
+
+    #[test]
+    fn replace_names_keeps_ids_reorders_and_drops() {
+        let c = memory_db();
+        let comic = kind_id(&c, "books", "漫画");
+        let fiction = kind_id(&c, "books", "虚构");
+        c.execute("INSERT INTO books (title, kind_id) VALUES ('a', ?1), ('b', ?2)", [comic, fiction]).unwrap();
+        let names: Vec<String> = ["漫画", "绘本", "非虚构"].map(String::from).to_vec();
+        replace_names(&c, "books", &names).unwrap();
+        let l = list(&c, "books").unwrap();
+        assert_eq!(l.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(), names);
+        assert_eq!(l[0].id, comic);
+        let kids: Vec<Option<i64>> = {
+            let mut st = c.prepare("SELECT kind_id FROM books ORDER BY id").unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        };
+        assert_eq!(kids, [Some(comic), None]); // 虚构 dropped → 未分类
+        assert_eq!(list(&c, "films").unwrap().len(), 3); // other modules untouched
+        assert!(validate_names("书", &["a".into(), " a ".into()]).is_err());
+        assert!(validate_names("书", &[" ".into()]).is_err());
+        assert!(validate_names("书", &[]).is_ok());
+    }
+
+    #[test]
+    fn resolve_names_and_legacy_codes() {
+        let c = memory_db();
+        assert_eq!(resolve(&c, "books", Some("nonfiction")).unwrap(), Some(kind_id(&c, "books", "非虚构")));
+        assert_eq!(resolve(&c, "books", Some("虚构")).unwrap(), Some(kind_id(&c, "books", "虚构")));
+        let new = resolve(&c, "books", Some("绘本")).unwrap().unwrap();
+        assert_eq!(new, kind_id(&c, "books", "绘本"));
+        assert_eq!(resolve(&c, "books", Some("  ")).unwrap(), None);
+        assert_eq!(resolve(&c, "books", None).unwrap(), None);
+    }
+}

@@ -1,0 +1,32 @@
+/* 日历 (visual-atelier's canvases/pomelo-pages Calendar, phase6.mjs). The card, chips, buttons and the circle round
+   today are the Design System's (ds.css pm-*, painted by shared/hand.ts); this lays out the month. */
+.cal { position: relative; }
+.calbar { display: flex; align-items: center; gap: 8px; height: 44px; margin-bottom: 12px; flex-shrink: 0; }
+.calnav { width: 34px; height: 34px; }
+.calm { min-width: 150px; text-align: center; font-size: 22px; font-weight: 700; }
+.calnow { margin-left: 6px; }
+.calf { display: flex; gap: 6px; margin-left: auto; }
+.calsrc { cursor: pointer; }
+.calsrc[aria-pressed="false"] { opacity: .38; background: transparent; box-shadow: inset 0 0 0 1.2px var(--color-line); }
+.calcard { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 8px 10px 10px; }
+.calhead { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); align-items: center; height: 28px; padding: 0 8px; font-size: 13px; color: var(--color-ink-soft); }
+.calcells { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: repeat(6, minmax(0, 1fr)); }
+.cc { position: relative; min-width: 0; overflow: hidden; padding: 4px 6px 2px; border-top: 1.5px dashed var(--color-line); }
+.cc:not(:nth-child(7n + 1)) { border-left: 1.5px dashed var(--color-line); }
+.cc.we { background: color-mix(in srgb, var(--color-desk) 35%, transparent); }
+.cc.out .cd { color: var(--color-ink-soft); opacity: .55; }
+.cd { position: relative; display: inline-grid; place-items: center; width: 26px; height: 24px; font-size: 14px; }
+.cc.now .cd { font-weight: 700; }
+.cnow { position: absolute; left: -2px; top: -2px; width: 30px; height: 28px; }
+.ce { position: relative; display: flex; align-items: center; gap: 5px; width: 100%; height: 20px; padding: 0 4px; border-radius: 6px; font-size: 12.5px; text-align: left; white-space: nowrap; }
+.ce:hover { background: color-mix(in srgb, var(--color-selected) 60%, transparent); }
+.ce i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--pm-dot); }
+.ce span { overflow: hidden; text-overflow: ellipsis; }
+.ce.next { color: var(--color-ink-soft); }
+.ce.next i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--pm-dot); }
+.ce.done span { color: var(--color-ink-soft); text-decoration: line-through; text-decoration-color: var(--color-ink-soft); }
+.ce.late span { color: var(--color-danger); }
+.cmore { padding-left: 16px; font-size: 11.5px; line-height: 18px; color: var(--color-ink-soft); }
+.calpop { position: absolute; z-index: 30; width: 280px; padding: 14px 16px; }
+.calpop .pt { margin: 6px 0 4px; font-size: 16px; font-weight: 700; line-height: 1.4; }
+.calpop .pm-link { display: inline-block; margin-top: 10px; font-size: 13px; }

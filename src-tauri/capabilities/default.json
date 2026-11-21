@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window and the 速记小窗 and the print page",
+  "windows": ["main", "capture", "print"],
+  "permissions": ["core:default", "core:window:allow-start-dragging", "dialog:allow-open", "dialog:allow-save", "opener:default"]
+}

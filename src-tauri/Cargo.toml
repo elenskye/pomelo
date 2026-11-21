@@ -1,0 +1,63 @@
+[package]
+name = "pomelo"
+version = "1.0.0"
+description = "Pomelo OS"
+edition = "2021"
+
+[lib]
+name = "pomelo_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.40.2", features = ["bundled", "backup", "session"] }
+tauri-plugin-dialog = "2"
+# 芝麻开门: Argon2id (master password → key), XChaCha20-Poly1305 (entries), keychain + Touch ID + pasteboard
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+zeroize = "1"
+security-framework = "3"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSDictionary", "NSBundle"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSResponder", "NSRunningApplication", "NSWorkspace", "NSWindow", "libc"] }
+# 柚子: streaming from the local model (127.0.0.1) and the cloud services; tokio is already in the tree via tauri
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy", "json"] }
+tokio = { version = "1", features = ["time", "rt", "sync"] }
+tauri-plugin-autostart = "2"
+# 系统通知 (v1.0): UserNotifications, so a click opens what it is about
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "bitflags", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+# 柚子 reads more files (v0.4.5): Excel / CSV, PowerPoint (a zip of XML), web pages (a Readability port)
+calamine = "0.36"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42"
+dom_smoothie = "0.18"
+# 呦呦漫游 (v0.5): reads the website's front matter (written back by site/yaml.rs, as Keystatic's js-yaml does)
+yaml-rust2 = { version = "0.13", default-features = false }
+# Pub2MD (v0.6): 简繁互转 by OpenCC's dictionaries (pure Rust, built in; the model looks it over after)
+ferrous-opencc = "0.4"
+# 速记小窗 (v0.8): ⌥Space from any app (Tauri's own plugin)
+tauri-plugin-global-shortcut = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Small build output (scripts/clean-build.sh wipes src-tauri/target past 20 GB): dependencies without
+# debug info, our own code with line tables only (backtraces keep file:line).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

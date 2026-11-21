@@ -1,0 +1,5 @@
+/* Pub2MD 的使用说明（设置里能改，Markdown）：页面最下面的小字，粗体是用途 */
+.md.p2-about { font-family: inherit; font-size: 12px; line-height: 1.75; color: var(--muted-foreground); }
+.md.p2-about strong { color: var(--foreground); font-weight: 700; }
+.md.p2-about ul, .md.p2-about ol { padding-left: 1.2em; }
+.md.p2-about li + li { margin-top: 2px; }

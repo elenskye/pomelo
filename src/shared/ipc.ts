@@ -1,0 +1,64 @@
+// Typed wrappers for Rust commands (src-tauri/src/lib.rs). UI never touches SQL.
+import { invoke } from "@tauri-apps/api/core";
+
+export type AppInfo = {
+  appVersion: string;
+  isDev: boolean;
+  dataDir: string;
+  dbPath: string;
+  schemaVersion: number | null;
+  startupError: string | null;
+};
+
+export type ImportSummary = {
+  modules: { key: string; label: string; incoming: number; existing: number }[];
+  skipped: string[];
+  backup: string | null;
+};
+
+export type ExportSummary = {
+  path: string;
+  modules: { key: string; label: string; incoming: number }[];
+};
+
+/** `store`: pomelo (life data) | youzi (柚子). `label`: daily | manual | before-import | before-restore | before-v<N>. `createdAt`: local "YYYY-MM-DD HH:MM:SS". */
+export type BackupInfo = { fileName: string; store: "pomelo" | "youzi"; label: string; createdAt: string; size: number };
+
+/** 开机自动启动: `registers` = this copy writes the login item (the installed app); otherwise only the setting is kept. */
+export type Autostart = { on: boolean; registers: boolean };
+
+/** 系统通知 (Rust notify.rs): `posts` = this copy posts (the installed app); `allowed` = macOS lets it (null: not asked yet). */
+export type NotifyKinds = { todo: boolean; jobs: boolean; days: boolean; schedule: boolean };
+/** `times`: the daily kinds (todo, jobs, days) → HH:MM; 定时任务 follows each task's own time. */
+export type NotifySettings = { kinds: NotifyKinds; times: Record<string, string>; posts: boolean; allowed: boolean | null };
+
+export const api = {
+  appInfo: () => invoke<AppInfo>("app_info"),
+  autostart: () => invoke<Autostart>("app_autostart"),
+  autostartSet: (on: boolean) => invoke<Autostart>("app_autostart_set", { on }),
+  notifySettings: () => invoke<NotifySettings>("notify_settings"),
+  notifySet: (change: { kinds?: NotifyKinds; kind?: string; at?: string }) => invoke<null>("notify_set", change),
+  notifyOpenSystem: () => invoke<null>("notify_open_system"),
+  importPreview: (path: string) => invoke<ImportSummary>("import_preview", { path }),
+  importApply: (path: string, overwrite: boolean) => invoke<ImportSummary>("import_apply", { path, overwrite }),
+  exportTo: (path: string) => invoke<ExportSummary>("export_to", { path }),
+  backupsList: () => invoke<BackupInfo[]>("backups_list"),
+  backupNow: () => invoke<BackupInfo>("backup_now"),
+  /** No-op (null) if today's daily snapshot exists. */
+  backupDaily: () => invoke<BackupInfo | null>("backup_daily"),
+  backupRestore: (fileName: string) => invoke<{ safety: BackupInfo }>("backup_restore", { fileName }),
+  revealBackupsDir: () => invoke<void>("reveal_backups_dir"),
+  revealDataDir: () => invoke<void>("reveal_data_dir"),
+  /** The 索引签's names from the top, for the menu bar's ⌘1–⌘9 (Rust menu.rs). */
+  appMenuIndex: (names: string[]) => invoke<void>("app_menu_index", { names }),
+  /** URL (any scheme), local path, or bare address (→ https); rules in Rust. */
+  openLink: (link: string) => invoke<void>("open_link", { link }),
+  /** Day-change chores in Rust: finished check-ins completed, due 固定支出 posted. */
+  dailySweep: () => invoke<{ closed: number; posted: number }>("daily_sweep"),
+  /** label = the step undone / redone; null = nothing to do. */
+  undo: () => invoke<{ label: string | null }>("undo_last"),
+  redo: () => invoke<{ label: string | null }>("redo_last"),
+  settingsGet: <T>(key: string) => invoke<T | null>("settings_get", { key }),
+  settingsSet: (key: string, value: unknown) => invoke<void>("settings_set", { key, value }),
+};
+

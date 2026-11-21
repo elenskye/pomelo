@@ -1,0 +1,50 @@
+// 首页 summary (src-tauri/src/home.rs → home_overview); month / months / note feed the full version's desk (Dawn Plan · Phase 6). Rules live in Rust; hidden modules come back as
+// null / are left out. 今天的待办 comes from todo_agenda instead.
+import { invoke } from "@tauri-apps/api/core";
+import { useQuery } from "@tanstack/react-query";
+import type { CalendarEntry } from "@/calendar/api";
+import type { Bookmark } from "@/modules/bookmarks/api";
+import type { Day } from "@/modules/days/api";
+import type { Stage } from "@/modules/jobs/api";
+import type { Hit } from "@/shared/open";
+
+/** null = module hidden. */
+export type Year = { year: string; books: number | null; films: number | null; lessons: number | null; todos: number | null; notes: number | null; jobs: number | null };
+/** total in CNY cents. */
+export type Point = { day: string; total: number };
+export type JobLine = Hit & { status: string; stage: Stage; waitingDays: number | null };
+export type JobsCard = { total: number; thisWeek: number; ongoing: number; got: number; follow: JobLine[]; active: JobLine[] };
+export type CourseLine = { id: number; name: string; total: number; done: number; doing: number; next: Hit | null };
+/** at: UTC timestamp; done: a task checked off (else something added). */
+export type Recent = Hit & { at: string; done: boolean };
+export type Then = { year: string; items: Hit[] };
+/** This year per month (index 0 = January); null = module hidden. Books and films keep only the year. */
+export type Months = { lessons: number[] | null; todos: number[] | null; notes: number[] | null; jobs: number[] | null };
+/** 念念不忘一条 on the desk: the newest pinned note, else an older one picked by the day. */
+export type DeskNote = { id: number; content: string; day: string; pinned: boolean };
+export type Overview = {
+  today: string;
+  year: Year;
+  assets: Point[] | null;
+  jobs: JobsCard | null;
+  reading: Hit[] | null;
+  drawing: CourseLine[] | null;
+  /** 快到的日子 (days.rs soon); null = hidden. */
+  days: Day[] | null;
+  /** 一网打尽's links marked 放首页, in the tree's order; null = hidden. */
+  bookmarks: Bookmark[] | null;
+  /** 那年今日: earlier years on today's month-day, newest first; per year notes first. */
+  then: Then[];
+  recent: Recent[];
+  /** 本月 on the desk (calendar.rs), by day. */
+  month: CalendarEntry[];
+  months: Months;
+  /** null = 念念不忘 hidden or no notes yet. */
+  note: DeskNote | null;
+};
+
+export const HOME_KEY = ["home"];
+
+/** Refetched every time the page opens (other pages don't invalidate it). */
+export const useOverview = (hidden: string[]) =>
+  useQuery({ queryKey: [...HOME_KEY, hidden], queryFn: () => invoke<Overview>("home_overview", { hidden }), refetchOnMount: "always" });

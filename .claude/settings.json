@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/clean-build.sh\" --auto 2>/dev/null || true",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

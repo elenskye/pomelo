@@ -1,0 +1,69 @@
+/* 柚子链接 (links.ts): a chip for [[目标]] (the module's sticker and the name, 柚子链接色 on its own light tint), a Pomelo
+   link for [[目标|字]] (the words in 柚子链接色, a dotted line under them: an ordinary web link stays --pm-link),
+   找不到 in soft ink. Also the 「柚子链接 · N」 lists and the [[ suggestions. */
+.pm-lk {
+  display: inline;
+  padding: 0 0.32em 0 0.18em;
+  margin: 0 0.06em;
+  border-radius: 7px;
+  color: var(--pm-link-pomelo);
+  background: color-mix(in srgb, var(--pm-link-pomelo) 9%, transparent);
+  font: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  vertical-align: baseline;
+  text-align: left;
+}
+.pm-lk:hover { background: color-mix(in srgb, var(--pm-link-pomelo) 16%, transparent); }
+.pm-lk > span { white-space: normal; }
+.pm-lk .pm-lk-mk { display: inline-block; vertical-align: -0.22em; margin-right: 0.22em; }
+.pm-lk.dead { color: var(--muted-foreground); background: color-mix(in srgb, var(--muted-foreground) 8%, transparent); cursor: default; }
+.pm-lk-gone { margin-left: 0.4em; font-size: 0.8em; }
+.pm-lk-lg { display: inline-flex; align-items: center; gap: 0.3em; padding: 1px 9px 1px 5px; border-radius: 8px; font-size: 14px; line-height: 1.8; }
+.pm-lk-lg .pm-lk-mk { margin: 0; vertical-align: 0; }
+.pm-lk-d { margin-left: 0.35em; color: var(--muted-foreground); font-size: 0.85em; }
+
+.pm-lkw {
+  display: inline;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  color: var(--pm-link-pomelo);
+  text-decoration: underline dotted 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+.pm-lkw.dead { color: var(--muted-foreground); cursor: default; }
+
+/* 文章最后 */
+.pm-bkx { margin-top: 2.2em; padding-top: 0.8em; border-top: 1.5px dashed var(--border); font-family: var(--font-sans); }
+.pm-bkh { font-size: 13px; line-height: 18px; color: var(--muted-foreground); margin-bottom: 8px; }
+
+/* 面板里 */
+.pm-bkl { display: flex; flex-direction: column; }
+.pm-bkr { display: flex; align-items: center; gap: 8px; width: 100%; height: 36px; padding: 0 6px; border-radius: 9px; text-align: left; font-size: 14px; }
+.pm-bkr + .pm-bkr { border-top: 1px dashed var(--border); }
+.pm-bkr:hover { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+/* [[ 的提示：贴纸、名字（打的字划荧光笔）、一行淡墨 */
+.pm-sug { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 3px 0; white-space: normal; }
+.pm-sug-t { display: flex; min-width: 0; flex: 1; flex-direction: column; line-height: 1.35; }
+.pm-sug-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--foreground); }
+.pm-sug-m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted-foreground); }
+.pm-sug-hit { font-style: normal; background: linear-gradient(transparent 52%, var(--pm-marker) 52%, var(--pm-marker) 92%, transparent 92%); }
+
+/* 写的时候（边写边显示的框）：记号变淡，名字是柚子链接色 */
+.pm-lk-edit { color: var(--pm-link-pomelo); background: color-mix(in srgb, var(--pm-link-pomelo) 9%, transparent); border-radius: 4px; }
+.pm-lkw-edit { color: var(--pm-link-pomelo); text-decoration: underline dotted 1.5px; text-underline-offset: 3px; }
+
+/* 柚子链接…（右键里的那一项，LinkPicker.tsx）：一条纸，上面找、下面挑 */
+.pm-linkpick { position: fixed; z-index: 70; width: min(360px, calc(100vw - 24px)); padding: 6px; box-shadow: 0 8px 16px var(--pm-shadow); }
+.pm-linkpick-row { width: 100%; height: 48px; justify-content: flex-start; text-align: left; }
+
+/* 念念不忘的输入框浮在别处（ClipBox.tsx：记到念念不忘、书影游面板的「记一条」），左上角拍着它的贴纸 */
+.pm-clip { position: fixed; z-index: 70; width: min(440px, calc(100vw - 24px)); padding: 16px 18px 12px; background: var(--card); border-radius: 14px; box-shadow: 0 1px 2px var(--pm-shadow), 0 14px 24px var(--pm-shadow); }
+.pm-clip-slap { position: absolute; left: -20px; top: -24px; transform: rotate(-8deg); }
+/* 文章右上角的「柚子链接 · N」 */
+.pm-bkb { color: var(--pm-link-pomelo); }

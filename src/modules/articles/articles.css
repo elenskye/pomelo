@@ -1,0 +1,281 @@
+/* 见字如面 (modules/articles): the page's columns, the writing box drawn by bear.ts, the format bar. Body in PingFang
+   (--font-reading, the second exception after 柚子's messages), headings in the hand font; colours are variables. */
+
+/* ---------- the page: three columns on the paper, only the two lines between them ---------- */
+.ar-cols { display: flex; min-height: 0; flex: 1; gap: 0; padding: 22px 6px 0 6px; }
+.ar-nav { flex: none; display: flex; flex-direction: column; min-width: 0; padding-bottom: 14px; }
+.ar-nav .side-row .truncate, .ar-nav .side-row span { min-width: 0; }
+.ar-card { position: relative; flex: 1; min-width: 0; display: flex; }
+.ar-grip { position: relative; flex: none; width: 14px; cursor: col-resize; touch-action: none; }
+.ar-grip::after { content: ""; position: absolute; top: 2px; bottom: 16px; left: 6px; border-left: 1.5px dashed color-mix(in srgb, var(--pm-pen) 30%, transparent); transition: border-color 150ms; }
+.ar-grip:hover::after, .ar-grip.on::after { border-left-color: var(--pm-pen); }
+.ar-list { flex: none; display: flex; flex-direction: column; min-width: 0; padding: 0 2px 0 4px; }
+.ar-rows { flex: 1; min-height: 0; overflow-y: auto; }
+.ar-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 12px; text-align: left; outline: none; }
+
+
+.ar-row:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.ar-row.on { background: var(--accent); }
+.ar-row:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.ar-row-title { font-size: 16px; font-weight: 700; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-row-preview { font-size: 13.5px; line-height: 1.6; color: var(--muted-foreground); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ar-row-date { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.ar-thumb { width: 54px; height: 54px; border-radius: 10px; object-fit: cover; align-self: center; border: 1px solid var(--border); }
+.ar-slot { flex: 1; min-width: 0; display: flex; }
+.ar-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ar-focus { position: fixed; inset: 0; z-index: 80; background: var(--background); display: flex; flex-direction: column; font-family: var(--font-sans); color: var(--foreground); }
+.ar-focus .ar-head { padding: 14px 18px 0; }
+
+/* ---------- the writing box ---------- */
+.ar-editor { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ar-editor.dropping { box-shadow: inset 0 0 0 2px var(--primary); border-radius: 14px; }
+.ar-head { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 12px 0; min-height: 34px; }
+.ar-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; }
+.ar-page { max-width: var(--ar-width, 680px); margin: 0 auto; padding: 10px 40px 48px calc(var(--ar-size, 17px) * 2.7); }
+.ar-text { --gut: calc(var(--ar-size, 17px) * 2.6); font-family: var(--font-reading); font-size: var(--ar-size, 17px); line-height: var(--ar-leading, 1.75); color: var(--foreground); min-height: 60vh; }
+/* with 柚子链接 after the text, a short article doesn't push them out of sight (a click below still writes: Editor.tsx) */
+.ar-page.linked .ar-text { min-height: 9em; }
+.ar-text .ln { position: relative; }
+.ar-text .ln.gap { height: 0.7em; line-height: 0.7em; }
+/* the writing box spaces lines as Bear does (设置): a blank line is a whole line, every line has --ar-para after it
+   (blocks drawn as one piece — code, formulas, tables, callouts — set their own padding and keep theirs) */
+.ar-editor .ar-text .ln.gap, .ar-sample .ln.gap { height: auto; line-height: inherit; }
+.ar-editor :where(.ar-text > .ln), .ar-sample :where(.ar-text > .ln) { padding-bottom: var(--ar-para, 0em); }
+.ar-text .ln.tr, .ar-text .ln.tsep { padding-bottom: 0; }
+.ar-text .ln.hid, .ar-text .srcline, .ar-text .srchid { display: none; }
+
+/* marks (bear.ts): drawn only where the caret is, as in Bear 2. An inline construct's (.fx) while an end of the selection
+   is in it or next to it (a nested one only when the caret is in that one); a block's (direct children of the line: a
+   quote's >, a fence, a picture's source, a fold mark …) on the caret's line or block. A table keeps its pipes' room
+   and a rule its line; a footnote keeps its label. */
+.ar-text .mk { color: var(--muted-foreground); opacity: 0.75; }
+.ar-text .fx:not(.on) .mk, .ar-text .fx:not(.on) .msrc { display: none; }
+.ar-text .fx.on > .mrender, .ar-text .fx.on > .img-inline { display: none; }
+.ar-text .fx.on > .mk.imgsrc { font-size: 0.8em; }
+.ar-text .ln:not(.cur) > .mk { display: none; }
+.ar-text .ln.fndef > .mk { display: inline; }
+.ar-text .cur > .mk.imgsrc { font-size: 0.8em; }
+
+/* headings: the hand font; --hs is the size against the body's */
+.ar-text .h { --hs: 1; font-family: var(--font-sans); font-weight: 700; line-height: max(1.35, calc(var(--ar-leading, 1.75) * 0.74)); margin-top: 0.35em; font-size: calc(var(--hs) * 1em); }
+.ar-text .h1 { --hs: 1.62; }
+.ar-text .h2 { --hs: 1.36; }
+.ar-text .h3 { --hs: 1.18; }
+.ar-text .h4 { --hs: 1.06; }
+.ar-text .h5, .ar-text .h6 { color: var(--muted-foreground); }
+/* the marks in the left margin (one unit, source hidden), drawn as the level: a long line, two short ones and the number */
+.ar-text .hg { position: relative; display: inline-block; width: var(--gut); margin-left: calc(-1 * var(--gut)); text-indent: 0; user-select: none; -webkit-user-select: none; cursor: text; }
+.ar-text .hg-src { font-size: 0; }
+.ar-text .hg::before, .ar-text .hg::after { position: absolute; right: calc(var(--ar-size) * 0.55); top: 50%; pointer-events: none; }
+.ar-text .hg::before { content: ""; width: calc(var(--ar-size) * 1.05); height: calc(var(--ar-size) * 0.66); margin-top: calc(var(--ar-size) * -0.36); color: color-mix(in srgb, var(--muted-foreground) 80%, transparent); background: linear-gradient(currentColor 0 0) left top / 100% 2px no-repeat, linear-gradient(currentColor 0 0) left 58% / 38% 2px no-repeat, linear-gradient(currentColor 0 0) left bottom / 38% 2px no-repeat; }
+.ar-text .hg::after { content: attr(data-level); width: calc(var(--ar-size) * 0.55); margin-top: calc(var(--ar-size) * -0.18); font: 700 calc(var(--ar-size) * 0.66) / 1 var(--font-sans); text-align: center; color: var(--pm-link); }
+
+/* inline */
+.ar-text .b { font-weight: 700; }
+.ar-text .i { font-style: italic; }
+.ar-text .s { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--foreground) 55%, transparent); }
+.ar-text .u { text-decoration: underline; text-underline-offset: 0.18em; text-decoration-color: var(--pm-pen); }
+.ar-text .s.u { text-decoration-line: underline line-through; }
+.ar-text .hl { -webkit-box-decoration-break: clone; box-decoration-break: clone; border-radius: 3px; }
+.ar-text .hl-def { background: linear-gradient(transparent 42%, var(--pm-marker) 42%, var(--pm-marker) 92%, transparent 92%); }
+.ar-text .hl-mint { background: var(--pm-cat-mint-bg); }
+.ar-text .hl-pink { background: var(--pm-cat-pink-bg); }
+.ar-text .hl-sky { background: var(--pm-cat-sky-bg); }
+.ar-text .hl-yuzu { background: color-mix(in srgb, var(--pm-yuzu) 45%, transparent); }
+.ar-text .hl-grape { background: var(--pm-cat-grape-bg); }
+.ar-text .lk { color: var(--pm-link); text-decoration: underline; text-underline-offset: 0.16em; text-decoration-color: color-mix(in srgb, var(--pm-link) 45%, transparent); cursor: pointer; }
+/* 柚子链接 in the text (links.css draws the chip and the Pomelo link): the sticker sits in front of the name; a set-in note
+   is a small white card in 念念不忘's 手札体, its source above it (dimmed) on the caret's line, the card's edge then bolder */
+.ar-text .pm-lk { white-space: normal; padding: 0 0.28em 0 0.14em; }
+.ar-text .pm-lk-mk { display: inline-block; vertical-align: -0.18em; margin-right: 0.2em; line-height: 0; }
+.ar-text .embline { display: block; }
+.ar-text .embline:not(.cur) > .mk.embsrc { display: none; }
+.ar-text .embline.cur > .mk.embsrc { display: block; font-family: var(--font-sans); font-size: 0.8em; color: var(--muted-foreground); }
+.ar-text .emb { display: block; margin: 0.35em 0 0.2em; cursor: default; }
+.emb-card { border: 1.5px solid color-mix(in srgb, var(--pm-pen) 55%, transparent); border-radius: 12px; background: var(--card); padding: 11px 16px 13px; font-family: var(--font-sans); box-shadow: 0 1px 0 var(--pm-shadow); }
+.ar-text .embline.cur .emb-card { border-width: 2.4px; border-color: var(--primary); }
+.emb-card.gone { border-style: dashed; background: none; color: var(--muted-foreground); font-size: 14px; box-shadow: none; }
+.emb-card.wait { opacity: 0.6; }
+.emb-h { display: flex; align-items: center; gap: 7px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); }
+.emb-op { margin-left: auto; display: flex; color: var(--pm-pen); cursor: pointer; }
+.emb-t { margin-top: 5px; font-size: 15px; line-height: 1.75; color: var(--foreground); }
+.emb-t .pm-lk-mk { display: inline-block; vertical-align: -0.2em; margin-right: 0.2em; line-height: 0; }
+.emb-t mark { border-radius: 3px; background: var(--status-doing-bg); padding: 0 0.15em; color: inherit; }
+.emb-t .emb-gap { height: 0.6em; }
+.emb-t .emb-li { padding-left: 0.2em; }
+.ar-text .att { color: var(--pm-link); cursor: pointer; }
+.ar-text .cd { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; background: var(--muted); border-radius: 4px; padding: 0.05em 0.25em; }
+.ar-text .pm-hashtag { cursor: pointer; }
+.ar-text .fn { font-size: 0.7em; color: var(--pm-link); vertical-align: super; line-height: 0; }
+.ar-text .fndef { font-size: 0.86em; color: var(--muted-foreground); }
+.ar-text .missing { color: var(--destructive); }
+.ar-text .mrender { display: inline; }
+
+/* lists and tasks: a hanging indent, bullets drawn over the - */
+.ar-text .li { padding-left: var(--hang); text-indent: calc(-1 * var(--hang)); }
+.ar-text .ind { display: inline-block; overflow: hidden; white-space: pre; vertical-align: bottom; height: 1px; }
+.ar-text .bul { position: relative; display: inline-block; width: 0.9em; color: transparent; text-indent: 0; }
+.ar-text .bul::after { content: ""; position: absolute; left: 0.22em; top: 50%; width: 0.36em; height: 0.36em; margin-top: -0.18em; border-radius: 50%; background: var(--pm-pen); opacity: 0.8; }
+.ar-text .bul-hide { display: inline-block; width: 0; overflow: hidden; vertical-align: bottom; white-space: pre; }
+.ar-text .num { color: var(--pm-pen); font-variant-numeric: tabular-nums; }
+.ar-text .task { display: inline-block; text-indent: 0; margin-right: 0.45em; vertical-align: -0.12em; cursor: pointer; user-select: none; }
+.ar-text .box { display: block; width: 1em; height: 1em; border: 1.6px solid var(--pm-pen); border-radius: 0.28em; background: var(--card); }
+.ar-text .box.on { background: var(--pm-yuzu); position: relative; }
+.ar-text .box.on::after { content: ""; position: absolute; left: 0.28em; top: 0.08em; width: 0.28em; height: 0.52em; border: solid var(--pm-art-ink); border-width: 0 0.13em 0.13em 0; transform: rotate(42deg); }
+.ar-text .li.done { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted-foreground) 70%, transparent); }
+
+/* quotes and callouts */
+.ar-text .q { border-left: 3px solid color-mix(in srgb, var(--pm-pen) 35%, transparent); padding-left: 0.9em; color: var(--muted-foreground); }
+.ar-text .q.li { padding-left: calc(0.9em + var(--hang)); }
+.ar-text .co { color: var(--foreground); padding: 0.05em 0.9em; }
+.ar-text .co.qtop { border-top-right-radius: 10px; padding-top: 0.4em; }
+.ar-text .co.qbottom { border-bottom-right-radius: 10px; padding-bottom: 0.4em; margin-bottom: 0.2em; }
+.ar-text .co-sky { background: var(--pm-cat-sky-tint); border-left-color: var(--pm-cat-sky); }
+.ar-text .co-mint { background: var(--pm-cat-mint-tint); border-left-color: var(--pm-cat-mint); }
+.ar-text .co-grape { background: var(--pm-cat-grape-tint); border-left-color: var(--pm-cat-grape); }
+.ar-text .co-orange { background: var(--pm-cat-orange-tint); border-left-color: var(--pm-cat-orange); }
+.ar-text .co-pink { background: var(--pm-cat-pink-tint); border-left-color: var(--pm-cat-pink); }
+/* its head is an icon in its tint (bear.ts: on the first line, or heading the second when the first is only the mark) */
+/* a box as tall as the line, the icon in its middle: the line's middle is the middle of its words (and of an empty line) */
+.ar-text .co-head { display: inline-flex; align-items: center; height: 1lh; vertical-align: top; margin-right: 0.45em; text-indent: 0; user-select: none; -webkit-user-select: none; }
+.ar-text .co-head svg { display: block; width: 1.2em; height: 1.2em; }
+.ar-text .co-sky .co-head { color: var(--pm-cat-sky); }
+.ar-text .co-mint .co-head { color: var(--pm-cat-mint); }
+.ar-text .co-grape .co-head { color: var(--pm-cat-grape); }
+.ar-text .co-orange .co-head { color: var(--pm-cat-orange); }
+.ar-text .co-pink .co-head { color: var(--pm-cat-pink); }
+.ar-text .ln.cohid { display: none; }
+
+/* code */
+.ar-text .code, .ar-text .fence, .ar-text .mathsrc { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.82em; line-height: 1.65; background: color-mix(in srgb, var(--muted) 75%, transparent); padding: 0 1em; white-space: pre-wrap; }
+.ar-text .fence.top { border-radius: 10px 10px 0 0; padding-top: 0.35em; }
+.ar-text .fence.bottom { border-radius: 0 0 10px 10px; padding-bottom: 0.35em; margin-bottom: 0.2em; }
+.ar-text .hljs-comment, .ar-text .hljs-quote { color: var(--muted-foreground); font-style: italic; }
+.ar-text .hljs-keyword, .ar-text .hljs-selector-tag, .ar-text .hljs-built_in, .ar-text .hljs-literal, .ar-text .hljs-type { color: var(--chart-4); }
+.ar-text .hljs-string, .ar-text .hljs-regexp, .ar-text .hljs-addition, .ar-text .hljs-attribute, .ar-text .hljs-template-tag { color: var(--pm-up); }
+.ar-text .hljs-number, .ar-text .hljs-symbol, .ar-text .hljs-bullet, .ar-text .hljs-variable, .ar-text .hljs-template-variable { color: var(--chart-3); }
+.ar-text .hljs-title, .ar-text .hljs-section, .ar-text .hljs-title.function_, .ar-text .hljs-title.class_, .ar-text .hljs-name { color: var(--pm-link); }
+.ar-text .hljs-meta, .ar-text .hljs-tag, .ar-text .hljs-attr, .ar-text .hljs-property { color: var(--chart-2); }
+.ar-text .hljs-deletion { color: var(--destructive); }
+
+/* tables */
+.ar-text .tr { white-space: nowrap; border-bottom: 1px solid var(--border); }
+.ar-text .tr.th { font-weight: 700; border-bottom: 1.5px solid color-mix(in srgb, var(--pm-pen) 40%, var(--border)); }
+.ar-text .td { display: inline-block; vertical-align: top; white-space: pre-wrap; padding: 0.18em 0.35em; }
+.ar-text .ln.tr:not(.cur) > .mk, .ar-text .ln.tsep:not(.cur) > .mk { display: inline; opacity: 0; }
+.ar-text .tr.cur > .mk { opacity: 0.45; }
+.ar-text .tsep { font-size: 0.55em; line-height: 0.9; height: 0.5em; overflow: hidden; }
+
+/* rules, pictures, formulas, diagrams */
+.ar-text .hr { position: relative; }
+.ar-text .ln.hr:not(.cur) > .mk { display: inline; color: transparent; }
+.ar-text .hr::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1.5px dashed color-mix(in srgb, var(--pm-pen) 45%, transparent); pointer-events: none; }
+.ar-text .hr.cur::after { left: 3em; }
+.ar-text .img, .ar-text .img-inline { display: block; padding: 0.3em 0; cursor: text; user-select: none; }
+.ar-text .img img, .ar-text .img-inline img { max-width: 100%; max-height: 520px; border-radius: 10px; border: 1px solid var(--border); }
+.ar-text .formula, .ar-text .diagram { display: block; text-align: center; padding: 0.4em 0; cursor: text; user-select: none; overflow-x: auto; }
+.ar-text .diagram svg { max-width: 100%; height: auto; }
+.ar-text .formula.under, .ar-text .diagram.under { border-top: 1px dashed var(--border); margin-top: 0.3em; }
+.ar-text .pv-err { color: var(--destructive); font-size: 0.85em; }
+.ar-text .pv-wait { color: var(--muted-foreground); font-size: 0.85em; }
+
+/* folding */
+.ar-text .fold { position: absolute; left: -1.35em; top: 0.35em; width: 1em; height: 1em; cursor: pointer; opacity: 0; transition: opacity 150ms; text-indent: 0; }
+.ar-text .fold::before { content: ""; position: absolute; left: 0.3em; top: 0.22em; border: solid var(--pm-pen); border-width: 0 0.12em 0.12em 0; width: 0.38em; height: 0.38em; transform: rotate(45deg); transition: transform 150ms; }
+.ar-text .fold.shut::before { transform: rotate(-45deg); left: 0.18em; top: 0.3em; }
+.ar-text .ln:hover > .fold, .ar-text .fold.shut { opacity: 0.75; }
+.ar-text .h > .fold { font-size: var(--ar-size); left: calc(-1 * var(--gut) - var(--ar-size) * 0.1); top: calc(var(--hs) * var(--ar-size) * 0.7 - 0.5em); }
+.ar-text .folded { margin-left: 0.4em; padding: 0 0.35em; border-radius: 6px; background: var(--muted); color: var(--muted-foreground); font-size: 0.85em; text-indent: 0; }
+
+/* ---------- the format bar ---------- */
+.ar-bar-dock { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 5; max-width: calc(100% - 24px); }
+.ar-bar { position: relative; display: flex; align-items: center; gap: 1px; padding: 5px 7px; background: var(--card); border-radius: 12px; box-shadow: 0 1px 2px var(--pm-shadow), 0 8px 18px var(--pm-shadow); white-space: nowrap; }
+.ar-bar.float { padding: 4px 6px; }
+.ar-float-at { position: fixed; z-index: 60; }
+.ar-fb { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 1px; min-width: 30px; height: 30px; padding: 0 4px; border-radius: 8px; color: var(--pm-pen); outline: none; transition: background-color 150ms; }
+.ar-fb:hover { background: var(--muted); }
+.ar-fb.on { background: var(--accent); }
+.ar-fb:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
+.ar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--border); flex: none; }
+.ar-fdot { position: absolute; right: 3px; bottom: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--pm-marker); }
+.ar-pop { position: fixed; z-index: 70; min-width: 168px; }
+.ar-swatch { width: 12px; height: 12px; border-radius: 50%; flex: none; border: 1px solid var(--border); }
+.ar-swatch.hl-def { background: var(--pm-marker); }
+.ar-swatch.hl-mint { background: var(--pm-cat-mint); }
+.ar-swatch.hl-pink { background: var(--pm-cat-pink); }
+.ar-swatch.hl-sky { background: var(--pm-cat-sky); }
+.ar-swatch.hl-yuzu { background: var(--pm-yuzu); }
+.ar-swatch.hl-grape { background: var(--pm-cat-grape); }
+.ar-assist { position: fixed; z-index: 70; width: min(420px, calc(100vw - 24px)); display: grid; gap: 8px; padding: 12px 14px; background: var(--card); border-radius: 14px; box-shadow: 0 1px 2px var(--pm-shadow), 0 10px 22px var(--pm-shadow); }
+
+/* ---------- locked ---------- */
+.ar-locked { flex: 1; display: grid; place-items: center; padding-bottom: 40px; }
+
+/* ---------- 导出 (the dialog, after the canvas's Notes-Export), 选中的几篇 ---------- */
+.ar-drow { display: flex; align-items: flex-start; gap: 14px; }
+.ar-dlab { width: 64px; flex: none; font-size: 14px; line-height: 36px; color: var(--muted-foreground); }
+.ar-dval { flex: 1; min-width: 0; display: flex; align-items: center; min-height: 36px; }
+.ar-styles { display: flex; gap: 14px; }
+.ar-sty { position: relative; width: 196px; padding: 10px 10px 8px; text-align: left; border-radius: 12px; outline: none; }
+.ar-sty:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
+.ar-sty-pk { position: absolute; inset: 0; }
+.ar-sty > *:not(.ar-sty-pk):not([data-hand-painted]) { position: relative; }
+.ar-stname { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: 14px; font-weight: 700; }
+.ar-stname svg { margin-left: auto; color: var(--pm-pen); }
+.ar-sty:not(.on) .ar-stname svg { visibility: hidden; }
+.ar-mini { display: flex; gap: 6px; height: 96px; }
+.ar-mp { position: relative; width: 68px; height: 96px; box-sizing: border-box; border-radius: 3px; box-shadow: 0 1px 3px var(--pm-shadow); overflow: hidden; padding: 10px 8px; }
+.ar-mini-pomelo .ar-mp { background-color: var(--color-paper); background-image: linear-gradient(var(--color-grid) 1px, transparent 1px), linear-gradient(90deg, var(--color-grid) 1px, transparent 1px); background-size: 8px 8px; }
+.ar-mini-print .ar-mp { background: var(--color-print-paper); }
+.ar-mini i { display: block; }
+.ar-mini-l { height: 3px; margin: 3px 0; border-radius: 2px; opacity: 0.55; background: var(--color-ink-soft); }
+.ar-mini-print .ar-mini-l { background: #9a9a94; }
+.ar-mini-t { width: 70%; height: 6px; border-radius: 3px; background: var(--color-ink); margin: 2px 0 4px; }
+.ar-mini-print .ar-mini-t { width: 64%; height: 5px; border-radius: 0; background: #222; margin: 2px auto 5px; }
+.ar-mini-m { width: 46%; height: 5px; border-radius: 3px; background: var(--color-marker); margin-top: -7px; opacity: 0.8; }
+.ar-mini-gap { height: 6px; }
+.ar-mini-block { height: 12px; margin: 5px 0; border-radius: 2px; background: var(--color-cat-mint-tint); }
+.ar-mini-print .ar-mini-block { background: #eee; }
+.ar-checks { display: flex; flex-direction: column; gap: 2px; }
+.ar-check { min-height: 34px; font-size: 15px; }
+.ar-dpath { display: flex; align-items: center; gap: 8px; width: 100%; }
+.ar-dfield { flex: 1; min-width: 0; height: 38px; font-size: 14px; padding: 0 12px; display: flex; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ar-left { display: grid; gap: 4px; }
+.ar-picked { flex: 1; display: grid; place-items: center; padding-bottom: 40px; }
+
+/* ---------- 设置: Bear's typography as lines to drag (the filled part in the marker's colour), the sample beside ---------- */
+.ar-range { -webkit-appearance: none; appearance: none; width: 168px; height: 24px; margin: 0; background: transparent; cursor: pointer; outline: none; }
+.ar-range::-webkit-slider-runnable-track { height: 5px; border-radius: 3px; background: linear-gradient(var(--pm-marker) 0 0) left / var(--p, 0%) 100% no-repeat, color-mix(in srgb, var(--pm-pen) 16%, transparent); }
+.ar-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 17px; height: 17px; margin-top: -6px; border-radius: 50%; background: var(--card); border: 1.6px solid var(--pm-pen); box-shadow: 0 1px 2px var(--pm-shadow); transition: transform 150ms; }
+.ar-range:active::-webkit-slider-thumb { transform: scale(1.12); }
+.ar-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--ring); }
+.ar-range::-moz-range-track { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--pm-pen) 16%, transparent); }
+.ar-range::-moz-range-progress { height: 5px; border-radius: 3px; background: var(--pm-marker); }
+.ar-range::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--card); border: 1.6px solid var(--pm-pen); }
+.ar-sample .ar-text { font-size: var(--ar-size); }
+
+/* ---------- folding (two fingers sideways): a column slides out to the left, the article widening as it goes ---------- */
+.ar-fold { flex: none; display: flex; justify-content: flex-end; min-width: 0; min-height: 0; overflow: hidden; transition: width 260ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease; }
+.ar-fold.shut { opacity: 0; }
+.ar-cols.dragging .ar-fold { transition: none; }
+@media (prefers-reduced-motion: reduce) { .ar-fold { transition: none; } }
+
+/* ---------- a row drawn aside over its delete (swipe.ts sets the offsets) ---------- */
+.ar-swipe { position: relative; border-radius: 12px; overflow: hidden; }
+.ar-swipe + .ar-swipe::before { content: ""; position: absolute; z-index: 2; top: 0; left: 12px; right: 12px; border-top: 1.5px dashed color-mix(in srgb, var(--border) 90%, transparent); pointer-events: none; }
+.ar-swipe.on + .ar-swipe::before, .ar-swipe.on::before, .ar-swipe.open::before, .ar-swipe.open + .ar-swipe::before { display: none; }
+.ar-swipe > .ar-row { will-change: transform; }
+.ar-swipe-del { position: absolute; top: 0; right: 0; bottom: 0; width: 0; display: grid; place-items: center; overflow: hidden; outline: none; }
+.ar-swipe-pill { display: grid; place-items: center; height: 38px; min-width: 38px; border-radius: 19px; background: var(--destructive); color: var(--color-on-danger); opacity: 0; transform: scale(0.55); }
+
+/* ---------- 柚子链接: 书架、落点、记到念念不忘、链接到… ---------- */
+.ar-shelf { flex: none; width: 282px; display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 4px 0 0 14px; margin-left: 9px; border-left: 1.5px dashed color-mix(in srgb, var(--pm-pen) 30%, transparent); }
+.ar-shelf-head { display: flex; align-items: center; gap: 8px; height: 30px; flex: none; }
+.ar-shelf-head b { font-size: 17px; line-height: 24px; }
+.ar-shelf-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 10px; }
+.ar-shelf-note { flex: none; padding: 9px 12px 10px; border-radius: 12px; border: 1.5px solid color-mix(in srgb, var(--pm-pen) 30%, transparent); background: var(--card); font-size: 14px; line-height: 1.6; cursor: grab; user-select: none; }
+.ar-shelf-note.faded { opacity: 0.35; }
+.ar-shelf-when { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--muted-foreground); }
+.ar-shelf-text { margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ar-shelf-drag { position: fixed; z-index: 80; pointer-events: none; transform: rotate(-2.5deg); box-shadow: 0 14px 20px var(--pm-shadow); cursor: grabbing; }
+.ar-drop { position: absolute; height: 0; margin-top: -1px; border-top: 2.5px solid var(--primary); border-radius: 2px; pointer-events: none; }

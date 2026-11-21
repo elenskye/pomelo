@@ -1,0 +1,153 @@
+// Modal for editing a module's 类型 list: rename inline, reorder ↑↓, delete (items → 未分类), add.
+// KindEditor is the dialog itself; 芝麻开门 feeds it its own (encrypted) categories.
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "@/shared/icons";
+import { errorText, useConfirm, useToast } from "@/shared/feedback";
+import { Button, IconButton, TextInput } from "@/shared/ui";
+import { useKindMutations, useKinds } from "./api";
+
+type EditableKind = { id: number; name: string; count: number };
+export type KindOps = {
+  create: (name: string) => Promise<unknown>;
+  rename: (v: { id: number; name: string }) => Promise<unknown>;
+  remove: (id: number) => Promise<unknown>;
+  reorder: (ids: number[]) => Promise<unknown>;
+};
+
+function KindName(props: { kind: EditableKind; noun: string; onSave: (name: string) => Promise<boolean> }) {
+  const [v, setV] = useState(props.kind.name);
+  useEffect(() => setV(props.kind.name), [props.kind.name]);
+  const commit = async () => {
+    const name = v.trim();
+    if (!name || name === props.kind.name) return setV(props.kind.name);
+    if (!(await props.onSave(name))) setV(props.kind.name);
+  };
+  return (
+    <input
+      value={v}
+      aria-label={`${props.noun}名称：${props.kind.name}`}
+      spellCheck={false}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          e.preventDefault(); // keep the dialog open; just undo the edit
+          e.stopPropagation();
+          setV(props.kind.name);
+        }
+      }}
+      className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1.5 text-sm outline-none hover:bg-card focus:bg-card focus:ring-2 focus:ring-ring"
+    />
+  );
+}
+
+export function KindManager(props: {
+  module: string;
+  moduleLabel: string;
+  unit: string; // 本 / 部 / 节
+  itemsKey: readonly unknown[];
+  onClose: () => void;
+  noun?: string; // 类型 (default) | 类别
+}) {
+  const { data: kinds = [] } = useKinds(props.module);
+  const m = useKindMutations(props.module, props.itemsKey);
+  const ops: KindOps = { create: m.create.mutateAsync, rename: m.rename.mutateAsync, remove: m.remove.mutateAsync, reorder: m.reorder.mutateAsync };
+  return <KindEditor kinds={kinds} ops={ops} moduleLabel={props.moduleLabel} unit={props.unit} onClose={props.onClose} noun={props.noun} />;
+}
+
+export function KindEditor(props: { kinds: EditableKind[]; ops: KindOps; moduleLabel: string; unit: string; onClose: () => void; noun?: string }) {
+  const { kinds, ops } = props;
+  const noun = props.noun ?? "类型";
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.showModal();
+  }, []);
+  const toast = useToast();
+  const [confirm, confirmDialog] = useConfirm();
+  const [newName, setNewName] = useState("");
+
+  const run = async (p: Promise<unknown>) => {
+    try {
+      await p;
+      return true;
+    } catch (e) {
+      toast(errorText(e), "error");
+      return false;
+    }
+  };
+  const move = (i: number, d: -1 | 1) => {
+    const ids = kinds.map((k) => k.id);
+    [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
+    void run(ops.reorder(ids));
+  };
+  const remove = async (k: EditableKind) => {
+    const ok =
+      k.count === 0 ||
+      (await confirm({
+        title: `删除${noun}「${k.name}」？`,
+        message: `${k.count} ${props.unit}会变成「未分类」。`,
+        confirmLabel: "删除",
+        danger: true,
+      }));
+    if (ok) void run(ops.remove(k.id));
+  };
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    if (newName.trim() && (await run(ops.create(newName)))) setNewName("");
+  };
+
+  return (
+    <dialog
+      ref={ref}
+      onCancel={(e) => {
+        e.preventDefault();
+        props.onClose();
+      }}
+      className="m-auto h-fit w-[420px] rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30"
+    >
+      <div className="flex items-baseline justify-between">
+        <p className="text-base font-bold">管理{noun}</p>
+        <span className="text-xs text-muted-foreground">{props.moduleLabel}</span>
+      </div>
+
+      <ul className="-mx-1 mt-3 max-h-80 space-y-0.5 overflow-y-auto p-1">
+        {kinds.map((k, i) => (
+          <li key={k.id} className="flex items-center gap-1 rounded-control pr-1 hover:bg-muted/60">
+            <KindName kind={k} noun={noun} onSave={(name) => run(ops.rename({ id: k.id, name }))} />
+            <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
+              {k.count} {props.unit}
+            </span>
+            <IconButton label="上移" disabled={i === 0} onClick={() => move(i, -1)}>
+              <ArrowUp size={14} />
+            </IconButton>
+            <IconButton label="下移" disabled={i === kinds.length - 1} onClick={() => move(i, 1)}>
+              <ArrowDown size={14} />
+            </IconButton>
+            <IconButton label={`删除「${k.name}」`} danger onClick={() => void remove(k)}>
+              <Trash2 size={14} />
+            </IconButton>
+          </li>
+        ))}
+        {kinds.length === 0 && <li className="py-3 text-center text-sm text-muted-foreground">还没有{noun}</li>}
+      </ul>
+
+      <form onSubmit={add} className="mt-3 flex gap-2">
+        <TextInput value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={`新${noun}的名字`} maxLength={20} />
+        <Button type="submit">
+          <Plus size={14} /> 添加
+        </Button>
+      </form>
+
+      <div className="mt-5 flex justify-end">
+        <Button variant="primary" onClick={props.onClose}>
+          完成
+        </Button>
+      </div>
+      {confirmDialog}
+    </dialog>
+  );
+}
