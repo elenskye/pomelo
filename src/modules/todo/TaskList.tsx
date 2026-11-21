@@ -188,7 +188,7 @@ function TaskRow(p: RowProps) {
               <ListPlus size={14} />
             </IconButton>
           )}
-          <IconButton label={`删除「${t.title}」`} danger onClick={p.onDelete}>
+          <IconButton label={`删除「${t.title}」`} tip="删除" danger onClick={p.onDelete}>
             <X size={14} />
           </IconButton>
         </div>

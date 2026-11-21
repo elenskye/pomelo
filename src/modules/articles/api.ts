@@ -91,7 +91,7 @@ export const ARTICLES_KEY = ["articles"];
 export const useArticles = (filter: Filter) => useQuery({ queryKey: [...ARTICLES_KEY, "list", filter], queryFn: () => articlesApi.list(filter), placeholderData: keepPreviousData });
 export const useSimilarArticles = (filter: Filter, enabled: boolean) =>
   useQuery({ queryKey: [...ARTICLES_KEY, "similar", filter], queryFn: () => articlesApi.similar(filter), enabled, retry: false, staleTime: 30_000 });
-export const useArticlesOverview = () => useQuery({ queryKey: [...ARTICLES_KEY, "overview"], queryFn: articlesApi.overview });
+export const useArticlesOverview = (enabled = true) => useQuery({ queryKey: [...ARTICLES_KEY, "overview"], queryFn: articlesApi.overview, enabled });
 export const useTitles = () => useQuery({ queryKey: [...ARTICLES_KEY, "titles"], queryFn: articlesApi.titles });
 export const useArticle = (id: number | null) => useQuery({ queryKey: [...ARTICLES_KEY, "one", id], queryFn: () => articlesApi.get(id!), enabled: id !== null, gcTime: 0 });
 

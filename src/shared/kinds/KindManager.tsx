@@ -127,7 +127,7 @@ export function KindEditor(props: { kinds: EditableKind[]; ops: KindOps; moduleL
             <IconButton label="下移" disabled={i === kinds.length - 1} onClick={() => move(i, 1)}>
               <ArrowDown size={14} />
             </IconButton>
-            <IconButton label={`删除「${k.name}」`} danger onClick={() => void remove(k)}>
+            <IconButton label={`删除「${k.name}」`} tip="删除" danger onClick={() => void remove(k)}>
               <Trash2 size={14} />
             </IconButton>
           </li>

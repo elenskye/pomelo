@@ -26,6 +26,7 @@ import { TabsProvider, useTabs } from "./tabs";
 import { TopBar } from "./TopBar";
 import "./frame.css";
 import { Oops } from "@/shared/Oops";
+import { TagIcons } from "@/modules/notes/tagIcons";
 
 // 柚子's 小窗 brings the Markdown / formula libraries: loaded the first time it opens
 const SideChat = lazy(() => import("@/modules/youzi/SideChat").then((m) => ({ default: m.SideChat })));
@@ -353,6 +354,7 @@ function Shell() {
   if (info.data?.startupError) return <StartupError info={info.data} />;
   return (
     <div className="flex h-full flex-col bg-sidebar">
+      <TagIcons />
       <TopBar
         face={face}
         isDev={info.data?.isDev}

@@ -65,8 +65,9 @@ function Inline(props: { line: string; onTag?: (tag: string) => void; thing: (ta
           ) : a.kind === "icon" ? (
             libraryIcon(a.value) ? <LibIcon name={a.value} size={18} className="inline-block align-[-0.2em]" /> : text
           ) : a.kind === "tag" ? (
-            <button type="button" onClick={() => props.onTag?.(a.value)} className="pm-hashtag hover:underline">
-              {text}
+            <button type="button" onClick={() => props.onTag?.(a.value)} className="pm-hashtag hover:underline" data-tags="notes" data-tag={a.value}>
+              <span className="pm-hash">#</span>
+              {text.slice(1)}
             </button>
           ) : (
             <button type="button" onClick={() => void api.openLink(a.value).catch(() => {})} className="text-left break-all text-primary underline underline-offset-2">

@@ -393,7 +393,7 @@ function RecordChat(props: { session: number; close: () => void; saved: (out: Ra
       <header className="flex items-center gap-2 border-b px-5 py-3">
         <MessageSquare size={16} className="shrink-0 text-[var(--module-rater)]" />
         <p className="min-w-0 flex-1 truncate font-bold">复盘{r && ` · ${r.job.label} · ${reviewTitle(r)}`}</p>
-        <IconButton label="关掉（没记完的留在这个岗位下）" onClick={props.close}><X size={16} /></IconButton>
+        <IconButton label="关掉（没记完的留在这个岗位下）" tip="关掉" onClick={props.close}><X size={16} /></IconButton>
       </header>
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">

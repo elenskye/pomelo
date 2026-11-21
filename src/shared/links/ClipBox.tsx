@@ -6,18 +6,20 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LiteEditor, type LiveTextHandle } from "@/shared/editor/LiteEditor";
 import { errorText, useToast } from "@/shared/feedback";
+import { useFit, type Anchor } from "@/shared/fit";
 import { Button } from "@/shared/ui";
 import { useNoteMutations, useOverview } from "@/modules/notes/api";
 import { LinkMark } from "./LinkParts";
-import type { At } from "./LinkPicker";
 import "./links.css";
 
-export function ClipBox(props: { at: At; text: string; label?: string; onClose: () => void }) {
+export function ClipBox(props: { at: Anchor; text: string; label?: string; onClose: () => void }) {
   const [draft, setDraft] = useState(props.text);
   const m = useNoteMutations();
   const toast = useToast();
   const tags = (useOverview().data?.tags ?? []).map((t) => t.tag);
   const editor = useRef<LiveTextHandle>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const place = useFit(box, props.at);
   useEffect(() => {
     requestAnimationFrame(() => {
       editor.current?.focus();
@@ -38,7 +40,7 @@ export function ClipBox(props: { at: At; text: string; label?: string; onClose: 
     );
   };
   return createPortal(
-    <div role="dialog" aria-label={props.label ?? "记到念念不忘"} className="pm-clip pm-card animate-pop-in" style={{ left: props.at.left, top: props.at.top }} onMouseDown={(e) => e.stopPropagation()}>
+    <div ref={box} role="dialog" aria-label={props.label ?? "记到念念不忘"} className="pm-clip pm-float animate-pop-in" style={place} data-hand="card" data-seed={1549} data-amp="0.8" onMouseDown={(e) => e.stopPropagation()}>
       <span className="pm-clip-slap" aria-hidden>
         <LinkMark module="notes" size={40} />
       </span>

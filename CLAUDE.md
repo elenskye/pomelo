@@ -10,7 +10,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## 版本
 
-- 版本号 `主.次.补`，现在是 1.0.0。小幅优化、修 Bug 升最后一位（1.0.0 → 1.0.1）；新功能、大幅优化升中间一位（1.0.0 → 1.1.0）；升第一位（→ 2.0.0）由我决定。
+- 版本号 `主.次.补`，现在是 1.0.1。小幅优化、修 Bug 升最后一位（1.0.0 → 1.0.1）；新功能、大幅优化升中间一位（1.0.0 → 1.1.0）；升第一位（→ 2.0.0）由我决定。
 - 升中间一位、第一位的分 Phase 计划（比如 1.2.0 Phase 1～5），写进 `roadmap.md`，每个 Phase 做完功能要真能用并说明验收结果；升最后一位的不分 Phase。
 - 开新版本时把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 三处版本号（设置「关于」里显示的）一起改。
 
@@ -94,7 +94,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 做界面照 `docs/design.md` 的「开发指南」，最常出错的几条：
 
 - 不写使用提示，列表行只放最必要的信息；只有一种东西的列表不写小标题。
-- 先用现成的组件（控件表、`PageHeader`、`SidePanel`、`.side-row` + `<Picked />`、`charts.tsx`、手画的 `TextInput` `MdField` `Dropdown` `PickField` `Button`），不用细边框的原生输入框；我能挑图标的地方用图标库（`IconDialog` / `IconField` / `StoredIcon`，存成 `i:<键>`）；小按钮的名字用 `pm-tip-host` + `<Tip>`。
+- 先用现成的组件（控件表、`PageHeader`、`SidePanel`、`.side-row` + `<Picked />`、`charts.tsx`、手画的 `TextInput` `MdField` `Dropdown` `PickField` `Button`），不用细边框的原生输入框；我能挑图标的地方用图标库（`IconDialog` / `IconField` / `StoredIcon`，存成 `i:<键>`）；小按钮的名字用 `pm-tip-host` + `<Tip>`，纸签只写动作（「删除」，不写「删除「某某」」：记录名放 `IconButton` 的 `label`、纸签写 `tip`）；浮在字或按钮旁的卡用 `.pm-float` + `src/shared/fit.ts`（量了再摆，不出窗口）。
 - 颜色只用变量（图表只用 `--chart-*`，模块颜色 `--module-*` 回 visual-atelier 加）；字体只用 `font-sans`（不直接写 `Hannotate SC`；柚子消息正文和见字如面的正文用苹方 `font-reading`，是仅有的例外）；便签（`.pm-note`）上用便签的墨色。
 - 手画的边画在字下面一层：会滚、会裁的盒子外面一层画边、里面一层滚，能滚的区域用 `-m-1 … p-1`。拖动排序用鼠标事件（`src/shared/sortable`），不用浏览器自带的拖放。
 - 每一页、桌面和每个浮层都包 `shared/Oops.tsx`；hook 不写在提前返回的后面；有焦点的输入框不能在窗口外面（WebKit 会把整个窗口的内容挪上去）。

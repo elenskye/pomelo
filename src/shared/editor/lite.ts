@@ -116,8 +116,10 @@ function lineHtml(line: string, tags: boolean): string {
   const marks = pairMarks(text, spans);
   const on: Record<Mark, boolean> = { "**": false, "==": false, "++": false };
   let out = head ? span(MARK, head) : "";
-  const styled = (s: string, cls = "") =>
-    span([cls, on["**"] && "font-bold", on["=="] && "rounded-[3px] bg-[var(--status-doing-bg)] px-0.5 text-foreground", on["++"] && "underline decoration-1 underline-offset-[3px]"].filter(Boolean).join(" "), s);
+  const classes = (cls = "") => [cls, on["**"] && "font-bold", on["=="] && "rounded-[3px] bg-[var(--status-doing-bg)] px-0.5 text-foreground", on["++"] && "underline decoration-1 underline-offset-[3px]"].filter(Boolean).join(" ");
+  const styled = (s: string, cls = "") => span(classes(cls), s);
+  // a #tag: its 「#」 on its own, so a tag with an icon shows the icon there (modules/notes/tagIcons.tsx)
+  const tag = (seen: string, value: string) => `<span class="${classes("pm-hashtag")}" data-tags="notes" data-tag="${esc(value).replace(/"/g, "&quot;")}"><span class="pm-hash">#</span>${esc(seen.slice(1))}</span>`;
   let buf = "";
   const flush = () => {
     if (buf) out += styled(buf);
@@ -136,7 +138,7 @@ function lineHtml(line: string, tags: boolean): string {
     if (a) {
       flush();
       const seen = text.slice(a.start, a.end);
-      out += a.kind === "link" ? linkHtml(seen, styled) : a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : styled(seen, a.kind === "tag" ? "pm-hashtag" : "text-primary underline underline-offset-2");
+      out += a.kind === "link" ? linkHtml(seen, styled) : a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : a.kind === "tag" ? tag(seen, a.value) : styled(seen, "text-primary underline underline-offset-2");
       i = a.end;
       continue;
     }

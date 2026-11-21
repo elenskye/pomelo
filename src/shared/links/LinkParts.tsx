@@ -13,7 +13,7 @@ import { Tip } from "@/shared/handParts";
 import { Field } from "@/shared/ui";
 import { Menu, type MenuAt } from "@/app/Menu";
 import { ClipBox } from "./ClipBox";
-import type { At } from "./LinkPicker";
+import { buttonAnchor, type Anchor } from "@/shared/fit";
 import type { Hit } from "@/shared/open";
 import { RECORD, dayText, foundIn, linksApi, shortDay, targetOf, useBacklinks, useLookup, type Backlink, type LinkModule, type Thing } from "./links";
 import "./links.css";
@@ -99,13 +99,13 @@ export function BacklinkList(props: { module: string; id: number }) {
   const { data = [] } = useBacklinks(props.module, props.id);
   const open = useOpenThing();
   const [hidden] = useHiddenModules();
-  const [jot, setJot] = useState<{ at: At; text: string } | null>(null);
+  const [jot, setJot] = useState<{ at: Anchor; text: string } | null>(null);
   const notes = !hidden.includes("notes");
   if (!data.length && !notes) return null;
   const start = async (e: React.MouseEvent<HTMLElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
+    const at = buttonAnchor(e.currentTarget);
     const t = await linksApi.thing(props.module, props.id).catch(() => null);
-    if (t) setJot({ at: { left: Math.max(12, Math.min(r.right - 440, window.innerWidth - 452)), top: Math.max(12, Math.min(r.bottom + 8, window.innerHeight - 260)) }, text: `[[${t.target}]] ` });
+    if (t) setJot({ at, text: `[[${t.target}]] ` });
   };
   return (
     <Field

@@ -60,8 +60,8 @@ export function useGroupMove(write: Write, kind: SeekerGroupKind, lang: string, 
       void write(() => seekerApi.groupsOrder(kind, lang, next));
     };
     return <>
-      <IconButton label={`「${group}」上移`} disabled={busy || i === 0} onClick={() => swap(i - 1)}><ArrowUp size={14} /></IconButton>
-      <IconButton label={`「${group}」下移`} disabled={busy || i === shown.length - 1} onClick={() => swap(i + 1)}><ArrowDown size={14} /></IconButton>
+      <IconButton label={`「${group}」上移`} tip="上移" disabled={busy || i === 0} onClick={() => swap(i - 1)}><ArrowUp size={14} /></IconButton>
+      <IconButton label={`「${group}」下移`} tip="下移" disabled={busy || i === shown.length - 1} onClick={() => swap(i + 1)}><ArrowDown size={14} /></IconButton>
     </>;
   };
 }

@@ -155,9 +155,10 @@ function TaskCards(props: { note: Note; cards: QuickFillResult[]; onDone: () => 
           const c = props.cards[i];
           const bits = cardBits(c);
           return (
-            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            // the picker hangs over its line (-my) so the line stays one line tall and the checkbox sits on the title
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
               <span className="min-w-0 font-medium">{c.title}</span>
-              <Dropdown<string | null> ariaLabel={`「${c.title}」加到哪里`} value={placeOf(i)} onChange={(v) => setPlaces((ps) => ps.map((x, j) => (j === i ? v : x)))} options={options} menuMaxHeight={300} />
+              <span className="-my-1.5"><Dropdown<string | null> ariaLabel={`「${c.title}」加到哪里`} value={placeOf(i)} onChange={(v) => setPlaces((ps) => ps.map((x, j) => (j === i ? v : x)))} options={options} menuMaxHeight={300} /></span>
               {bits.length > 0 && <span className="block w-full text-xs text-muted-foreground">{bits.join(" · ")}</span>}
             </span>
           );

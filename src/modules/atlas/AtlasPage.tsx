@@ -295,7 +295,7 @@ export default function AtlasPage() {
                     <div className="mt-2 flex h-9 items-center gap-1">
                       {latest ? (
                         <>
-                          <IconButton label={`时间穿梭：${y} 年做过的 ${list.length} 份`} onClick={() => setView({ at: "year", year: y })}>
+                          <IconButton label={`时间穿梭：${y} 年做过的 ${list.length} 份`} tip="时间穿梭" onClick={() => setView({ at: "year", year: y })}>
                             <TimeTravel size={20} />
                           </IconButton>
                           <span className="text-xs text-muted-foreground tabular-nums">{writing ? "柚子在写…" : `${list.length} 份`}</span>
@@ -329,7 +329,7 @@ export default function AtlasPage() {
                 </button>
                 <div className="mt-3 flex items-center justify-between gap-1">
                   <span className="font-bold whitespace-nowrap tabular-nums">{wrote(e)}</span>
-                  <IconButton label={`删除 ${wrote(e)} 写的这一份`} danger onClick={() => void remove(e)}>
+                  <IconButton label={`删除 ${wrote(e)} 写的这一份`} tip="删除" danger onClick={() => void remove(e)}>
                     <X size={14} />
                   </IconButton>
                 </div>

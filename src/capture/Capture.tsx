@@ -18,6 +18,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText } from "@/shared/feedback";
 import { Button, Segmented, TextInput } from "@/shared/ui";
 import { EMPTY, captureApi, type CaptureTab, type Draft, type Snapshot } from "./api";
+import { TagIcons } from "@/modules/notes/tagIcons";
 import "./capture.css";
 
 const CaptureChat = lazy(() => import("./CaptureChat"));
@@ -236,6 +237,7 @@ export function Capture() {
         void hide(true);
       }}
     >
+      <TagIcons articles={false} />
       <header className="flex shrink-0 items-center gap-2">
         {tab && tabs.length > 1 && (
           <Segmented

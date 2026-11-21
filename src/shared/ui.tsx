@@ -179,6 +179,8 @@ export function Field(props: { label: string; action?: ReactNode; children: Reac
 /** Small icon-only button (ghost): its name hangs under it on a string when pointed at (Design System Tooltip). */
 export function IconButton(props: {
   label: string;
+  /** The 落签 when it should be shorter than `label` (a record's name stays in `label` only). */
+  tip?: string;
   onClick: () => void;
   children: ReactNode;
   disabled?: boolean;
@@ -198,7 +200,7 @@ export function IconButton(props: {
       } ${props.on ? "bg-accent text-foreground" : ""}`}
     >
       {props.children}
-      <Tip>{props.label}</Tip>
+      <Tip>{props.tip ?? props.label}</Tip>
     </button>
   );
 }
@@ -207,7 +209,7 @@ export function IconButton(props: {
 export function RefreshButton(props: { label: string; onRefresh: () => Promise<unknown>; disabled?: boolean }) {
   const [busy, setBusy] = useState(false);
   return (
-    <IconButton label={props.label} disabled={props.disabled || busy} onClick={() => { setBusy(true); void props.onRefresh().finally(() => setBusy(false)); }}>
+    <IconButton label={props.label} tip="刷新" disabled={props.disabled || busy} onClick={() => { setBusy(true); void props.onRefresh().finally(() => setBusy(false)); }}>
       <RefreshCw size={14} strokeWidth={1.75} className={busy ? "animate-spin" : ""} />
     </IconButton>
   );

@@ -44,7 +44,7 @@ function lineHtml(line: string, sticker: (module: string) => string): string {
     if (a) {
       flush();
       const seen = line.slice(a.start, a.end);
-      if (a.kind === "tag") out += wrap(`<span class="pm-hashtag">${esc(seen)}</span>`);
+      if (a.kind === "tag") out += wrap(`<span class="pm-hashtag" data-tags="notes" data-tag="${esc(a.value)}"><span class="pm-hash">#</span>${esc(seen.slice(1))}</span>`);
       else if (a.kind === "link") {
         const f = foundIn(seen)[0];
         const { module, name } = targetOf(f?.target ?? seen);

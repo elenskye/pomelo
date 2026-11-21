@@ -86,10 +86,10 @@ function GroupedItems(props: {
 function RowActions(props: { name: string; onEdit: () => void; onDelete: () => void }) {
   return (
     <div className="flex opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-      <IconButton label={`编辑「${props.name}」`} onClick={props.onEdit}>
+      <IconButton label={`编辑「${props.name}」`} tip="编辑" onClick={props.onEdit}>
         <Pencil size={14} />
       </IconButton>
-      <IconButton label={`删除「${props.name}」`} danger onClick={props.onDelete}>
+      <IconButton label={`删除「${props.name}」`} tip="删除" danger onClick={props.onDelete}>
         <X size={14} />
       </IconButton>
     </div>

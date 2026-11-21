@@ -165,7 +165,7 @@ function inline(text: string, look: Look, st: St = {}, at = 0, ends: Ends = NO_E
     else if (m[19] !== undefined) out += iconHtml(m[19]) ?? txt(st, all);
     else if (m[20] !== undefined) {
       const tag = m[20].replace(/\/+$/, "");
-      out += tag && !tag.startsWith("/") && !tag.includes("//") && [...tag].length <= 50 ? `<span class="pm-hashtag" data-tag="${esc(tag)}">#${esc(m[20])}</span>` : txt(st, all);
+      out += tag && !tag.startsWith("/") && !tag.includes("//") && [...tag].length <= 50 ? `<span class="pm-hashtag" data-tags="articles" data-tag="${esc(tag)}"><span class="pm-hash">#</span>${esc(m[20])}</span>` : txt(st, all);
     } else if (m[21] !== undefined && URL_RE.test(m[21])) {
       const url = m[21].replace(/[.,;:!?)\]]+$/, "");
       out += `<span class="${cls({ ...st, link: true })}" data-href="${esc(url)}">${esc(url)}</span>` + txt(st, m[21].slice(url.length));

@@ -4,30 +4,21 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useHiddenModules } from "@/app/hidden";
 import { X } from "@/shared/icons";
+import { useFit, type Anchor } from "@/shared/fit";
 import { IconButton } from "@/shared/ui";
 import { LinkMark } from "./LinkParts";
 import { dayText, linksApi, type Thing } from "./links";
 
-export type At = { left: number; top: number };
-
-/** Where a box goes under the selection (kept inside the window). */
-export function underSelection(width: number, height = 260): At {
-  const sel = window.getSelection();
-  const r = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
-  const left = Math.max(12, Math.min((r?.left ?? 200) - 8, window.innerWidth - width - 12));
-  const top = Math.max(12, Math.min((r?.bottom ?? 200) + 10, window.innerHeight - height));
-  return { left, top };
-}
-
 /** What goes into the text for a picked thing: the words as a link to it, or (no words, or words a link can't hold) a chip. */
 export const linkText = (target: string, words: string) => (words.trim() && !/[\n\]|[]/.test(words) ? `[[${target}|${words}]]` : `[[${target}]]`);
 
-export function LinkPicker(props: { at: At; except: [string, number] | null; onPick: (t: Thing) => void; onClose: () => void }) {
+export function LinkPicker(props: { at: Anchor; except: [string, number] | null; onPick: (t: Thing) => void; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [items, setItems] = useState<Thing[]>([]);
   const [active, setActive] = useState(0);
   const [hidden] = useHiddenModules();
   const box = useRef<HTMLDivElement>(null);
+  const place = useFit(box, props.at);
   useEffect(() => {
     let live = true;
     const t = setTimeout(() => {
@@ -47,7 +38,7 @@ export function LinkPicker(props: { at: At; except: [string, number] | null; onP
     return () => window.removeEventListener("pointerdown", away, true);
   });
   return createPortal(
-    <div ref={box} role="dialog" aria-label="柚子链接" className="pm-linkpick pm-menu animate-pop-in" style={{ left: props.at.left, top: props.at.top }}>
+    <div ref={box} role="dialog" aria-label="柚子链接" className="pm-linkpick pm-menu animate-pop-in" style={place}>
       <div className="flex items-center gap-1 px-1 pb-1">
         <input
           autoFocus

@@ -81,7 +81,7 @@ export function StatusManager(props: { onClose: () => void }) {
             <IconButton label="下移" disabled={i === statuses.length - 1} onClick={() => move(i, 1)}>
               <ArrowDown size={14} />
             </IconButton>
-            <IconButton label={`删除「${s.name}」`} danger disabled={s.count > 0 || s.used > 0 || statuses.length <= 1} onClick={() => void del(s)}>
+            <IconButton label={`删除「${s.name}」`} tip="删除" danger disabled={s.count > 0 || s.used > 0 || statuses.length <= 1} onClick={() => void del(s)}>
               <Trash2 size={14} />
             </IconButton>
           </li>

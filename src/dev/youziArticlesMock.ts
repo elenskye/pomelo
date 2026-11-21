@@ -21,6 +21,7 @@ export const youziArticlesHandlers: Record<string, (a: Args) => unknown> = {
       return { text: `${text.trim().replace(/很/g, "非常")}（模拟润色）` };
     }
     if (!text.trim() && !after.trim()) throw "先写几句，柚子再接着写";
-    return { text: "接着写下去的一段。（模拟续写）" };
+    // as long as a real reply (two paragraphs), so the card is seen growing and scrolling
+    return { text: `${"接着写下去的一段：远处码头的光在水面上碎成一片，像谁把没发出去的话撒进了海里。".repeat(4)}\n\n${"所以还没打算停下，等手头这件事做完，再去更远的地方看看。".repeat(4)}（模拟续写）` };
   },
 };

@@ -9,7 +9,8 @@ import { Brackets } from "@/shared/icons";
 import { liteFlavor } from "./lite";
 import { LiveText, type Flavor, type LiveTextHandle, type Suggest } from "./LiveText";
 import { linkInsert, typingLink, useLinkSource } from "@/shared/links/LinkParts";
-import { LinkPicker, linkText, underSelection, type At } from "@/shared/links/LinkPicker";
+import { LinkPicker, linkText } from "@/shared/links/LinkPicker";
+import { selectionAnchor, type Anchor } from "@/shared/fit";
 import type { LinkModule } from "@/shared/links/links";
 
 export type { LiveTextHandle } from "./LiveText";
@@ -88,12 +89,12 @@ export const LiteEditor = forwardRef<
     },
     [handle],
   );
-  const [linking, setLinking] = useState<{ at: At; sel: [number, number] } | null>(null);
+  const [linking, setLinking] = useState<{ at: Anchor; sel: [number, number] } | null>(null);
   const tagged = !!props.tags;
   const flavor = useMemo((): Flavor => {
     const base = tagged ? WITH_TAGS : PLAIN;
     if (!on) return base;
-    return { ...base, formats: [{ label: "柚子链接…", lead: true, icon: <Brackets size={16} />, act: (sel) => setLinking({ at: underSelection(360), sel }) }, "-", ...(base.formats ?? [])] };
+    return { ...base, formats: [{ label: "柚子链接…", lead: true, icon: <Brackets size={16} />, act: (sel) => setLinking({ at: selectionAnchor(), sel }) }, "-", ...(base.formats ?? [])] };
   }, [tagged, on]);
   return (
     <>

@@ -128,10 +128,10 @@ export function FieldManager(props: { moduleId: number; fields: Field[]; itemCou
               表格里显示
               <Switch label={`「${f.name}」在表格里显示`} checked={f.shown} onChange={(shown) => m.fieldUpdate.mutate({ id: f.id, patch: { shown } }, { onError: (e) => toast(errorText(e), "error") })} />
             </span>
-            <IconButton label={`编辑「${f.name}」`} onClick={() => setEditing(f)}>
+            <IconButton label={`编辑「${f.name}」`} tip="编辑" onClick={() => setEditing(f)}>
               <Pencil size={14} />
             </IconButton>
-            <IconButton label={`删除「${f.name}」`} danger onClick={() => void del(f)}>
+            <IconButton label={`删除「${f.name}」`} tip="删除" danger onClick={() => void del(f)}>
               <Trash2 size={14} />
             </IconButton>
           </div>

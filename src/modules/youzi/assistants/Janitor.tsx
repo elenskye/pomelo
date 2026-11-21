@@ -589,7 +589,7 @@ function SettingsTab() {
                   <div className="truncate font-mono text-xs text-muted-foreground">{r.pattern}</div>
                   {r.rebuild && <div className="text-xs text-muted-foreground">{r.rebuild}</div>}
                 </div>
-                <IconButton label={`删掉「${r.name}」`} onClick={() => void janitorApi.ruleDelete(r.id).then((v) => { qc.setQueryData([...JANITOR_KEY, "settings"], v); void qc.invalidateQueries({ queryKey: OVERVIEW }); }, (e) => toast(errorText(e), "error"))}><Trash2 size={14} /></IconButton>
+                <IconButton label={`删掉「${r.name}」`} tip="删除" onClick={() => void janitorApi.ruleDelete(r.id).then((v) => { qc.setQueryData([...JANITOR_KEY, "settings"], v); void qc.invalidateQueries({ queryKey: OVERVIEW }); }, (e) => toast(errorText(e), "error"))}><Trash2 size={14} /></IconButton>
               </li>
             ))}
           </ul>

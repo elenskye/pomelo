@@ -206,7 +206,7 @@
 .ar-swatch.hl-sky { background: var(--pm-cat-sky); }
 .ar-swatch.hl-yuzu { background: var(--pm-yuzu); }
 .ar-swatch.hl-grape { background: var(--pm-cat-grape); }
-.ar-assist { position: fixed; z-index: 70; width: min(420px, calc(100vw - 24px)); display: grid; gap: 8px; padding: 12px 14px; background: var(--card); border-radius: 14px; box-shadow: 0 1px 2px var(--pm-shadow), 0 10px 22px var(--pm-shadow); }
+.ar-assist { width: min(440px, calc(100vw - 24px)); max-height: min(560px, calc(100vh - 24px)); gap: 10px; }
 
 /* ---------- locked ---------- */
 .ar-locked { flex: 1; display: grid; place-items: center; padding-bottom: 40px; }

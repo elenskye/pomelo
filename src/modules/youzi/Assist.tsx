@@ -282,18 +282,21 @@ export function IdeaList<T>(props: { items: T[]; label: (item: T) => ReactNode; 
   const [off, setOff] = useState<Set<number>>(new Set());
   const picked = props.items.filter((_, i) => !off.has(i));
   return (
-    <div className="space-y-2 rounded-card border bg-card p-2.5 text-sm shadow-sm">
+    <div className="space-y-2 rounded-card border bg-card p-2.5 text-sm">
       <ul className="space-y-1">
         {props.items.map((it, i) => (
           <li key={i}>
             <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                checked={!off.has(i)}
-                onChange={() => setOff((s) => (s.has(i) ? new Set([...s].filter((x) => x !== i)) : new Set(s).add(i)))}
-                className="mt-1 size-3.5 accent-[var(--primary)]"
-              />
-              <span>{props.label(it)}</span>
+              {/* as tall as the first line, so the box sits on its middle */}
+              <span className="flex h-[1lh] shrink-0 items-center">
+                <input
+                  type="checkbox"
+                  checked={!off.has(i)}
+                  onChange={() => setOff((s) => (s.has(i) ? new Set([...s].filter((x) => x !== i)) : new Set(s).add(i)))}
+                  className="size-3.5 accent-[var(--primary)]"
+                />
+              </span>
+              <span className="min-w-0">{props.label(it)}</span>
             </label>
           </li>
         ))}

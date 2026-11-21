@@ -61,7 +61,8 @@ import { foundIn, linksChanged, useBacklinks, useLookup } from "@/shared/links/l
 import { BacklinkChips, linkInsert, typingLink, useLinkSource, useOpenThing, useStickerHtml } from "@/shared/links/LinkParts";
 import { escapeName } from "@/shared/links/links";
 import { ClipBox } from "@/shared/links/ClipBox";
-import { LinkPicker, linkText, underSelection, type At } from "@/shared/links/LinkPicker";
+import { LinkPicker, linkText } from "@/shared/links/LinkPicker";
+import { selectionAnchor, useFit, type Anchor } from "@/shared/fit";
 import { CALLOUTS, HEADING, HIGHLIGHTS, LIST, bearFlavor, blocks, cells, decodeName, encodeName, foldKey, foldRange, markedFolds, type Look } from "./bear";
 import { renderCode, renderDiagram, renderMath } from "./render";
 import "./articles.css";
@@ -212,33 +213,31 @@ function PopMenu(props: { at: { left: number; top: number; up: boolean }; items:
 
 type AssistState = { mode: "polish" | "continue"; from: [number, number]; text: string; after: string; result?: string; error?: string };
 
-function AssistCard(props: { state: AssistState; at: { left: number; top: number }; onRun: () => void; onUse: (text: string) => void; onClose: () => void }) {
+function AssistCard(props: { state: AssistState; at: Anchor; onRun: () => void; onUse: (text: string) => void; onClose: () => void }) {
   const status = useYouziStatus().data;
   const s = props.state;
   const working = s.result === undefined && !s.error;
+  const box = useRef<HTMLDivElement>(null);
+  const place = useFit(box, props.at);
+  const name = s.mode === "polish" ? "柚子润色" : "柚子续写";
   return createPortal(
-    <div role="dialog" aria-label={s.mode === "polish" ? "柚子润色" : "柚子续写"} className="ar-assist pm-card animate-pop-in" style={{ left: props.at.left, top: props.at.top }} onMouseDown={(e) => e.stopPropagation()}>
-      <div className="flex items-center gap-1.5 text-sm font-bold">
-        <Sparkles size={14} className="text-[var(--module-youzi)]" />
-        {s.mode === "polish" ? "柚子润色" : "柚子续写"}
-      </div>
-      {working && <p className="animate-pulse text-xs text-muted-foreground">{assistBusyText(status, s.mode === "polish" ? "正在润色…" : "正在续写…")}</p>}
-      {s.error && <p className="text-xs text-destructive">{s.error}</p>}
-      {s.result !== undefined && (s.mode === "polish" ? <DiffView from={s.text} to={s.result} /> : <p className="selectable max-h-60 overflow-y-auto rounded-control bg-background px-2.5 py-2 leading-relaxed whitespace-pre-wrap">{s.result}</p>)}
-      <div className="flex gap-2">
-        {s.result !== undefined && (
-          <Button variant="primary" onClick={() => props.onUse(s.result!)}>
-            用这段
-          </Button>
-        )}
-        {!working && (
-          <Button variant="ghost" onClick={props.onRun}>
-            再来一次
-          </Button>
-        )}
-        <Button variant="ghost" onClick={props.onClose}>
-          取消
-        </Button>
+    // a hand-drawn card like the panels (.pm-float), kept in the window as the reply grows; the reply scrolls inside
+    <div ref={box} role="dialog" aria-label={name} className="ar-assist pm-float animate-pop-in" style={place} data-hand="card" data-seed={1547} data-amp="0.8" onMouseDown={(e) => e.stopPropagation()}>
+      <p className="flex shrink-0 items-center gap-1.5 font-bold">
+        <Sparkles size={15} className="text-[var(--module-youzi)]" />
+        {name}
+      </p>
+      {(working || s.error || s.result !== undefined) && (
+        <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
+          {working && <p className="animate-pulse text-sm text-muted-foreground">{assistBusyText(status, s.mode === "polish" ? "正在润色…" : "正在续写…")}</p>}
+          {s.error && <p className="text-sm text-destructive">{s.error}</p>}
+          {s.result !== undefined && (s.mode === "polish" ? <DiffView from={s.text} to={s.result} /> : <p className="selectable leading-relaxed whitespace-pre-wrap">{s.result}</p>)}
+        </div>
+      )}
+      <div className="flex shrink-0 items-center justify-end gap-2">
+        {!working && <Button variant="ghost" onClick={props.onRun}>再来一次</Button>}
+        <Button variant="ghost" onClick={props.onClose}>取消</Button>
+        {s.result !== undefined && <Button variant="primary" onClick={() => props.onUse(s.result!)}>用这段</Button>}
       </div>
     </div>,
     document.body,
@@ -294,10 +293,10 @@ export const ArticleEditor = forwardRef<
   const [narrow, setNarrow] = useState(0);
   const [menu, setMenu] = useState<{ kind: "heading" | "highlight" | "more"; at: { left: number; top: number; up: boolean } } | null>(null);
   const [floatAt, setFloatAt] = useState<{ left: number; top: number } | null>(null);
-  const [assist, setAssist] = useState<(AssistState & { at: { left: number; top: number } }) | null>(null);
+  const [assist, setAssist] = useState<(AssistState & { at: Anchor }) | null>(null);
   /** 记到念念不忘's box, 链接到…'s finder (over the words picked then). */
-  const [clip, setClip] = useState<{ at: At; text: string } | null>(null);
-  const [linking, setLinking] = useState<{ at: At; sel: [number, number] } | null>(null);
+  const [clip, setClip] = useState<{ at: Anchor; text: string } | null>(null);
+  const [linking, setLinking] = useState<{ at: Anchor; sel: [number, number] } | null>(null);
 
   // ---------- saving ----------
   // one save at a time, in the order asked: the commands run off the main thread (articles.rs), so two sent at once
@@ -492,13 +491,12 @@ export const ArticleEditor = forwardRef<
     const [s, e] = sel;
     const text = mode === "polish" ? t.slice(s, e) : t.slice(0, e);
     const after = mode === "continue" ? t.slice(e) : "";
-    const r = window.getSelection()?.rangeCount ? window.getSelection()!.getRangeAt(0).getBoundingClientRect() : null;
-    const at = { left: Math.max(12, Math.min((r?.left ?? 200) - 20, window.innerWidth - 440)), top: Math.min((r?.bottom ?? 200) + 10, window.innerHeight - 320) };
+    const at = selectionAnchor();
     const state: AssistState = { mode, from: [s, e], text, after };
     setAssist({ ...state, at });
     runAssist(state, at);
   };
-  const runAssist = (state: AssistState, at: { left: number; top: number }) => {
+  const runAssist = (state: AssistState, at: Anchor) => {
     setAssist({ ...state, result: undefined, error: undefined, at });
     const go = async () => {
       if (id.current === null) await saveRef.current();
@@ -514,7 +512,7 @@ export const ArticleEditor = forwardRef<
   const clipNote = async (sel: [number, number]) => {
     const words = current().slice(sel[0], sel[1]).trim();
     if (!words) return toast("先选一段");
-    const at = underSelection(440);
+    const at = selectionAnchor();
     await saveRef.current();
     const title = id.current !== null ? (await articlesApi.get(id.current).catch(() => null))?.title : null;
     setClip({ at, text: title ? `${words}\n来自 [[${escapeName(title)}]]\n` : `${words}\n` });
@@ -538,7 +536,7 @@ export const ArticleEditor = forwardRef<
     ];
     if (!props.readOnly) {
       out.push({ label: "记到念念不忘", lead: true, icon: <Feather size={16} />, act: (sel) => void clipNote(sel) });
-      out.push({ label: "柚子链接…", lead: true, icon: <Brackets size={16} />, act: (sel) => setLinking({ at: underSelection(360), sel }) });
+      out.push({ label: "柚子链接…", lead: true, icon: <Brackets size={16} />, act: (sel) => setLinking({ at: selectionAnchor(), sel }) });
     }
     if (assistOn && !props.readOnly && !props.article?.locked) {
       out.push("-", { label: "柚子润色", act: (sel) => (sel[0] === sel[1] ? toast("先选一段") : askYouzi("polish", sel)) }, { label: "柚子续写", act: (sel) => askYouzi("continue", [sel[1], sel[1]]) });

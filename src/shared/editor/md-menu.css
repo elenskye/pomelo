@@ -22,8 +22,9 @@
 .md-site-name { font-size: 12px; line-height: 16px; color: var(--color-ink-soft); white-space: nowrap; }
 
 /* 写在字里的柚儿园图标（inlineIcon.ts）：只看得见图标，它的写法（:pm-名字:）藏在里面，复制和存下来的还是那几个字 */
-.md-ico { display: inline-block; vertical-align: -0.2em; line-height: 1; white-space: nowrap; }
-.md-ico > svg { display: inline-block; width: 1.2em; height: 1.2em; }
-.md-ico-src { font-size: 0; }
+/* 盒子只装图形（写法挪出排版），底边就是基线：下移 0.27em 让图形的中心落在汉字的字心（手写体 0.30em、苹方 0.36em 高），左右各让一点 */
+.md-ico { display: inline-block; vertical-align: -0.27em; margin: 0 0.08em; line-height: 0; white-space: nowrap; }
+.md-ico > svg { display: block; width: 1.2em; height: 1.2em; }
+.md-ico-src { position: absolute; font-size: 0; }
 .md-menu-lead { font-weight: 700; }
 .md-menu-lead svg { color: var(--pm-pen); }
