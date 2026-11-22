@@ -24,8 +24,8 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **优化清单**：我写在 `docs/pomelo-improve-N.rtf`（`textutil -convert txt -stdout` 读）或直接在对话里给。做完删掉清单，更新 `roadmap.md`。
 - **汇报**：中文、简洁：每条改了什么、我自己选的地方、旧数据会怎么变、怎么验证的。
 - **能直接改的**：这边的文档、代码、`package.json`、版本号。
-- **正式版**：`pnpm app:install` 只在我同意时执行，装之前先做升级测试（`docs/testing.md`）。计划里的 Phase 做完算我同意：直接做升级测试再装。
-- **Git**：提交、合并、推送都由你在 main 上做。一轮做完提交，提交信息一行 `vX.Y.Z: 概括`，越短越好（`v1.0.1: fix some problems`、`v1.1.0: minor improvement` 都行），不署名（不加 Co-Authored-By 之类）。
+- **正式版**（`pnpm app:install`，装之前先做升级测试，见 `docs/testing.md`）：升最后一位的（1.0.0 → 1.0.1）做完直接装；升中间一位、第一位的（→ 1.1.0、→ 2.0.0）只在最后一轮收尾时自动装，中间的 Phase 我说要装才装（我也可能自己装）。
+- **Git**：在 main 上做，每一轮开发你自己提交（不用问，可以分几个），推送由我来做。提交信息一行 `vX.Y.Z: 概括`，越短越好（`v1.0.1: fix some problems`、`v1.1.0: minor improvement` 都行），不署名（不加 Co-Authored-By 之类）。每轮汇报列出这一轮的提交：哈希前 7 位、提交信息、各改了什么。
 - **只在主目录做**：`~/Documents/GitHub/pomelo`（main）是我日常用的，不开 worktree；`pnpm app:install` 只在这里做。`pnpm dev` 固定 1420 端口，同时只能一个。
 - **代码格式**：没有格式化配置，照周围的写法手动排（长行）；不跑 prettier 这类工具。
 
@@ -146,7 +146,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 |---|---|
 | `pnpm check` | 类型检查 + 双指滑动的模拟 + Rust 测试，每次改完都要跑 |
 | `pnpm app:dev` · `pnpm app:build` | 运行开发版 · 只打包不安装 |
-| `pnpm app:install` | 打包并安装到「应用程序」，只在我同意时执行 |
+| `pnpm app:install` | 打包并安装到「应用程序」（什么时候装见「正式版」） |
 | `pnpm clean:build` | 清编译缓存 `src-tauri/target`（超过 20 GB 时各命令和开会话的 hook 会自动清；别改回带调试信息的编译设置） |
 
 - 怎么测见 `docs/testing.md`：界面用 Bash 后台跑 `pnpm dev`、再开 `ui-mock` 的 `http://localhost:1420/?mock`；`?mock` 不走 Rust，新加或改了 Rust 命令的页面还要在打包版里用临时数据目录点一次（不用 osascript 碰 System Events）。
