@@ -4,7 +4,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "@/shared/feedback";
-import { Button, TextInput } from "@/shared/ui";
+import { Button, QuietFields, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type Link, type SiteData, type TermIn } from "./api";
 import { AddRow, RowControls, SizedInput, moved, replaced } from "./parts";
 
@@ -21,7 +21,9 @@ function Card(props: { title: string; dirty: boolean; saving: boolean; onSave: (
           {props.saving ? "正在保存…" : "保存"}
         </Button>
       </div>
-      <div className="rounded-card border bg-card p-4">{props.children}</div>
+      <div className="rounded-card border bg-card p-4">
+        <QuietFields.Provider value>{props.children}</QuietFields.Provider>
+      </div>
     </section>
   );
 }

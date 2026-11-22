@@ -9,6 +9,7 @@ import { errorText, useToast } from "@/shared/feedback";
 import { Field } from "@/shared/ui";
 import { attachmentsApi, fileSize, fileSrc, type FileInfo } from "./api";
 import { useAttachTarget } from "./target";
+import { showDialog } from "../dialog";
 
 const MISSING = "这个附件不在这台 Mac 上";
 
@@ -37,8 +38,7 @@ function Viewer(props: { images: FileInfo[]; index: number; onClose: () => void 
   const n = props.images.length;
   const img = props.images[i];
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const step = (by: number) => setI((x) => (x + by + n) % n);
   return (

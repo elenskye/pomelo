@@ -1,7 +1,8 @@
 // Toasts + promise-based confirm dialog (native <dialog>: focus trap + Esc for free;
-// showModal focuses the first button = 取消, a safe default for destructive confirms).
+// showDialog focuses the dialog itself: Enter does nothing, Esc = 取消, a safe default for destructive confirms).
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "./ui";
+import { showDialog } from "./dialog";
 
 type ToastKind = "info" | "error";
 type ToastItem = { id: number; text: string; kind: ToastKind; leaving: boolean };
@@ -69,8 +70,7 @@ export function useConfirm() {
 function ConfirmDialog(props: ConfirmOptions & { onDone: (ok: boolean) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal(); // guard: StrictMode runs effects twice
+    showDialog(ref.current);
   }, []);
   return (
     <dialog

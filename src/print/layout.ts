@@ -208,7 +208,11 @@ export async function layout(item: Item, o: Options, host: HTMLElement): Promise
   const made: HTMLElement[] = [];
   pages.forEach((lns, n) => {
     const pg = el("div", `pv-page pv-${o.style}`);
-    if (o.style === "pomelo") pg.style.backgroundImage = tile;
+    if (o.style === "pomelo") {
+      pg.style.backgroundImage = tile;
+      // the paper's grain, as the app's papers have it (the desk preset: a tiled picture under everything)
+      pg.dataset.hand = "desk";
+    }
     if (o.header && n > 0) {
       const h = el("div", "pv-head", `<span class="t"></span><span>见字如面</span>`);
       h.querySelector(".t")!.textContent = item.title || "无标题";

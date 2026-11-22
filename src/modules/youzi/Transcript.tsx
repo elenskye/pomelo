@@ -38,6 +38,7 @@ import { EditCard, EditFileTag, WordDialog } from "./Work";
 import { UsedMemories } from "./Memory";
 import { DiffView } from "./Assist";
 import { MarkdownView, citedIn } from "./MarkdownView";
+import { showDialog } from "@/shared/dialog";
 
 export type TranscriptHandle = { openFind: () => void; closeFind: () => boolean; toBottom: () => void };
 
@@ -401,8 +402,7 @@ function PassageDialog(props: { source: Source; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const toast = useToast();
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const s = props.source;
   return (

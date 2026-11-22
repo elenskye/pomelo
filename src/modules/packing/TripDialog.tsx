@@ -7,6 +7,7 @@ import { DateInput } from "@/shared/DateInput";
 import { Button, Field, TextArea, TextInput } from "@/shared/ui";
 import { usePackingMutations, type Template, type Trip } from "./api";
 import { Polish, QuickFill, useAssistOn, useFilled, type QuickFillResult } from "@/modules/youzi/Assist";
+import { showDialog } from "@/shared/dialog";
 
 export function TripDialog(props: {
   trip: Trip | null; // null = create
@@ -20,8 +21,7 @@ export function TripDialog(props: {
   const { trip, templates, trips } = props;
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current, { field: true });
   }, []);
   // list source: "t:<template id>" · "p:<trip id>" · "" blank
   const firstTemplate = props.presetTemplateId ?? templates[0]?.id ?? null;

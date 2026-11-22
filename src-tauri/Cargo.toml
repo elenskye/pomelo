@@ -1,6 +1,6 @@
 [package]
 name = "pomelo"
-version = "1.0.1"
+version = "1.0.2"
 description = "Pomelo OS"
 edition = "2021"
 

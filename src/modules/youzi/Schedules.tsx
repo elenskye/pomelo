@@ -16,6 +16,7 @@ import { modelOptions } from "./ModelMenu";
 import { FlowChart } from "./Plugins";
 import { LevelPicker, fromLevel, levelOf, thinkFits, thinkOf } from "./Thinking";
 import { MdField } from "@/shared/editor/MdField";
+import { showDialog } from "@/shared/dialog";
 
 type Confirm = ReturnType<typeof useConfirm>[0];
 
@@ -50,8 +51,7 @@ export function SchedulesDialog(props: { onOpenSession: (id: number) => void; on
   const ref = useRef<HTMLDialogElement>(null);
   const [confirm, confirmDialog] = useConfirm();
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   return (
     <dialog

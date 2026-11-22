@@ -4,7 +4,7 @@
 // Dropdowns: ./Dropdown.tsx.
 import type { IconType } from "@/shared/icons";
 import { RefreshCw } from "@/shared/icons";
-import { useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type Ref } from "react";
 import { flash } from "./hand";
 import { HandIcon, Tip } from "./handParts";
 import { markSvg, sizedMark } from "./marks";
@@ -94,22 +94,66 @@ export function Button({ variant = "secondary", className, type, ...rest }: Butt
 /** A field without a box of its own: the hand-drawn edge around it thickens when it has focus (Design System Input). */
 const FIELD = "pm-field pm-compact";
 
+/** Inside: the boxes of a hand-drawn card, drawn quieter (a steadier, lighter edge: index.css .quiet-field) so the card
+ *  and the boxes in it don't read as two equal layers (呦呦漫游's editors). Fields and segmented choices follow it. */
+export const QuietFields = createContext(false);
+const QUIET = { "data-amp": "0.22", "data-sw": "1.4" };
+function useQuiet() {
+  const quiet = useContext(QuietFields);
+  return quiet ? { cls: " quiet-field", attrs: QUIET } : { cls: "", attrs: {} };
+}
+
 export function TextInput({ className, ...rest }: ComponentProps<"input">) {
+  const q = useQuiet();
   // full width unless given a width of its own (w-20, w-28…)
   const width = /(^|\s)w-/.test(className ?? "") ? "" : "w-full";
   return (
-    <span className={`${FIELD} ${width} ${className ?? ""}`} data-hand="field" data-seed="1410">
+    <span className={`${FIELD}${q.cls} ${width} ${className ?? ""}`} data-hand="field" data-seed="1410" {...q.attrs}>
       <input type="text" autoComplete="off" spellCheck={false} {...rest} />
     </span>
   );
 }
 
-export function TextArea({ className, ...rest }: ComponentProps<"textarea">) {
+/** `grow`: as tall as its text (one line at least), no scrollbar; refitted when the text or the width changes. */
+export function TextArea({ className, grow, ref, ...rest }: ComponentProps<"textarea"> & { grow?: boolean }) {
+  const q = useQuiet();
+  const own = useRef<HTMLTextAreaElement | null>(null);
+  const setRef = (el: HTMLTextAreaElement | null) => {
+    own.current = el;
+    if (typeof ref === "function") ref(el);
+    else if (ref) (ref as { current: HTMLTextAreaElement | null }).current = el;
+  };
+  useLayoutEffect(() => {
+    if (grow) fitHeight(own.current);
+  }, [grow, rest.value]);
+  useEffect(() => {
+    const el = own.current;
+    if (!grow || !el) return;
+    let w = el.offsetWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.offsetWidth === w) return;
+      w = el.offsetWidth;
+      fitHeight(el);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [grow]);
   return (
-    <span className={`${FIELD} pm-area w-full ${className ?? ""}`} data-hand="field" data-seed="1411">
-      <textarea spellCheck={false} className="resize-none leading-relaxed" {...rest} />
+    <span className={`${FIELD}${q.cls} pm-area w-full ${className ?? ""}`} data-hand="field" data-seed="1411" {...q.attrs}>
+      <textarea ref={setRef as Ref<HTMLTextAreaElement>} spellCheck={false} className={`resize-none leading-relaxed${grow ? " autogrow" : ""}`} {...rest} rows={grow ? 1 : rest.rows} />
     </span>
   );
+}
+
+/** A textarea as tall as its text. The box around it keeps its height while measuring, so nothing above or below
+ *  moves and a scrolled page doesn't jump. */
+function fitHeight(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  const box = el.parentElement;
+  if (box) box.style.minHeight = `${box.offsetHeight}px`;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+  if (box) box.style.minHeight = "";
 }
 
 export function SearchInput(props: ComponentProps<"input">) {
@@ -131,6 +175,7 @@ export function Segmented<T extends string>(props: {
   onChange: (v: T) => void;
   ariaLabel?: string;
 }) {
+  const q = useQuiet();
   const box = useRef<HTMLDivElement>(null);
   const hl = useRef<HTMLSpanElement>(null);
   const was = useRef(props.value);
@@ -144,7 +189,7 @@ export function Segmented<T extends string>(props: {
     was.current = props.value;
   });
   return (
-    <div ref={box} role="radiogroup" aria-label={props.ariaLabel} className="pm-seg pm-compact shrink-0" data-hand="field" data-seed="1390" data-sw="1.5" data-amp="0.55">
+    <div ref={box} role="radiogroup" aria-label={props.ariaLabel} className={`pm-seg pm-compact shrink-0${q.cls}`} data-hand="field" data-seed="1390" data-sw="1.5" data-amp="0.55" {...q.attrs}>
       <span ref={hl} className="pm-seg-hl" data-hand="pick" data-seed="1391" />
       {props.options.map((o) => {
         const on = o.value === props.value;

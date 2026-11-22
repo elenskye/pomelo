@@ -15,7 +15,7 @@ import { errorText, useConfirm } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { MonthInput } from "@/shared/MonthInput";
 import { useDropTarget } from "@/shared/attachments/target";
-import { Button, Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Button, Field, IconButton, QuietFields, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { type MdEditorHandle } from "./MdEditor";
 import { BodyField, DraftAction, GHOST, LABEL, addTo, pickFiles as pickImages, shown, stored, useEnglishDraft, type View } from "./parts";
 import { SITE_KEY, pagePath, siteAssist, siteSrc, useAssets, workApi, type Asset, type AssetKind, type GalleryItem, type Lang, type Taxonomy, type Version, type Work } from "./api";
@@ -259,7 +259,7 @@ function VersionPane(props: { lang: Lang; v: Version; set: (patch: Partial<Versi
       />
       <Field label="摘要">
         <Polish module="site" value={v.summary} onChange={(summary) => props.set({ summary })}>
-          <TextArea rows={2} value={v.summary} readOnly={props.locked} onChange={(e) => props.set({ summary: e.target.value })} className="text-[13px]" />
+          <TextArea grow value={v.summary} readOnly={props.locked} onChange={(e) => props.set({ summary: e.target.value })} className="text-[13px]" />
         </Polish>
       </Field>
       <div className="border-t pt-2">
@@ -288,48 +288,50 @@ function MissingVersion(props: { lang: Lang; zh: Version | null; setZh: (patch: 
     }
   };
   return (
-    <div className="space-y-4 rounded-card border bg-card p-4">
-      <p className="text-sm font-bold">{props.lang === "en" ? "还没有英文版" : "还没有中文版"}</p>
-      {props.lang === "en" && zh && (
-        <>
-          <Field
-            label="英文标题"
-            action={
-              assistOn && (
-                <AssistAction disabled={filling} onClick={() => void fill()}>
-                  {filling ? "正在补全…" : "补全"}
-                </AssistAction>
-              )
-            }
-          >
-            <TextInput
-              value={zh.englishTitle}
-              onChange={(e) => {
-                filled.clear("title");
-                props.setZh({ englishTitle: e.target.value });
-              }}
-              className={filled.cls("title")}
-            />
-          </Field>
-          <Field label="英文摘要">
-            <Polish module="site" value={zh.englishSummary} onChange={(t) => props.setZh({ englishSummary: t })}>
-              <TextArea
-                rows={3}
-                value={zh.englishSummary}
+    <QuietFields.Provider value>
+      <div className="space-y-4 rounded-card border bg-card p-4">
+        <p className="text-sm font-bold">{props.lang === "en" ? "还没有英文版" : "还没有中文版"}</p>
+        {props.lang === "en" && zh && (
+          <>
+            <Field
+              label="英文标题"
+              action={
+                assistOn && (
+                  <AssistAction disabled={filling} onClick={() => void fill()}>
+                    {filling ? "正在补全…" : "补全"}
+                  </AssistAction>
+                )
+              }
+            >
+              <TextInput
+                value={zh.englishTitle}
                 onChange={(e) => {
-                  filled.clear("summary");
-                  props.setZh({ englishSummary: e.target.value });
+                  filled.clear("title");
+                  props.setZh({ englishTitle: e.target.value });
                 }}
-                className={`text-[13px] ${filled.cls("summary")}`}
+                className={filled.cls("title")}
               />
-            </Polish>
-          </Field>
-        </>
-      )}
-      <Button variant="primary" disabled={props.busy} onClick={props.onCreate}>
-        {props.lang === "en" ? "新建英文版" : "新建中文版"}
-      </Button>
-    </div>
+            </Field>
+            <Field label="英文摘要">
+              <Polish module="site" value={zh.englishSummary} onChange={(t) => props.setZh({ englishSummary: t })}>
+                <TextArea
+                  grow
+                  value={zh.englishSummary}
+                  onChange={(e) => {
+                    filled.clear("summary");
+                    props.setZh({ englishSummary: e.target.value });
+                  }}
+                  className={`text-[13px] ${filled.cls("summary")}`}
+                />
+              </Polish>
+            </Field>
+          </>
+        )}
+        <Button variant="primary" disabled={props.busy} onClick={props.onCreate}>
+          {props.lang === "en" ? "新建英文版" : "新建中文版"}
+        </Button>
+      </div>
+    </QuietFields.Provider>
   );
 }
 

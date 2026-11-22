@@ -94,7 +94,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 做界面照 `docs/design.md` 的「开发指南」，最常出错的几条：
 
 - 不写使用提示，列表行只放最必要的信息；只有一种东西的列表不写小标题。
-- 先用现成的组件（控件表、`PageHeader`、`SidePanel`、`.side-row` + `<Picked />`、`charts.tsx`、手画的 `TextInput` `MdField` `Dropdown` `PickField` `Button`），不用细边框的原生输入框；我能挑图标的地方用图标库（`IconDialog` / `IconField` / `StoredIcon`，存成 `i:<键>`）；小按钮的名字用 `pm-tip-host` + `<Tip>`，纸签只写动作（「删除」，不写「删除「某某」」：记录名放 `IconButton` 的 `label`、纸签写 `tip`）；浮在字或按钮旁的卡用 `.pm-float` + `src/shared/fit.ts`（量了再摆，不出窗口）。
+- 先用现成的组件（控件表、`PageHeader`、`SidePanel`、`.side-row` + `<Picked />`、`charts.tsx`、手画的 `TextInput` `MdField` `Dropdown` `PickField` `Button`），不用细边框的原生输入框；我能挑图标的地方用图标库（`IconDialog` / `IconField` / `StoredIcon`，存成 `i:<键>`）；小按钮的名字用 `pm-tip-host` + `<Tip>`，纸签只写动作（「删除」，不写「删除「某某」」：记录名放 `IconButton` 的 `label`、纸签写 `tip`）；浮在字或按钮旁的卡用 `.pm-float` + `src/shared/fit.ts`（量了再摆，不出窗口；带标题的能拖，`useDragFit`）；弹窗用 `Modal`，自己写 `<dialog>` 的用 `shared/dialog.ts` 的 `showDialog` 打开。
 - 颜色只用变量（图表只用 `--chart-*`，模块颜色 `--module-*` 回 visual-atelier 加）；字体只用 `font-sans`（不直接写 `Hannotate SC`；柚子消息正文和见字如面的正文用苹方 `font-reading`，是仅有的例外）；便签（`.pm-note`）上用便签的墨色。
 - 手画的边画在字下面一层：会滚、会裁的盒子外面一层画边、里面一层滚，能滚的区域用 `-m-1 … p-1`。拖动排序用鼠标事件（`src/shared/sortable`），不用浏览器自带的拖放。
 - 每一页、桌面和每个浮层都包 `shared/Oops.tsx`；hook 不写在提前返回的后面；有焦点的输入框不能在窗口外面（WebKit 会把整个窗口的内容挪上去）。

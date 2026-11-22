@@ -30,6 +30,7 @@ import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "..
 import { JanitorCards } from "./JanitorCards";
 import { JANITOR_KEY, ago, bytes, dayOf, janitorApi, type JanitorEnvItem, type JanitorGroup, type JanitorItem, type JanitorOutcome, type JanitorOverview, type JanitorRing } from "./janitorApi";
 import { MdField } from "@/shared/editor/MdField";
+import { showDialog } from "@/shared/dialog";
 
 type Tab = "disk" | "clean" | "env" | "agent" | "settings";
 const OVERVIEW = [...JANITOR_KEY, "overview"];
@@ -700,8 +701,7 @@ function AgentPrompt() {
 function PromptHead(props: { text: string; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   return (
     <dialog ref={ref} aria-label="开头和现在的情况" onCancel={(e) => { e.preventDefault(); props.onClose(); }} className="m-auto h-fit max-h-[80vh] w-[720px] max-w-[calc(100vw-48px)] rounded-card border bg-popover p-0 text-foreground shadow-xl backdrop:bg-black/30">

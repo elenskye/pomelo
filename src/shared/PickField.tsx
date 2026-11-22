@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronsUpDown, X } from "@/shared/icons";
 import { IconButton, SearchInput } from "./ui";
+import { showDialog } from "./dialog";
 
 export type PickOption<T> = { value: T; label: string; detail?: string; group?: string };
 
@@ -62,10 +63,7 @@ function PickDialog<T>(props: { title: string; value: T; options: PickOption<T>[
   const ref = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-    // showModal focuses the first button (关闭); typing should go to the search box
-    d?.querySelector<HTMLInputElement>("input[type=search]")?.focus();
+    showDialog(ref.current, { field: true });
   }, []);
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = props.options.filter((o) => words.every((w) => `${o.label} ${o.detail ?? ""} ${o.group ?? ""}`.toLowerCase().includes(w)));

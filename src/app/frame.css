@@ -179,6 +179,11 @@
 [data-auto-card] { isolation: isolate; border-color: transparent !important; background-color: transparent !important; box-shadow: none !important; }
 [data-auto-card]:not([data-auto-scroll]) { overflow: visible !important; }
 [data-auto-card] > [data-hand-painted] { background: var(--color-card); border-radius: 14px; box-shadow: var(--shadow-card); }
+/* the painted layer (every hand-drawn box's first child) takes no margin or border from the box's own utilities: under
+   space-y-* it got a margin and ended short of the hand-drawn line, a strip of paper inside the card's lower edge */
+[data-hand-painted] { margin: 0 !important; border-width: 0 !important; }
+/* a white card keeps its 1px (transparent) border: the layer covers the border box, which the line is drawn around */
+[data-auto-card]:not([data-auto-scroll]) > [data-hand-painted] { inset: -1px !important; }
 /* 选中的卡片（Seeker「选择」时）：原来的底色交给画出来的那一层 */
 [data-auto-card].bg-accent > [data-hand-painted] { background: var(--color-selected); }
 /* 卡片里的行、格子不另涂白底：卡片的底就在画出来的那一层（在字下面），行的白底会盖住半条手画的边，往里抖的地方看着像断了。
@@ -201,6 +206,10 @@
 /* 浮在页上的手画卡（柚子续写 / 润色、记到念念不忘；src/shared/fit.ts 摆位置）：和面板一样，高不过窗口，里面那层滚 */
 .pm-float { position: fixed; z-index: 70; isolation: isolate; display: flex; flex-direction: column; max-height: calc(100vh - 24px); padding: 16px 20px; }
 .pm-float > [data-hand-painted] { background: var(--color-card); border-radius: 16px; box-shadow: 0 2px 4px var(--color-shadow), 0 18px 40px var(--color-shadow); }
+/* one that can be moved (fit.ts useDragFit): a hand over its title and empty parts, the usual pointer over what it holds */
+.pm-float[data-drag] { cursor: grab; }
+.pm-float[data-drag] :is(button, a, input, textarea, select, label, [contenteditable], .selectable, [data-no-drag]) { cursor: auto; }
+.pm-float[data-drag].is-dragging, .pm-float[data-drag].is-dragging * { cursor: grabbing; }
 /* 问柚子的输入框（Composer，柚子页和小窗）：纸上自动换成手画卡，有焦点时和手画的输入框一样把线描粗，不另套直线的焦点框 */
 .pm-composer:focus-within > [data-hand-painted] path[stroke] { stroke-width: var(--pm-sw-focus); }
 .pm-composer:not([data-auto-card]):focus-within { box-shadow: 0 0 0 2px var(--ring); }

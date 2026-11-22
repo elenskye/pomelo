@@ -26,6 +26,7 @@ import { AmountInput, CurrencyPicker } from "./fields";
 import { importApi, importerApi, TREATMENTS, useRefundCandidates, type BatchSummary, type ImportDraft, type ImporterPoint, type ImporterSettings, type ImportRow } from "./importApi";
 import { fileName, importJobPreview, importJobTake, runImport, runTidy, useImportJob } from "./importJob";
 import { CURRENCIES, CURRENCY_NAME, money, moneyInput, parseMoney } from "./money";
+import { showDialog } from "@/shared/dialog";
 
 const SETTINGS = ["importer"];
 const NO_FILTERS = { from: "", to: "", currency: "", treatment: "", category: "", text: "" };
@@ -143,7 +144,7 @@ function ReviewRow(props: { row: ImportRow; preview?: string; dirty: boolean; on
   const frame = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    if (big) dialog.current?.showModal();
+    if (big) showDialog(dialog.current);
   }, [big]);
   const [draft, setDraft] = useState(row.draft);
   const [amount, setAmount] = useState(moneyInput(row.draft.amount));

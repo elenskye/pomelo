@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { useJobMutations, useStatuses, type Status } from "./api";
+import { showDialog } from "@/shared/dialog";
 
 function Name(props: { status: Status; onSave: (name: string) => void }) {
   const [v, setV] = useState(props.status.name);
@@ -32,8 +33,7 @@ function Name(props: { status: Status; onSave: (name: string) => void }) {
 export function StatusManager(props: { onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const { data: statuses = [] } = useStatuses();
   const m = useJobMutations();

@@ -30,6 +30,7 @@ import { SEEKER_KEY, seekerApi, seekerJobResumesKey } from "./seekerApi";
 import { folderOf, openPath } from "@/shared/open";
 import { SeekerJobLine, startSeekerJob, useSeekerJobs, seekerJobKey } from "./seekerJobs";
 import { RATER_INTERVIEWS_KEY, RATER_INTERVIEW_LANGS, RATER_KEY, RATER_MODES, RATER_PRACTICE_KEY, RATER_RECORDS_KEY, RATER_RESULTS, interviewApi, raterApi, sameJob, type RaterAnalysis, type RaterAsked, type RaterBank, type RaterCan, type RaterFollow, type RaterInterviews, type RaterPrep, type RaterRecord, type RaterReview, type RaterSummary } from "./raterApi";
+import { showDialog } from "@/shared/dialog";
 
 type Guarded = (action: () => Promise<void>) => Promise<boolean>;
 type Props = { bank: RaterBank; can: RaterCan; busy: boolean; guarded: Guarded; toCards: () => void };
@@ -338,7 +339,7 @@ function RecordChat(props: { session: number; close: () => void; saved: (out: Ra
   const ref = useRef<HTMLDialogElement>(null);
   const transcript = useRef<TranscriptHandle>(null);
   const composer = useRef<ComposerHandle>(null);
-  useEffect(() => { const d = ref.current; if (d && !d.open) d.showModal(); }, []);
+  useEffect(() => showDialog(ref.current), []);
   const current = props.session;
   const { live, busyHere, run, shownWith } = useLiveReply({ current, status, onSent: () => {}, onStart: () => transcript.current?.toBottom() });
   const activeHere = activeIn(status, current);

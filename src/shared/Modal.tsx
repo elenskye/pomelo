@@ -2,6 +2,7 @@
 // `submitLabel`: a dialog where a click on a choice is the answer).
 import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
 import { Button } from "./ui";
+import { showDialog } from "./dialog";
 
 export function Modal(props: {
   title: string;
@@ -21,8 +22,7 @@ export function Modal(props: {
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current, { field: true });
   }, []);
   return (
     <dialog

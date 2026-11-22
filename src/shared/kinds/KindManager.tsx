@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { useKindMutations, useKinds } from "./api";
+import { showDialog } from "../dialog";
 
 type EditableKind = { id: number; name: string; count: number };
 export type KindOps = {
@@ -63,8 +64,7 @@ export function KindEditor(props: { kinds: EditableKind[]; ops: KindOps; moduleL
   const noun = props.noun ?? "类型";
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const toast = useToast();
   const [confirm, confirmDialog] = useConfirm();

@@ -642,6 +642,8 @@ function Writing({ asked, onTaken }: { asked: { id: number } | null; onTaken: ()
         )}
         {createPortal(
           <>
+          {/* 专心写 on the paper: the palette's paper colour (articles.css) and the hand-drawn papers' grain (the desk preset) */}
+          {focus && <span className="ar-paper" data-hand="desk" aria-hidden />}
           {several ? (
             <>
               {head(null)}

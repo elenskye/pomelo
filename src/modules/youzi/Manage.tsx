@@ -12,6 +12,7 @@ import { INSTRUCTIONS_KEY, PRESETS_KEY, TEMPLATES_KEY, youziApi, usePresets, use
 import { MemoriesTab } from "./Memory";
 import { slots, templateGroups } from "./slots";
 import { MdField } from "@/shared/editor/MdField";
+import { showDialog } from "@/shared/dialog";
 
 export type ManageTab = "templates" | "presets" | "global" | "memories";
 
@@ -20,8 +21,7 @@ export function ManageDialog(props: { tab: ManageTab; projects: ProjectRow[]; se
   const [tab, setTab] = useState<ManageTab>(props.tab);
   const [confirm, confirmDialog] = useConfirm();
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   return (
     <dialog

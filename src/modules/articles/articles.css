@@ -23,8 +23,12 @@
 .ar-thumb { width: 54px; height: 54px; border-radius: 10px; object-fit: cover; align-self: center; border: 1px solid var(--border); }
 .ar-slot { flex: 1; min-width: 0; display: flex; }
 .ar-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.ar-focus { position: fixed; inset: 0; z-index: 80; background: var(--background); display: flex; flex-direction: column; font-family: var(--font-sans); color: var(--foreground); }
+.ar-focus { position: fixed; inset: 0; z-index: 80; isolation: isolate; background: var(--color-paper); display: flex; flex-direction: column; font-family: var(--font-sans); color: var(--foreground); }
 .ar-focus .ar-head { padding: 14px 18px 0; }
+.ar-paper { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+/* the window's lower edge is right there: the bar stands higher, so the tags hanging under its buttons show whole */
+.ar-focus .ar-bar-dock { bottom: 56px; }
+.ar-focus .ar-page { padding-bottom: 128px; }
 
 /* ---------- the writing box ---------- */
 .ar-editor { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }

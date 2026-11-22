@@ -13,6 +13,7 @@ import { useConfirm } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { raterApi } from "./raterApi";
 import { seekerApi, seekerBatch, type SeekerGroupKind, type SeekerLang, type SeekerPromptView, type SeekerWorkspace } from "./seekerApi";
+import { showDialog } from "@/shared/dialog";
 
 type Write = (action: () => Promise<SeekerWorkspace>) => Promise<boolean>;
 
@@ -107,8 +108,7 @@ function PromptsDialog(props: { title: string; list: SeekerPromptView[]; label: 
   const ref = useRef<HTMLDialogElement>(null);
   const [key, setKey] = useState(props.list[0]?.key ?? "");
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const shown = props.list.find((p) => p.key === key) ?? props.list[0];
   return (

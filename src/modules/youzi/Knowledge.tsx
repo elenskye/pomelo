@@ -17,6 +17,7 @@ import { Button, IconButton, RefreshButton, Switch, TextInput } from "@/shared/u
 import { LIBRARY_KEY, sessionOf, youziApi, useLibrary, type KbDraft, type KbLibrary, type KbPlan, type KbSource } from "./api";
 import { toolClass } from "./Composer";
 import { WebDialog } from "./Files";
+import { showDialog } from "@/shared/dialog";
 
 export const KB_KEY = ["youzi", "kb"];
 
@@ -206,8 +207,7 @@ export function KnowledgeDialog(props: { onClose: () => void }) {
   const [chosen, setChosen] = useState<number | null>(null);
   const [naming, setNaming] = useState<{ id: number | null; name: string } | null>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
     void youziApi.kbScan().catch(() => {});
   }, []);
   const shown = libraries.find((l) => l.id === chosen) ?? libraries[0];

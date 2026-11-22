@@ -106,6 +106,10 @@
   ::after {
     border-color: var(--border);
   }
+  /* a dialog holds the focus itself when it opens (shared/dialog.ts): no ring around it */
+  dialog:focus {
+    outline: none;
+  }
   @media (prefers-reduced-motion: reduce) {
     *,
     ::before,
@@ -130,6 +134,12 @@
 .pm-field input::placeholder, .pm-field textarea::placeholder { color: var(--color-ink-soft); opacity: 1; }
 .pm-field.pm-area { height: auto; align-items: stretch; padding: 6px 10px; }
 .pm-field.pm-area textarea { min-height: 3.2em; }
+/* a box as tall as its text (TextArea grow): one line at least, never a scrollbar */
+.pm-field.pm-area textarea.autogrow { min-height: 0; overflow: hidden; }
+/* the boxes inside a hand-drawn card (QuietFields): a lighter, steadier edge, so card and boxes don't read as two
+   equal layers; ink again while typing in one */
+.quiet-field > [data-hand-painted] path[stroke] { stroke: color-mix(in srgb, var(--color-pen) 36%, transparent); }
+.quiet-field:focus-within > [data-hand-painted] path[stroke] { stroke: var(--color-pen); }
 /* 分段的框按里面的字画：一格不缩（中文按字算最窄宽度，挤一挤就比字还窄，字和荧光笔伸到框外），放不下时整排换到下一行 */
 .pm-seg { min-width: max-content; }
 .pm-seg-item { white-space: nowrap; }

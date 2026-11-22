@@ -9,6 +9,7 @@ import { Modal } from "@/shared/Modal";
 import { DragHandle, useSortable } from "@/shared/sortable";
 import { Button, Field as Row, IconButton, Switch, TextInput } from "@/shared/ui";
 import { FIELD_TYPES, fieldTypeLabel, MAX_FIELDS, MAX_OPTIONS, useCustomMutations, type Field, type FieldType } from "./api";
+import { showDialog } from "@/shared/dialog";
 
 type Opt = { key: number; name: string; was: string | null };
 let keySeq = 0;
@@ -95,8 +96,7 @@ export function FieldManager(props: { moduleId: number; fields: Field[]; itemCou
   const [editing, setEditing] = useState<Field | "new" | null>(null);
   const sort = useSortable((ids) => m.fieldsReorder.mutate({ moduleId: props.moduleId, ids }));
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const del = async (f: Field) => {
     const ok = await confirm({ title: `删除字段「${f.name}」？`, message: props.itemCount > 0 ? "每一条里填的这一项也会一起删掉。" : undefined, confirmLabel: "删除", danger: true });

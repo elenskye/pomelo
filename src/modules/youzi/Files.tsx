@@ -10,6 +10,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { Button, IconButton, TextInput } from "@/shared/ui";
+import { showDialog } from "@/shared/dialog";
 import {
   FILE_EXTENSIONS,
   LIBRARY_FILES_KEY,
@@ -152,8 +153,7 @@ export function openFile(id: number, toast: ReturnType<typeof useToast>) {
 export function Panel(props: { title: ReactNode; right?: ReactNode; onClose: () => void; children: ReactNode; width?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   return (
     <dialog

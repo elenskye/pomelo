@@ -62,7 +62,7 @@ import { BacklinkChips, linkInsert, typingLink, useLinkSource, useOpenThing, use
 import { escapeName } from "@/shared/links/links";
 import { ClipBox } from "@/shared/links/ClipBox";
 import { LinkPicker, linkText } from "@/shared/links/LinkPicker";
-import { selectionAnchor, useFit, type Anchor } from "@/shared/fit";
+import { selectionAnchor, useDragFit, type Anchor } from "@/shared/fit";
 import { CALLOUTS, HEADING, HIGHLIGHTS, LIST, bearFlavor, blocks, cells, decodeName, encodeName, foldKey, foldRange, markedFolds, type Look } from "./bear";
 import { renderCode, renderDiagram, renderMath } from "./render";
 import "./articles.css";
@@ -218,11 +218,12 @@ function AssistCard(props: { state: AssistState; at: Anchor; onRun: () => void; 
   const s = props.state;
   const working = s.result === undefined && !s.error;
   const box = useRef<HTMLDivElement>(null);
-  const place = useFit(box, props.at);
+  const { style: place, grab } = useDragFit(box, props.at);
   const name = s.mode === "polish" ? "柚子润色" : "柚子续写";
   return createPortal(
-    // a hand-drawn card like the panels (.pm-float), kept in the window as the reply grows; the reply scrolls inside
-    <div ref={box} role="dialog" aria-label={name} className="ar-assist pm-float animate-pop-in" style={place} data-hand="card" data-seed={1547} data-amp="0.8" onMouseDown={(e) => e.stopPropagation()}>
+    // a hand-drawn card like the panels (.pm-float), kept in the window as the reply grows; the reply scrolls inside;
+    // dragged by its title or empty parts to see the text under it
+    <div ref={box} role="dialog" aria-label={name} className="ar-assist pm-float animate-pop-in" style={place} data-hand="card" data-seed={1547} data-amp="0.8" data-drag="" onMouseDown={grab}>
       <p className="flex shrink-0 items-center gap-1.5 font-bold">
         <Sparkles size={15} className="text-[var(--module-youzi)]" />
         {name}

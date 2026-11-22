@@ -9,6 +9,7 @@ import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { Button, Field, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
+import { showDialog } from "@/shared/dialog";
 import {
   MEMORY_ENABLED_KEY,
   SERVICE_NAMES,
@@ -250,8 +251,7 @@ function CloudModelsDialog(props: { models: CloudModel[]; onClose: () => void })
     void youziApi.cloudModelsReorder(ids).then(refresh, (e) => toast(errorText(e), "error"));
   };
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const remove = async (m: CloudModel) => {
     if (!(await confirm({ title: `删除「${m.name}」？`, confirmLabel: "删除", danger: true }))) return;

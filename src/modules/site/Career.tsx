@@ -6,7 +6,7 @@ import { FilePlus } from "@/shared/icons";
 import { useConfirm } from "@/shared/feedback";
 import { Polish } from "@/modules/youzi/Assist";
 import { useSetting } from "@/shared/settings";
-import { Field, Segmented, TextArea, TextInput } from "@/shared/ui";
+import { Field, QuietFields, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type Career, type CareerVersion, type Detailed, type Lang, type Section, type Simple } from "./api";
 import { AddRow, BodyField, DocBar, RowControls, SITE_ICONS, SizedInput, addTo, moved, pickFiles, replaced, useDoc, usePreview, useSiteIconMenu, type View } from "./parts";
 import { AssetPicker } from "./WorkEditor";
@@ -70,16 +70,18 @@ function Resumes(props: { lang: Lang; v: CareerVersion; set: (patch: Partial<Car
 
 function SimpleRows(props: { rows: Simple[]; set: (rows: Simple[]) => void }) {
   return (
-    <div className="space-y-2">
-      {props.rows.map((r, i) => (
-        <div key={i} className="flex gap-2">
-          <div className="min-w-0 flex-1 space-y-1">
-            <TextInput {...SITE_ICONS} aria-label="小标题" placeholder="小标题" value={r.heading} onChange={(e) => props.set(replaced(props.rows, i, { heading: e.target.value }))} className={small} />
-            <TextArea {...SITE_ICONS} aria-label="内容要点" placeholder="内容要点" rows={2} value={r.items} onChange={(e) => props.set(replaced(props.rows, i, { items: e.target.value }))} className="text-xs" />
+    <div className="space-y-1">
+      <div className="divide-y">
+        {props.rows.map((r, i) => (
+          <div key={i} className="flex gap-3 py-3 first:pt-1">
+            <div className="min-w-0 flex-1 space-y-2">
+              <TextInput {...SITE_ICONS} aria-label="小标题" placeholder="小标题" value={r.heading} onChange={(e) => props.set(replaced(props.rows, i, { heading: e.target.value }))} className={small} />
+              <TextArea {...SITE_ICONS} grow aria-label="内容要点" placeholder="内容要点" value={r.items} onChange={(e) => props.set(replaced(props.rows, i, { items: e.target.value }))} className="text-xs" />
+            </div>
+            <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />
           </div>
-          <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />
-        </div>
-      ))}
+        ))}
+      </div>
       <AddRow onClick={() => props.set([...props.rows, { heading: "", items: "" }])}>加一条</AddRow>
     </div>
   );
@@ -87,20 +89,22 @@ function SimpleRows(props: { rows: Simple[]; set: (rows: Simple[]) => void }) {
 
 function DetailedRows(props: { rows: Detailed[]; set: (rows: Detailed[]) => void }) {
   return (
-    <div className="space-y-2">
-      {props.rows.map((r, i) => (
-        <div key={i} className="flex gap-2">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="grid grid-cols-3 gap-1">
-              <TextInput aria-label="时间段" placeholder="时间段" value={r.period} onChange={(e) => props.set(replaced(props.rows, i, { period: e.target.value }))} className={small} />
-              <TextInput {...SITE_ICONS} aria-label="角色 / 名称" placeholder="角色 / 名称" value={r.role} onChange={(e) => props.set(replaced(props.rows, i, { role: e.target.value }))} className={small} />
-              <TextInput {...SITE_ICONS} aria-label="机构 / 项目" placeholder="机构 / 项目" value={r.org} onChange={(e) => props.set(replaced(props.rows, i, { org: e.target.value }))} className={small} />
+    <div className="space-y-1">
+      <div className="divide-y">
+        {props.rows.map((r, i) => (
+          <div key={i} className="flex gap-3 py-3 first:pt-1">
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                <TextInput aria-label="时间段" placeholder="时间段" value={r.period} onChange={(e) => props.set(replaced(props.rows, i, { period: e.target.value }))} className={small} />
+                <TextInput {...SITE_ICONS} aria-label="角色 / 名称" placeholder="角色 / 名称" value={r.role} onChange={(e) => props.set(replaced(props.rows, i, { role: e.target.value }))} className={small} />
+                <TextInput {...SITE_ICONS} aria-label="机构 / 项目" placeholder="机构 / 项目" value={r.org} onChange={(e) => props.set(replaced(props.rows, i, { org: e.target.value }))} className={small} />
+              </div>
+              <TextArea {...SITE_ICONS} grow aria-label="要点（一行一条）" placeholder="要点" value={r.bullets.join("\n")} onChange={(e) => props.set(replaced(props.rows, i, { bullets: e.target.value.split("\n") }))} className="text-xs" />
             </div>
-            <TextArea {...SITE_ICONS} aria-label="要点（一行一条）" placeholder="要点" rows={3} value={r.bullets.join("\n")} onChange={(e) => props.set(replaced(props.rows, i, { bullets: e.target.value.split("\n") }))} className="text-xs" />
+            <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />
           </div>
-          <RowControls i={i} n={props.rows.length} onMove={(to) => props.set(moved(props.rows, i, to))} onRemove={() => props.set(props.rows.filter((_, j) => j !== i))} vertical />
-        </div>
-      ))}
+        ))}
+      </div>
       <AddRow onClick={() => props.set([...props.rows, { period: "", role: "", org: "", bullets: [] }])}>加一条</AddRow>
     </div>
   );
@@ -120,14 +124,16 @@ function Sections(props: { v: CareerVersion; set: (patch: Partial<CareerVersion>
   return (
     <div className="space-y-3">
       {secs.map((s, i) => (
-        <div key={i} className="space-y-2 rounded-card border bg-card p-3">
-          <div className="flex items-center gap-2">
-            <TextInput aria-label="模块标题" placeholder="模块标题" value={s.title} onChange={(e) => setSec(i, { title: e.target.value })} className="min-w-0 flex-1 font-bold" />
-            <RowControls i={i} n={secs.length} onMove={(to) => props.set({ sections: moved(secs, i, to) })} onRemove={() => props.set({ sections: secs.filter((_, j) => j !== i) })} removeLabel="删除模块" />
+        <QuietFields.Provider key={i} value>
+          <div className="space-y-3 rounded-card border bg-card p-4">
+            <div className="flex items-center gap-2">
+              <TextInput aria-label="模块标题" placeholder="模块标题" value={s.title} onChange={(e) => setSec(i, { title: e.target.value })} className="min-w-0 flex-1 font-bold" />
+              <RowControls i={i} n={secs.length} onMove={(to) => props.set({ sections: moved(secs, i, to) })} onRemove={() => props.set({ sections: secs.filter((_, j) => j !== i) })} removeLabel="删除模块" />
+            </div>
+            <Segmented ariaLabel="内容模式" value={s.mode} onChange={(m) => void switchMode(i, m)} options={MODES} />
+            {s.mode === "simple" ? <SimpleRows rows={s.simple} set={(simple) => setSec(i, { simple })} /> : <DetailedRows rows={s.detailed} set={(detailed) => setSec(i, { detailed })} />}
           </div>
-          <Segmented ariaLabel="内容模式" value={s.mode} onChange={(m) => void switchMode(i, m)} options={MODES} />
-          {s.mode === "simple" ? <SimpleRows rows={s.simple} set={(simple) => setSec(i, { simple })} /> : <DetailedRows rows={s.detailed} set={(detailed) => setSec(i, { detailed })} />}
-        </div>
+        </QuietFields.Provider>
       ))}
       <AddRow onClick={() => props.set({ sections: [...secs, { title: "", mode: "detailed", simple: [], detailed: [] }] })}>加一个模块</AddRow>
       {confirmDialog}
@@ -169,7 +175,7 @@ export function CareerPage(props: { setDirty: (d: boolean) => void; onError: (e:
                 </Field>
                 <Field label="页面开头摘要">
                   <Polish module="site" value={v.summary} onChange={(summary) => setV(l)({ summary })}>
-                    <TextArea rows={3} value={v.summary} onChange={(e) => setV(l)({ summary: e.target.value })} className="text-[13px]" />
+                    <TextArea grow value={v.summary} onChange={(e) => setV(l)({ summary: e.target.value })} className="text-[13px]" />
                   </Polish>
                 </Field>
                 <Field label="简历下载">

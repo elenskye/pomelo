@@ -18,6 +18,7 @@ import { monthDay, slashDate } from "@/shared/dates";
 import { searchAll, searchSimilar, type Hit } from "@/shared/open";
 import { useAllModules } from "@/modules/custom/api";
 import { useHiddenModules } from "./hidden";
+import { showDialog } from "@/shared/dialog";
 
 
 /** The muted text after a title. */
@@ -83,8 +84,7 @@ export function SearchBox(props: { onClose: () => void; onAsk?: ((text: string) 
     setTimeout(props.onClose, 300);
   };
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current, { field: true });
   }, []);
   useEffect(() => {
     const t = setTimeout(() => setQ(text.trim()), 120);

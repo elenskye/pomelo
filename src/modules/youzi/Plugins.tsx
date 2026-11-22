@@ -8,14 +8,14 @@ import { X, RefreshCw } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
 import { Button, IconButton, Switch, TextInput } from "@/shared/ui";
 import { SKILLS_KEY, youziApi, useSkills, type Skill, type SkillFlowNode, type SkillKey } from "./api";
+import { showDialog } from "@/shared/dialog";
 
 export function PluginsDialog(props: { onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const skills = useSkills().data ?? [];
   const [chosen, setChosen] = useState<string | null>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   const shown = skills.find((s) => s.key === chosen) ?? skills[0];
   return (

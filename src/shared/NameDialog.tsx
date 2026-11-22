@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Trash2 } from "@/shared/icons";
 import { errorText, useConfirm } from "./feedback";
 import { Button, Field, TextArea, TextInput } from "./ui";
+import { showDialog } from "./dialog";
 
 export function NameDialog(props: {
   title: string;
@@ -15,8 +16,7 @@ export function NameDialog(props: {
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current, { field: true });
   }, []);
   const [name, setName] = useState(props.initial?.name ?? "");
   const [note, setNote] = useState(props.initial?.note ?? "");

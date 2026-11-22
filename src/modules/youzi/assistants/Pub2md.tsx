@@ -26,6 +26,7 @@ import { Row, Section } from "@/settings/layout";
 import { MarkdownView } from "../MarkdownView";
 import "./pub2md.css";
 import { chipLook } from "./select";
+import { showDialog } from "@/shared/dialog";
 
 export const PUB2MD_KEY = ["youzi", "pub2md"];
 type Tab = "work" | "prompt" | "settings";
@@ -546,8 +547,7 @@ function PreviewDialog(props: { recent: Pub2mdRecent; file: string; onFile: (f: 
   const files = props.recent.outputs.filter(previewable);
   const text = useQuery({ queryKey: ["youzi", "pub2md-preview", props.recent.folder, props.file], queryFn: () => youziApi.pub2mdPreview(props.recent.folder, props.file), staleTime: Infinity, gcTime: 60_000 });
   useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
+    showDialog(ref.current);
   }, []);
   useEffect(() => {
     if (text.error) toast(errorText(text.error), "error");
