@@ -12,7 +12,7 @@
 // mark that a line is folded (`<!-- {"fold":true} -->` at its end, brought by 搬家) opens it shut, the mark drawn as a mark.
 // 柚子链接 (shared/links): `[[目标]]` the module's sticker and the name, `[[目标|字]]` the words as a Pomelo link, a line that
 // is only `![[念念不忘/…]]` the note as a small card (its source shows above it on the caret's line).
-import { offsetOf } from "@/shared/editor/editable";
+import { showGroups } from "@/shared/editor/editable";
 import { iconHtml } from "@/shared/editor/inlineIcon";
 import { esc } from "@/shared/editor/markdown";
 import type { Flavor, Format, LineKind } from "@/shared/editor/LiveText";
@@ -512,26 +512,6 @@ const BASE: Format[] = [
   { label: "表格", insert: "| 列 1 | 列 2 |\n| --- | --- |\n|  |  |", group: "插入" },
   { label: "分隔线", insert: "---", group: "插入" },
 ];
-
-/** The caret moved within its line: the groups holding an end of the selection show their marks, the others hide them
- * (the classes drawDoc would give, so the next draw finds the line as it would draw it). One div per line. */
-function showGroups(box: HTMLElement, sel: [number, number], starts: number[]) {
-  const want = new Set<Element>();
-  for (const e of sel[0] === sel[1] ? [sel[0]] : sel) {
-    let lo = 0;
-    let hi = starts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (starts[mid] <= e) lo = mid;
-      else hi = mid - 1;
-    }
-    box.children[lo]?.querySelectorAll<HTMLElement>(".fx").forEach((g) => {
-      if (e >= offsetOf(box, g, 0, starts) && e <= offsetOf(box, g, g.childNodes.length, starts)) want.add(g);
-    });
-  }
-  box.querySelectorAll(".fx.on").forEach((g) => !want.has(g) && g.classList.remove("on"));
-  want.forEach((g) => !g.classList.contains("on") && g.classList.add("on"));
-}
 
 /** 见字如面's flavor; `look` is read at every draw (folds, pictures, renders change without a new flavor). */
 export function bearFlavor(look: () => Look, extra: () => Format[]): Flavor {

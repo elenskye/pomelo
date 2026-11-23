@@ -2,7 +2,10 @@
 // headings, quotes, lists, rules, code fences, tables and Markdoc tags by line; **bold**, *italic*, `code`, ~~del~~,
 // [links](…) inline; a line that is only an image can show the picture under it (not part of the text). ↩ continues
 // a list or quote, Tab / ⇧Tab indent a list item, ⌘B / ⌘I bold / italic. Used by 呦呦漫游's body (MdEditor) and
-// every box where I write a prompt (MdField).
+// every box where I write a prompt (MdField). Laid out as 见字如面 (index.css .lv-ln: every line a whole line, a blank one
+// too, the same small gap after each; code and tables tight); an inline construct's marks show only while the caret is
+// in it or next to it (`.fx.on`), a heading's `#` and a quote's `>` only on the caret's line (`.md-blk`).
+import { endsIn, fxGroup, NO_ENDS, showGroups, type Ends } from "./editable";
 import { iconHtml } from "./inlineIcon";
 import type { Flavor, Format } from "./LiveText";
 
@@ -10,9 +13,10 @@ import type { Flavor, Format } from "./LiveText";
 export type ImageSrc = (url: string) => string | null;
 
 const MARK = "text-muted-foreground/45";
-/** A format mark (** * _ ~~ \` # > and a link's brackets and address): shown only while the box is being edited
- *  (index.css .md-mark). List markers, rules and code fences stay. */
+/** A format mark (** * _ ~~ \` and a link's brackets and address): shown only in the group holding the caret
+ *  (index.css .md-mark, .fx); a block's (# >) only on the caret's line. Rules and code fences stay; a `- ` is a dot. */
 const FMT = `md-mark ${MARK}`;
+const BLK = `md-mark md-blk ${MARK}`;
 const LIST = /^( *)([-*+]|\d+[.)])( +)(.*)$/;
 const QUOTE = /^( *>+ ?)(.*)$/;
 const HEADING = /^(#{1,6})( +)(.*)$/;
@@ -33,56 +37,67 @@ const cls = (s: Style) => [s.bold && "font-bold", s.italic && "italic", s.strike
 const INLINE =
   /(`+)(.+?)\1(?!`)|!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]*)\]\(([^)]*)\)|(\*\*|__)(?=\S)(.*?\S)\7|\*(?=[^\s*])(.*?[^\s*])\*(?!\*)|(?<![A-Za-z0-9_])_(?=\S)(.*?\S)_(?![A-Za-z0-9_])|~~(?=\S)(.*?\S)~~|\{%.*?%\}|<https?:\/\/[^>\s]+>|:pm-([a-z0-9-]+):/g;
 
-/** A line's inline marks: every character drawn once, in order. */
-function inline(text: string, st: Style = {}): string {
+/** A line's inline marks: every character drawn once, in order; each construct with marks a group (`.fx`). `at`: where
+ * `text` starts in its line; `ends`: the selection's ends in the line (offsets in it). */
+function inline(text: string, st: Style = {}, at = 0, ends: Ends = NO_ENDS): string {
   let out = "";
   let last = 0;
   for (const m of text.matchAll(INLINE)) {
     out += span(cls(st), text.slice(last, m.index));
     last = m.index + m[0].length;
     const [all] = m;
-    if (m[1] !== undefined) out += span(FMT, m[1]) + span("rounded-sm bg-muted px-0.5 font-mono text-[0.9em]", m[2]) + span(FMT, m[1]);
+    const a = at + m.index;
+    const fx = (html: string) => fxGroup(a, a + all.length, ends, html);
+    const sub = (t: string, s2: Style, skip: number) => inline(t, s2, a + skip, ends);
+    if (m[1] !== undefined) out += fx(span(FMT, m[1]) + span("rounded-sm bg-muted px-0.5 font-mono text-[0.9em]", m[2]) + span(FMT, m[1]));
     else if (m[3] !== undefined) out += span(MARK, "![") + span(cls(st), m[3]) + span(MARK, `](${m[4]})`);
-    else if (m[5] !== undefined) out += span(FMT, "[") + inline(m[5], { ...st, link: true }) + span(FMT, `](${m[6]})`);
-    else if (m[7] !== undefined) out += span(FMT, m[7]) + inline(m[8], { ...st, bold: true }) + span(FMT, m[7]);
-    else if (m[9] !== undefined) out += span(FMT, "*") + inline(m[9], { ...st, italic: true }) + span(FMT, "*");
-    else if (m[10] !== undefined) out += span(FMT, "_") + inline(m[10], { ...st, italic: true }) + span(FMT, "_");
-    else if (m[11] !== undefined) out += span(FMT, "~~") + inline(m[11], { ...st, strike: true }) + span(FMT, "~~");
+    else if (m[5] !== undefined) out += fx(span(FMT, "[") + sub(m[5], { ...st, link: true }, 1) + span(FMT, `](${m[6]})`));
+    else if (m[7] !== undefined) out += fx(span(FMT, m[7]) + sub(m[8], { ...st, bold: true }, m[7].length) + span(FMT, m[7]));
+    else if (m[9] !== undefined) out += fx(span(FMT, "*") + sub(m[9], { ...st, italic: true }, 1) + span(FMT, "*"));
+    else if (m[10] !== undefined) out += fx(span(FMT, "_") + sub(m[10], { ...st, italic: true }, 1) + span(FMT, "_"));
+    else if (m[11] !== undefined) out += fx(span(FMT, "~~") + sub(m[11], { ...st, strike: true }, 2) + span(FMT, "~~"));
     else if (m[12] !== undefined) out += iconHtml(m[12]) ?? span(cls(st), all);
     else out += span(all.startsWith("<") ? "text-primary" : MARK, all);
   }
   return out + span(cls(st), text.slice(last));
 }
 
-function lineHtml(line: string, imageSrc: ImageSrc): { cls: string; html: string } {
+/** One line (not in a code fence); `tight`: no gap after it (a table row). */
+function lineHtml(line: string, imageSrc: ImageSrc, ends: Ends): { cls: string; html: string; tight?: boolean } {
   let m: RegExpExecArray | null;
-  if ((m = HEADING.exec(line))) return { cls: `${HEAD_CLASS[m[1].length]} mt-1`, html: span(FMT, m[1] + m[2]) + inline(m[3], { bold: true }) };
+  if ((m = HEADING.exec(line))) return { cls: `${HEAD_CLASS[m[1].length]} mt-1`, html: span(BLK, m[1] + m[2]) + inline(m[3], { bold: true }, m[1].length + m[2].length, ends) };
   if (RULE.test(line) || TAG_LINE.test(line)) return { cls: "", html: span(MARK, line) };
-  if (/^ *\|/.test(line)) return { cls: "font-mono text-[13px]", html: inline(line) };
+  if (/^ *\|/.test(line)) return { cls: "font-mono text-[13px]", html: inline(line, {}, 0, ends), tight: true };
   if ((m = IMAGE_LINE.exec(line))) {
     const src = imageSrc(m[2]);
     const pic = src ? `<span contenteditable="false" class="block select-none py-1"><img src="${esc(src)}" alt="" draggable="false" class="max-h-56 max-w-full rounded-control border object-contain"></span>` : "";
-    return { cls: "", html: inline(line) + pic };
+    return { cls: "", html: inline(line, {}, 0, ends) + pic };
   }
-  if ((m = QUOTE.exec(line))) return { cls: "border-l-2 pl-3 text-muted-foreground", html: span(FMT, m[1]) + inline(m[2]) };
-  if ((m = LIST.exec(line))) return { cls: "", html: span(MARK, m[1] + m[2] + m[3]) + inline(m[4]) };
-  return { cls: "", html: inline(line) };
+  if ((m = QUOTE.exec(line))) return { cls: "border-l-2 pl-3 text-muted-foreground", html: span(BLK, m[1]) + inline(m[2], {}, m[1].length, ends) };
+  if ((m = LIST.exec(line))) {
+    const head = /\d/.test(m[2]) ? span(MARK, m[1] + m[2] + m[3]) : `${esc(m[1])}<span class="lv-bul">${esc(m[2])}</span>${esc(m[3])}`;
+    return { cls: "", html: head + inline(m[4], {}, m[1].length + m[2].length + m[3].length, ends) };
+  }
+  return { cls: "", html: inline(line, {}, 0, ends) };
 }
 
-function docHtml(text: string, pending: number | null, imageSrc: ImageSrc): string[] {
+function docHtml(text: string, imageSrc: ImageSrc, active?: number | null, sel?: [number, number] | null): string[] {
   let fence = false;
-  return text
-    .split("\n")
-    .map((l, i) => {
-      if (FENCE.test(l)) {
-        fence = !fence;
-        return `<div class="font-mono text-[13px]">${span(MARK, l)}</div>`;
-      }
-      if (fence) return `<div class="bg-muted/40 px-1 font-mono text-[13px]">${l ? esc(l) : "<br>"}</div>`;
-      if (!l.trim()) return i === pending ? "<div><br></div>" : `<div class="h-[0.8em] leading-[0.8em]"><br></div>`;
-      const { cls: c, html } = lineHtml(l, imageSrc);
-      return `<div class="${c}">${html}</div>`;
-    });
+  let start = 0;
+  return text.split("\n").map((l, i) => {
+    const ends = i === active ? endsIn(sel, start, l.length) : NO_ENDS;
+    start += l.length + 1;
+    const cur = i === active ? " cur" : "";
+    // a code fence is tight (no gap between its lines)
+    if (FENCE.test(l)) {
+      fence = !fence;
+      return `<div class="font-mono text-[13px]">${span(MARK, l)}</div>`;
+    }
+    if (fence) return `<div class="bg-muted/40 px-1 font-mono text-[13px]">${l ? esc(l) : "<br>"}</div>`;
+    if (!l.trim()) return `<div class="lv-ln${cur}">${l ? esc(l) : "<br>"}</div>`;
+    const { cls: c, html, tight } = lineHtml(l, imageSrc, ends);
+    return `<div class="${tight ? "" : "lv-ln"}${cur}${c ? ` ${c}` : ""}">${html}</div>`;
+  });
 }
 
 /** What the right-click list offers in Markdown. */
@@ -106,7 +121,9 @@ const FORMATS: Format[] = [
 export function markdownFlavor(image?: ImageSrc): Flavor {
   const src: ImageSrc = image ?? (() => null);
   return {
-    draw: (text, pending) => docHtml(text, pending, src),
+    caretAware: true,
+    draw: (text, _pending, active, sel) => docHtml(text, src, active, sel),
+    onCaret: showGroups,
     line: (line) => {
       const li = LIST.exec(line);
       if (li) {

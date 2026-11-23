@@ -153,3 +153,40 @@ export function select(root: HTMLElement, start: number, end = start, starts?: n
 }
 
 export const lineStart = (v: string, i: number) => v.lastIndexOf("\n", i - 1) + 1;
+
+// ---------- marks shown where the caret is (见字如面's way, after Bear 2) ----------
+
+/** Where the selection's ends are in one line (offsets in it); none when the box isn't focused or it's another line. */
+export type Ends = readonly number[];
+export const NO_ENDS: Ends = [];
+
+/** The ends of `sel` falling in line `i` (whose start is `start`, length `len`), for a caret-aware flavor's draw. */
+export const endsIn = (sel: [number, number] | null | undefined, start: number, len: number): Ends =>
+  sel ? [sel[0], sel[1]].filter((e) => e >= start && e <= start + len).map((e) => e - start) : NO_ENDS;
+
+/** One inline construct with marks, [a, b] in its line: `on` (its marks show) while an end of the selection is in it or
+ * right next to it; elsewhere it reads as what it means. No offsets in the HTML: typing before it mustn't change how its
+ * line is drawn (LiveText keeps a line the browser typed). */
+export const fxOpen = (a: number, b: number, ends: Ends) => `<span class="fx${ends.some((e) => e >= a && e <= b) ? " on" : ""}">`;
+export const fxGroup = (a: number, b: number, ends: Ends, html: string) => `${fxOpen(a, b, ends)}${html}</span>`;
+
+/** The caret moved within its line (a flavor's `onCaret`): the groups (`.fx`) holding an end of the selection show their
+ * marks, the others hide them — the classes the draw would give, so the next draw finds the line as it would draw it.
+ * One div per line. */
+export function showGroups(box: HTMLElement, sel: [number, number], starts: number[]) {
+  const want = new Set<Element>();
+  for (const e of sel[0] === sel[1] ? [sel[0]] : sel) {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= e) lo = mid;
+      else hi = mid - 1;
+    }
+    box.children[lo]?.querySelectorAll<HTMLElement>(".fx").forEach((g) => {
+      if (e >= offsetOf(box, g, 0, starts) && e <= offsetOf(box, g, g.childNodes.length, starts)) want.add(g);
+    });
+  }
+  box.querySelectorAll(".fx.on").forEach((g) => !want.has(g) && g.classList.remove("on"));
+  want.forEach((g) => !g.classList.contains("on") && g.classList.add("on"));
+}

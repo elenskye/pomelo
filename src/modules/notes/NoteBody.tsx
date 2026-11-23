@@ -89,21 +89,20 @@ function Inline(props: { line: string; onTag?: (tag: string) => void; thing: (ta
 
 const BULLETS = ["•", "◦", "▪"];
 
-/** Each line is a block: paragraphs sit 0.75em apart (clearly more than the line gap), list items in a
- * row 0.25rem; a blank line adds a little more room. */
+/** Each line is a block, laid out as the box writing it (index.css .lv-ln). */
 export function NoteBody(props: { content: string; onTag?: (tag: string) => void }) {
   const lines = props.content.split("\n");
   const thing = useLinkThings(props.content);
-  const gap = (i: number, isItem: boolean) => (i === 0 || !lines[i - 1].trim() ? "" : isItem && LIST.test(lines[i - 1]) ? "mt-1" : "mt-[0.75em]");
   return (
     <div className="selectable leading-relaxed break-words">
       {lines.map((line, i) => {
-        if (!line.trim()) return i === 0 ? null : <div key={i} className="h-[0.9em]" />;
+        // as the box writing it (lite.ts, index.css .lv-ln): every line a whole line, a blank one too, a small gap after each
+        if (!line.trim()) return <div key={i} className="lv-ln"><br /></div>;
         const li = LIST.exec(line);
         if (li) {
           const level = Math.floor(li[1].length / 2);
           return (
-            <div key={i} className={`flex ${gap(i, true)}`} style={{ paddingLeft: `${level * 1.25}em` }}>
+            <div key={i} className="lv-ln flex" style={{ paddingLeft: `${level * 1.25}em` }}>
               <span className="w-[1.25em] shrink-0 text-muted-foreground tabular-nums">{li[3] ? `${li[3]}.` : BULLETS[Math.min(level, 2)]}</span>
               <div className="min-w-0 flex-1">
                 <Inline line={li[5]} onTag={props.onTag} thing={thing} />
@@ -113,7 +112,7 @@ export function NoteBody(props: { content: string; onTag?: (tag: string) => void
         }
         const indent = /^ */.exec(line)![0].length;
         return (
-          <p key={i} className={gap(i, false)} style={indent ? { paddingLeft: `${Math.floor(indent / 2) * 1.25}em` } : undefined}>
+          <p key={i} className="lv-ln" style={indent ? { paddingLeft: `${Math.floor(indent / 2) * 1.25}em` } : undefined}>
             <Inline line={line.trimStart()} onTag={props.onTag} thing={thing} />
           </p>
         );

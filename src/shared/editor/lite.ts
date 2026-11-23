@@ -1,7 +1,10 @@
 // Markdown-lite, 念念不忘's format (also the 速记小窗's): lines = paragraphs, `- ` / `1. ` lists (2 spaces
 // per level), **bold**, ==highlight==, ++underline++, bare URLs, (optionally) #tags, `:pm-<key>:` icons
-// (inlineIcon.ts) and 柚子链接 `[[目标]]` / `[[目标|字]]` (shared/links: marks dimmed, the name drawn as a link). The tag rule mirrors notes.rs — keep them in step. `liteFlavor` draws it in LiveText the way NoteBody shows it
-// (paragraphs 0.75em apart, list items 4px, a blank line 0.9em), marks kept and dimmed.
+// (inlineIcon.ts) and 柚子链接 `[[目标]]` / `[[目标|字]]` (shared/links: marks dimmed, the name drawn as a link). The tag rule mirrors notes.rs — keep them in step. `liteFlavor` draws it in LiveText the way NoteBody shows it,
+// laid out as 见字如面 (index.css .lv-ln): every line a whole line, a blank one too, the same small gap after each; a
+// `- ` item's marker drawn as a dot. Marks (** == ++, a link's brackets) show only where the caret is (`.fx.on`, as in
+// 见字如面); the box not being edited shows none.
+import { endsIn, fxOpen, NO_ENDS, showGroups, type Ends } from "./editable";
 import { iconHtml, iconSpans } from "./inlineIcon";
 import { foundIn, targetOf, KINDS } from "@/shared/links/links";
 import "@/shared/links/links.css";
@@ -101,21 +104,39 @@ export function liteFileName(text: string, fallback: string): string {
   return [...name].slice(0, 40).join("").trim() || fallback;
 }
 const MARK = "text-muted-foreground/45";
-/** A format mark (** == ++): shown only while the box is being edited (index.css .md-mark). */
+/** A format mark (** == ++, a link's brackets): shown only in the group holding the caret (index.css .md-mark, .fx). */
 const FMT = `md-mark ${MARK}`;
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const span = (cls: string, text: string) => (cls ? `<span class="${cls}">${esc(text)}</span>` : `<span>${esc(text)}</span>`);
 
-/** One line's inside: every character of it, marks dimmed, styled like NoteBody's. */
-function lineHtml(line: string, tags: boolean): string {
+/** The list head's HTML: a `- ` / `* ` marker as a dot (见字如面's .bul), a number dimmed. */
+function headHtml(head: string, li: RegExpExecArray): string {
+  if (!li[2]) return span(MARK, head);
+  return `${esc(li[1])}<span class="lv-bul">${esc(li[2])}</span>${esc(head.slice(li[1].length + 1))}`;
+}
+
+/** One line's inside: every character of it, styled like NoteBody's; each pair of marks and each link a group (`.fx`)
+ * whose marks show while `ends` (the selection's ends in this line) touch it. */
+function lineHtml(line: string, tags: boolean, ends: Ends = NO_ENDS): string {
   const li = LIST.exec(line);
   const head = li ? line.slice(0, line.length - li[5].length) : "";
-  const text = line.slice(head.length);
+  const at = head.length;
+  const text = line.slice(at);
   const spans = atoms(text, tags);
   const marks = pairMarks(text, spans);
+  // each opening mark's closing one (pairMarks pairs them in order)
+  const closer = new Map<number, number>();
+  const opened = new Map<Mark, number>();
+  for (const [i, m] of [...marks].sort((x, y) => x[0] - y[0])) {
+    const o = opened.get(m);
+    if (o === undefined) opened.set(m, i);
+    else (closer.set(o, i), opened.delete(m));
+  }
+  const groups: { mark: Mark; a: number; b: number }[] = [];
+  const open = (g: { a: number; b: number }) => fxOpen(at + g.a, at + g.b, ends);
   const on: Record<Mark, boolean> = { "**": false, "==": false, "++": false };
-  let out = head ? span(MARK, head) : "";
+  let out = li ? headHtml(head, li) : "";
   const classes = (cls = "") => [cls, on["**"] && "font-bold", on["=="] && "rounded-[3px] bg-[var(--status-doing-bg)] px-0.5 text-foreground", on["++"] && "underline decoration-1 underline-offset-[3px]"].filter(Boolean).join(" ");
   const styled = (s: string, cls = "") => span(classes(cls), s);
   // a #tag: its 「#」 on its own, so a tag with an icon shows the icon there (modules/notes/tagIcons.tsx)
@@ -129,8 +150,21 @@ function lineHtml(line: string, tags: boolean): string {
     const mark = marks.get(i);
     if (mark) {
       flush();
-      out += span(FMT, mark);
-      on[mark] = !on[mark];
+      const end = closer.get(i);
+      if (end !== undefined) {
+        const g = { mark, a: i, b: end + 2 };
+        out += open(g) + span(FMT, mark);
+        groups.push(g);
+        on[mark] = true;
+      } else {
+        // a pair crossing another (**a==b**c==): the ones opened inside close and open again around this end
+        const k = groups.map((g) => g.mark).lastIndexOf(mark);
+        const inner = groups.splice(k + 1);
+        out += "</span>".repeat(inner.length) + span(FMT, mark) + "</span>";
+        groups.pop();
+        on[mark] = false;
+        for (const g of inner) (out += open(g)), groups.push(g);
+      }
       i += 2;
       continue;
     }
@@ -138,7 +172,7 @@ function lineHtml(line: string, tags: boolean): string {
     if (a) {
       flush();
       const seen = text.slice(a.start, a.end);
-      out += a.kind === "link" ? linkHtml(seen, styled) : a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : a.kind === "tag" ? tag(seen, a.value) : styled(seen, "text-primary underline underline-offset-2");
+      out += a.kind === "link" ? open({ a: a.start, b: a.end }) + linkHtml(seen, styled) + "</span>" : a.kind === "icon" ? (iconHtml(a.value) ?? styled(seen)) : a.kind === "tag" ? tag(seen, a.value) : styled(seen, "text-primary underline underline-offset-2");
       i = a.end;
       continue;
     }
@@ -155,12 +189,12 @@ function linkHtml(seen: string, styled: (s: string, cls?: string) => string): st
   const f = foundIn(seen)[0];
   if (!f) return styled(seen);
   const [a, b, c] = f.inner;
-  if (f.alias) return span(MARK, seen.slice(0, b + 1)) + styled(seen.slice(b + 1, c), "pm-lkw-edit") + span(MARK, seen.slice(c));
+  if (f.alias) return span(FMT, seen.slice(0, b + 1)) + styled(seen.slice(b + 1, c), "pm-lkw-edit") + span(FMT, seen.slice(c));
   const raw = seen.slice(a, b);
   const { module } = targetOf(f.target);
   const label = KINDS.find(([k]) => k === module)?.[1];
   const head = module !== "articles" && label && raw.startsWith(`${label}/`) ? label.length + 1 : 0;
-  return span(MARK, seen.slice(0, a + head)) + styled(raw.slice(head), "pm-lk-edit") + span(MARK, seen.slice(b));
+  return span(FMT, seen.slice(0, a + head)) + styled(raw.slice(head), "pm-lk-edit") + span(FMT, seen.slice(b));
 }
 
 /** What the right-click list offers in this format. */
@@ -172,21 +206,18 @@ const FORMATS: Format[] = [
   { label: "编号列表", line: "1. " },
 ];
 
-/** NoteBody's gaps: a blank line is a 0.9em spacer; a line after text sits 0.75em below it, a list item
- * after a list item 4px. The pending line counts as text. */
-function gap(lines: string[], i: number, pending: number | null): string {
-  const blank = (j: number) => j !== pending && !lines[j].trim();
-  if (blank(i)) return lines.length > 1 ? "h-[0.9em] leading-[0.9em]" : "";
-  if (i === 0 || blank(i - 1)) return "";
-  return LIST.test(lines[i]) && LIST.test(lines[i - 1]) ? "mt-1" : "mt-[0.75em]";
-}
-
 export function liteFlavor(opts: { tags: boolean }): Flavor {
   return {
-    draw: (text, pending) => {
-      const lines = text.split("\n");
-      return lines.map((l, i) => `<div class="${gap(lines, i, pending)}">${l ? lineHtml(l, opts.tags) : "<br>"}</div>`);
+    caretAware: true,
+    draw: (text, _pending, active, sel) => {
+      let start = 0;
+      return text.split("\n").map((l, i) => {
+        const ends = i === active ? endsIn(sel, start, l.length) : NO_ENDS;
+        start += l.length + 1;
+        return `<div class="lv-ln">${l ? lineHtml(l, opts.tags, ends) : "<br>"}</div>`;
+      });
     },
+    onCaret: showGroups,
     line: (line) => {
       const li = LIST.exec(line);
       if (!li) return null;

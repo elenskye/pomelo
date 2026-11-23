@@ -197,6 +197,13 @@
 /* 边写边显示的输入框（shared/editor 的 lite、markdown，Seeker 的要点）：不在编辑时把格式符号（** == ++ # > 这些）收起来，
    只看效果；点进去编辑时再显示出来。 */
 [contenteditable]:not(:focus) .md-mark { display: none; }
+/* the boxes drawn as they are written (LiveText's lite / Markdown flavors, 念念不忘's NoteBody) laid out as 见字如面: every
+   line a whole line, a blank one too, the same small gap after each; marks only in the group holding the caret (.fx.on),
+   a heading's # and a quote's > only on the caret's line (.cur); a list's `- ` drawn as a dot (见字如面's .bul) */
+.lv-ln:not(:last-child) { padding-bottom: 0.25em; }
+.lv-ln .fx:not(.on) > .md-mark, .lv-ln:not(.cur) > .md-blk { display: none; }
+.lv-bul { position: relative; display: inline-block; width: 0.9em; color: transparent; }
+.lv-bul::after { content: ""; position: absolute; left: 0.22em; top: 50%; width: 0.36em; height: 0.36em; margin-top: -0.18em; border-radius: 50%; background: var(--color-pen); opacity: 0.8; }
 
 /* ---------- 左边一列（典型页「列表型」：visual-atelier canvases/pomelo-pages 的 .lp-side） ----------
    一行 .side-row；选中的那行里第一个放 shared/ui.tsx 的 <Picked />（一块手剪的底，data-hand="pick"），不再整行涂色。 */
