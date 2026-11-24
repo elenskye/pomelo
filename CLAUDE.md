@@ -101,7 +101,8 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - 每一页、桌面和每个浮层都包 `shared/Oops.tsx`；hook 不写在提前返回的后面；有焦点的输入框不能在窗口外面（WebKit 会把整个窗口的内容挪上去）。
 - 窗口是 WebKit：不放实时的 SVG 滤镜，整页大小的层不改 `z-index`、不反复新建；改了外框、纸、手画零件或动效，在 Safari 里量一遍流畅度。
 - 外框（顶栏、桌面和纸、前进后退、贴纸簿、柚子瓣、柚子）照 `requirements.md`「界面外框」和 `design.md`「外框」；各模块自己的布局不动。面板里柚子的操作（贴 JD、拆成子任务）放在那一栏标题的右边：`Field` 的 `action` 加 `Assist.tsx` 的 `AssistAction`。
-- 改了界面跑 `node scripts/ui-lint.mjs`（白板、直线框、被切的边、字出框都要清零）和 `node scripts/hooks-lint.mjs`。
+- 样式只管自己：模块的规则写在自己的盒子下面或带自己的前缀，不写单个通用类名打头的规则（`pnpm check` 的 css-lint 拦）；会滚的区域里只为裁切的盒子（截断的字、折起来的卡片）用 `overflow: clip`，不用 `hidden`（WebKit 里会接走鼠标滚轮，ui-lint 的 wheel-trap 查）。
+- 改了界面跑 `node scripts/ui-lint.mjs`（白板、直线框、被切的边、字出框都要清零）和 `node scripts/hooks-lint.mjs`。改了写字的框（`shared/editor/`、`bear.ts` 和它们的样式）再跑 `node scripts/editor-lab.mjs --safari`（WebKit）。
 
 ## 文档规则
 

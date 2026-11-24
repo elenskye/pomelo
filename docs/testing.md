@@ -6,7 +6,8 @@
 
 | 什么时候 | 做什么 |
 |---|---|
-| 改完任何代码 | `pnpm check`（类型检查 + 双指滑动的模拟 + Rust 测试） |
+| 改完任何代码 | `pnpm check`（样式不串 + 类型检查 + 双指滑动的模拟 + 写字的框的测试台（无头 Chrome）+ Rust 测试） |
+| 改了写字的框（`shared/editor/`、`bear.ts`、`lite.ts`、`markdown.ts`）或它们用到的样式 | `node scripts/editor-lab.mjs --safari`：同一个测试台在 Safari（WebKit）里再跑一遍（「写字的框」） |
 | 改了见字如面的双指滑动（`swipe.ts`） | `node scripts/swipe-sim.mjs`：编的滚轮事件放一遍干净的、页面忙的、主线程卡的、连滑几次的，126 种要 0 种不对；`node scripts/swipe-sim.mjs 7 all` 换一组随机数（前面的数）并列出每一种 |
 | 改了组件 | `node scripts/hooks-lint.mjs`：hook 写在 `if (…) return` 后面（数据晚到时 React 报 #310、这一页「出错了」），要 0 处 |
 | 改了界面、手画零件、外框 | `node scripts/ui-lint.mjs`（「界面检查」） |
@@ -33,7 +34,7 @@
 
 ## 界面检查
 
-`pnpm dev` 开着时 `node scripts/ui-lint.mjs`（无头 Chrome，用 visual-atelier 的 playwright-core，那边 `npm ci` 过就行；跑几分钟，期间别改仓库里的文件）。每一页和几个编辑面板（收支、账户、导入账单的一行、任务、书、岗位、日子、Seeker 小窗口时的抽屉）在 1440 × 900 和 1180 × 780 里走一遍，按类列出：盖在纸上的白板（board）、浏览器画的直线框（plain，小的附件签、文件名签不算）、手画的边在会滚的盒子里或被切掉（frame-*）、涂了底色的行压着手画的边（covers-frame）、字或格子伸出框（text-out、child-out）、整页白了（BLANK）。
+`pnpm dev` 开着时 `node scripts/ui-lint.mjs`（无头 Chrome，用 visual-atelier 的 playwright-core，那边 `npm ci` 过就行；跑几分钟，期间别改仓库里的文件）。每一页和几个编辑面板（收支、账户、导入账单的一行、任务、书、岗位、日子、Seeker 小窗口时的抽屉）在 1440 × 900 和 1180 × 780 里走一遍，按类列出：盖在纸上的白板（board）、浏览器画的直线框（plain，小的附件签、文件名签不算）、手画的边在会滚的盒子里或被切掉（frame-*）、涂了底色的行压着手画的边（covers-frame）、字或格子伸出框（text-out、child-out）、会卡住鼠标滚轮的盒子（wheel-trap：会滚的区域里 `overflow: hidden` 又真藏了东西的，WebKit 里滚轮停在它上面，区域不滚；改成 `clip`）、整页白了（BLANK）。WebKit 里滚轮的真实表现在浏览器里试不出来（Chrome 只在少数情况卡住），靠这一项拦。
 
 - 后面的参数换配色和明暗（`… lint.json 1440x900 blue dark`），`ROUTES=/finance,/todo` 只查几页，`SHOTS=<文件夹>` 存编辑面板的截图。
 - 故意保留的细边框加 `data-nolint`。首页问候的荧光笔会报一处（字形比行高高一点，不是出框）。
@@ -54,6 +55,8 @@
 - **柚子的右键和归档**：`?mock#/youzi` 对话列表的一条、项目的文件夹右键（发 `contextmenu`）出「⋯」里的那些；消息右键：我的是复制、修改问题，柚子的是复制、保存为 Word、重新生成（生成时不出后两样）。点「归档」后列表最下面多「归档 1」；`?mock#/settings/youzi` 的「柚子的数据」里「归档的对话」点「在柚子里看」，到柚子、「归档」展开在眼前。
 - **柚子链接**：`?mock#/notes` 的输入框里打 `[[示例`，提示（`[role=listbox]`）里混着游戏、书，↩ 写成 `[[玩物有志/示例游戏 A]]`，记下后是小卡（`.pm-lk`，颜色 `--pm-link-pomelo`），点它打开那一条，面板最下面「柚子链接 · 1」。`?mock#/articles` 正文里：`![[念念不忘/…]]` 单独一段是笔记卡 `.emb-card`（目标用 `links_suggest` 取一条笔记的 `target`）；选一段右键，「记到念念不忘」弹出 `.pm-clip`（字后面「来自 [[标题]]」），「柚子链接…」弹出 `.pm-linkpick`，点一行把选中的字变成 `.pm-lkw`（念念不忘的输入框右键也有）；被链到的那篇正文右上有 `.pm-bkb`（点了是菜单）、文末 `.pm-bkx`；书影游面板「柚子链接」右边「记一条」弹出同一个框、开头是 `[[玩物有志/…]] `；正文右上的羽毛开书架 `.ar-shelf`，用 `PointerEvent` 把小卡拖到一段后面，多一张 `.emb-card`。五花八门「游戏」清单「⋯ → 搬到玩物有志…」确认后到 `#/games`、清单没了。Rust：`modules::links`、`modules::games`。
 - **见字如面的搬家、导入、导出**：Rust 的 `modules::articles::import`、`export`、`docx`。真的 Bear 只读地核对：`real_bear_import`（不设 `POMELO_BEAR_INTO` 时搬进内存里的库和临时文件夹，打印篇数、标签、附件，逐篇比时间和图片；设了就搬进那个数据目录，先留「导入前」备份，App 要关着）。PDF 的样子在浏览器里看：`/print.html?mock&id=4&style=pomelo|print&toc&header&meta&repeat=3`（`repeat` 把正文多来几遍看分页；`window.__laid` 是页数、链接和书签；加 `&word` 看拆给 Word 的块）。真的 PDF / Word 只能在打包版里出：用临时数据目录打开时带 `POMELO_TRY_EXPORT='{"target":{"all":true},"options":{"format":"pdf","style":"pomelo","toc":true,"header":true,"meta":true,"dest":"<临时文件夹>"}}'`，打开 5 秒后导出一次，结果写在数据目录的 `export-try.json`（只认临时数据目录）。
+- **写字的框的测试台**（`src/dev/edlab.ts`，`node scripts/editor-lab.mjs [--safari]`，自己起一个 Vite，不占 1420）：在真页面里（所有样式都在）把一份编的样本用三种写法（见字如面、念念不忘、写提示词）各画一遍：没在写、光标停在每一行、刚回车的空行、光标走过每一个字，几种宽度和字号。查六样，一样不过就列出来：字叠在一起（每段字两两不重叠、盒子装得下自己的字）、别的模块的样式画进了框里、读回来的字和原文不一样、光标放到第 i 个字读回来不是 i（标题的 `#`、字里的图标是整块，落在两头算对）、只重画变了的行和整个重画不一样，再加能点的（折叠箭头、「…」、待办的框、链接、标签）在最上面。新的写法、新的记号先加进样本。
+- **样式不串**（`node scripts/css-lint.mjs`，在 `pnpm check` 里）：所有样式表开窗就全部载入（`main.tsx`，懒加载的页也是），一个模块不带作用域的规则在每一页都算数。模块的样式表里，单个类名打头的规则用的类名不能出现在别的模块的样式表里，也不写不带类名的规则。
 - **写字的框**（右键的那条纸、字里的图标）：`?mock#/notes` 在输入框里右键，点格式、点两个图标库（柚儿园的画成图标，网站的留着 `:名字:`）；Markdown 的在 `?mock#/site` 的作品正文或写提示词的框里（格式收在「文字」「段落」「插入」三行里）。预览面板和后台标签页没有键盘焦点，`[[`、`#` 的提示出不来：先对着输入框发 `new FocusEvent('focusin', { bubbles: true })`。速记小窗（`capture.html?mock`，520 × 320）里提示列表不出窗口、不盖住在写的那一行，放不下就在里面滚。光标和退格碰到字里的图标各家浏览器不一样：随手起一个收 POST 的（`node -e` 写文件就行）听一个端口，再 `open -g -a Safari "http://localhost:1420/?mock&edtest=<端口>"`（`src/dev/edtest.ts`：两种格式各 12 项，结果发回来；页面标题变成 `edtest ok` / `edtest FAIL`，`window.__edtest` 里是每一项），要 24 项全过。Rust：`notes`（一行预览去掉图标）。
 - **落签**（规矩见 `design.md`「外框 › 落签」）：`.tip-float` 是挂出来的那张。靠纸边的按钮（`?mock#/site` 右上的「刷新」）纸签要整张看得到；`.tip-float .pm-tip-string` 的 top 比 `inkBottom` 量出的最低一笔低 3 像素左右，线的中线对着按钮的中线（正中一竖上没有笔画的图标，如格式条的「引用」「柚子链接」「专心写」，量整幅图最低的一笔）。`?mock` 里 `(await import('/src/shared/tips.ts')).inkBottom(按钮, null)` 直接量，窗口 1900 宽（格式条不收起）。要量：时间穿梭、顶栏的找东西和设置、格式条的每个按钮、「桌上开着」的每一页、叠着的页（开三四个模块再回一页，歪完 0.35 秒再量）、柚子瓣（含念念不忘那片叶子）。等纸签晃完（1.1 秒）再量，第一帧往上提了 8 像素。内置浏览器的面板藏起来时不走帧，用无头 Chrome；Safari 后台标签页先塞 `*{animation:none!important;transition:none!important}`。
 

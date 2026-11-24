@@ -258,8 +258,9 @@
 7. **新浮层包一层 `Oops`**（`look="layer"`，给它 `onClose`），照 `src/app/App.tsx` 里贴纸簿那几个的写法。
 8. **hook 不写在提前返回的后面**：`if (…) return` 后面再调 hook，数据晚到的那一下这一页就显示「这一页出错了」。
 9. **有焦点的输入框不能在窗口外面**：WebKit 为了让它露出来，会把整个窗口的内容挪上去、回不来。从窗口外滑进来的东西（贴纸簿）等它进了窗口再给焦点，滑走前先放开。
-10. **文案**照「文案」；能挑图标的地方用图标库；页面用 `usePageContext` 告诉问柚子的小窗现在在哪。
-11. **改完跑**（见 `testing.md`「什么时候跑什么」）：`pnpm check`；`node scripts/ui-lint.mjs`（白板、直线框、被切的手画边、字出框都要清零）；`node scripts/hooks-lint.mjs`。看页面：后台跑 `pnpm dev`，开 `http://localhost:1420/?mock`（某页用 `/?mock#/finance`）。改了外框、纸、手画零件、动效，在 Safari 里量流畅度；新加或改了 Rust 命令的页面，还要在打包版的真实窗口里点一次。
+10. **样式只管自己的东西**：所有样式表开窗就全部载入，模块的样式写在自己的盒子下面（`.ar-text .cd`）或带自己的前缀（`.cal-day`），不写单个通用类名打头的规则（`.cd`、`.on`），也不写只有元素的规则；`pnpm check` 的 `css-lint` 会拦。会滚的区域里，只为裁掉东西的盒子（截断的字、折起来的卡片、左滑才露出的按钮）用 `overflow: clip`，不用 `hidden`：WebKit 里藏了东西的 `hidden` 盒子会接走鼠标滚轮，下面的列表就不滚了。`index.css` 已把 `truncate`、`line-clamp-*` 改成 `clip`；`css-lint` 和 `ui-lint` 的 wheel-trap 会查。
+11. **文案**照「文案」；能挑图标的地方用图标库；页面用 `usePageContext` 告诉问柚子的小窗现在在哪。
+12. **改完跑**（见 `testing.md`「什么时候跑什么」）：`pnpm check`；`node scripts/ui-lint.mjs`（白板、直线框、被切的手画边、字出框都要清零）；`node scripts/hooks-lint.mjs`。看页面：后台跑 `pnpm dev`，开 `http://localhost:1420/?mock`（某页用 `/?mock#/finance`）。改了外框、纸、手画零件、动效，在 Safari 里量流畅度；新加或改了 Rust 命令的页面，还要在打包版的真实窗口里点一次。
 
 ## 各处的样子
 
