@@ -6,18 +6,18 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 1. **先问我这次属于哪种程度的开发**（见「版本」），定了版本号再动手。
 2. 读 `HANDOFF.md`（交接：现在到哪、正式版装到哪个版本、没做完的、等我做的）、`docs/roadmap.md`（以后做什么、做完的版本）和 `docs/requirements.md` 里要动的那几节。
-3. 按需读：`docs/schema.md`（表和规则）、`docs/design.md`（视觉和做界面的规矩）、`docs/architecture.md`（存放、备份、安全、柚子的做法）、`docs/testing.md`（怎么测）。
+3. 按需读：`docs/schema.md`（表和规则）、`docs/design.md`（视觉、共用的摆法和控件）、`docs/architecture.md`（存放、备份、安全、柚子的做法）、`docs/testing.md`（怎么测）。
 
 ## 版本
 
-- 版本号 `主.次.补`，现在是 1.0.1。小幅优化、修 Bug 升最后一位（1.0.0 → 1.0.1）；新功能、大幅优化升中间一位（1.0.0 → 1.1.0）；升第一位（→ 2.0.0）由我决定。
+- 版本号 `主.次.补`（现在到哪见 `HANDOFF.md`）。小幅优化、修 Bug 升最后一位（1.0.0 → 1.0.1）；新功能、大幅优化升中间一位（1.0.0 → 1.1.0）；升第一位（→ 2.0.0）由我决定。
 - 升中间一位、第一位的分 Phase 计划（比如 1.2.0 Phase 1～5），写进 `roadmap.md`，每个 Phase 做完功能要真能用并说明验收结果；升最后一位的不分 Phase。
 - 开新版本时把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 三处版本号（设置「关于」里显示的）一起改。
 
 ## 最高原则
 
 - **个人、轻量**：一台 Mac、一个人。不做账号、协作、云端、跨平台，不做「以后可能用得上」的抽象。只做当前版本（或 Phase）的事。
-- **重要决定先问我**：数据结构、页面结构、新增依赖、功能范围，给推荐方案、写清后果，由我来定。一两个决定用提问功能问；大范围的需求用问卷页（照 visual-atelier 的 `questionnaire` Skill 做，发成 Artifact，答案存在页面存储里读回；源文件放 `docs/`，结论写进 `requirements.md` 后删掉）。界面大改先在 `prototype/ui-rN/` 做本地网页原型给我看。
+- **重要决定先问我**：数据结构、页面结构、新增依赖、功能范围，给推荐方案、写清后果，由我来定。一两个决定用提问功能问；大范围的需求用问卷页（照 visual-atelier 的 `questionnaire` Skill 做，源文件放 visual-atelier 的 `canvases/pomelo-<名字>/`，发成 Artifact，答案存在页面存储里读回；结论写进 `requirements.md` 后问我删不删）。界面大改先在 `prototype/ui-rN/` 做本地网页原型给我看。
 
 ## 工作方式
 
@@ -36,7 +36,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **这边的会话在那边能动的**：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`，`CHANGELOG.md` 里自己的条目，`ROADMAP.md`「现在」里 Pomelo 那一行。别的（`bench/`、别的 `tooling/`、`package.json`……）要改先问我。几个项目共用一个仓库：只提交、只打自己做的那部分，提交信息同样全英文，写 `pomelo 1.0.0: …`、tag `pomelo-v1.0.0`（这是视觉方案的版本，和 App 的版本号无关）。
 - **新设计**：先在现用账号的云端画布上出样子，我在那里批；批了源进 `canvases/pomelo-<名字>/`、资产进 `schemes/pomelo/`，再发版、提交、打 tag、核对 tag、同步。方案发版、Design System「Pomelo 柚儿园」的发布、同步进来都由这边的会话做。
 - **同步来的资产**在 `src/vendor/pomelo/`（单向，核对 tag 后 `sync`，不手改，要改回那边改）：`pomelo.css`、`ds.css`、`tokens.ts`、手画零件 `handmade.js`、`marks/`（柚子的表情、模块贴纸、界面小图标、空状态插图、菜单栏和 App 图标……）、Atlas 的设计快照、`VERSION`、`SHA256SUMS`。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
-- **图标**：界面小图标从 `@/shared/icons` 取（名字沿用 Lucide 的 `Plus`、`Trash2`…；没有也不装 lucide-react）。新图标回那边 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行。柚子的表情、模块贴纸用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark`（每次换一套 id，同一张能放很多次）。
+- **图标**：界面小图标从 `@/shared/icons` 取（名字沿用 Lucide 的 `Plus`、`Trash2`…；没有也不装 lucide-react）。新图标回那边 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行；贴纸、空状态插图同理（那边的 `marks/`）。柚子的表情、模块贴纸用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark`（每次换一套 id，同一张能放很多次）。
 - **Atlas 的设计是冻结的快照**（`src/vendor/pomelo/atlas/<名字>-<版本>/`），不改。只升最后一位的小修替掉同一条线里旧的那份（照旧的做的改照新的画）；升了前两位的两份都留（旧的几份照旧的画）。新设计：那边定稿（名字和版本号我定）、冻结、同步，再改 `youzi/atlas.rs` 的 `DESIGN`。「呈现结果」只能加，旧的行和快照都要读得了。年度小报只有我能删（没有删它的 AI 工具，后台任务也不删）。
 
 ## 数据规则
@@ -46,7 +46,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - 一次改几张表用 `common::Tx::begin(conn)?`（可嵌套，基于 SAVEPOINT），不用 `unchecked_transaction`。
 - **只加不改**：改结构只能新增 migration；migration、`youzi.db` 升级脚本、`transfer.rs` 格式版本、`search/store.rs` 版本都接着现有编号写，已有的永远不改。重建有子表的表注意外键动作（参考 `0018`、`0019`）。每个模块导出再导入必须完全一致（有测试）；数据文件格式变了 `transfer.rs` 的版本加一，旧文件要能读。
 - **真实数据目录** `~/Library/Application Support/Pomelo OS/`：开发和测试只用开发数据目录或临时目录，除非我明确要求绝不读写。我允许时也只碰我说的那几块：读用只读拷贝（`sqlite3 -readonly <库> ".backup <临时文件>"`），写之前先问，绝不撤回或覆盖我在正式版里做的修改。个人数据（xlsx、数据库、备份、导出文件、`prototype/`）不进 Git。
-- **算出来的东西**随时能删了重建，不写 migration，不进备份、导出和撤销：`search.db`（改结构把 `search/store.rs` 的版本加一；新一类要搜的记录在 `search/sources.rs` 加一行）、`janitor.db`（见「DevJanitor」）、一网打尽的网站图标（数据目录 `icons/`，`icons.rs`；只有正式数据目录的打包版联网去取，开发版和测试只显示首字母）。
+- **算出来的东西**随时能删了重建，不写 migration，不进备份、导出和撤销（算出来的库用 `db::Derived` 打开）：`search.db`（改结构把 `search/store.rs` 的版本加一；新一类要搜的记录在 `search/sources.rs` 加一行）、`janitor.db`（见「DevJanitor」）、一网打尽的网站图标（数据目录 `icons/`，`icons.rs`；只有正式数据目录的打包版联网去取，开发版和测试只显示首字母）。
 - **建出来的模块**（五花八门 / 循序渐进，`custom.rs`）是数据不是代码：键 `list/编号`、`progress/编号`，编号不重用；隐藏、发给云端、搜索、柚子查数据都按单个模块算，新增读数据的地方（搜索、首页、柚子）要连它们一起照顾。
 - **芝麻开门**：密码只以密文存（规则见 `modules/vault.rs` 开头）。不做成 AI 工具，不进导出、全局搜索和索引，不向我要主密码；测试只用临时目录和自己编的主密码，不往真实钥匙串写（单元测试用 `secure.rs` 的假实现）。
 
@@ -92,23 +92,24 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## 界面规则
 
-做界面照 `docs/design.md` 的「开发指南」，最常出错的几条：
+做界面的规矩只写在这里；视觉、共用的摆法和控件表见 `docs/design.md`。
 
 - 不写使用提示，列表行只放最必要的信息；只有一种东西的列表不写小标题。
-- 先用现成的组件（控件表、`PageHeader`、`SidePanel`、`.side-row` + `<Picked />`、`charts.tsx`、手画的 `TextInput` `MdField` `Dropdown` `PickField` `Button`），不用细边框的原生输入框；我能挑图标的地方用图标库（`IconDialog` / `IconField` / `StoredIcon`，存成 `i:<键>`）；小按钮的名字用 `pm-tip-host` + `<Tip>`，纸签只写动作（「删除」，不写「删除「某某」」：记录名放 `IconButton` 的 `label`、纸签写 `tip`）；浮在字或按钮旁的卡用 `.pm-float` + `src/shared/fit.ts`（量了再摆，不出窗口；带标题的能拖，`useDragFit`）；弹窗用 `Modal`，自己写 `<dialog>` 的用 `shared/dialog.ts` 的 `showDialog` 打开。
-- 颜色只用变量（图表只用 `--chart-*`，模块颜色 `--module-*` 回 visual-atelier 加）；字体只用 `font-sans`（不直接写 `Hannotate SC`；柚子消息正文和见字如面的正文用苹方 `font-reading`，是仅有的例外）；便签（`.pm-note`）上用便签的墨色。
-- 手画的边画在字下面一层：会滚、会裁的盒子外面一层画边、里面一层滚，能滚的区域用 `-m-1 … p-1`。拖动排序用鼠标事件（`src/shared/sortable`），不用浏览器自带的拖放。
-- 每一页、桌面和每个浮层都包 `shared/Oops.tsx`；hook 不写在提前返回的后面；有焦点的输入框不能在窗口外面（WebKit 会把整个窗口的内容挪上去）。
+- 先用现成的组件（控件表、`PageHeader`、`SidePanel`、`.side-row` + `<Picked />`、`charts.tsx`、手画的 `TextInput` `MdField` `Dropdown` `PickField` `Button`），不用细边框的原生输入框，不自己拼 `pm-*` 类名；我能挑图标的地方用图标库（`IconDialog` / `IconField` / `StoredIcon`，存成 `i:<键>`）；小按钮的名字用 `pm-tip-host` + `<Tip>`，纸签只写动作（「删除」，不写「删除「某某」」：记录名放 `IconButton` 的 `label`、纸签写 `tip`）；浮在字或按钮旁的卡用 `.pm-float` + `src/shared/fit.ts`（量了再摆，不出窗口；带标题的能拖，`useDragFit`）；弹窗用 `Modal`，自己写 `<dialog>` 的用 `shared/dialog.ts` 的 `showDialog` 打开。
+- 颜色只用变量（图表只用 `--chart-*`；新模块的颜色 `--module-<键>` 在那边的 `schemes/pomelo/tokens/targets.json` 定、同步过来，这边在 `app/modules.ts` 写 `color: "var(--module-<键>)"`）；字体只用 `font-sans`（不直接写 `Hannotate SC`；柚子消息正文和见字如面的正文用苹方 `font-reading`，是仅有的例外）；便签（`.pm-note`）上用便签的墨色。
+- 白卡照写 `rounded-card border bg-card`，在纸上自己变成手画卡。手画的边画在字下面一层：会滚、会裁的盒子外面一层画边、里面一层滚，能滚的区域用 `-m-1 … p-1`。拖动排序用鼠标事件（`src/shared/sortable`），不用浏览器自带的拖放。
+- 动效只加减类名：先在 `ds.css` 里找零件，没有的回 visual-atelier 加，这边不写关键帧。
+- 每一页、桌面和每个浮层都包 `shared/Oops.tsx`（浮层用 `look="layer"` 加 `onClose`，照 `App.tsx` 里贴纸簿的写法）；hook 不写在提前返回的后面；有焦点的输入框不能在窗口外面（WebKit 会把整个窗口的内容挪上去）：从窗口外滑进来的东西进了窗口再给焦点，滑走前先放开。页面用 `usePageContext` 告诉柚子小窗现在在哪。
 - 窗口是 WebKit：不放实时的 SVG 滤镜，整页大小的层不改 `z-index`、不反复新建；改了外框、纸、手画零件或动效，在 Safari 里量一遍流畅度。
 - 外框（顶栏、桌面和纸、前进后退、贴纸簿、柚子瓣、柚子）照 `requirements.md`「界面外框」和 `design.md`「外框」；各模块自己的布局不动。面板里柚子的操作（贴 JD、拆成子任务）放在那一栏标题的右边：`Field` 的 `action` 加 `Assist.tsx` 的 `AssistAction`。
-- 样式只管自己：模块的规则写在自己的盒子下面或带自己的前缀，不写单个通用类名打头的规则（`pnpm check` 的 css-lint 拦）；会滚的区域里只为裁切的盒子（截断的字、折起来的卡片）用 `overflow: clip`，不用 `hidden`（WebKit 里会接走鼠标滚轮，ui-lint 的 wheel-trap 查）。
+- 样式只管自己：模块的规则写在自己的盒子下面或带自己的前缀，不写单个通用类名或只有元素打头的规则（`pnpm check` 的 css-lint 拦）；会滚的区域里只为裁切的盒子（截断的字、折起来的卡片、左滑才露出的按钮）用 `overflow: clip`，不用 `hidden`（WebKit 里会接走鼠标滚轮，ui-lint 的 wheel-trap 查；`index.css` 已把 `truncate`、`line-clamp-*` 改成 `clip`）。
 - 改了界面跑 `node scripts/ui-lint.mjs`（白板、直线框、被切的边、字出框都要清零）和 `node scripts/hooks-lint.mjs`。改了写字的框（`shared/editor/`、`bear.ts` 和它们的样式）再跑 `node scripts/editor-lab.mjs --safari`（WebKit）。
 
 ## 文档规则
 
 - **给我看的**：`README.md`、`CLAUDE.md`、`AGENTS.md`、`HANDOFF.md`、`docs/`。越短越好，通俗、全中文，只写现状、规则和决定，不写变更历史、不写只为旧数据的说明；各页的具体样子（布局、宽度、按钮上的字）以代码为准，不写进文档。
 - **不给我看的**：代码、注释、脚本、提交信息，按 Agent 效率最高的方式写。
-- 每轮更新 `HANDOFF.md`；一个版本（或 Phase）做完更新 `roadmap.md`；需求变了改 `requirements.md`，数据结构变了改 `schema.md`（含版本记录），视觉变了改 `design.md`，做法变了改 `architecture.md`，测法变了改 `testing.md`。
+- **一件事只写在一处**，别处要提只写「见 `某文档`「某节」」：`README.md` 是什么、怎么用、数据在哪；`CLAUDE.md` 给 Agent 的规则和代码地图；`HANDOFF.md` 现状、没做完的、等我做的（每轮更新）；`roadmap.md` 以后做什么、做完的版本（一个版本或 Phase 做完更新）；`requirements.md` 功能做什么、我的决定；`architecture.md` 做法和为什么；`schema.md` 表、字段、数据文件格式和版本记录；`design.md` 视觉、共用的摆法和控件；`testing.md` 怎么测。哪样变了就改哪份。
 
 ## 代码地图
 
@@ -129,7 +130,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 | `src/modules/youzi/` | `YouziPage.tsx`；`ConversationList.tsx`、`BigPomelo.tsx`；`Transcript.tsx` · `markdown.ts`；`useChat.tsx`；`SideChat.tsx` 右侧小窗；`AskCard.tsx`；`Composer.tsx`；`Assist.tsx` 面板里的帮手；`Thinking.tsx` 思考和强度；`assistants/` 各助手的页面（`seekerJobs.tsx` 让模型调用离开页面也跑完；`translator.tsx` 和速记小窗共用） |
 | `src/settings/` · `src/shared/` | 设置页（五张纸签）；共用组件：`links/` 柚子链接（改了能被链到的东西调 `links.ts` 的 `linksChanged`）、`editor/`（`LiveText` 底子、`LiteEditor` 念念不忘的格式（新模块要写字就用它）、`MdField` 写提示词的框、`MdMenu.tsx` 右键的格式）、`iconLibrary.tsx`、`tips.ts` 落签、`hand.ts` 手画零件、`ui.tsx` 基本控件、`Oops`、`InlineName` 就地改名（改名都用它，不弹窗）、`Dropdown` `PickField` `DateInput` `panel` `Modal` `sortable` `charts` 等 |
 | `src/dev/` | `mockIpc.ts` 浏览器测试用的模拟后端（新命令要加进来；各模块的 `*Mock.ts` 分开放，`janitorMock` 由 Rust 扫假 Mac 生成，`atlasMock` 由 `scripts/atlas-mock.mjs` 生成）；`perf.ts` 流畅度自测、`edtest.ts` 写字的框自测、`drive.ts` 在 Safari 里遥控（见 `docs/testing.md`） |
-| `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`perf-listen.mjs`、`drive.mjs`、`ui-lint.mjs`、`hooks-lint.mjs`、`swipe-sim.mjs`、`atlas-mock.mjs`、`resume-templates.ts`（生成内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
+| `scripts/` · `prototype/` | `install-app.sh`、`clean-build.sh`、`perf-listen.mjs`、`drive.mjs`、`ui-lint.mjs`、`hooks-lint.mjs`、`css-lint.mjs`、`editor-lab.mjs`、`swipe-sim.mjs`、`atlas-mock.mjs`、`resume-templates.ts`（生成内置简历模板）；界面原型 `prototype/ui-rN/`（不进 Git，现在是 `ui-r4`） |
 
 ## 新增一个模块
 
@@ -137,7 +138,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 2. 写 `src-tauri/src/modules/xxx.rs`（参考 `jobs.rs`），在 `mod.rs`、`lib.rs` 注册；写导出再导入的往返测试
 3. 需要「类型」：在 `kinds.rs` 的 `TABLES` 加一行（列名必须叫 `kind_id`），默认值写进 migration
 4. `transfer.rs` 加一个 `Payload`（含 `kind_modules`），格式版本加一；`search/sources.rs` 加要搜的字段，页面用 `useOpenRequest` 打开搜到的记录；要上首页的在 `home.rs` 加一块；柚子要能查的在 `youzi/data.rs` 加查询
-5. 前端：`src/modules/xxx/`，在 `app/modules.ts`、`main.tsx` 注册，`app/dock.ts` 的 `DEFAULT` 里定它默认在贴纸簿哪个分类；有子页的在 `modules.ts` 写 `subs`、页面用 `useSubPage`；模块颜色和贴纸回 visual-atelier 加（`design.md`「开发指南」）；命令和示例数据加进 `mockIpc.ts`；页面用 `usePageContext` 告诉小窗在哪、打开了哪条
+5. 前端：`src/modules/xxx/`，在 `app/modules.ts`、`main.tsx` 注册，`app/dock.ts` 的 `DEFAULT` 里定它默认在贴纸簿哪个分类；有子页的在 `modules.ts` 写 `subs`、页面用 `useSubPage`；模块颜色和贴纸回 visual-atelier 加（见「visual-atelier」）；命令和示例数据加进 `mockIpc.ts`；页面用 `usePageContext` 告诉小窗在哪、打开了哪条
 6. 更新文档
 
 五花八门、循序渐进建的模块不走这一步。
@@ -146,13 +147,12 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm check` | 类型检查 + 双指滑动的模拟 + Rust 测试，每次改完都要跑 |
+| `pnpm check` | 样式不串 + 类型检查 + 双指滑动的模拟 + 写字的框的测试台 + Rust 测试，每次改完都要跑 |
 | `pnpm app:dev` · `pnpm app:build` | 运行开发版 · 只打包不安装 |
 | `pnpm app:install` | 打包并安装到「应用程序」（什么时候装见「正式版」） |
 | `pnpm clean:build` | 清编译缓存 `src-tauri/target`（超过 20 GB 时各命令和开会话的 hook 会自动清；别改回带调试信息的编译设置） |
 
 - 怎么测见 `docs/testing.md`：界面用 Bash 后台跑 `pnpm dev`、再开 `ui-mock` 的 `http://localhost:1420/?mock`；`?mock` 不走 Rust，新加或改了 Rust 命令的页面还要在打包版里用临时数据目录点一次（不用 osascript 碰 System Events）。
-- 装正式版前做升级测试；真的本地模型、云端、联网接口、Pub2MD 真测都先问我。
 
 ## 环境
 

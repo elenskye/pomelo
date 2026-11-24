@@ -38,12 +38,14 @@
 |---|---|
 | [交接](HANDOFF.md) | 现在到哪、没做完的、等你做的 |
 | [开发路线](docs/roadmap.md) | 以后做什么、做完的版本 |
-| [需求](docs/requirements.md) | 已经确定的需求 |
-| [技术架构](docs/architecture.md) | 选型、数据存放、备份升级、安全 |
-| [数据结构](docs/schema.md) | 每张表的字段和规则、数据文件格式 |
-| [视觉规范](docs/design.md) | 颜色、字体、布局、各处的样子 |
+| [需求](docs/requirements.md) | 每个功能做什么、你做的决定（含不做什么） |
+| [技术架构](docs/architecture.md) | 怎么做的、为什么：选型、数据存放、备份升级、撤销、安全、柚子 |
+| [数据结构](docs/schema.md) | 表和字段、数据文件格式、版本记录 |
+| [视觉规范](docs/design.md) | 颜色、字、手画、外框、动效、文案，几页共用的摆法和控件 |
 | [验证方法](docs/testing.md) | 怎么测：模拟数据的参数、真实窗口、升级测试、真模型和真接口的命令 |
-| [CLAUDE.md](CLAUDE.md) | 给 AI 编程助手的规则（版本号、Git、数据规则）和代码地图（Codex 读 [AGENTS.md](AGENTS.md)，它指向 CLAUDE.md） |
+| [CLAUDE.md](CLAUDE.md) | 给 AI 编程助手的规则（版本号、Git、数据规则、做界面的规矩，只写在这一处）和代码地图（Codex 读 [AGENTS.md](AGENTS.md)，它指向 CLAUDE.md） |
+
+一件事只写在一份里，别的文档要提只写「见某文档「某节」」。
 
 ## 数据在哪里
 
