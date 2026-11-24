@@ -1,7 +1,7 @@
 {
   "name": "pomelo",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,7 @@
     "app:build": "bash scripts/clean-build.sh --auto && tauri build --bundles app",
     "app:install": "bash scripts/install-app.sh",
     "clean:build": "bash scripts/clean-build.sh",
-    "check": "bash scripts/clean-build.sh --auto && tsc --noEmit && node scripts/swipe-sim.mjs && cargo test --manifest-path src-tauri/Cargo.toml"
+    "check": "bash scripts/clean-build.sh --auto && node scripts/css-lint.mjs && tsc --noEmit && node scripts/swipe-sim.mjs && node scripts/editor-lab.mjs && cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.0",
