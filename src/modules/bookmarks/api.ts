@@ -20,7 +20,7 @@ export type Bookmark = {
   updatedAt: string;
 };
 export type NewBookmark = { parentId: number | null; kind: Bookmark["kind"]; title: string; url?: string; onHome?: boolean };
-export type BookmarkPatch = Partial<{ title: string; url: string; onHome: boolean }>;
+type BookmarkPatch = Partial<{ title: string; url: string; onHome: boolean }>;
 
 const api = {
   list: () => invoke<Bookmark[]>("bookmarks_list"),
@@ -32,7 +32,7 @@ const api = {
   icons: () => invoke<Record<string, string>>("bookmarks_icons"),
 };
 
-export const BOOKMARKS_KEY = ["bookmarks"];
+const BOOKMARKS_KEY = ["bookmarks"];
 const ICONS_KEY = [...BOOKMARKS_KEY, "icons"];
 export const useBookmarks = () => useQuery({ queryKey: [...BOOKMARKS_KEY, "list"], queryFn: api.list });
 

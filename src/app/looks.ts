@@ -10,7 +10,7 @@ import { isTint, markSvg, stickerById, TINTS, type Sticker, type Tint } from "@/
 import type { ModuleDef } from "./modules";
 
 export type Look = { mark?: string; tint?: Tint };
-export type Looks = Record<string, Look>;
+type Looks = Record<string, Look>;
 
 const KEY = "ui.module_look";
 const QUERY = ["setting", KEY];

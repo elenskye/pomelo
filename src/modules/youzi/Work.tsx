@@ -26,7 +26,7 @@ export function EditFileTag(props: { target: EditTarget }) {
       onClick={() => openPath(props.target.path, toast)}
       className="mb-1.5 flex max-w-[85%] items-center gap-1.5 rounded-control bg-primary/10 px-2 py-1 text-xs outline-none hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <FilePen size={12} strokeWidth={1.75} className="shrink-0" />
+      <FilePen size={12} className="shrink-0" />
       <span className="text-muted-foreground">改</span>
       <span className="truncate">{props.target.name}</span>
     </button>
@@ -62,7 +62,7 @@ function NewWordCard(props: { edit: FileEdit; streaming: boolean; onChanged: () 
   return (
     <div data-find-skip className="mt-2 max-w-2xl rounded-card border bg-card text-sm">
       <p className="flex items-center gap-1.5 border-b px-3 py-2 text-xs text-muted-foreground">
-        <FilePlus2 size={12} strokeWidth={1.75} /> 新建 {excel ? "Excel" : "Word"}「{pending ? `${name}.${ext}` : edit.name}」
+        <FilePlus2 size={12} /> 新建 {excel ? "Excel" : "Word"}「{pending ? `${name}.${ext}` : edit.name}」
       </p>
       <div className="-m-1 max-h-60 overflow-y-auto p-1">
         <div className="px-3 py-2">

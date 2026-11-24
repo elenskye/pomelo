@@ -38,9 +38,9 @@ export function cheer(text: string, x: number, y: number, withConfetti = false) 
 }
 
 /** Cheer over an element (the list that was just finished). */
-export const cheerOver = (el: Element | null, text: string, withConfetti = true) => {
+export const cheerOver = (el: Element | null, text: string) => {
   const r = el?.getBoundingClientRect();
-  cheer(text, r ? r.left + r.width / 2 : window.innerWidth / 2, r ? r.top + Math.min(r.height / 2, 160) : window.innerHeight / 2, withConfetti);
+  cheer(text, r ? r.left + r.width / 2 : window.innerWidth / 2, r ? r.top + Math.min(r.height / 2, 160) : window.innerHeight / 2, true);
 };
 
 export function CheerLayer() {

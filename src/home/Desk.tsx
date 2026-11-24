@@ -10,9 +10,9 @@ import { api } from "@/shared/ipc";
 import { reducedMotion } from "@/shared/hand";
 import "./desk.css";
 
-export const DESK_W = 2560;
+const DESK_W = 2560;
 /** The desk's height when the window is shorter (the notes are laid out for it). */
-export const DESK_H = 600;
+const DESK_H = 600;
 const KEY = "ui.desk";
 const QUERY = ["settings", KEY];
 type Layout = { notes: Record<string, [number, number]> };

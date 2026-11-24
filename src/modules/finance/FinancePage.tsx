@@ -31,7 +31,7 @@ export default function FinancePage() {
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       {/* under 导入账单 收支 stays as it was, out of sight: the import lies on the paper itself, not on a white board */}
       <div className={`contents ${view === "import" ? "invisible" : ""}`}>
-        <PageHeader icon={m.icon} color={m.color} title={m.label} />
+        <PageHeader title={m.label} />
         <div className="flex min-h-0 flex-1 gap-6 px-8 pb-6">
           <section className="flex min-w-0 flex-1 flex-col">
             {(view === "entries" || view === "import") && <EntriesView focus={focus} showMonth={posted} onImport={() => setView("import")} />}

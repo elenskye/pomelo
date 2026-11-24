@@ -11,7 +11,7 @@ function Card(props: { color: string; children: ReactNode }) {
   return (
     <div className="flex flex-1 items-center justify-center pb-16">
       <div className="w-80 space-y-4 text-center">
-        <KeyRound size={36} strokeWidth={1.5} className="mx-auto" style={{ color: props.color }} />
+        <KeyRound size={36} className="mx-auto" style={{ color: props.color }} />
         {props.children}
       </div>
     </div>

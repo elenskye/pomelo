@@ -88,7 +88,7 @@ function GalleryDialog(props: { work: Work; onClose: () => void; onDone: (g: Gal
       footerLeft={
         <>
           <Button onClick={() => void pickImages(true).then((paths) => paths.length && take(props.addImages({ paths })))}>
-            <ImagePlus size={14} strokeWidth={1.5} /> 添加图片…
+            <ImagePlus size={14} /> 添加图片…
           </Button>
           <Button onClick={() => setPicking(true)}>资源库…</Button>
         </>
@@ -493,7 +493,7 @@ export function WorkEditor(props: { slug: string; taxonomy: Taxonomy; view: View
             ]}
             renderTrigger={() => (
               <>
-                <ImagePlus size={14} strokeWidth={1.5} /> 插入图片
+                <ImagePlus size={14} /> 插入图片
               </>
             )}
             triggerClassName={GHOST}
@@ -515,7 +515,7 @@ export function WorkEditor(props: { slug: string; taxonomy: Taxonomy; view: View
               { value: "rename", label: "改 slug…" },
               { value: "delete", label: <span className="text-destructive">删除作品…</span> },
             ]}
-            renderTrigger={() => <MoreHorizontal size={16} strokeWidth={1.5} />}
+            renderTrigger={() => <MoreHorizontal size={16} />}
             triggerClassName={GHOST}
           />
         </div>

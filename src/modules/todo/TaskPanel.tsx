@@ -17,7 +17,7 @@ import { useAttachmentsOf, type FileInfo } from "@/shared/attachments/api";
 import { AttachmentField } from "@/shared/attachments/Attachments";
 import { DateInput } from "@/shared/DateInput";
 import { Dropdown } from "@/shared/Dropdown";
-import { addDays, formatDay, localToday, mondayOf, parseYmd, slashDate, toYmd } from "@/shared/dates";
+import { addDays, formatDay, localToday, mondayOf, pad, parseYmd, slashDate, toYmd, WEEK } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { SidePanel } from "@/shared/panel";
 import { Button, Field, IconButton, Segmented, TextArea, TextInput } from "@/shared/ui";
@@ -51,7 +51,6 @@ const placeOf = (where: string): Pick<TaskPatch, "groupId" | "goalId"> => {
   const id = Number(where.slice(2));
   return where.startsWith("o:") ? { goalId: id } : { groupId: id, goalId: null };
 };
-const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 const ruleKind = (rule: string) => rule.split(":")[0];
 /** Rules whose series ends by count (一共几次 / 已经做了几次); 完成后 runs from a start date instead. */
 const counted = (rule: string) => ruleKind(rule) !== "after";
@@ -98,7 +97,6 @@ function DayPicker(props: { days: number[]; labels: (d: number) => string; value
 
 type Mode = "daily" | "weekly" | "monthly" | "yearly" | "every" | "after";
 const MODES: Mode[] = ["daily", "weekly", "monthly", "yearly", "every", "after"];
-const pad2 = (n: number) => String(n).padStart(2, "0");
 /** Days in month m of a leap year (02-29 allowed; Rust uses 02-28 in other years). */
 const monthDays = (m: number) => new Date(2000, m, 0).getDate();
 
@@ -106,7 +104,7 @@ const monthDays = (m: number) => new Date(2000, m, 0).getDate();
 function YearlyEditor(props: { arg: string; onChange: (v: string) => void }) {
   const [md, every = "1"] = props.arg.split("/");
   const [m, d] = md.split("-").map(Number);
-  const emit = (mm: number, dd: number, n: string) => props.onChange(`yearly:${pad2(mm)}-${pad2(Math.min(dd, monthDays(mm)))}${n === "1" ? "" : `/${n}`}`);
+  const emit = (mm: number, dd: number, n: string) => props.onChange(`yearly:${pad(mm)}-${pad(Math.min(dd, monthDays(mm)))}${n === "1" ? "" : `/${n}`}`);
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
       每 <NumberInput label="每几年" value={every} onChange={(v) => emit(m, d, v)} /> 年的
@@ -149,7 +147,7 @@ function RuleEditor(props: { value: string; onChange: (v: string) => void; check
         daily: "daily",
         weekly: `weekly:${((today.getDay() + 6) % 7) + 1}`,
         monthly: `monthly:${today.getDate()}`,
-        yearly: `yearly:${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`,
+        yearly: `yearly:${pad(today.getMonth() + 1)}-${pad(today.getDate())}`,
         every: "every:2d",
         after: "after:7d",
       }[m],

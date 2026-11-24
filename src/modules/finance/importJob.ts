@@ -6,7 +6,7 @@ import { errorText } from "@/shared/feedback";
 import { FIN_KEY } from "./api";
 import { importerApi, type ImporterSummary } from "./importApi";
 
-export type ImportJob = {
+type ImportJob = {
   doing: string | null;
   error: string | null;
   /** What came of it, once. */

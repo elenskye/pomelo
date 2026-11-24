@@ -31,6 +31,7 @@ import { JanitorCards } from "./JanitorCards";
 import { JANITOR_KEY, ago, bytes, dayOf, janitorApi, type JanitorEnvItem, type JanitorGroup, type JanitorItem, type JanitorOutcome, type JanitorOverview, type JanitorRing } from "./janitorApi";
 import { MdField } from "@/shared/editor/MdField";
 import { showDialog } from "@/shared/dialog";
+import { pad } from "@/shared/dates";
 
 type Tab = "disk" | "clean" | "env" | "agent" | "settings";
 const OVERVIEW = [...JANITOR_KEY, "overview"];
@@ -90,7 +91,7 @@ function ScanBar(props: { ov: JanitorOverview }) {
           {scan.error && <span className="min-w-0 truncate text-destructive">{scan.error}</span>}
           {when && summary && !scan.error && (
             <span className="min-w-0 truncate text-muted-foreground tabular-nums">
-              扫描于 {dayOf(summary.scannedAt).slice(5)} {String(when.getHours()).padStart(2, "0")}:{String(when.getMinutes()).padStart(2, "0")} · 用了 {Math.max(1, Math.round(summary.took / 1000))} 秒
+              扫描于 {dayOf(summary.scannedAt).slice(5)} {pad(when.getHours())}:{pad(when.getMinutes())} · 用了 {Math.max(1, Math.round(summary.took / 1000))} 秒
             </span>
           )}
           <Button onClick={() => void rescan()}>重新扫描</Button>
@@ -200,7 +201,7 @@ function DiskTab(props: { ov: JanitorOverview }) {
                   {k.denied > 0 && <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs text-muted-foreground">没权限 {k.denied}</span>}
                   {k.kind !== "system" && (
                     <button type="button" aria-label="在访达中显示" title="在访达中显示" onClick={() => void reveal(k.path)} className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100">
-                      <FolderOpen size={14} strokeWidth={1.75} />
+                      <FolderOpen size={14} />
                     </button>
                   )}
                   <span className="w-20 shrink-0 text-right tabular-nums">{bytes(k.size)}</span>
@@ -232,7 +233,7 @@ function findRing(n: JanitorRing, path: string): JanitorRing | null {
 
 // ---- 清理 ----
 
-function ItemRow(props: { item: JanitorItem; on: boolean; toggle: () => void; showProject?: boolean }) {
+function ItemRow(props: { item: JanitorItem; on: boolean; toggle: () => void }) {
   const toast = useToast();
   const it = props.item;
   const busy = !!it.inUse;

@@ -10,7 +10,7 @@ import { iconHtml } from "./inlineIcon";
 import type { Flavor, Format } from "./LiveText";
 
 /** An image line's URL → the picture's src (null: no picture). */
-export type ImageSrc = (url: string) => string | null;
+type ImageSrc = (url: string) => string | null;
 
 const MARK = "text-muted-foreground/45";
 /** A format mark (** * _ ~~ \` and a link's brackets and address): shown only in the group holding the caret

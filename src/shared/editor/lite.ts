@@ -13,7 +13,7 @@ import type { Flavor, Format } from "./LiveText";
 const TAG_MAX = 50;
 const validTag = (t: string) => t.length > 0 && !t.startsWith("/") && !t.includes("//") && [...t].length <= TAG_MAX;
 
-export type Span = { start: number; end: number; kind: "tag" | "url" | "icon" | "link"; value: string };
+type Span = { start: number; end: number; kind: "tag" | "url" | "icon" | "link"; value: string };
 
 /** Tag spans in a line (`start` is the `#`). */
 export function tagSpans(line: string): Span[] {
@@ -40,7 +40,7 @@ export function atoms(line: string, tags = true): Span[] {
   return spans.sort((a, b) => a.start - b.start);
 }
 
-export type Mark = "**" | "==" | "++";
+type Mark = "**" | "==" | "++";
 const ALNUM = /[A-Za-z0-9]/;
 
 /** Paired mark positions (index → mark). `==` / `++` must not touch ASCII letters on the outside (C++). */

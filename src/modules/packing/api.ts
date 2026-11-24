@@ -41,9 +41,9 @@ export type PackItem = {
 };
 
 export type ListKind = "template" | "trip";
-export type ItemPatch = { name?: string; kindId?: number | null; note?: string | null; packed?: boolean };
+type ItemPatch = { name?: string; kindId?: number | null; note?: string | null; packed?: boolean };
 type NamePatch = { name?: string; note?: string | null };
-export type TripPatch = NamePatch & { departOn?: string | null };
+type TripPatch = NamePatch & { departOn?: string | null };
 
 const parentArg = (list: ListKind, parentId: number) => (list === "template" ? { templateId: parentId } : { tripId: parentId });
 

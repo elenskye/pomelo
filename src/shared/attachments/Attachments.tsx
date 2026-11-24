@@ -168,7 +168,7 @@ export function AttachButton(props: { onFiles: (files: FileInfo[]) => void; chil
       onClick={pick}
       className="-my-0.5 inline-flex shrink-0 items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Paperclip size={12} strokeWidth={1.75} /> {props.children}
+      <Paperclip size={12} /> {props.children}
     </button>
   ) : (
     <button
@@ -178,7 +178,7 @@ export function AttachButton(props: { onFiles: (files: FileInfo[]) => void; chil
       onClick={pick}
       className="inline-flex shrink-0 items-center justify-center rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Paperclip size={15} strokeWidth={1.75} />
+      <Paperclip size={15} />
     </button>
   );
 }

@@ -6,9 +6,9 @@ import { useEffect, useState } from "react";
 import { tokens } from "@/vendor/pomelo/tokens";
 import { api } from "./ipc";
 
-export type Palette = keyof typeof tokens.palettes;
+type Palette = keyof typeof tokens.palettes;
 export type ThemeChoice = "system" | "light" | "dark";
-export type Appearance = { palette: Palette; theme: ThemeChoice };
+type Appearance = { palette: Palette; theme: ThemeChoice };
 
 const KEY = "appearance";
 const CACHE = "pomelo.appearance";

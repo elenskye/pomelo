@@ -27,7 +27,7 @@ import {
   type IconType,
 } from "@/shared/icons";
 
-export const ICONS: [string, IconType][] = [
+const ICONS: [string, IconType][] = [
   ["shapes", Shapes],
   ["list-checks", ListChecks],
   ["gamepad-2", Gamepad2],

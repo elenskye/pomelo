@@ -42,7 +42,7 @@ function Entry(props: { label: string; onClick: () => void; dot?: boolean; busy?
     >
       {props.dot && <span aria-label="在运行" className="size-1.5 rounded-full bg-[var(--status-done-fg)]" />}
       {props.busy ?? props.label}
-      {!props.busy && <ExternalLink size={12} strokeWidth={1.5} />}
+      {!props.busy && <ExternalLink size={12} />}
     </button>
   );
 }
@@ -170,7 +170,7 @@ export default function SitePage() {
   usePageContext({ module: "site", page: TABS.find((t) => t.value === tab)!.label });
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} right={o && <Entries o={o} vercelUrl={history?.vercelUrl ?? null} />} />
+      <PageHeader title={m.label} right={o && <Entries o={o} vercelUrl={history?.vercelUrl ?? null} />} />
       {o &&
         (o.problem ? (
           <ProblemView o={o} />

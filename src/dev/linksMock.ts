@@ -1,19 +1,19 @@
 // 柚子链接 for ?mock (links.rs, loosely): names → things over the mock's notes, articles and works; lookup, the `[[`
 // list, 柚子链接 (backlinks), a thing; 玩物有志's move from a 五花八门 list.
 import { escapeName, foundIn, shown, targetOf, type Backlink, type LinkModule, type Thing } from "@/shared/links/links";
+import { pad } from "@/shared/dates";
 
 type Args = Record<string, unknown>;
 type Note = { id: number; content: string; refs: number[]; createdAt: string };
 type Art = { id: number; title: string; content: string; locked: boolean; trashedAt: string | null; createdAt: string; updatedAt: string };
 type Work = { id: number; title: string; author?: string | null; director?: string | null; platformId?: number | null; status: string; updatedAt: string };
-export type LinkDeps = {
+type LinkDeps = {
   notes: () => Note[];
   articles: () => Art[];
   works: (module: "books" | "films" | "games") => Work[];
   platform: (id: number | null | undefined) => string | null;
 };
 
-const pad = (n: number) => String(n).padStart(2, "0");
 /** Local `YYYY-MM-DD HH:MM` (`sec`: `:SS` too). */
 function local(iso: string, sec = false) {
   const d = new Date(iso);

@@ -231,7 +231,7 @@ function useVaultIdleLock(enabled: boolean) {
 function StartupError({ info }: { info: AppInfo }) {
   return (
     <div data-tauri-drag-region className="flex h-full flex-col items-center justify-center gap-3 px-16 text-center">
-      <TriangleAlert size={32} strokeWidth={1.5} className="text-destructive" />
+      <TriangleAlert size={32} className="text-destructive" />
       <p className="text-lg font-bold">数据库没能打开</p>
       <p className="selectable max-w-xl text-sm text-muted-foreground">{info.startupError}</p>
       <p className="selectable font-mono text-xs text-muted-foreground">{info.dataDir}</p>

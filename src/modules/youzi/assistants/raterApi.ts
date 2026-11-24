@@ -11,7 +11,7 @@ export type RaterBuiltin = { category: string; title: string; points: string[]; 
 export const RATER_LIMIT = 90;
 export type RaterJob = { id: number; createdAt: string; label: string };
 export type RaterQuestion = { id: string; category: string; question: string; answer: string; tags: string[]; material: string | null; job: RaterJob | null; from: string | null; revision: number };
-export type RaterRevision = { id: number; questionId: string; body: RaterQuestion; savedAt: string };
+type RaterRevision = { id: number; questionId: string; body: RaterQuestion; savedAt: string };
 /** A question's practice record (Rust practice.rs `Tally`): streak = 会 in a row up to the last mark. */
 export type RaterTally = { know: number; unsure: number; last: string | null; lastMark: string; streak: number };
 /** seconds: each question's answer read aloud (400 字 in 90 s); practice: each practiced question's record. */
@@ -40,9 +40,9 @@ export const RATER_RANDOM_COUNT = 10;
 /** A card: question = the bank question (a follow-up: the one it follows up); follow-ups are dashed with 柚子's reference answer. */
 export type RaterCard = { question: string; text: string; category: string; follow: boolean; reference: string; saved: string | null; mark: string | null; markedAt: string | null; typed: string; asked: boolean };
 /** notes: card = index in the round. */
-export type RaterFeedback = { model: string; summary: string; good: string[]; gaps: string[]; notes: { card: number; text: string }[] };
+type RaterFeedback = { model: string; summary: string; good: string[]; gaps: string[]; notes: { card: number; text: string }[] };
 export type RaterRound = { id: string; mode: string; job: RaterJob | null; advice: string; cards: RaterCard[]; startedAt: string; endedAt: string | null; feedback: RaterFeedback | null };
-export type RaterRoundRow = { id: string; mode: string; job: string | null; startedAt: string; endedAt: string | null; cards: number; follows: number; know: number; unsure: number; left: number };
+type RaterRoundRow = { id: string; mode: string; job: string | null; startedAt: string; endedAt: string | null; cards: number; follows: number; know: number; unsure: number; left: number };
 export type RaterPractice = { running: RaterRound | null; rounds: RaterRoundRow[] };
 export type RaterStart = { mode: string; job: number | null; questions: string[]; count: number; advice: string };
 export type RaterPick = { questions: string[]; advice: string; model: string; note: string };
@@ -87,8 +87,8 @@ export type RaterFollow = { about: string; category: string; question: string; a
 export type RaterPrep = { id: string; job: RaterJob; resume: string; lang: string; form: string; request: string; questions: string[]; follows: RaterFollow[]; sheet: string; advice: string; model: string; note: string; createdAt: string };
 export type RaterAsked = { question: string; answer: string; feedback: string };
 /** asked: index into the review's items (a summary's: of `review`). */
-export type RaterMatched = { review?: string; asked: number; text: string };
-export type RaterRuleIdea = { use: string; title: string; text: string; why: string; adopted: string | null };
+type RaterMatched = { review?: string; asked: number; text: string };
+type RaterRuleIdea = { use: string; title: string; text: string; why: string; adopted: string | null };
 export type RaterAnalysis = { model: string; prep: string | null; summary: string; hits: RaterMatched[]; misses: RaterMatched[]; questions: RaterFollow[]; rules: RaterRuleIdea[] };
 export type RaterReview = { id: string; job: RaterJob; date: string; round: string; form: string; result: string; items: RaterAsked[]; feedback: string; thoughts: string; analysis: RaterAnalysis | null; createdAt: string };
 /** 总结复盘: some reviews of a job (oldest first) against a prep (none: the bank only). */

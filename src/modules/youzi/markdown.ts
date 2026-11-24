@@ -247,7 +247,7 @@ rules.image = (tokens: Any, idx: number, options: Any, env: Any, self: Any) => {
 };
 
 /** True when the source ends inside an unclosed ``` or ~~~ fence (CommonMark rules, top level only). */
-export function endsInsideFence(source: string) {
+function endsInsideFence(source: string) {
   let open: { char: string; length: number } | null = null;
   for (const line of source.split("\n")) {
     const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);

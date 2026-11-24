@@ -9,13 +9,16 @@ import { AssistAction, PolishBox, useAssistOn } from "@/modules/youzi/Assist";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
 import { useDropTarget } from "@/shared/attachments/target";
 import { MdMenu } from "@/shared/editor/MdMenu";
+import { useSetting } from "@/shared/settings";
 import { Button, IconButton, Segmented, TextInput } from "@/shared/ui";
 import { MdEditor, type MdEditorHandle } from "./MdEditor";
 import { siteAssist, siteSrc, workApi, type Draft, type Lang } from "./api";
 
 export type View = Lang | "both";
+/** 中文 / English / 并排, shared by the site's pages. */
+export const useSiteView = () => useSetting<View>("ui.site_work_view", "zh", (v): v is View => v === "zh" || v === "en" || v === "both");
 export const LABEL: Record<Lang, string> = { zh: "中文", en: "English" };
-export const IMAGE_EXT = ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif", "heic", "heif", "tif", "tiff"];
+const IMAGE_EXT = ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif", "heic", "heif", "tif", "tiff"];
 export const GHOST = "inline-flex items-center gap-1 rounded-control px-2 py-1.5 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
 
 /** The editor shows a body without the file's last newline (Rust writes it back). */
@@ -95,7 +98,7 @@ export function useDoc<T>(key: unknown[], load: () => Promise<T>, saveFn: (t: T)
 }
 
 /** The bar above an editor: the language view on the left; 预览 · 保存 · ⋯ on the right. */
-export function DocBar(props: { view?: View; setView?: (v: View) => void; left?: ReactNode; extra?: ReactNode; onPreview?: () => void; previewing?: boolean; onSave: () => void; dirty: boolean; saving: boolean; menu?: DropdownOption<string>[]; onMenu?: (v: string) => void }) {
+export function DocBar(props: { view?: View; setView?: (v: View) => void; left?: ReactNode; onPreview?: () => void; previewing?: boolean; onSave: () => void; dirty: boolean; saving: boolean; menu?: DropdownOption<string>[]; onMenu?: (v: string) => void }) {
   return (
     <div className="flex shrink-0 items-center justify-between gap-3 border-b px-6 py-2">
       <div className="flex min-w-0 items-center gap-3">
@@ -103,7 +106,6 @@ export function DocBar(props: { view?: View; setView?: (v: View) => void; left?:
         {props.left}
       </div>
       <div className="flex items-center gap-1.5">
-        {props.extra}
         {props.onPreview && (
           <Button disabled={props.previewing || props.saving} onClick={props.onPreview}>
             {props.previewing ? "正在打开…" : "预览"}
@@ -113,7 +115,7 @@ export function DocBar(props: { view?: View; setView?: (v: View) => void; left?:
           {props.saving ? "正在保存…" : "保存"}
         </Button>
         {props.menu && props.onMenu && (
-          <Dropdown ariaLabel="更多" plain align="end" value={null as string | null} onChange={(v) => v && props.onMenu!(v)} options={props.menu} renderTrigger={() => <MoreHorizontal size={16} strokeWidth={1.5} />} triggerClassName={GHOST} />
+          <Dropdown ariaLabel="更多" plain align="end" value={null as string | null} onChange={(v) => v && props.onMenu!(v)} options={props.menu} renderTrigger={() => <MoreHorizontal size={16} />} triggerClassName={GHOST} />
         )}
       </div>
     </div>
@@ -347,7 +349,7 @@ export function ImageList(props: { items: string[]; onChange: (items: string[]) 
       </div>
       <div className="flex gap-x-1 text-xs">
         <button type="button" className="inline-flex items-center gap-1 rounded px-1 text-muted-foreground hover:text-foreground" onClick={() => void pickFiles(true).then((paths) => paths.length && add(take({ paths })))}>
-          <ImagePlus size={12} strokeWidth={1.5} /> 选择…
+          <ImagePlus size={12} /> 选择…
         </button>
         <button type="button" className="rounded px-1 text-muted-foreground hover:text-foreground" onClick={props.onPickAsset}>
           资源库…

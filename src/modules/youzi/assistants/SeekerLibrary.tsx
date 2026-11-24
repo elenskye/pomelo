@@ -26,7 +26,7 @@ import { EXEMPT, SHARED_KINDS, groupName, orderedGroups, recordIn, seekerApi, se
 
 export type SeekerWrite = (action: () => Promise<SeekerWorkspace>) => Promise<boolean>;
 /** A rule's category: which model task reads it (Rust model.rs `reads`); the names as Rust catalog.rs `RULE_LABELS`. */
-export const USES = [{ value: "写作规则", label: "通用规则" }, { value: "素材润色", label: "素材润色" }, { value: "整体审查", label: "选材和审查" }];
+const USES = [{ value: "写作规则", label: "通用规则" }, { value: "素材润色", label: "素材润色" }, { value: "整体审查", label: "选材和审查" }];
 type Use = { value: string; label: string };
 const useLabel = (c: string, uses: Use[] = USES) => uses.find((u) => u.value === c)?.label ?? c;
 /** Rater's rules (题库维护, 面试) live with Seeker's records but show only on Rater's 规则 page. */
@@ -43,7 +43,7 @@ const materialsOf = (lang: string | undefined) => (lang === "en" ? MATERIALS_EN 
 const LANGS = [{ value: "cn", label: "中文" }, { value: "en", label: "English" }, { value: "", label: "中英共用" }];
 const NAMES = ["姓名", "Name"];
 const DOSSIER = "经历档案";
-export const STACK = "技术栈";
+const STACK = "技术栈";
 /** What can be chosen for a resume: the 技术栈 line, then the points (catalog.rs `choosable`). */
 export function choosable(r: SeekerRecord): SeekerPoint[] {
   const stack = r.stack?.trim();
@@ -130,10 +130,10 @@ function Card(props: { r: SeekerRecord; a: Records; meta?: ReactNode; actions: R
 }
 
 /** Rows of name + text (已确认事实; 网申 lines: plain text, with 复制). */
-function Rows(props: { rows: SeekerRecord[]; a: Records; p: PageProps; shared?: boolean; sel: Select; plain?: boolean }) {
+function Rows(props: { rows: SeekerRecord[]; a: Records; p: PageProps; sel: Select; plain?: boolean }) {
   if (!props.rows.length) return null;
   return <SortGroup items={props.rows} disabled={props.p.busy || props.sel.on} onSort={(ids) => void props.p.write(() => seekerBatch.order(ids))} className="divide-y rounded-card border bg-card">{(r, drag) => <div {...drag} role={props.sel.on ? "checkbox" : undefined} aria-checked={props.sel.on ? props.sel.has(r.id) : undefined} onClick={props.sel.on ? props.sel.pick(r.id) : undefined} className={`group flex items-start gap-4 px-3 py-2 text-sm ${props.sel.has(r.id) ? "bg-accent text-accent-foreground" : "bg-card"} ${props.sel.on ? "cursor-pointer" : ""} ${r.enabled ? "" : "opacity-60"}`}>
-    <span className="w-44 shrink-0 pt-1 font-medium">{r.title}{props.shared && r.lang === "" && <span className="ml-2 text-xs font-normal text-muted-foreground">中英共用</span>}</span>
+    <span className="w-44 shrink-0 pt-1 font-medium">{r.title}</span>
     <p className="min-w-0 flex-1 pt-1 break-words whitespace-pre-wrap">{props.plain ? r.text : <InlineMd text={r.text} />}</p>
     {!props.sel.on && <Actions r={r} a={props.a} p={props.p} copy={props.plain} />}
   </div>}</SortGroup>;
@@ -207,13 +207,13 @@ export function SeekerDossiers(p: PageProps) {
   const facts = all.filter((r) => matches(r, query));
   const dossiers = facts.filter((r) => r.category === DOSSIER);
   // 经历档案 and the fact groups, in the user's order (上移 / 下移)
-  const order = orderedGroups(p.catalog, "fact", "", [DOSSIER, ...new Set(all.filter((r) => r.category !== DOSSIER).map((r) => r.category))]);
+  const order = orderedGroups(p.catalog, "fact", [DOSSIER, ...new Set(all.filter((r) => r.category !== DOSSIER).map((r) => r.category))]);
   const shown = order.filter((g) => !query || facts.some((r) => r.category === g));
   const groups = order.filter((g) => g !== DOSSIER);
   const title = (id: string | null | undefined) => p.catalog.records.find((r) => r.id === id && r.kind === "material")?.title;
   const hung = (r: SeekerRecord) => [title(r.material), title(r.materialEn)].filter(Boolean).join(" · ");
   const sel = useSelect(shown.flatMap((g) => facts.filter((r) => r.category === g)).map((r) => r.id));
-  const move = useGroupMove(p.write, "fact", "", order, p.busy);
+  const move = useGroupMove(p.write, "fact", order, p.busy);
   return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<SelectButton select={sel} /><Button disabled={p.busy} onClick={() => a.add("fact", groups[0] ?? "个人事实")}><Plus size={14} />事实</Button></>} bar={<RecordBar sel={sel} p={p} />} empty={!facts.length} dialogs={a.dialogs}>
     {shown.map((g) => g === DOSSIER
       ? <Group key={g} title={DOSSIER} onAdd={() => a.add("fact", DOSSIER)} move={!query && move(g)}>
@@ -233,12 +233,12 @@ export function SeekerRules(p: PageProps) {
   const uses = [...own.map((u) => u.value), ...new Set(records.filter((r) => r.kind !== "example").map((r) => r.category).filter((c) => !own.some((u) => u.value === c)))];
   const examples = rater ? [] : records.filter((r) => r.kind === "example");
   // the rule groups and (Seeker) 豁免情况, in the user's order (上移 / 下移)
-  const order = orderedGroups(p.catalog, "rule", "", [...uses, ...(rater ? [] : [EXEMPT])]);
+  const order = orderedGroups(p.catalog, "rule", [...uses, ...(rater ? [] : [EXEMPT])]);
   const has = (g: string) => (g === EXEMPT ? examples.length > 0 : records.some((r) => r.kind === "rule" && r.category === g));
   const shown = order.filter((g) => !query || has(g));
   const sel = useSelect(shown.flatMap((g) => (g === EXEMPT ? examples : records.filter((r) => r.kind === "rule" && r.category === g))).map((r) => r.id));
   const groups = useGroupActions(p.write, p.lang, p.busy);
-  const move = useGroupMove(p.write, "rule", "", order, p.busy);
+  const move = useGroupMove(p.write, "rule", order, p.busy);
   const prompts = usePrompts(p.lang);
   // a group's name: the user's for a built-in one, else the page's word for it
   const nameOf = (u: string) => { const custom = groupName(p.catalog, "rule", "", u); return custom !== u ? custom : useLabel(u, own); };
@@ -267,11 +267,11 @@ export function SeekerApplications(p: PageProps) {
   const [query, setQuery] = useState("");
   const all = p.catalog.records.filter((r) => APPLY.some((k) => k.value === r.kind));
   const rows = all.filter((r) => matches(r, query));
-  const order = orderedGroups(p.catalog, "application", "", [...new Set(all.map((r) => r.category))]);
+  const order = orderedGroups(p.catalog, "application", [...new Set(all.map((r) => r.category))]);
   const shown = order.filter((g) => !query || rows.some((r) => r.category === g));
   const of = (kind: string, g: string) => rows.filter((r) => r.kind === kind && r.category === g);
   const sel = useSelect(shown.flatMap((g) => [...of("application_line", g), ...of("application", g)]).map((r) => r.id));
-  const move = useGroupMove(p.write, "application", "", order, p.busy);
+  const move = useGroupMove(p.write, "application", order, p.busy);
   // ＋ asks which kind
   const add = (group: string, label: string, trigger: ReactNode, className: string) => <Dropdown<string | null> plain ariaLabel={label} value={null} options={APPLY} onChange={(kind) => kind && a.add(kind, group)} renderTrigger={() => trigger} triggerClassName={`${className} outline-none focus-visible:ring-2 focus-visible:ring-ring ${p.busy ? "pointer-events-none opacity-50" : ""}`} />;
   return <Frame query={query} setQuery={setQuery} tools={<>{p.tools}<SelectButton select={sel} />{add(order[0] ?? "网申", "新增网申资料", <><Plus size={14} />网申资料</>, "pm-btn pm-btn--plain h-8 gap-1.5 px-3 text-sm")}</>} bar={<RecordBar sel={sel} p={p} />} empty={!rows.length} dialogs={a.dialogs} after={<SeekerMaterialFiles />}>

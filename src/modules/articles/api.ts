@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FileInfo } from "@/shared/attachments/api";
+import { pad } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import type { TagCount } from "@/modules/notes/api";
 import { linksChanged, type Backlink } from "@/shared/links/links";
@@ -42,9 +43,9 @@ export type Article = {
   updatedAt: string;
 };
 export type Filter = { view?: View; tag?: string; q?: string; id?: number };
-export type Patch = { content?: string; pinned?: boolean; archived?: boolean; attachments?: number[] };
-export type Counts = Record<View, number>;
-export type Overview = { counts: Counts; tags: TagCount[]; pinned: string[] };
+type Patch = { content?: string; pinned?: boolean; archived?: boolean; attachments?: number[] };
+type Counts = Record<View, number>;
+type Overview = { counts: Counts; tags: TagCount[]; pinned: string[] };
 
 export type ExportTarget = { ids?: number[]; tag?: string; all?: boolean };
 export type ExportFormat = "md" | "pdf" | "docx";
@@ -53,7 +54,7 @@ export type ExportOptions = { format: ExportFormat; style: ExportStyle; toc: boo
 export type Left = { title: string; what: string };
 export type ExportReport = { written: number; folder: string; file: string | null; left: Left[] };
 export type ImportReport = { imported: number; files: number; tags: number; left: Left[]; fixes: string[] };
-export type BearPreview = { notes: number; archived: number; trashed: number; locked: number; tags: number; files: number; here: number };
+type BearPreview = { notes: number; archived: number; trashed: number; locked: number; tags: number; files: number; here: number };
 
 export const articlesApi = {
   list: (filter: Filter) => invoke<Summary[]>("articles_list", { filter }),
@@ -118,7 +119,6 @@ export function useArticleMutations() {
   };
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
 /** The list's date: this year「11 / 06」, before「2025 / 11 / 06」. */
 export function listDate(stamp: string): string {
   const d = new Date(stamp);

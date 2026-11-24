@@ -2,7 +2,6 @@
 // hand-drawn edges painted by shared/hand.ts (data-hand), the controls' small motions (按下扁一下, 荧光笔拖过去, 圆贴纸滑过去,
 // 小签晃两下, 空状态画完再弹…) from the Design System's motion parts. Sizes stay Pomelo's (compact) where a page is dense.
 // Dropdowns: ./Dropdown.tsx.
-import type { IconType } from "@/shared/icons";
 import { RefreshCw } from "@/shared/icons";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type Ref } from "react";
 import { flash } from "./hand";
@@ -10,9 +9,8 @@ import { HandIcon, Tip } from "./handParts";
 import { markSvg, sizedMark } from "./marks";
 
 /** A page's title, as the typical pages (visual-atelier's canvases/pomelo-pages): big, no icon — the module's sticker
- *  is slapped on the paper's corner — clear of that sticker; what the page holds in soft small print on the right.
- *  `icon` / `color` stay for pages shown outside the paper. */
-export function PageHeader(props: { icon?: IconType; color?: string; title: string; badge?: ReactNode; right?: ReactNode }) {
+ *  is slapped on the paper's corner — clear of that sticker; what the page holds in soft small print on the right. */
+export function PageHeader(props: { title: string; badge?: ReactNode; right?: ReactNode }) {
   return (
     <header data-tauri-drag-region className="pm-page-head flex h-[68px] shrink-0 items-end justify-between gap-4 pr-8 pb-3 pl-14">
       <h1 className="pm-sheet-title pointer-events-none flex shrink-0 items-center gap-2 whitespace-nowrap">
@@ -161,7 +159,7 @@ export function SearchInput(props: ComponentProps<"input">) {
   return (
     <span className={`${FIELD} w-full ${className ?? ""}`} data-hand="field" data-seed="1412">
       <span className="pm-field-icon text-muted-foreground" style={{ order: -1 }}>
-        <HandIcon name="search" size={16} seed={14} />
+        <HandIcon name="search" size={16} />
       </span>
       <input type="search" autoComplete="off" spellCheck={false} {...rest} />
     </span>
@@ -251,11 +249,11 @@ export function IconButton(props: {
 }
 
 /** 重新读文件夹 (a page showing what's in a folder: 呦呦漫游, Seeker, 知识库): spins until `onRefresh` is done. */
-export function RefreshButton(props: { label: string; onRefresh: () => Promise<unknown>; disabled?: boolean }) {
+export function RefreshButton(props: { label: string; onRefresh: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   return (
-    <IconButton label={props.label} tip="刷新" disabled={props.disabled || busy} onClick={() => { setBusy(true); void props.onRefresh().finally(() => setBusy(false)); }}>
-      <RefreshCw size={14} strokeWidth={1.75} className={busy ? "animate-spin" : ""} />
+    <IconButton label={props.label} tip="刷新" disabled={busy} onClick={() => { setBusy(true); void props.onRefresh().finally(() => setBusy(false)); }}>
+      <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
     </IconButton>
   );
 }

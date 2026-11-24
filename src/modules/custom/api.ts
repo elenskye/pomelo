@@ -25,10 +25,10 @@ export type Custom = {
   createdAt: string;
   updatedAt: string;
 };
-export type CustomPatch = Partial<{ template: Template; name: string; icon: string; courseWord: string; lessonWord: string }>;
+type CustomPatch = Partial<{ template: Template; name: string; icon: string; courseWord: string; lessonWord: string }>;
 
 export const TEMPLATE_LABEL: Record<Template, string> = { list: "五花八门", progress: "循序渐进" };
-export const TEMPLATE_COLOR: Record<Template, string> = { list: "var(--module-list)", progress: "var(--module-progress)" };
+const TEMPLATE_COLOR: Record<Template, string> = { list: "var(--module-list)", progress: "var(--module-progress)" };
 
 // ---- 五花八门 ----
 export type FieldType = "text" | "longtext" | "number" | "year" | "select" | "multi" | "check" | "rating" | "link";
@@ -49,19 +49,19 @@ export const MAX_FIELDS = 20;
 export const MAX_OPTIONS = 50;
 export type Field = { id: number; moduleId: number; name: string; type: FieldType; options: string[]; shown: boolean; sortOrder: number };
 /** options: `was` = the name before (renames carry into every item); left out = removed. */
-export type FieldPatch = Partial<{ name: string; type: FieldType; options: { name: string; was?: string | null }[]; shown: boolean }>;
+type FieldPatch = Partial<{ name: string; type: FieldType; options: { name: string; was?: string | null }[]; shown: boolean }>;
 export type Value = string | number | boolean | string[];
 export type Item = { id: number; moduleId: number; name: string; values: Record<string, Value>; sortOrder: number; createdAt: string; updatedAt: string };
 /** values: only the fields given change (null empties one). */
-export type ItemPatch = Partial<{ name: string; values: Record<string, Value | null> }>;
+type ItemPatch = Partial<{ name: string; values: Record<string, Value | null> }>;
 
 // ---- 循序渐进 ----
 export type Course = { id: number; moduleId: number; name: string; note: string | null; sortOrder: number; total: number; done: number; doing: number; createdAt: string; updatedAt: string };
-export type CoursePatch = Partial<{ name: string; note: string | null }>;
+type CoursePatch = Partial<{ name: string; note: string | null }>;
 export type Lesson = { id: number; courseId: number; code: string | null; kindId: number | null; title: string; status: StatusCode; finishedMonth: string | null; note: string | null; sortOrder: number; createdAt: string; updatedAt: string };
 export type LessonPatch = Partial<{ code: string | null; kindId: number | null; title: string; status: StatusCode; finishedMonth: string | null; note: string | null }>;
 
-export const customApi = {
+const customApi = {
   list: () => invoke<Custom[]>("custom_list"),
   create: (patch: CustomPatch) => invoke<Custom>("custom_create", { patch }),
   update: (v: { id: number; patch: CustomPatch }) => invoke<Custom>("custom_update", v),
@@ -98,7 +98,7 @@ export const useLessons = (courseId: number | null) =>
 
 /** A made module as a module: its sticker is its icon's, its color the sticker's own (or the template's before a
  *  sync brings the stickers), behind its own variable so a picked color (looks.ts) reaches it. */
-export function madeDef(c: Custom): ModuleDef {
+function madeDef(c: Custom): ModuleDef {
   const mark = MADE_MARKS[c.icon] ?? "shapes";
   const tint = stickerById(mark)?.tint;
   return { id: c.key, label: c.name, icon: iconOf(c.icon), mark, color: `var(${colorVar(c.key)}, ${tint ? tintColor(tint) : TEMPLATE_COLOR[c.template]})` };

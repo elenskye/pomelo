@@ -1,38 +1,27 @@
-// Date (or month) field with a Pomelo calendar popover instead of WebKit's native picker. Value is
-// "YYYY-MM-DD" ("YYYY-MM" with `month`), "" = empty. Popover: portal like Dropdown (never clipped,
+// Date field with a Pomelo calendar popover instead of WebKit's native picker. Value is
+// "YYYY-MM-DD", "" = empty. Popover: portal like Dropdown (never clipped,
 // flips up, stays in a modal dialog's top layer). Day view: ‹ 2026 年 10 月 › (click the title for
 // months), Monday first, 6 rows; keys ←→↑↓ PageUp/PageDown Enter Esc; footer 今天 / 清除.
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "@/shared/icons";
-import { addDays, localToday, mondayOf, toYmd } from "./dates";
+import { addDays, localToday, mondayOf, pad, shiftMonth, slashDate, toYmd, WEEK } from "./dates";
 
-const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
-const pad = (n: number) => String(n).padStart(2, "0");
 const monthOf = (d: string) => d.slice(0, 7);
-const shiftMonth = (ym: string, k: number) => {
-  const [y, m] = ym.split("-").map(Number);
-  const d = new Date(y, m - 1 + k, 1);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-};
 /** Same day in another month (clamped to its end). */
 const sameDayIn = (day: string, ym: string) => {
   const [y, m] = ym.split("-").map(Number);
   return `${ym}-${pad(Math.min(Number(day.slice(8)), new Date(y, m, 0).getDate()))}`;
 };
-const slash = (v: string) => v.split("-").join(" / ");
 
 export function DateInput(props: {
   value: string;
   onChange: (v: string) => void;
   ariaLabel: string;
-  /** Pick a month ("YYYY-MM") instead of a day. */
-  month?: boolean;
   /** Show × to empty it (and 清除 in the popover). */
   clearable?: boolean;
   min?: string;
   max?: string;
-  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -101,11 +90,11 @@ export function DateInput(props: {
             setOpen(true);
           }
         }}
-        className={`pm-field pm-compact inline-flex items-center gap-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring ${open ? "is-focus" : ""} ${props.className ?? ""}`}
+        className={`pm-field pm-compact inline-flex items-center gap-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring ${open ? "is-focus" : ""}`}
         data-hand="field"
         data-seed="1416"
       >
-        <span className={props.value ? "" : "text-muted-foreground"}>{props.value ? slash(props.value) : props.month ? "年 / 月" : "年 / 月 / 日"}</span>
+        <span className={props.value ? "" : "text-muted-foreground"}>{props.value ? slashDate(props.value) : "年 / 月 / 日"}</span>
         <CalendarDays size={14} className="ml-auto shrink-0 text-muted-foreground" />
       </button>
       {props.clearable && props.value && (
@@ -137,11 +126,7 @@ export function DateInput(props: {
             style={{ position: "fixed", top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? "visible" : "hidden" }}
             className="z-50 w-64 animate-pop-in rounded-card border bg-popover p-3 text-foreground shadow-lg"
           >
-            {props.month ? (
-              <MonthGrid value={props.value} onPick={pick} onClear={props.clearable ? () => pick("") : undefined} min={props.min} max={props.max} />
-            ) : (
-              <DayGrid value={props.value} onPick={pick} onClear={props.clearable ? () => pick("") : undefined} min={props.min} max={props.max} />
-            )}
+            <DayGrid value={props.value} onPick={pick} onClear={props.clearable ? () => pick("") : undefined} min={props.min} max={props.max} />
           </div>,
           container,
         )}
@@ -153,9 +138,7 @@ const navBtn =
   "rounded-control p-1 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-30";
 const footBtn = "rounded-control px-2 py-1 text-sm text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
 
-type GridProps = { value: string; onPick: (v: string) => void; onClear?: () => void; min?: string; max?: string };
-
-function DayGrid(props: GridProps) {
+function DayGrid(props: { value: string; onPick: (v: string) => void; onClear?: () => void; min?: string; max?: string }) {
   const today = localToday();
   const [active, setActive] = useState(props.value || (props.max && today > props.max ? props.max : today));
   const [months, setMonths] = useState(false); // month chooser instead of days
@@ -255,10 +238,10 @@ function DayGrid(props: GridProps) {
   );
 }
 
-function MonthGrid(props: GridProps) {
+/** The month chooser behind the day view's title. */
+function MonthGrid(props: { value: string; onPick: (ym: string) => void }) {
   const now = toYmd(new Date()).slice(0, 7);
   const [year, setYear] = useState(Number((props.value || now).slice(0, 4)));
-  const ok = (ym: string) => (!props.min || ym >= props.min.slice(0, 7)) && (!props.max || ym <= props.max.slice(0, 7));
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -278,11 +261,9 @@ function MonthGrid(props: GridProps) {
             <button
               key={ym}
               type="button"
-              disabled={!ok(ym)}
               aria-selected={selected}
-              data-autofocus={selected || (!props.value && ym === now) || undefined}
               onClick={() => props.onPick(ym)}
-              className={`rounded-control py-1.5 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30 ${
+              className={`rounded-control py-1.5 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-ring ${
                 selected ? "bg-primary text-primary-foreground" : "hover:bg-muted"
               } ${ym === now && !selected ? "ring-1 ring-ring" : ""}`}
             >
@@ -292,14 +273,9 @@ function MonthGrid(props: GridProps) {
         })}
       </div>
       <div className="flex items-center justify-between border-t pt-2">
-        <button type="button" disabled={!ok(now)} onClick={() => props.onPick(now)} className={footBtn}>
+        <button type="button" onClick={() => props.onPick(now)} className={footBtn}>
           本月
         </button>
-        {props.onClear && props.value && (
-          <button type="button" onClick={props.onClear} className={`${footBtn} text-muted-foreground`}>
-            清除
-          </button>
-        )}
       </div>
     </div>
   );

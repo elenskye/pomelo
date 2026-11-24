@@ -9,7 +9,7 @@ import { markdownFlavor } from "./markdown";
 
 const FLAVOR = markdownFlavor();
 
-export function MdField(props: { value: string; onChange: (v: string) => void; label: string; rows?: number; placeholder?: string; autoFocus?: boolean; readOnly?: boolean; onBlur?: () => void; className?: string }) {
+export function MdField(props: { value: string; onChange: (v: string) => void; label: string; rows?: number; autoFocus?: boolean; onBlur?: () => void; className?: string }) {
   const live = useRef<LiveTextHandle>(null);
   return (
     // the hand-drawn field (like TextArea) is the outer box; the text scrolls inside it, so the edge stays put
@@ -18,19 +18,19 @@ export function MdField(props: { value: string; onChange: (v: string) => void; l
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) props.onBlur?.();
       }}
       style={props.rows ? { height: `calc(${props.rows * 1.625}em + 0.75rem + 2px)` } : undefined}
-      className={`pm-field pm-compact pm-area flex w-full cursor-text text-sm ${props.readOnly ? "text-muted-foreground" : ""} ${props.className ?? ""}`}
+      className={`pm-field pm-compact pm-area flex w-full cursor-text text-sm ${props.className ?? ""}`}
       data-hand="field"
       data-seed="1413"
     >
       <div
         className="-mx-2.5 -my-1.5 min-h-0 flex-1 overflow-y-auto px-3 py-1.5"
         onMouseDown={(e) => {
-          if (e.target !== e.currentTarget || props.readOnly) return;
+          if (e.target !== e.currentTarget) return;
           e.preventDefault();
           live.current?.focus();
         }}
       >
-        <LiveText ref={live} value={props.value} onChange={props.onChange} flavor={FLAVOR} label={props.label} placeholder={props.placeholder} autoFocus={props.autoFocus} readOnly={props.readOnly} focusAt="end" />
+        <LiveText ref={live} value={props.value} onChange={props.onChange} flavor={FLAVOR} label={props.label} autoFocus={props.autoFocus} focusAt="end" />
       </div>
     </div>
   );

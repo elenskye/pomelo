@@ -9,7 +9,6 @@ export function InlineName(props: {
   /** An empty name is an answer too (back to an own name); otherwise it is the same as giving up. */
   clearable?: boolean;
   onDone: (name: string | null) => void;
-  className?: string;
 }) {
   const [v, setV] = useState(props.initial);
   const ref = useRef<HTMLInputElement>(null);
@@ -40,7 +39,7 @@ export function InlineName(props: {
           finish(false);
         }
       }}
-      className={`w-full min-w-0 rounded-control border bg-card px-2 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${props.className ?? ""}`}
+      className="w-full min-w-0 rounded-control border bg-card px-2 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
     />
   );
 }

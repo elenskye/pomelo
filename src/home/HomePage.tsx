@@ -10,7 +10,7 @@ import { useHiddenModules } from "@/app/hidden";
 import { useTabs } from "@/app/tabs";
 import { type Day } from "@/modules/days/api";
 import { useAgenda, type Task } from "@/modules/todo/api";
-import { toYmd } from "@/shared/dates";
+import { pad, slashDate, toYmd } from "@/shared/dates";
 import type { Hit } from "@/shared/open";
 import { useOverview } from "./api";
 import { BriefCard } from "./BriefCard";
@@ -41,8 +41,6 @@ function greeting(h: number) {
   return "夜深了";
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
 /** When a 最近 row happened: 14:30 today, 昨天, 10 / 06 this year, else 2025 / 10 / 06. */
 function when(at: string, today: string) {
   const d = new Date(at);
@@ -51,7 +49,7 @@ function when(at: string, today: string) {
   const y = new Date(`${today}T00:00:00`);
   y.setDate(y.getDate() - 1);
   if (day === toYmd(y)) return "昨天";
-  return day.slice(0, 4) === today.slice(0, 4) ? `${day.slice(5, 7)} / ${day.slice(8)}` : day.split("-").join(" / ");
+  return day.slice(0, 4) === today.slice(0, 4) ? `${day.slice(5, 7)} / ${day.slice(8)}` : slashDate(day);
 }
 
 const taskHit = (t: Task): Hit => ({

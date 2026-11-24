@@ -7,6 +7,7 @@
 import { useState, type FormEvent } from "react";
 import { ChevronLeft, ChevronRight, Target } from "@/shared/icons";
 import { BarList, ChartCard, ColumnChart, Donut, Meter, MultiLineChart } from "@/shared/charts";
+import { shiftMonth } from "@/shared/dates";
 import { errorText, useToast } from "@/shared/feedback";
 import { useKinds, UNCATEGORIZED } from "@/shared/kinds/api";
 import { Modal } from "@/shared/Modal";
@@ -14,7 +15,7 @@ import { Button, IconButton, Segmented } from "@/shared/ui";
 import { AssetTrends } from "./AssetTrends";
 import { OUT_KINDS, useAccounts, useAssets, useBudgets, useFinMutations, useHoldings, useTotals, type Total } from "./api";
 import { AmountInput, CurrencyPicker } from "./fields";
-import { CURRENCIES, money, moneyInput, moneyShort, monthTitle, parseMoney, shiftMonth, thisMonth, type Currency } from "./money";
+import { CURRENCIES, money, moneyInput, moneyShort, monthTitle, parseMoney, thisMonth, type Currency } from "./money";
 import { usePageContext } from "@/app/pageContext";
 
 type Mode = "month" | "year" | "assets";

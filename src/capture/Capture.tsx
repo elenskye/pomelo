@@ -262,7 +262,7 @@ export function Capture() {
             pinned ? "text-primary" : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Pin size={15} strokeWidth={1.75} className={pinned ? "fill-current" : ""} />
+          <Pin size={15} className={pinned ? "fill-current" : ""} />
         </button>
       </header>
 
@@ -326,7 +326,7 @@ export function Capture() {
                 onClick={() => void pick()}
                 className="inline-flex shrink-0 items-center justify-center rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
               >
-                <Paperclip size={15} strokeWidth={1.75} />
+                <Paperclip size={15} />
               </button>
             )}
             {tab === "note" && (
@@ -338,7 +338,7 @@ export function Capture() {
                 onClick={() => void saveMarkdown()}
                 className="inline-flex shrink-0 items-center justify-center rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
               >
-                <FileDown size={15} strokeWidth={1.75} />
+                <FileDown size={15} />
               </button>
             )}
             <span role="status" className={`min-w-0 truncate text-xs ${status?.error ? "text-destructive" : "text-muted-foreground"}`}>

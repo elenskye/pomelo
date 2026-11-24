@@ -7,7 +7,7 @@ import { flash, reducedMotion } from "@/shared/hand";
 import { markSvg, sizedMark } from "@/shared/marks";
 
 /** Ask the top bar's pomelo for a face for a moment (App listens). */
-export const pomeloFace = (face: string, ms: number) => window.dispatchEvent(new CustomEvent("pomelo:face", { detail: { face, ms } }));
+const pomeloFace = (face: string, ms: number) => window.dispatchEvent(new CustomEvent("pomelo:face", { detail: { face, ms } }));
 
 function useMark(name: string, size: number) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
@@ -15,8 +15,9 @@ function useMark(name: string, size: number) {
   return useMemo(() => (svg ? sizedMark(svg, size, uid) : ""), [svg, size, uid]);
 }
 
-export function Whisper(props: { size?: number; className?: string }) {
-  const size = props.size ?? 72;
+const size = 72;
+
+export function Whisper(props: { className?: string }) {
   const ghost = useMark("pomelo-ghost", size);
   const front = useMark("pomelo-normal", size);
   const back = useMark("pomelo-normal", size);

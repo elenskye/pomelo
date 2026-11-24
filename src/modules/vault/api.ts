@@ -5,8 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText, useToast } from "@/shared/feedback";
 
-export type VaultState = "new" | "locked" | "open";
-export type Reason = "none" | "failed" | "expired" | "updated" | "first";
+type VaultState = "new" | "locked" | "open";
+type Reason = "none" | "failed" | "expired" | "updated" | "first";
 export type VaultStatus = { state: VaultState; touch: boolean; reason: Reason | null };
 
 export type Fields = {
@@ -43,7 +43,7 @@ export const REASON: Record<Reason, string | null> = {
   updated: "App 更新后，第一次要输入主密码",
   first: null,
 };
-export const LOCKED = "芝麻开门已经锁上了";
+const LOCKED = "芝麻开门已经锁上了";
 /** Same as IDLE in vault.rs; the UI locks itself too so the page doesn't sit open. */
 export const IDLE_MS = 5 * 60 * 1000;
 

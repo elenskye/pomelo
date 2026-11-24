@@ -30,7 +30,7 @@ function shown(path: string) {
 }
 
 function MiniPages(props: { kind: ExportStyle }) {
-  const lines = (n: number, w0 = 80) => Array.from({ length: n }, (_, i) => <i key={i} className="ar-mini-l" style={{ width: `${w0 - (i % 3) * 12}%` }} />);
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => <i key={i} className="ar-mini-l" style={{ width: `${80 - (i % 3) * 12}%` }} />);
   return (
     <div className={`ar-mini ar-mini-${props.kind}`} data-theme="light" aria-hidden="true">
       <div className="ar-mp">
@@ -68,7 +68,7 @@ function Row(props: { label: string; children: React.ReactNode }) {
 }
 
 /** What didn't come over (or came over differently), as a short list. */
-export function LeftList(props: { left: Left[]; fixes?: string[] }) {
+function LeftList(props: { left: Left[]; fixes?: string[] }) {
   if (!props.left.length && !props.fixes?.length) return null;
   return (
     <div className="ar-left pm-scroll -m-1 max-h-[240px] overflow-y-auto p-1">

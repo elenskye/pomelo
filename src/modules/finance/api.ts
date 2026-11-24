@@ -27,15 +27,15 @@ export type Account = {
   lastDay: string | null;
   lastAmount: number | null;
 };
-export type AccountPatch = Partial<Pick<Account, "name" | "kind" | "currency" | "closed" | "note">>;
-export type Balance = { accountId: number; day: string; amount: number };
-export type Rate = { day: string; currency: Currency; rate: number };
+type AccountPatch = Partial<Pick<Account, "name" | "kind" | "currency" | "closed" | "note">>;
+type Balance = { accountId: number; day: string; amount: number };
+type Rate = { day: string; currency: Currency; rate: number };
 /** Total assets on a day with any balance (latest balance per account × latest rate up to it). */
-export type DayTotal = { day: string; totalCny: number | null; missing: Currency[] };
-export type Assets = { balances: Balance[]; rates: Rate[]; totals: DayTotal[] };
+type DayTotal = { day: string; totalCny: number | null; missing: Currency[] };
+type Assets = { balances: Balance[]; rates: Rate[]; totals: DayTotal[] };
 /** price: unit price in currency units (not cents); value = quantity × price, in cents. */
-export type Holding = { id: number; accountId: number; day: string; name: string; quantity: number; price: number; value: number };
-export type HoldingInput = { name: string; quantity: number; price: number };
+type Holding = { id: number; accountId: number; day: string; name: string; quantity: number; price: number; value: number };
+type HoldingInput = { name: string; quantity: number; price: number };
 
 export type Entry = {
   id: number;
@@ -54,7 +54,7 @@ export type Entry = {
   createdAt: string;
   updatedAt: string;
 };
-export type EntryPatch = Partial<Pick<Entry, "flow" | "amount" | "currency" | "day" | "endDay" | "kindId" | "note" | "isRefund" | "refundOf">>;
+type EntryPatch = Partial<Pick<Entry, "flow" | "amount" | "currency" | "day" | "endDay" | "kindId" | "note" | "isRefund" | "refundOf">>;
 
 export type Fixed = {
   id: number;
@@ -72,9 +72,9 @@ export type Fixed = {
   createdAt: string;
   updatedAt: string;
 };
-export type FixedPatch = Partial<Pick<Fixed, "name" | "flow" | "amount" | "currency" | "kindId" | "rule" | "nextDay" | "stopped" | "note">>;
+type FixedPatch = Partial<Pick<Fixed, "name" | "flow" | "amount" | "currency" | "kindId" | "rule" | "nextDay" | "stopped" | "note">>;
 
-export type Budget = { kindId: number; currency: Currency; amount: number };
+type Budget = { kindId: number; currency: Currency; amount: number };
 /** Entry sums by month × currency × flow × 分类 (a period counts with its share in each month). */
 export type Total = { month: string; currency: Currency; flow: Flow; kindId: number | null; amount: number; count: number };
 

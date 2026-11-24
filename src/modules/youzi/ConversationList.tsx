@@ -379,7 +379,7 @@ export function ConversationList(props: {
       >
         {folding ? (
           <button type="button" aria-expanded={folding.open} onClick={() => !swallow() && (foldByHand(), folding.toggle())} className="yz-lab">
-            <HandIcon name="down" size={14} seed={1201} className={`yz-chev pm-fold-chev ${folding.open ? "" : "shut"}`} />
+            <HandIcon name="down" size={14} className={`yz-chev pm-fold-chev ${folding.open ? "" : "shut"}`} />
             <span className="yz-lt">{text}</span>
           </button>
         ) : (
@@ -462,7 +462,7 @@ export function ConversationList(props: {
     <div className="yz-list">
       <button type="button" onClick={props.onSearch} className="pm-field pm-compact yz-search" data-hand="field" data-seed={1210} data-r={10} data-fill="card">
         <span style={{ color: "var(--color-pen)" }}>
-          <HandIcon name="search" size={16} seed={1211} />
+          <HandIcon name="search" size={16} />
         </span>
         <span>搜索对话</span>
       </button>
@@ -474,7 +474,7 @@ export function ConversationList(props: {
           "项目",
           null,
           <IconButton label="新建项目" onClick={() => setProjectDialog("new")}>
-            <Plus size={13} strokeWidth={1.75} />
+            <Plus size={13} />
           </IconButton>,
           fold("projects"),
         )}
@@ -486,7 +486,7 @@ export function ConversationList(props: {
                 {p.files > 0 && (
                   <div className="yz-row yz-files">
                     <button type="button" onClick={() => props.onProjectFiles(p.id)} className="yz-title">
-                      <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
+                      <LibraryIcon size={13} /> 资料 <span className="text-xs">{p.files}</span>
                     </button>
                   </div>
                 )}
@@ -550,7 +550,7 @@ export function ConversationList(props: {
             onClick={onClick}
             className="yz-tool pm-press"
           >
-            <Icon size={14} strokeWidth={1.5} /> {label}
+            <Icon size={14} /> {label}
           </button>
         ))}
       </div>

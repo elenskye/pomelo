@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { attachmentsApi, fileSrc, type FileInfo } from "@/shared/attachments/api";
 import { pickAttachments } from "@/shared/attachments/Attachments";
+import { pad } from "@/shared/dates";
 import { useAttachTarget } from "@/shared/attachments/target";
 import { offsetOf } from "@/shared/editor/editable";
 import { LiveText, type Format, type LiveTextHandle, type Suggest } from "@/shared/editor/LiveText";
@@ -63,7 +64,7 @@ import { escapeName } from "@/shared/links/links";
 import { ClipBox } from "@/shared/links/ClipBox";
 import { LinkPicker, linkText } from "@/shared/links/LinkPicker";
 import { selectionAnchor, useDragFit, type Anchor } from "@/shared/fit";
-import { CALLOUTS, HEADING, HIGHLIGHTS, LIST, bearFlavor, blocks, cells, decodeName, encodeName, foldKey, foldRange, markedFolds, type Look } from "./bear";
+import { CALLOUTS, HEADING, HIGHLIGHTS, LIST, bearFlavor, blocks, cells, fencedLines, decodeName, encodeName, foldKey, foldRange, markedFolds, type Look } from "./bear";
 import { renderCode, renderDiagram, renderMath } from "./render";
 import "./articles.css";
 
@@ -98,13 +99,12 @@ function namesIn(text: string): Set<string> {
   return out;
 }
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
 /** A pasted file under a name the article doesn't use yet (a screenshot: 截图 2026-11-13 10.32.05.png). */
 function named(f: File, i: number, taken: Map<string, FileInfo>): File {
   const d = new Date();
   const ext = (/\.[a-z0-9]+$/i.exec(f.name)?.[0] ?? (f.type === "image/jpeg" ? ".jpg" : ".png")).toLowerCase();
   const pasted = !f.name || /^image\.(png|jpe?g|gif|tiff?)$/i.test(f.name);
-  const base = pasted ? `截图 ${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}.${pad2(d.getMinutes())}.${pad2(d.getSeconds())}${i ? ` ${i + 1}` : ""}` : f.name.replace(/\.[^.]+$/, "");
+  const base = pasted ? `截图 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}${i ? ` ${i + 1}` : ""}` : f.name.replace(/\.[^.]+$/, "");
   let name = `${base}${pasted ? ext : (/\.[^.]+$/.exec(f.name)?.[0] ?? "")}`;
   for (let n = 2; taken.has(name); n++) name = `${base} ${n}${pasted ? ext : (/\.[^.]+$/.exec(f.name)?.[0] ?? "")}`;
   return name === f.name ? f : new File([f], name, { type: f.type });
@@ -573,7 +573,7 @@ export const ArticleEditor = forwardRef<
   };
   const foldAll = (shut: boolean) => {
     const lines = current().split("\n");
-    const fenced = new Set<number>(blocks(lines).filter((b) => b.kind === "fence" || b.kind === "math").flatMap((b) => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
+    const fenced = fencedLines(blocks(lines));
     const keys = lines.map((_, i) => (HEADING.test(lines[i]) && foldRange(lines, i, fenced) ? foldKey(lines, i) : null)).filter((k): k is string => k !== null);
     setFolds(shut ? new Set(keys) : new Set());
   };

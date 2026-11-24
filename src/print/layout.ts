@@ -3,20 +3,20 @@
 // top of the first page, then cut into A4 pages (1 CSS px = 1 pt) line by line: a heading never ends a page, a gap
 // never starts one, a picture / formula / diagram stays whole (scaled to fit the page). Two looks (print.css):
 // 柚儿园 and 印刷. Word gets the same lines as blocks and runs (docx.rs); formulas and diagrams as pictures.
-import { CALLOUTS, LIST, blocks, drawDoc, type Look } from "@/modules/articles/bear";
+import { CALLOUTS, LIST, blocks, drawDoc, fencedLines, type Look } from "@/modules/articles/bear";
 import { diagramReady, renderCode, renderMath } from "@/modules/articles/render";
 import { fileSrc, type FileInfo } from "@/shared/attachments/api";
 import { esc } from "@/shared/editor/markdown";
 import { moduleMark, sizedMark } from "@/shared/marks";
 
-export type Style = "pomelo" | "print";
+type Style = "pomelo" | "print";
 export type Options = { format: string; style: Style; toc: boolean; header: boolean; meta: boolean; dest?: string };
 export type Item = { id: number; title: string; content: string; tags: string[]; createdAt: string; updatedAt: string; files: FileInfo[] };
-export type PdfLink = { page: number; x: number; y: number; w: number; h: number; toPage?: number; toY?: number; url?: string };
-export type OutlineMark = { level: number; title: string; page: number; y: number };
-export type Laid = { pages: HTMLElement[]; links: PdfLink[]; outline: OutlineMark[] };
+type PdfLink = { page: number; x: number; y: number; w: number; h: number; toPage?: number; toY?: number; url?: string };
+type OutlineMark = { level: number; title: string; page: number; y: number };
+type Laid = { pages: HTMLElement[]; links: PdfLink[]; outline: OutlineMark[] };
 
-export const PAGE = { w: 595, h: 842 };
+const PAGE = { w: 595, h: 842 };
 const BOX: Record<Style, { top: number; right: number; bottom: number; left: number }> = {
   pomelo: { top: 64, right: 62, bottom: 64, left: 66 },
   print: { top: 76, right: 72, bottom: 76, left: 76 },
@@ -41,7 +41,7 @@ export function longDate(stamp: string) {
 const TAG = /(^|\s)#[^\s#]+/g;
 /** The title's line (articles.rs `title_line`): the first line outside code with words of its own. */
 function titleIndex(lines: string[]): number {
-  const fenced = new Set<number>(blocks(lines).filter((b) => b.kind === "fence" || b.kind === "math").flatMap((b) => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
+  const fenced = fencedLines(blocks(lines));
   for (let i = 0; i < lines.length; i++) {
     if (fenced.has(i)) continue;
     const t = lines[i]
@@ -272,8 +272,8 @@ export async function layout(item: Item, o: Options, host: HTMLElement): Promise
 
 // ---------- Word ----------
 
-export type Run = { t?: string; b?: boolean; i?: boolean; u?: boolean; s?: boolean; code?: boolean; sup?: boolean; hl?: string; href?: string; pic?: number; file?: number; w?: number; h?: number };
-export type Block =
+type Run = { t?: string; b?: boolean; i?: boolean; u?: boolean; s?: boolean; code?: boolean; sup?: boolean; hl?: string; href?: string; pic?: number; file?: number; w?: number; h?: number };
+type Block =
   | { k: "h"; level: number; runs: Run[] }
   | { k: "p"; runs: Run[] }
   | { k: "li"; level: number; mark: string; done: boolean; runs: Run[] }

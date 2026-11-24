@@ -60,13 +60,13 @@ const MIN = { t: 150, l: 220, e: 380 };
 const MAX = { t: 300, l: 440 };
 
 /** Bear's spacing (its default, measured): 17 px, lines 1.9 apart, a fifth of the size after each line, blank lines whole. */
-export const DEFAULT_LOOK: Look2 = { size: 17, leading: 1.9, para: 0.2, width: 680, bar: "always" };
+const DEFAULT_LOOK: Look2 = { size: 17, leading: 1.9, para: 0.2, width: 680, bar: "always" };
 const isLook = (v: unknown): v is Look2 => {
   const l = v as Look2;
   return !!l && typeof l.size === "number" && typeof l.leading === "number" && (l.para === undefined || typeof l.para === "number") && (l.width === null || typeof l.width === "number") && (l.bar === "always" || l.bar === "select");
 };
 /** A look saved before 段距 existed gets the default one. */
-export function useLook() {
+function useLook() {
   const [look, setLook] = useSetting<Look2>("articles.look", DEFAULT_LOOK, isLook);
   return [{ ...look, para: look.para ?? DEFAULT_LOOK.para }, setLook] as const;
 }
@@ -222,7 +222,7 @@ export default function ArticlesPage() {
   const mod = moduleById(MOD);
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      {sub === "settings" && <PageHeader icon={mod.icon} color={mod.color} title={`${mod.label} · 设置`} />}
+      {sub === "settings" && <PageHeader title={`${mod.label} · 设置`} />}
       {sub === "settings" ? <Settings /> : <Writing asked={asked} onTaken={() => setAsked(null)} />}
     </div>
   );
@@ -527,7 +527,7 @@ function Writing({ asked, onTaken }: { asked: { id: number } | null; onTaken: ()
         className={`side-row w-full shrink-0 gap-2 px-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${on ? "on" : ""}`}
       >
         {on && <Picked seed={1440 + VIEWS.indexOf(v)} />}
-        <Icon size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+        <Icon size={15} className="shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{v.label}</span>
         <span className="text-xs font-normal text-muted-foreground tabular-nums">{overview?.counts[v.id] ?? ""}</span>
       </button>
@@ -624,7 +624,7 @@ function Writing({ asked, onTaken }: { asked: { id: number } | null; onTaken: ()
                 {q && (near.length > 0 || similar.isFetching) && (
                   <>
                     <p className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-sm text-muted-foreground">
-                      <Sparkles size={14} strokeWidth={1.75} /> 意思相近{similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
+                      <Sparkles size={14} /> 意思相近{similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
                     </p>
                     {near.map((a) => (
                       <ListRow key={`n${a.id}`} a={a} trash={a.trashed} on={several ? picked.includes(a.id) : a.id === sel && !fresh} onOpen={click(a.id)} onMenu={rowMenu(a)} />

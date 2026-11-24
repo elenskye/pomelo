@@ -4,7 +4,7 @@ import { FIN_KEY, type Entry } from "./api";
 import type { Currency } from "./money";
 
 export type ImportDraft = { day: string; amount: number | null; currency: Currency; treatment: "out" | "in" | "refund" | "neutral"; category: string | null; note: string; refundOf: number | null };
-export type SourceRow = { sheet: string; rowNumber: number; raw: [string, string][]; tradeId: string; time: string; status: string; draft: ImportDraft; issues: string[]; region?: [number, number, number, number] | null };
+type SourceRow = { sheet: string; rowNumber: number; raw: [string, string][]; tradeId: string; time: string; status: string; draft: ImportDraft; issues: string[]; region?: [number, number, number, number] | null };
 export type ImportRow = { pendingCandidates?: { id: number; batchId: number; name: string; draft: ImportDraft }[]; ai?: { model: string; noteError?: string | null; settled?: boolean; why?: string | null; duplicate: string; reason: string; duplicateRow?: number | null; target?: string | null; myCategory?: boolean } | null; fileName?: string | null; id: number; source: SourceRow; draft: ImportDraft; state: string; entryId: number | null; resolution: "new" | "linked" | null; candidates: { entry: Entry; sources: string[] }[] };
 export type BatchSummary = { id: number; name: string; title: string | null; sortOrder: number; source: string; createdAt: string; count: number; pending: number };
 export type ImportBatch = { summary: BatchSummary; rows: ImportRow[] };

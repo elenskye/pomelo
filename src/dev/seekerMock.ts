@@ -4,6 +4,7 @@
 // lives here too: its rules are Seeker records; 卡片练习 (practice.rs) keeps its rounds in `practice`.
 import type { RaterAsk, RaterBank, RaterBuiltin, RaterCard, RaterInterviews, RaterJob, RaterOptions, RaterPractice, RaterPrep, RaterPrepAsk, RaterQuestion, RaterReview, RaterRound, RaterStart, RaterTally } from "@/modules/youzi/assistants/raterApi";
 import type { SeekerCatalog, SeekerCompany, SeekerCvFile, SeekerDesk, SeekerDraft, SeekerEntry, SeekerExport, SeekerGroupName, SeekerImport, SeekerJobCompany, SeekerLang, SeekerNote, SeekerRecord, SeekerSelection, SeekerSettings, SeekerWorkspace, SourceChange } from "@/modules/youzi/assistants/seekerApi";
+import { draftLang } from "@/modules/youzi/assistants/seekerApi";
 
 const HEADER = ["工作邮箱", "联系电话", "个人网站", "工作地点"];
 const HEADER_EN = ["Location", "Email", "Phone", "GitHub"];
@@ -435,7 +436,6 @@ const emptyDesk = (): SeekerDesk => ({ draft: null, updatedAt: null, baseline: n
 export const seekerMock: { workspace: SeekerWorkspace; rater: RaterBank; practice: RaterRound[]; interviews: RaterInterviews; job: (id: number) => Job | undefined; wrap: <T>(label: string, f: () => T) => T; modelCheck: (feature: string) => void; jobLink: (id: number) => RaterJob } = { rater: sampleBank(), practice: [], interviews: { preps: [], reviews: [], summaries: [] }, modelCheck: (f) => modelCheck(f), jobLink: (id) => jobLink(id), wrap: (_label, f) => f(), workspace: { folder: "", ...emptyDesk(), en: emptyDesk(), catalog: sample(), output: { template: null, templateEn: null, exports: [], links: [] } }, job: () => undefined };
 const catalog = () => seekerMock.workspace.catalog;
 const langOf = (a: { lang?: unknown }): SeekerLang => (a.lang === "en" ? "en" : "cn");
-const langOfDraft = (d: SeekerDraft | null | undefined): SeekerLang => (d?.lang === "en" ? "en" : "cn");
 /** The Chinese desk is the workspace itself (its names from before English). */
 const desk = (lang: SeekerLang): SeekerDesk => (lang === "en" ? (seekerMock.workspace.en ??= emptyDesk()) : seekerMock.workspace);
 const isStack = (text: string) => /^(技术栈|tech stack)/i.test(text);
@@ -446,7 +446,7 @@ const warningsOf = (d: SeekerDraft | null) => {
   const warnings: string[] = [];
   if (!d) return warnings;
   const count = (category: string) => d.sections.filter((s) => s.category === category).reduce((n, s) => n + s.entries.length, 0);
-  if (langOfDraft(d) === "en") {
+  if (draftLang(d) === "en") {
     if (d.form !== "cv" && count("项目") > 2) warnings.push(`Resume 建议 1–2 个项目，现在 ${count("项目")} 个`);
     for (const e of d.sections.filter((s) => s.category === "项目" || s.category === "工作").flatMap((s) => s.entries)) if (e.points.length > 3) warnings.push(`「${e.name}」${e.points.length} 条，每段最多 3 条`);
     if (count(SUMMARY) > 1) warnings.push("Summary 只留一条");
@@ -464,7 +464,7 @@ const view = () => {
 const save = (draft: SeekerDraft) => {
   const ids = [...draft.header.map((h) => h.id), ...draft.sections.flatMap((s) => [s.id, ...s.entries.flatMap((e) => [e.id, ...e.points.map((p) => p.id)])])];
   if (ids.some((id) => !id) || new Set(ids).size !== ids.length) throw new Error("简历中有空白或重复的块编号");
-  const lang = langOfDraft(draft);
+  const lang = draftLang(draft);
   if ((lang === "en") !== (draft.form === "resume" || draft.form === "cv")) throw new Error("简历的类型不对");
   const d = desk(lang);
   // 批注 whose block is gone go (Rust seeker.rs `save`)
@@ -749,7 +749,7 @@ export const seekerHandlers: Record<string, (a: Args) => unknown> = {
   },
   youzi_seeker_new: (a) => { const lang = langOf(a); const draft = initial(lang); save(draft); desk(lang).baseline = structuredClone(draft); return view(); },
   // the page's copy keeps the stored 批注 (Rust seeker.rs `save_page`)
-  youzi_seeker_save: (a) => { const draft = a.draft as SeekerDraft; return save({ ...draft, notes: desk(langOfDraft(draft)).draft?.notes }); },
+  youzi_seeker_save: (a) => { const draft = a.draft as SeekerDraft; return save({ ...draft, notes: desk(draftLang(draft)).draft?.notes }); },
   youzi_seeker_delete_blocks: (a) => {
     const draft = draftOf(langOf(a));
     if (!draft) throw new Error("还没有简历草稿");

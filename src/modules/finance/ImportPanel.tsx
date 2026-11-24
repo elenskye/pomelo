@@ -579,7 +579,7 @@ export function ImportPanel(props: { onClose: () => void; onPosted: (day: string
     <section aria-label="导入账单" className="absolute inset-0 z-20 flex flex-col gap-3 px-6 pt-5 pb-4">
       <header className="flex shrink-0 flex-wrap items-center gap-2">
         <h2 className="text-lg font-bold">导入账单</h2>
-        <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手 Importer" style={{ color: "var(--module-youzi)" }} />
+        <Bird size={14} aria-label="柚子的助手 Importer" style={{ color: "var(--module-youzi)" }} />
         <span className="mr-auto" />
         {noAi && <span className="text-xs text-muted-foreground">{noAi}</span>}
         <Dropdown ariaLabel="模型" value={model} options={models.length ? models : [{ value: null, label: "没有云端模型" }]} onChange={(m) => m && saveSettings({ model: m })} align="end" />

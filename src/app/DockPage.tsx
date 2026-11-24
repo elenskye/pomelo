@@ -96,8 +96,8 @@ function MoreButton(props: { label: string; onOpen: (el: HTMLElement) => void; c
   );
 }
 
-/** One module in a category (or 已隐藏): icon, name, pin mark, live text. */
-export function ModuleRow(props: { id: string; dock: Dock; live?: string; menu: ModuleMenu; from: string; onOpen: (id: string) => void; dim?: boolean }) {
+/** One module in 已隐藏: icon, name, pin mark, live text. */
+export function ModuleRow(props: { id: string; dock: Dock; live?: string; menu: ModuleMenu; onOpen: (id: string) => void }) {
   const def = props.dock.defs.get(props.id);
   const drag = useDragNow();
   if (!def) return null;
@@ -106,11 +106,11 @@ export function ModuleRow(props: { id: string; dock: Dock; live?: string; menu: 
       data-mod={props.id}
       role="link"
       tabIndex={0}
-      onPointerDown={(e) => pressModule(e, props.id, props.from, props.dock.move)}
+      onPointerDown={(e) => pressModule(e, props.id, "hidden", props.dock.move)}
       onClick={() => props.onOpen(props.id)}
       onKeyDown={(e) => e.key === "Enter" && props.onOpen(props.id)}
       onContextMenu={(e) => props.menu.at(e, props.id)}
-      className={`group/m relative flex min-w-0 cursor-default items-center gap-2.5 rounded-control py-1 pr-8 pl-1.5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${props.dim ? "opacity-70" : ""} ${drag?.mod === props.id ? "opacity-40" : ""}`}
+      className={`group/m relative flex min-w-0 cursor-default items-center gap-2.5 rounded-control py-1 pr-8 pl-1.5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring opacity-70 ${drag?.mod === props.id ? "opacity-40" : ""}`}
     >
       <ModuleIcon def={def} size={26} />
       <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
@@ -125,7 +125,7 @@ export function ModuleRow(props: { id: string; dock: Dock; live?: string; menu: 
 }
 
 /** A category's name: click to rename in place (↩ or leaving saves, Esc keeps the old one). */
-export function CatName(props: { name: string; editing?: boolean; onEdited?: () => void; onRename: (name: string) => void; className?: string }) {
+export function CatName(props: { name: string; editing?: boolean; onEdited?: () => void; onRename: (name: string) => void }) {
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!props.editing || !ref.current) return;
@@ -157,7 +157,7 @@ export function CatName(props: { name: string; editing?: boolean; onEdited?: () 
           e.currentTarget.blur();
         }
       }}
-      className={`cursor-text rounded px-1 outline-none hover:bg-card focus:bg-card ${props.className ?? ""}`}
+      className="cursor-text rounded px-1 outline-none hover:bg-card focus:bg-card"
     >
       {props.name}
     </span>

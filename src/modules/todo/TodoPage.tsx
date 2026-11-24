@@ -495,17 +495,17 @@ export default function TodoPage() {
     <nav aria-label="一步一步" className="side-list flex w-60 shrink-0 flex-col pr-4">
       <div className="-m-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1">
         <NavButton active={view.kind === "today"} onClick={() => void go({ kind: "today" })}>
-          <Sun size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+          <Sun size={15} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">今天</span>
           {counts && counts.overdue > 0 && <span className="text-xs font-normal text-destructive">{counts.overdue} 过期</span>}
           {counts && <span className="text-xs font-normal text-muted-foreground">{counts.due}</span>}
         </NavButton>
         <NavButton active={view.kind === "month"} onClick={() => void go({ kind: "month" })}>
-          <CalendarDays size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+          <CalendarDays size={15} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">月历</span>
         </NavButton>
         <NavButton active={view.kind === "review"} onClick={() => void go({ kind: "review" })}>
-          <CalendarCheck size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+          <CalendarCheck size={15} className="shrink-0 text-muted-foreground" />
           <span className="flex-1">回看</span>
         </NavButton>
         <div className="side-rule" />
@@ -544,7 +544,7 @@ export default function TodoPage() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} right={stats} />
+      <PageHeader title={m.label} right={stats} />
       {groupsPending ? null : groups.length === 0 ? (
         <EmptyState
           title="一步一步，先建一个分组吧"

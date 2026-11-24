@@ -22,8 +22,8 @@ export function JobInterviews(props: { job: Job; disabled: boolean }) {
   const rows = [...preps.map((p) => ({ id: p.id, at: p.createdAt, text: `准备 · ${p.createdAt.slice(0, 10)} · ${[p.lang, p.form].filter(Boolean).join(" · ")}` })), ...reviews.map((r) => ({ id: r.id, at: r.date, text: `复盘 · ${r.date} · ${[r.round, r.result].filter(Boolean).join(" · ")}` })), ...summaries.map((s) => ({ id: s.id, at: s.createdAt, text: `总结 · ${s.createdAt.slice(0, 10)} · ${s.reviews.length} 次复盘` }))].sort((a, b) => b.at.localeCompare(a.at));
   return <Field label="面试"><div className="space-y-2">
     <div className="grid grid-cols-2 gap-2">
-      <Button className="justify-center" disabled={props.disabled} onClick={() => go("prep")}><Sparkles size={14} strokeWidth={1.75} />准备面试</Button>
-      <Button className="justify-center" disabled={props.disabled} onClick={() => go("review")}><MessageSquare size={14} strokeWidth={1.75} />复盘</Button>
+      <Button className="justify-center" disabled={props.disabled} onClick={() => go("prep")}><Sparkles size={14} />准备面试</Button>
+      <Button className="justify-center" disabled={props.disabled} onClick={() => go("review")}><MessageSquare size={14} />复盘</Button>
     </div>
     {rows.length > 0 && <div className="space-y-1">{rows.map((r) => <button key={r.id} type="button" onClick={() => go("job")} className="block w-full truncate rounded-control border px-2 py-1 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">{r.text}</button>)}</div>}
   </div></Field>;

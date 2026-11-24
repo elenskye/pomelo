@@ -11,8 +11,8 @@ import { libraryIcon, StoredIcon } from "@/shared/iconLibrary";
 import { useOverview, type TagCount } from "./api";
 
 /** A tag's icon in a 16px slot: library icon (module color), an old emoji, or a muted #. */
-export function TagIcon(props: { icon: string | null; size?: number }) {
-  return <StoredIcon icon={props.icon} size={props.size ?? 14} color="var(--module-notes)" />;
+export function TagIcon(props: { icon: string | null }) {
+  return <StoredIcon icon={props.icon} size={14} color="var(--module-notes)" />;
 }
 
 const mask = (body: string) => `url("data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">${body}</svg>`)}")`;

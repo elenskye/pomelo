@@ -20,7 +20,7 @@ import { useSortable } from "@/shared/sortable";
 import { StarRating } from "@/shared/StarRating";
 import { TagMulti, TagSelect } from "@/shared/tags";
 import { Button, EmptyState, PageHeader, SearchInput } from "@/shared/ui";
-import { madeDef, useCustomModules, useCustomMutations, useFields, useItems, type Custom, type Field, type Item, type Value } from "./api";
+import { useCustomModules, useCustomMutations, useFields, useItems, type Custom, type Field, type Item, type Value } from "./api";
 import { CustomDialog } from "./CustomDialog";
 import { FieldManager } from "./FieldManager";
 import { ItemPanel } from "./ItemPanel";
@@ -37,7 +37,7 @@ const host = (link: string) => {
 };
 
 /** What a value reads as (search, sorting text). */
-export function valueText(f: Field, v: Value | undefined): string {
+function valueText(f: Field, v: Value | undefined): string {
   if (v === undefined) return "";
   if (Array.isArray(v)) return v.join("、");
   if (f.type === "check") return v ? "是" : "";
@@ -100,7 +100,7 @@ function Cell(props: { f: Field; item: Item; onSet: (v: Value | null) => void })
           onClick={(e) => (stop(e), props.onSet(v === true ? null : true))}
           className={`flex size-4 items-center justify-center rounded-[4px] border outline-none focus-visible:ring-2 focus-visible:ring-ring ${v === true ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-foreground/40"}`}
         >
-          {v === true && <Check size={12} strokeWidth={2.5} />}
+          {v === true && <Check size={12} />}
         </button>
       );
     case "rating":
@@ -130,7 +130,7 @@ function Cell(props: { f: Field; item: Item; onSet: (v: Value | null) => void })
   }
 }
 
-function ListTable(props: { fields: Field[]; items: Item[]; selectedId: number | null; sort: Sort; onSort: (s: Sort) => void; onOpen: (id: number) => void; onReorder?: (ids: number[]) => void; moduleId: number }) {
+function ListTable(props: { fields: Field[]; items: Item[]; selectedId: number | null; sort: Sort; onSort: (s: Sort) => void; onOpen: (id: number) => void; onReorder?: (ids: number[]) => void }) {
   const m = useCustomMutations();
   const sort = useSortable<HTMLTableSectionElement>((ids) => props.onReorder?.(ids));
   const shown = props.fields.filter((f) => f.shown);
@@ -182,7 +182,6 @@ function ListTable(props: { fields: Field[]; items: Item[]; selectedId: number |
 
 function ListView(props: { list: Custom }) {
   const list = props.list;
-  const def = madeDef(list);
   const { data: fields = [] } = useFields(list.id);
   const { data: items = [] } = useItems(list.id);
   const m = useCustomMutations();
@@ -252,8 +251,6 @@ function ListView(props: { list: Custom }) {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
-        icon={def.icon}
-        color={def.color}
         title={list.name}
         right={
           <div className="flex items-center justify-end gap-2">
@@ -316,7 +313,6 @@ function ListView(props: { list: Custom }) {
             <ListTable
               fields={fields}
               items={shown}
-              moduleId={list.id}
               selectedId={editing?.id ?? null}
               sort={sort}
               onSort={setSort}

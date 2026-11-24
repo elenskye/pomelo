@@ -159,11 +159,11 @@ function Card(props: { title: ReactNode; meta?: ReactNode; first: boolean; actio
   </article>;
 }
 
-function FollowItem(props: { f: RaterFollow; busy: boolean; keep: () => void; label?: string }) {
+function FollowItem(props: { f: RaterFollow; busy: boolean; keep: () => void }) {
   return <li className="space-y-1 rounded-control border-[1.5px] border-dashed px-3 py-2">
     <div className="flex items-start gap-2"><span className="min-w-0 flex-1 font-medium">{props.f.question}</span><span className="shrink-0 text-xs text-muted-foreground">{[props.f.category, props.f.about].filter(Boolean).join(" · ")}</span></div>
     {props.f.answer && <p className="whitespace-pre-wrap text-muted-foreground">{props.f.answer}</p>}
-    {props.f.saved ? <span className="text-xs text-muted-foreground">已存进题库</span> : <Button variant="ghost" className="-ml-2" disabled={props.busy} onClick={props.keep}><Plus size={14} />{props.label ?? "存进题库"}</Button>}
+    {props.f.saved ? <span className="text-xs text-muted-foreground">已存进题库</span> : <Button variant="ghost" className="-ml-2" disabled={props.busy} onClick={props.keep}><Plus size={14} />存进题库</Button>}
   </li>;
 }
 
@@ -402,7 +402,7 @@ function RecordChat(props: { session: number; close: () => void; saved: (out: Ra
           <div className="space-y-2 px-4 pt-2 pb-4">
             <PrepNotices prep={prep} />
             <Composer ref={composer} draftKey={draftKey} busy={busy} templates={templates} onManageTemplates={() => toast("模板在柚子页管理")} skills={ask.usable} onAskSkill={ask.toggle}
-              tools={web?.enabled && <button type="button" aria-pressed={ask.asked.includes(WEB_SKILL)} onClick={() => ask.toggle(WEB_SKILL)} className={`${toolClass} ${ask.asked.includes(WEB_SKILL) ? "bg-accent text-accent-foreground" : ""}`}><Globe size={14} strokeWidth={1.5} /> 联网</button>}
+              tools={web?.enabled && <button type="button" aria-pressed={ask.asked.includes(WEB_SKILL)} onClick={() => ask.toggle(WEB_SKILL)} className={`${toolClass} ${ask.asked.includes(WEB_SKILL) ? "bg-accent text-accent-foreground" : ""}`}><Globe size={14} /> 联网</button>}
               chips={ask.asked.length > 0 && <div className="flex flex-wrap gap-1.5 px-3 pt-2.5"><SkillChips skills={ask.skills} asked={ask.asked} onRemove={ask.toggle} /></div>}
               onSend={send} onStop={stop} />
           </div>

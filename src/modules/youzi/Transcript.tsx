@@ -84,7 +84,7 @@ function CopyButton(props: { text: string }) {
         )
       }
     >
-      {done ? <span className="text-xs">✓</span> : <Copy size={14} strokeWidth={1.5} />}
+      {done ? <span className="text-xs">✓</span> : <Copy size={14} />}
     </ActionButton>
   );
 }
@@ -95,11 +95,11 @@ function Versions(props: { m: ChatMessage; disabled: boolean; onSwitch: (delta: 
   return (
     <span className="inline-flex items-center text-xs text-muted-foreground tabular-nums">
       <ActionButton label="上一个版本" disabled={props.disabled || m.versionIndex <= 1} onClick={() => props.onSwitch(-1)}>
-        <ChevronLeft size={14} strokeWidth={1.75} />
+        <ChevronLeft size={14} />
       </ActionButton>
       {m.versionIndex}/{m.versionCount}
       <ActionButton label="下一个版本" disabled={props.disabled || m.versionIndex >= m.versionCount} onClick={() => props.onSwitch(1)}>
-        <ChevronRight size={14} strokeWidth={1.75} />
+        <ChevronRight size={14} />
       </ActionButton>
     </span>
   );
@@ -324,7 +324,7 @@ function ProposalCard(props: { card: Card; streaming: boolean; onOpen: (r: Query
   };
   const toggle = (p: number) => setOff((s) => (s.has(p) ? new Set([...s].filter((x) => x !== p)) : new Set(s).add(p)));
   return (
-    <div data-find-skip data-card={card.runId} className="mt-2 max-w-md rounded-card border bg-card text-sm">
+    <div data-find-skip className="mt-2 max-w-md rounded-card border bg-card text-sm">
       <ul className="divide-y">
         {card.items.map((it) => {
           const w = it.written;
@@ -437,7 +437,7 @@ function PageChip(props: { page: Query }) {
   return (
     <details className="youzi-think group/page mb-1 flex max-w-[85%] flex-col items-end" data-find-skip>
       <summary className="flex max-w-full cursor-default list-none items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-        <MapPin size={12} strokeWidth={1.75} className="shrink-0" />
+        <MapPin size={12} className="shrink-0" />
         <span className="truncate">带着：{props.page.label}</span>
       </summary>
       {props.page.result && <p className="selectable mt-1 border-r-2 pr-3 text-right font-reading text-[12.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">{props.page.result}</p>}
@@ -525,7 +525,7 @@ function Item(p: ItemProps) {
             <div className="msg-actions mt-1 flex items-center opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
               <Versions m={m} disabled={p.busy} onSwitch={p.onSwitch} />
               <ActionButton label="修改问题" disabled={p.busy} onClick={p.onEdit}>
-                <Pencil size={14} strokeWidth={1.5} />
+                <Pencil size={14} />
               </ActionButton>
               <CopyButton text={m.content} />
             </div>
@@ -569,10 +569,10 @@ function Item(p: ItemProps) {
         >
           <CopyButton text={m.content} />
           <ActionButton label="保存为 Word" disabled={!m.content.trim() || m.state !== "complete"} onClick={() => setWord(true)}>
-            <FileDown size={14} strokeWidth={1.5} />
+            <FileDown size={14} />
           </ActionButton>
           <ActionButton label="重新生成" disabled={p.busy} onClick={p.onRegenerate}>
-            <RotateCcw size={14} strokeWidth={1.5} />
+            <RotateCcw size={14} />
           </ActionButton>
           <Versions m={m} disabled={p.busy} onSwitch={p.onSwitch} />
         </div>
@@ -685,13 +685,13 @@ function FindBar(props: { query: string; count: number; index: number; onQuery: 
       />
       <span className="min-w-10 text-right text-xs text-muted-foreground tabular-nums">{props.query ? (props.count ? `${props.index + 1}/${props.count}` : "0/0") : ""}</span>
       <ActionButton label="上一个" disabled={!props.count} onClick={() => props.onStep(-1)}>
-        <ChevronUp size={14} strokeWidth={1.75} />
+        <ChevronUp size={14} />
       </ActionButton>
       <ActionButton label="下一个" disabled={!props.count} onClick={() => props.onStep(1)}>
-        <ChevronDown size={14} strokeWidth={1.75} />
+        <ChevronDown size={14} />
       </ActionButton>
       <ActionButton label="关闭查找" onClick={props.onClose}>
-        <X size={14} strokeWidth={1.75} />
+        <X size={14} />
       </ActionButton>
     </div>
   );
@@ -984,7 +984,7 @@ export function Transcript(props: {
           onClick={toBottom}
           className="absolute bottom-3 left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border bg-popover text-muted-foreground shadow-md hover:text-foreground"
         >
-          <ArrowDown size={15} strokeWidth={1.75} />
+          <ArrowDown size={15} />
         </button>
       )}
       {passage && <PassageDialog source={passage} onClose={() => setPassage(null)} />}

@@ -2,12 +2,11 @@
 // Click a day to list its items below the grid.
 import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "@/shared/icons";
-import { addDays, formatDay, mondayOf, toYmd, weekday } from "@/shared/dates";
+import { addDays, formatDay, mondayOf, toYmd, WEEK, weekday } from "@/shared/dates";
 import { Button, IconButton } from "@/shared/ui";
 import { useMonth, type CalItem, type Task } from "./api";
 import { PlacedList } from "./TaskList";
 
-const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 const WHAT: Record<CalItem["what"], string> = { due: "截止", range: "时间段", next: "之后的一次", done: "完成" };
 
 function Chip({ it, today }: { it: CalItem; today: string }) {

@@ -30,7 +30,7 @@ export type Section = { id: "ds" | "motion" | "explore" | "questionnaire" | "che
 export type Review = { status: "proposed" | "approved" | "rejected"; note: string | null; changed: boolean };
 export type Board = { file: string; title: string; page: string | null; review?: Review | null };
 /** After a rename, delete or undo: `id` is what the undo of a delete needs (the bench's trash); `file` a board. */
-export type Changed = { id: string | null; canvas: string; page: string | null; file: string | null; title: string };
+type Changed = { id: string | null; canvas: string; page: string | null; file: string | null; title: string };
 export type Detail = { name: string; pages: Page[]; boards: Board[] };
 
 export const canvasApi = {

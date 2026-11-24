@@ -6,10 +6,9 @@ import { Plus } from "@/shared/icons";
 import { errorText, useConfirm } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { MonthInput } from "@/shared/MonthInput";
-import { useSetting } from "@/shared/settings";
 import { Button, EmptyState, Field, IconButton, Segmented } from "@/shared/ui";
 import { SITE_KEY, pageApi, type Lang, type NowMonth, type Status } from "./api";
-import { BodyField, DocBar, DraftAction, SizedInput, addTo, shown, stored, useDoc, useEnglishDraft, usePreview, type View } from "./parts";
+import { BodyField, DocBar, DraftAction, SizedInput, addTo, shown, stored, useDoc, useEnglishDraft, usePreview, useSiteView, type View } from "./parts";
 
 const NOW_KEY = [...SITE_KEY, "now"];
 const monthText = (m: string) => m.replace("-", " / ");
@@ -164,7 +163,7 @@ export function NowPage(props: { guard: { confirmLeave: () => Promise<boolean>; 
   const { data } = useQuery({ queryKey: NOW_KEY, queryFn: pageApi.nowList, refetchOnWindowFocus: true });
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [view, setView] = useSetting<View>("ui.site_work_view", "zh", (v): v is View => v === "zh" || v === "en" || v === "both");
+  const [view, setView] = useSiteView();
   const months = data?.months ?? [];
   useEffect(() => {
     if (data && (!selected || !months.some((m) => m.month === selected))) setSelected(months[0]?.month ?? null);
@@ -191,7 +190,7 @@ export function NowPage(props: { guard: { confirmLeave: () => Promise<boolean>; 
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-xs text-muted-foreground">月度记录</span>
               <IconButton label="新的月度记录" onClick={() => void props.guard.confirmLeave().then((ok) => ok && setCreating(true))}>
-                <Plus size={16} strokeWidth={1.5} />
+                <Plus size={16} />
               </IconButton>
             </div>
             <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">

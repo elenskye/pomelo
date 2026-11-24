@@ -8,10 +8,11 @@ import { errorText, useToast } from "@/shared/feedback";
 import { Button, EmptyState, IconButton } from "@/shared/ui";
 import { SeekerDiff } from "./SeekerParts";
 import { folderOf, openPath } from "@/shared/open";
+import { slashDate, toYmd } from "@/shared/dates";
 import { SEEKER_FILES_KEY, seekerApi, type SeekerCvFile, type SeekerLang } from "./seekerApi";
 
 const size = (n: number) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
-export const cvDate = (secs: number) => { const d = new Date(secs * 1000); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()} / ${p(d.getMonth() + 1)} / ${p(d.getDate())}`; };
+export const cvDate = (secs: number) => slashDate(toYmd(new Date(secs * 1000)));
 export const useSeekerFiles = () => useQuery({ queryKey: SEEKER_FILES_KEY, queryFn: seekerApi.files });
 
 function useOpen() {

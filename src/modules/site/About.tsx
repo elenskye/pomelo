@@ -4,10 +4,9 @@
 import { useState } from "react";
 import { Polish } from "@/modules/youzi/Assist";
 import { useConfirm } from "@/shared/feedback";
-import { useSetting } from "@/shared/settings";
 import { Field, QuietFields, TextArea, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type About, type AboutVersion, type Entry, type Lang } from "./api";
-import { AddRow, BodyField, DocBar, DraftAction, ImageList, RowControls, SITE_ICONS, addTo, moved, replaced, shown, stored, useDoc, useEnglishDraft, usePreview, useSiteIconMenu, type View } from "./parts";
+import { AddRow, BodyField, DocBar, DraftAction, ImageList, RowControls, SITE_ICONS, addTo, moved, replaced, shown, stored, useDoc, useEnglishDraft, usePreview, useSiteIconMenu, useSiteView } from "./parts";
 import { AssetPicker } from "./WorkEditor";
 
 function Timeline(props: { rows: Entry[]; set: (rows: Entry[]) => void; locked?: boolean }) {
@@ -36,7 +35,7 @@ function Timeline(props: { rows: Entry[]; set: (rows: Entry[]) => void; locked?:
 }
 
 export function AboutPage(props: { setDirty: (d: boolean) => void; onError: (e: unknown) => void; onChanged: () => void }) {
-  const [view, setView] = useSetting<View>("ui.site_work_view", "zh", (v): v is View => v === "zh" || v === "en" || v === "both");
+  const [view, setView] = useSiteView();
   const [confirm, confirmDialog] = useConfirm();
   const [picking, setPicking] = useState<"portraits" | "artworks" | "body" | null>(null);
   const doc = useDoc<About>([...SITE_KEY, "about"], pageApi.about, pageApi.aboutSave, props.setDirty, props.onError, props.onChanged);

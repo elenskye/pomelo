@@ -7,7 +7,7 @@ export type StatusLabels = Record<StatusCode, string>;
 
 export const STATUS_ORDER: StatusCode[] = ["unmarked", "todo", "doing", "done"];
 
-export function StatusTag(props: { value: StatusCode; labels: StatusLabels }) {
+function StatusTag(props: { value: StatusCode; labels: StatusLabels }) {
   return (
     // the Design System's chip: the status's tint, a dot of its color
     <span style={{ "--pm-tag-bg": `var(--status-${props.value}-bg)`, "--pm-dot": `var(--status-${props.value}-fg)` } as React.CSSProperties} className="pm-chip">
@@ -45,7 +45,7 @@ export function DoneToggle(props: { lesson: { title: string; status: StatusCode 
       }}
       className="rounded-full p-1 outline-none transition-transform duration-150 hover:scale-110 focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Icon size={18} strokeWidth={1.75} style={{ color }} />
+      <Icon size={18} style={{ color }} />
     </button>
   );
 }

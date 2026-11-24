@@ -30,7 +30,7 @@ import { TagTree } from "./TagTree";
 import { usePageContext } from "@/app/pageContext";
 
 /** A task title from a note: its first line, without list marks, bold / highlight marks and #tags. */
-export function todoTitle(content: string): string {
+function todoTitle(content: string): string {
   const line = content.split("\n").map((l) => l.trim()).find((l) => l.replace(/#[^\s#]+/g, "").trim()) ?? "";
   const t = line
     .replace(/^(-|\d+\.)\s+/, "")
@@ -214,7 +214,7 @@ export default function NotesPage() {
         className={`side-row shrink-0 gap-2 px-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${f.tag === null ? "on" : ""}`}
       >
         {f.tag === null && <Picked seed={1425} />}
-        <Notebook size={15} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+        <Notebook size={15} className="shrink-0 text-muted-foreground" />
         <span className="flex-1">全部笔记</span>
         <span className="text-xs font-normal text-muted-foreground tabular-nums">{overview?.total ?? ""}</span>
       </button>
@@ -225,8 +225,6 @@ export default function NotesPage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
-        icon={mod.icon}
-        color={mod.color}
         title={mod.label}
         right={<SearchInput ref={searchRef} aria-label="搜索笔记" placeholder="搜索" value={search} onChange={(e) => setSearch(e.target.value)} className="w-56" />}
       />
@@ -264,7 +262,7 @@ export default function NotesPage() {
             {nearShown && shown >= notes.length && (
               <>
                 <p className="flex items-center gap-1.5 pt-3 text-sm text-muted-foreground">
-                  <Sparkles size={14} strokeWidth={1.75} />
+                  <Sparkles size={14} />
                   意思相近
                   {similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
                   {similar.isError && <span className="truncate">· {errorText(similar.error)}</span>}

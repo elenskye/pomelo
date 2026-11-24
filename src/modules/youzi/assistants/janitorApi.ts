@@ -1,7 +1,8 @@
 // DevJanitor (Rust youzi/assistants/janitor/): the scan's result, the ring chart, cleaning, settings.
 import { invoke } from "@tauri-apps/api/core";
+import { toYmd } from "@/shared/dates";
 
-export type JanitorScan = { running: boolean; phase: string; files: number; bytes: number; startedAt: number; error: string | null };
+type JanitorScan = { running: boolean; phase: string; files: number; bytes: number; startedAt: number; error: string | null };
 
 export type JanitorItem = {
   id: number;
@@ -22,7 +23,7 @@ export type JanitorItem = {
 
 export type JanitorGroup = { id: string; name: string; rebuild: string | null; takes: string | null; network: boolean | null; size: number; items: JanitorItem[] };
 
-export type JanitorSummary = {
+type JanitorSummary = {
   scannedAt: number;
   took: number;
   disk: { total: number; free: number; scanned: number; system: number } | null;
@@ -44,25 +45,25 @@ export type JanitorOverview = {
 };
 
 export type JanitorRing = { path: string; name: string; kind: "disk" | "dir" | "file" | "system"; size: number; files: number; denied: number; newest: number; rest: number; children: JanitorRing[] };
-export type JanitorRingView = { node: JanitorRing; crumbs: [string, string][] };
+type JanitorRingView = { node: JanitorRing; crumbs: [string, string][] };
 
 /** One row of a 开发环境 (Rust janitor/env.rs). `part`: inside another row, not added to the size. */
 export type JanitorEnvItem = { title: string; version: string | null; path: string | null; size: number; by: string | null; default: boolean; packages: number | null; top: [string, number][]; tag: string | null; part: boolean; protected: string | null; admin: boolean; newest: number };
 export type JanitorEnv = { id: string; name: string; size: number; note: string | null; items: JanitorEnvItem[] };
 
 export type JanitorOutcome = { freed: number; done: number; failed: [string, string][] };
-export type JanitorMemory = { total: number; used: number; pressure: "normal" | "warn" | "critical"; top: { name: string; bytes: number }[] };
-export type JanitorCategory = { id: string; name: string; rebuild: string; takes: string; network: boolean; download: boolean };
+type JanitorMemory = { total: number; used: number; pressure: "normal" | "warn" | "critical"; top: { name: string; bytes: number }[] };
+type JanitorCategory = { id: string; name: string; rebuild: string; takes: string; network: boolean; download: boolean };
 /** `names`: my names for the built-in categories (id → name). */
 export type JanitorSettings = { off: string[]; staleDays: number; agent?: JanitorChoice; names?: Record<string, string> };
 /** What the Agent is told: the SKILL (mine to rewrite; `custom`: it's mine) and the rest, written each time. */
 export type JanitorPrompt = { skill: string; custom: boolean; head: string; situation: string };
-export type JanitorSettingsView = { settings: JanitorSettings; categories: JanitorCategory[]; rules: JanitorRule[] };
+type JanitorSettingsView = { settings: JanitorSettings; categories: JanitorCategory[]; rules: JanitorRule[] };
 
 /** The Agent's rules in 一键清理 (janitor/agent.rs `Rule`). */
 export type JanitorRule = { id: number; name: string; pattern: string; recognize: string; rebuild: string; checked: boolean; createdAt: string };
 
-export type JanitorTrashItem = { path: string; why: string; size: number; protected: string | null; kind: string; done: boolean; error: string | null };
+type JanitorTrashItem = { path: string; why: string; size: number; protected: string | null; kind: string; done: boolean; error: string | null };
 /** One of the Agent's cards (janitor/agent.rs `Card`): trash | command | rule. */
 export type JanitorCard = {
   id: number;
@@ -86,7 +87,7 @@ export type JanitorCard = {
   error: string | null;
 };
 export type JanitorChoice = { model: string | null; thinking: boolean; effort?: string | null };
-export type JanitorAgent = { session: number; choice: JanitorChoice };
+type JanitorAgent = { session: number; choice: JanitorChoice };
 
 export const JANITOR_KEY = ["janitor"] as const;
 
@@ -130,16 +131,13 @@ export function bytes(n: number): string {
 }
 
 /** 「今天」「3 天前」「2 个月前」「1 年前」 (unix seconds; 0 = nothing). */
-export function ago(t: number, now = Date.now() / 1000): string {
+export function ago(t: number): string {
   if (!t) return "—";
-  const days = Math.floor((now - t) / 86400);
+  const days = Math.floor((Date.now() / 1000 - t) / 86400);
   if (days < 1) return "今天";
   if (days < 31) return `${days} 天前`;
   if (days < 365) return `${Math.floor(days / 30)} 个月前`;
   return `${Math.floor(days / 365)} 年前`;
 }
 
-export const dayOf = (t: number) => {
-  const d = new Date(t * 1000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+export const dayOf = (t: number) => toYmd(new Date(t * 1000));

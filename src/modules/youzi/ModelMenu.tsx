@@ -23,7 +23,7 @@ const DOT_COLOR: Record<Dot, string> = {
 };
 
 export function StatusDot(props: { dot: Dot | "cloud" }) {
-  if (props.dot === "cloud") return <Cloud size={14} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />;
+  if (props.dot === "cloud") return <Cloud size={14} className="shrink-0 text-muted-foreground" />;
   const hollow = props.dot === "off";
   return (
     <span
@@ -84,13 +84,13 @@ const ACTION_LABEL: Record<IssueAction["kind"], string> = {
 };
 
 /** A model-service problem: what happened, why, what next (raw output on hover). */
-export function IssueNotice(props: { issue: Issue; compact?: boolean }) {
+export function IssueNotice(props: { issue: Issue }) {
   const toast = useToast();
   const refresh = useRefreshStatus();
   const { issue } = props;
   const run = (a: IssueAction) => void youziApi.issueAction(a).then(refresh, (e) => toast(errorText(e), "error"));
   return (
-    <div className={`rounded-card border bg-card text-sm ${props.compact ? "px-3 py-2" : "px-4 py-3"}`} title={issue.details ?? undefined}>
+    <div className="rounded-card border bg-card px-3 py-2 text-sm" title={issue.details ?? undefined}>
       <p className="font-bold text-destructive">{issue.title}</p>
       <p className="mt-0.5 text-muted-foreground">{issue.message}</p>
       <div className="mt-2 flex flex-wrap gap-2">

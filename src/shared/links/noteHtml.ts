@@ -9,7 +9,7 @@ import { foundIn, targetOf, type Thing } from "./links";
 const WEEK = "日一二三四五六";
 
 /** `11 月 2 日 · 周一 21:14` of a local `YYYY-MM-DD HH:MM`. */
-export function noteWhen(d: string): string {
+function noteWhen(d: string): string {
   const day = new Date(`${d.slice(0, 10)}T00:00:00`);
   const time = d.slice(11, 16);
   return `${Number(d.slice(5, 7))} 月 ${Number(d.slice(8, 10))} 日 · 周${WEEK[day.getDay()]}${time ? ` ${time}` : ""}`;

@@ -25,7 +25,7 @@ export function ModuleIcon(props: { def: ModuleDef; size: number; /** Show this 
   const Icon = props.def.icon;
   return (
     <span className={`grid shrink-0 place-items-center text-white ${props.className ?? ""}`} style={{ width: props.size, height: props.size, borderRadius: Math.round(props.size * 0.3), background: props.def.color }}>
-      <Icon size={props.size >= 36 ? 20 : props.size >= 24 ? 15 : 12} strokeWidth={1.75} />
+      <Icon size={props.size >= 36 ? 20 : props.size >= 24 ? 15 : 12} />
     </span>
   );
 }

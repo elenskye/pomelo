@@ -127,7 +127,7 @@ export function CollectionPage({ config, api }: { config: CollectionConfig; api:
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} right={items.length > 0 && stats} />
+      <PageHeader title={m.label} right={items.length > 0 && stats} />
 
       {items.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-3 px-8 pb-4">

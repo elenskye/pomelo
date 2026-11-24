@@ -54,9 +54,9 @@ export const picked = (on: boolean) => (on ? "border-primary bg-accent text-acce
 export const chipLook = (on: boolean) => ({ className: `pm-btn pm-btn--plain h-8 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${on ? "font-bold" : ""}`, "data-hand": "button", "data-fill": on ? "selected" : "card", "data-seed": 1433 });
 
 /** A choice that is on or off (Pub2MD's chips): the fill shows it. */
-export function Chip(props: { on: boolean; onClick: () => void; disabled?: boolean; className?: string; children: ReactNode }) {
+export function Chip(props: { on: boolean; onClick: () => void; className?: string; children: ReactNode }) {
   const look = chipLook(props.on);
-  return <button type="button" role="checkbox" aria-checked={props.on} disabled={props.disabled} onClick={props.onClick} {...look} className={`${look.className} ${props.className ?? ""}`}>{props.children}</button>;
+  return <button type="button" role="checkbox" aria-checked={props.on} onClick={props.onClick} {...look} className={`${look.className} ${props.className ?? ""}`}>{props.children}</button>;
 }
 
 /** A row that is picked or not, the whole row the button (its background shows it). `framed`: a card
@@ -66,9 +66,9 @@ export function PickRow(props: { on: boolean; onClick: (e: MouseEvent) => void; 
 }
 
 /** The toolbar's 「选择」. */
-export function SelectButton(props: { select: Select; disabled?: boolean }) {
+export function SelectButton(props: { select: Select }) {
   if (props.select.on) return null;
-  return <Button variant="ghost" disabled={props.disabled || !props.select.total} onClick={props.select.start}><CheckSquare size={14} />选择</Button>;
+  return <Button variant="ghost" disabled={!props.select.total} onClick={props.select.start}><CheckSquare size={14} />选择</Button>;
 }
 
 /** While selecting: how many, 全选, the actions, 完成. */

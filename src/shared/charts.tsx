@@ -5,6 +5,7 @@
 // Drawn by hand like the rest of the frame (visual-atelier canvases/pomelo-pages Stats): columns and donut slices are
 // hand-cut fills with a pen outline, lines are hand strokes, the grid is dashed (the Design System's handmade.js).
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { toYmd } from "./dates";
 import { handNs } from "./hand";
 
 const drawn = new Map<string, string>();
@@ -22,7 +23,7 @@ function byHand(d: string, kind: "fill" | "stroke", seed: number, amp = 0.5): st
 }
 const n2 = (v: number) => +v.toFixed(1);
 
-export type Fmt = (n: number) => string;
+type Fmt = (n: number) => string;
 
 /** Container width, kept current. */
 function useWidth() {
@@ -39,7 +40,7 @@ function useWidth() {
 }
 
 /** min … max in clean steps (1 / 2 / 2.5 / 5 × 10^k); min defaults to 0. `integer`: whole steps (counts). */
-export function niceTicks(max: number, count = 4, min = 0, integer = false): number[] {
+function niceTicks(max: number, count = 4, min = 0, integer = false): number[] {
   if (!(max > min)) return max > 0 ? [0, max] : [0, 1];
   const raw = (max - min) / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
@@ -66,7 +67,7 @@ function Tip(props: { x: number; width: number; children: ReactNode }) {
 }
 
 /** Tooltip row: short line key, value first (strong), name after. */
-export function TipRow(props: { color: string; value: string; name: string }) {
+function TipRow(props: { color: string; value: string; name: string }) {
   return (
     <div className="flex items-center gap-1.5 tabular-nums">
       <span className="h-0.5 w-2.5 shrink-0 rounded-full" style={{ background: props.color }} />
@@ -77,7 +78,7 @@ export function TipRow(props: { color: string; value: string; name: string }) {
 }
 
 /** Legend for ≥ 2 series (rect keys, like the marks). */
-export function Legend(props: { items: { name: string; color: string }[] }) {
+function Legend(props: { items: { name: string; color: string }[] }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
       {props.items.map((s) => (
@@ -131,7 +132,6 @@ export function ColumnChart(props: {
   values: number[][];
   format: Fmt;
   axisFormat?: Fmt;
-  height?: number;
   title?: (i: number) => string;
   /** Show every nth x label (others stay in the tooltip). */
   labelEvery?: number;
@@ -140,7 +140,7 @@ export function ColumnChart(props: {
 }) {
   const [ref, width] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
-  const height = props.height ?? 180;
+  const height = 180;
   const n = props.labels.length;
   const max = Math.max(0, ...props.values.flat());
   const ticks = niceTicks(max, 4, 0, props.integer);
@@ -209,16 +209,14 @@ export function LineChart(props: {
   name: string;
   format: Fmt;
   axisFormat?: Fmt;
-  height?: number;
   title?: (i: number) => string;
   labelEvery?: number;
-  color?: string;
   baseline?: "zero" | "auto";
 }) {
   const [ref, width] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
-  const height = props.height ?? 180;
-  const color = props.color ?? "var(--chart-1)";
+  const height = 180;
+  const color = "var(--chart-1)";
   const n = props.values.length;
   const present = props.values.filter((v): v is number => v !== null);
   const auto = props.baseline === "auto" && present.length > 0;
@@ -297,13 +295,12 @@ export function MultiLineChart(props: {
   series: { key: string; name: string; color: string; values: (number | null)[] }[];
   format: Fmt;
   axisFormat?: Fmt;
-  height?: number;
   title?: (i: number) => string;
   labelEvery?: number;
 }) {
   const [ref, width] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
-  const height = props.height ?? 200;
+  const height = 200;
   const n = props.labels.length;
   const present = props.series.flatMap((s) => s.values.filter((v): v is number => v !== null));
   const ticks = present.length > 0 ? niceTicks(Math.max(...present), 4, Math.min(...present)) : niceTicks(0);
@@ -364,8 +361,8 @@ export function MultiLineChart(props: {
 }
 
 /** Part-to-whole at a glance (≤ 6 slices; fold the rest into 其他 before calling). */
-export function Donut(props: { slices: { key: string; label: string; value: number; color: string }[]; format: Fmt; center?: ReactNode; size?: number }) {
-  const size = props.size ?? 168;
+export function Donut(props: { slices: { key: string; label: string; value: number; color: string }[]; format: Fmt; center?: ReactNode }) {
+  const size = 168;
   const [hover, setHover] = useState<number | null>(null);
   const total = props.slices.reduce((s, x) => s + x.value, 0);
   const R = size / 2;
@@ -436,9 +433,9 @@ const arc = (c: number, r0: number, r1: number, a0: number, a1: number) => {
  * share of its parent; what's too small to draw is left empty). The first ring takes `color` or the chart
  * colors in order; deeper rings are their first-ring ancestor's color, lighter. Hover names a segment in the
  * middle; clicking one calls `onPick`. The page lists the same nodes beside it. */
-export function Sunburst(props: { root: SunNode; format: Fmt; size?: number; rings?: number; onPick?: (n: SunNode) => void; center?: ReactNode }) {
+export function Sunburst(props: { root: SunNode; format: Fmt; size?: number; onPick?: (n: SunNode) => void; center?: ReactNode }) {
   const size = props.size ?? 320;
-  const rings = props.rings ?? 3;
+  const rings = 3;
   const c = size / 2;
   const hole = size * 0.2;
   const band = (c - hole - 2) / rings;
@@ -571,29 +568,27 @@ export function Meter(props: { value: number; max: number }) {
   );
 }
 
-/** Activity grid (after Flomo / GitHub): one column per week, Monday on top, the last `weeks` weeks
+/** Activity grid (after Flomo / GitHub): one column per week, Monday on top, the last 16 weeks
  * up to `today`; 4 steps of --chart-3 by share of the busiest day. Hover = native title; click a
  * day with entries to select it (the page lists them, so nothing is hover-only). */
 export function Heatmap(props: {
   counts: Map<string, number>;
   today: string;
-  weeks?: number;
   selected?: string | null;
   onSelect?: (day: string) => void;
   title: (day: string, n: number) => string;
 }) {
-  const weeks = props.weeks ?? 16;
+  const weeks = 16;
   const t = new Date(`${props.today}T00:00:00`);
   const monday = new Date(t);
   monday.setDate(t.getDate() - ((t.getDay() + 6) % 7) - (weeks - 1) * 7);
-  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const cols: { day: string; month: number; date: number }[][] = [];
   for (let w = 0; w < weeks; w++) {
     const col = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
       d.setDate(monday.getDate() + w * 7 + i);
-      col.push({ day: ymd(d), month: d.getMonth() + 1, date: d.getDate() });
+      col.push({ day: toYmd(d), month: d.getMonth() + 1, date: d.getDate() });
     }
     cols.push(col);
   }

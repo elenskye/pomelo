@@ -10,7 +10,7 @@ import { foundIn, shown, type Thing } from "@/shared/links/links";
 import { LinkChip, useLinkThings } from "@/shared/links/LinkParts";
 
 /** One-line preview, as notes.rs makes it: no tags, marks, icons or list bullets. */
-export function excerpt(content: string, max = 60): string {
+export function excerpt(content: string): string {
   const lines = shown(content).split("\n").map((l) => {
     let out = "";
     let last = 0;
@@ -22,7 +22,7 @@ export function excerpt(content: string, max = 60): string {
   });
   let s = lines.join(" ").split(/\s+/).filter(Boolean).join(" ");
   if (!s) s = [...new Set(content.split("\n").flatMap((l) => tagSpans(l).map((t) => `#${t.value}`)))].join(" ");
-  return [...s].length > max ? [...s].slice(0, max).join("") + "…" : s;
+  return [...s].length > 60 ? [...s].slice(0, 60).join("") + "…" : s;
 }
 
 function Inline(props: { line: string; onTag?: (tag: string) => void; thing: (target: string) => Thing | null | undefined }) {

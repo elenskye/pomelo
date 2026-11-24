@@ -9,7 +9,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { youziApi, type TranslateSettings, type TranslateView } from "../api";
 
-export const TRANSLATE_KEY = ["youzi", "translate"];
+const TRANSLATE_KEY = ["youzi", "translate"];
 const AUTO = "auto";
 const ZH_EN = "zh-en";
 
@@ -145,7 +145,7 @@ export function TranslateOutput(props: { data: TranslateView; className: string 
           onClick={copy}
           className="inline-flex size-7 items-center justify-center rounded-control outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30"
         >
-          {copied ? <span className="text-xs">✓</span> : <Copy size={14} strokeWidth={1.5} />}
+          {copied ? <span className="text-xs">✓</span> : <Copy size={14} />}
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">

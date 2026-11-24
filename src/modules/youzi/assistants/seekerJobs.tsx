@@ -7,7 +7,7 @@ import type { SeekerLang, SeekerSuggestion } from "./seekerApi";
 /** A model call of Seeker's (选材, 审查, 润色…), kept here and not in the page: it runs to the end while
  * the page is closed and its result waits (审查 / 润色要点 / Summary: Rust has already saved the 批注).
  * One per kind and language (润色一条素材: per material); gone when the app reloads. */
-export type SeekerJob = { key: string; kind: string; lang: SeekerLang; recordId: string | null; state: "running" | "done" | "error"; error?: string; message?: string; suggestion?: SeekerSuggestion };
+type SeekerJob = { key: string; kind: string; lang: SeekerLang; recordId: string | null; state: "running" | "done" | "error"; error?: string; message?: string; suggestion?: SeekerSuggestion };
 
 let jobs: SeekerJob[] = [];
 const listeners = new Set<() => void>();

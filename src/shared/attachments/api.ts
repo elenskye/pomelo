@@ -3,10 +3,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 
-export type Owner = "note" | "task" | "goal";
+type Owner = "note" | "task" | "goal";
 /** kind: image | file. missing: not on this Mac (from a data file, or cleaned up). */
 export type FileInfo = { id: number; name: string; kind: "image" | "file"; bytes: number; missing: boolean };
-export type AttachmentUsage = { files: number; bytes: number; unused: number; unusedBytes: number; dir: string };
+type AttachmentUsage = { files: number; bytes: number; unused: number; unusedBytes: number; dir: string };
 
 export const attachmentsApi = {
   addPaths: (paths: string[]) => invoke<FileInfo[]>("attachments_add_paths", { paths }),

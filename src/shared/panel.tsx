@@ -30,7 +30,7 @@ export function SidePanel(props: {
         <header data-tauri-drag-region className="flex h-16 shrink-0 items-end justify-between px-6 pb-3">
           <h2 className="pointer-events-none text-xl font-bold">{props.title}</h2>
           <button type="button" aria-label="关闭" onClick={props.onClose} className="pm-press grid size-8 place-items-center rounded-control text-[var(--color-pen)]">
-            <HandIcon name="x" size={18} seed={1501} />
+            <HandIcon name="x" size={18} />
           </button>
         </header>
         <div ref={body} className="flex-1 space-y-4 overflow-y-auto px-6 py-2">

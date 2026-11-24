@@ -16,7 +16,7 @@ let raf = 0;
 let at = { x: 0, y: 0, w: 0, h: 0 };
 const EDGE = 8;
 /** The little gap between the drawing and the top of the string (the tag hangs near the icon, not stuck to it). */
-export const GAP = 3;
+const GAP = 3;
 /** How long the stand-in keeps measuring after it was hung or last moved (the hover transitions take up to 0.5s). */
 const SETTLE = 600;
 const SHAPES = "path, circle, ellipse, rect, line, polyline, polygon";
@@ -28,7 +28,7 @@ const painted = (c: string) => !!c && c !== "none" && c !== "transparent" && !/^
  *  a shape whose position can't be trusted (getScreenCTM disagreeing with the layout) counts by its box. The host's
  *  own background (an icon button's hover square) is not the drawing, and a shape inside something fully transparent
  *  is not seen (opacity isn't inherited, so every wrapper up to the host is asked). */
-export function inkBottom(h: Element, x: number | null): number | null {
+function inkBottom(h: Element, x: number | null): number | null {
   let best: number | null = null;
   const clear = new Map<Element, boolean>();
   const unseen = (el: Element) => {

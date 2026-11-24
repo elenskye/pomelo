@@ -12,7 +12,7 @@ export function SeekerDiff({ before, after }: { before: string; after: string })
 }
 
 /** A web address, not an e-mail (output.rs `is_link`). */
-export function isLink(value: string): boolean {
+function isLink(value: string): boolean {
   const v = value.trim().toLowerCase();
   if (v.includes("@") || /\s/.test(v)) return false;
   if (v.includes("://") || v.startsWith("www.")) return true;

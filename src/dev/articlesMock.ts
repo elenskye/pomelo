@@ -4,7 +4,7 @@
 type Args = Record<string, unknown>;
 type FileInfo = { id: number; name: string; kind: "image" | "file"; bytes: number; missing: boolean };
 type Meta = { pin: number | null; icon: string | null; order: number | null };
-export type ARow = { id: number; content: string; title: string; locked: boolean; pinned: boolean; archived: boolean; trashedAt: string | null; createdAt: string; updatedAt: string; files: number[] };
+type ARow = { id: number; content: string; title: string; locked: boolean; pinned: boolean; archived: boolean; trashedAt: string | null; createdAt: string; updatedAt: string; files: number[] };
 
 export const ar: { rows: ARow[]; meta: Map<string, Meta>; next: number } = { rows: [], meta: new Map(), next: 1 };
 
@@ -26,7 +26,7 @@ const fencedLines = (lines: string[]) => {
   });
   return out;
 };
-export function tagsIn(text: string): string[] {
+function tagsIn(text: string): string[] {
   const lines = text.split("\n");
   const fenced = fencedLines(lines);
   const out: string[] = [];
@@ -70,7 +70,7 @@ function titleLine(content: string): [number, string] {
   }
   return [-1, ""];
 }
-export const titleOf = (c: string) => titleLine(c)[1];
+const titleOf = (c: string) => titleLine(c)[1];
 function previewOf(c: string) {
   const [at] = titleLine(c);
   const lines = c.split("\n");

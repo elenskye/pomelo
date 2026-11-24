@@ -135,9 +135,9 @@ function TripRow(props: { it: PackItem; grip: ReactNode; hold: boolean; onPacked
     >
       <span className="flex w-3 shrink-0 justify-center">{props.grip}</span>
       {packed ? (
-        <CheckCircle2 size={18} strokeWidth={1.75} className="shrink-0" style={{ color: "var(--status-done-fg)" }} />
+        <CheckCircle2 size={18} className="shrink-0" style={{ color: "var(--status-done-fg)" }} />
       ) : (
-        <Circle size={18} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+        <Circle size={18} className="shrink-0 text-muted-foreground" />
       )}
       <span className="min-w-0 flex-1">
         <span className={`task-title ${packed ? "done text-muted-foreground" : ""} ${ticking ? "is-pop" : ""}`} data-hand="strike" data-seed={1405 + (it.id % 7)}>
@@ -342,7 +342,7 @@ export default function PackingPage() {
         <div className="flex shrink-0 gap-2">
           {assistOn && (
             <Button variant="ghost" disabled={thinking} onClick={() => void findMissing(t)}>
-              <Sparkles size={14} strokeWidth={1.75} /> {thinking ? assistBusyText(youziStatus, "正在想…") : "可能漏了什么"}
+              <Sparkles size={14} /> {thinking ? assistBusyText(youziStatus, "正在想…") : "可能漏了什么"}
             </Button>
           )}
           <Button variant="primary" onClick={() => void panel.request("new")}>
@@ -420,7 +420,7 @@ export default function PackingPage() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} right={stats} />
+      <PageHeader title={m.label} right={stats} />
 
       <div className="flex shrink-0 items-center gap-3 px-8 pb-4">
         <Segmented

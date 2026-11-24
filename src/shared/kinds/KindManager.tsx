@@ -8,7 +8,7 @@ import { useKindMutations, useKinds } from "./api";
 import { showDialog } from "../dialog";
 
 type EditableKind = { id: number; name: string; count: number };
-export type KindOps = {
+type KindOps = {
   create: (name: string) => Promise<unknown>;
   rename: (v: { id: number; name: string }) => Promise<unknown>;
   remove: (id: number) => Promise<unknown>;

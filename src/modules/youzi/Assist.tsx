@@ -17,7 +17,7 @@ import { errorText } from "@/shared/feedback";
 import { Button, IconButton, TextInput } from "@/shared/ui";
 import { useYouziStatus, type YouziStatus } from "./api";
 
-export type WorkFill = { creator: string | null; country: string | null; kindId: number | null };
+type WorkFill = { creator: string | null; country: string | null; kindId: number | null };
 export type JobFill = { company: string | null; position: string | null; location: string | null };
 export type ItemIdea = { name: string; kindId: number | null };
 /** What a sentence filled (only its module's fields; ids already checked). Amount in cents. */
@@ -56,7 +56,7 @@ export type QuickFillResult = {
   /** 一句话改好: fields to empty (note, link, due_date, times, unit, position, location, channel, kind, creator, country, rating, year, depart_on). */
   clear: string[];
 };
-export type QuickModule = "finance" | "todo" | "jobs" | "books" | "films" | "packing";
+type QuickModule = "finance" | "todo" | "jobs" | "books" | "films" | "packing";
 
 export const assistApi = {
   /** `module`: the module the text belongs to (a cloud model may not get some). */
@@ -80,7 +80,7 @@ export function AssistAction(props: { onClick: () => void; disabled?: boolean; c
       onClick={props.onClick}
       className="-my-0.5 inline-flex shrink-0 items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
     >
-      <Sparkles size={12} strokeWidth={1.75} className={props.disabled ? "animate-pulse" : ""} /> {props.children}
+      <Sparkles size={12} className={props.disabled ? "animate-pulse" : ""} /> {props.children}
     </button>
   );
 }
@@ -128,7 +128,7 @@ export function QuickFill(props: { module: QuickModule; record?: number | null; 
   return (
     <div className="space-y-1">
       <div className="relative">
-        <Sparkles size={14} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-[var(--module-youzi)]" />
+        <Sparkles size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-[var(--module-youzi)]" />
         <TextInput
           aria-label={label}
           placeholder={label}
@@ -172,7 +172,7 @@ export function Polish(props: { module: string; value: string; onChange: (text: 
           onClick={() => setOpen(true)}
           className="absolute top-1 right-1 rounded-control bg-card/90 p-1 text-muted-foreground opacity-0 transition-opacity duration-150 outline-none group-focus-within/polish:opacity-100 group-hover/polish:opacity-100 hover:text-[var(--module-youzi)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <Sparkles size={14} strokeWidth={1.75} />
+          <Sparkles size={14} />
         </button>
       )}
       {open && (
@@ -278,7 +278,7 @@ export function DiffView(props: { from: string; to: string }) {
 }
 
 /** Suggestions to pick from (all on); 「加上」 gets the picked ones. */
-export function IdeaList<T>(props: { items: T[]; label: (item: T) => ReactNode; addLabel?: string; busy?: boolean; onAdd: (picked: T[]) => void; onCancel: () => void }) {
+export function IdeaList<T>(props: { items: T[]; label: (item: T) => ReactNode; busy?: boolean; onAdd: (picked: T[]) => void; onCancel: () => void }) {
   const [off, setOff] = useState<Set<number>>(new Set());
   const picked = props.items.filter((_, i) => !off.has(i));
   return (
@@ -303,7 +303,7 @@ export function IdeaList<T>(props: { items: T[]; label: (item: T) => ReactNode; 
       </ul>
       <div className="flex gap-2">
         <Button variant="primary" disabled={!picked.length || props.busy} onClick={() => props.onAdd(picked)}>
-          {props.addLabel ?? "加上"}
+          加上
           {picked.length > 0 && picked.length < props.items.length ? ` ${picked.length} 个` : ""}
         </Button>
         <Button variant="ghost" onClick={props.onCancel}>

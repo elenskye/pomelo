@@ -51,14 +51,14 @@ export function useGroupActions(write: Write, lang: SeekerLang, busy: boolean) {
 }
 
 /** 上移 / 下移 for a page's groups: `shown` is all of them in the order shown; a move sends the new order. */
-export function useGroupMove(write: Write, kind: SeekerGroupKind, lang: string, shown: string[], busy: boolean) {
+export function useGroupMove(write: Write, kind: Exclude<SeekerGroupKind, "material">, shown: string[], busy: boolean) {
   return (group: string): ReactNode => {
     const i = shown.indexOf(group);
     if (i < 0 || shown.length < 2) return null;
     const swap = (j: number) => {
       const next = [...shown];
       [next[i], next[j]] = [next[j], next[i]];
-      void write(() => seekerApi.groupsOrder(kind, lang, next));
+      void write(() => seekerApi.groupsOrder(kind, "", next));
     };
     return <>
       <IconButton label={`「${group}」上移`} tip="上移" disabled={busy || i === 0} onClick={() => swap(i - 1)}><ArrowUp size={14} /></IconButton>
@@ -71,7 +71,7 @@ export function useGroupMove(write: Write, kind: SeekerGroupKind, lang: string, 
 export function usePrompts(lang: SeekerLang) {
   const seeker = useQuery({ queryKey: ["youzi", "seeker", "prompts", lang], queryFn: () => seekerApi.prompts(lang) });
   const rater = useQuery({ queryKey: ["youzi", "rater", "prompts"], queryFn: raterApi.prompts });
-  return { seeker: seeker.data ?? [], rater: rater.data ?? [], error: seeker.error ?? rater.error, refetch: () => void Promise.all([seeker.refetch(), rater.refetch()]) };
+  return { seeker: seeker.data ?? [], rater: rater.data ?? [], refetch: () => void Promise.all([seeker.refetch(), rater.refetch()]) };
 }
 
 /** 「发给：…」: which functions read a group (all of one assistant's in a word). */

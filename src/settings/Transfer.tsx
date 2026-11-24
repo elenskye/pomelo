@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { FileInput, FileOutput } from "@/shared/icons";
 import { moduleLabel } from "@/app/modules";
+import { localToday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { api } from "@/shared/ipc";
 import { Button } from "@/shared/ui";
@@ -10,15 +11,10 @@ import { Row } from "./layout";
 
 const FILTERS = [{ name: "Pomelo 数据文件", extensions: ["json"] }];
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
 export function ExportRow() {
   const toast = useToast();
   const run = async () => {
-    const path = await save({ defaultPath: `pomelo-export-${today()}.json`, filters: FILTERS });
+    const path = await save({ defaultPath: `pomelo-export-${localToday()}.json`, filters: FILTERS });
     if (!path) return;
     try {
       const r = await api.exportTo(path);
@@ -33,7 +29,7 @@ export function ExportRow() {
       help="把所有模块存成一个 Pomelo 数据文件（.json），适合长期保存、换电脑，也能再导入。"
       actions={
         <Button onClick={() => void run()}>
-          <FileOutput size={14} strokeWidth={1.5} /> 导出…
+          <FileOutput size={14} /> 导出…
         </Button>
       }
     />
@@ -83,7 +79,7 @@ export function ImportRow() {
       help="从 Pomelo 数据文件导入，比如导出的文件、由 Excel 或 Markdown 待办转换来的文件。文件里有的模块会被替换，替换前会先确认并备份。"
       actions={
         <Button onClick={() => void run()}>
-          <FileInput size={14} strokeWidth={1.5} /> 选择文件…
+          <FileInput size={14} /> 选择文件…
         </Button>
       }
     >

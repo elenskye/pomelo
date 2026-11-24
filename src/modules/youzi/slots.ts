@@ -2,7 +2,7 @@
 // "/" menu's query and ordering, and the one-line summary on the empty page.
 import type { Template } from "./api";
 
-export type Slot = { start: number; end: number; name: string };
+type Slot = { start: number; end: number; name: string };
 
 /** `{{名称}}`: 1–40 characters without braces or line breaks, not just spaces. */
 export function slots(text: string): Slot[] {
@@ -22,7 +22,7 @@ export function nextSlot(all: Slot[], selStart: number, selEnd: number, backward
 }
 
 /** Text with each `{{名称}}` shown as its name. */
-export function preview(text: string): string {
+function preview(text: string): string {
   let out = text;
   for (const s of slots(text).reverse()) out = out.slice(0, s.start) + s.name + out.slice(s.end);
   return out;

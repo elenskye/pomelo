@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "@/shared/icons";
 import { BarList, ColumnChart } from "@/shared/charts";
-import { addDays, formatDay, mondayOf, parseYmd, toYmd, weekday } from "@/shared/dates";
+import { addDays, formatDay, mondayOf, parseYmd, shiftMonth, toYmd, WEEK, weekday } from "@/shared/dates";
 import { Button, IconButton, Segmented } from "@/shared/ui";
 import { monthTitle } from "@/modules/finance/money";
 import { useDoneBetween, type DoneItem, type Task } from "./api";
@@ -19,9 +19,6 @@ const PERIODS: { value: Period; label: string }[] = [
   { value: "all", label: "全部" },
 ];
 const ALL_FROM = "2000-01-01";
-const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
-
-const nextMonth = (ym: string) => toYmd(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 1)).slice(0, 7);
 
 function rangeOf(period: Period, offset: number, today: string) {
   const [y, m] = [Number(today.slice(0, 4)), Number(today.slice(5, 7))];
@@ -57,7 +54,7 @@ function bucketsOf(period: Period, from: string, to: string, items: DoneItem[], 
   }
   const first = items.length ? items.map((t) => t.day).reduce((a, b) => (a < b ? a : b)).slice(0, 7) : today.slice(0, 7);
   const months: string[] = [];
-  for (let k = first; k <= today.slice(0, 7); k = nextMonth(k)) months.push(k);
+  for (let k = first; k <= today.slice(0, 7); k = shiftMonth(k, 1)) months.push(k);
   if (months.length <= 36) return { keys: months, labels: months.map((k) => (k.endsWith("-01") || k === months[0] ? `${k.slice(2, 4)}/${Number(k.slice(5))}` : `${Number(k.slice(5))}月`)), unit: "month" as const };
   const years = [...new Set(months.map((k) => k.slice(0, 4)))];
   return { keys: years, labels: years, unit: "year" as const };

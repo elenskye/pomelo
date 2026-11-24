@@ -269,7 +269,7 @@ export function AssetsNote(props: { points: Point[]; go: () => void }) {
         <Tape kind="yuzu" rot={4} />
       </span>
       <button type="button" className="rflip pm-press pm-tip-host" aria-label="翻面" onClick={() => setBack(!back)}>
-        <HandIcon name="flip" size={20} seed={790} />
+        <HandIcon name="flip" size={20} />
         <Tip>翻面</Tip>
       </button>
     </div>

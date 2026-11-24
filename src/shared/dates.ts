@@ -1,8 +1,10 @@
 // Local-date helpers. Dates are "YYYY-MM-DD" strings in the Mac's local time (Rust uses the same).
-const pad = (n: number) => String(n).padStart(2, "0");
+export const pad = (n: number) => String(n).padStart(2, "0");
 
 export const toYmd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const localToday = () => toYmd(new Date());
+/** "2026-10" moved by `k` months. */
+export const shiftMonth = (ym: string, k: number) => toYmd(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1 + k, 1)).slice(0, 7);
 /** Today for the frame (顶栏, 柚子瓣): "10 月 3 日 · 周五". */
 export const todayText = () => {
   const d = new Date();
@@ -25,6 +27,9 @@ export function mondayOf(s: string): string {
   const day = parseYmd(s).getDay(); // 0 = Sunday
   return addDays(s, day === 0 ? -6 : 1 - day);
 }
+
+/** Week heads, Monday first. */
+export const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 export const weekday = (s: string) => WEEKDAYS[parseYmd(s).getDay()];

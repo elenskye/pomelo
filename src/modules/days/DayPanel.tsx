@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Plus, X } from "@/shared/icons";
 import { DateInput } from "@/shared/DateInput";
-import { stampDay } from "@/shared/dates";
+import { pad, stampDay } from "@/shared/dates";
 import { Dropdown } from "@/shared/Dropdown";
 import { currentYear, YearInput } from "@/shared/MonthInput";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
@@ -19,7 +19,6 @@ const DATE_LABEL: Record<Kind, string> = { day: "日期", birthday: "生日", do
 /** date: YYYY-MM-DD for 纪念日 / 证件; a birthday keeps year ("" = 不知道) / month / mday apart until saved. */
 type Draft = { kind: Kind; name: string; date: string; year: string; month: string; mday: string; repeat: Repeat; remind: number[]; pinned: boolean; note: string; ideas: string; gifts: Gift[] };
 
-const pad = (n: number) => String(n).padStart(2, "0");
 const monthDays = (year: string, month: string) => (month ? new Date(Number(year) || 2000, Number(month), 0).getDate() : 31);
 
 function initial(d: Day | null, kind: Kind): Draft {

@@ -12,12 +12,12 @@ import { useNotes, useOverview, type Note } from "@/modules/notes/api";
 import { NoteBody } from "@/modules/notes/NoteBody";
 import { linksApi } from "@/shared/links/links";
 import { LinkLookup, LinkMark } from "@/shared/links/LinkParts";
+import { pad } from "@/shared/dates";
+import { listDate } from "./api";
 
-const pad = (n: number) => String(n).padStart(2, "0");
 function when(iso: string) {
   const d = new Date(iso);
-  const day = `${pad(d.getMonth() + 1)} / ${pad(d.getDate())}`;
-  return `${d.getFullYear() === new Date().getFullYear() ? day : `${d.getFullYear()} / ${day}`} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${listDate(iso)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 type Drag = { note: Note; x: number; y: number; w: number };

@@ -41,8 +41,6 @@ export default function JobsPage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
-        icon={m.icon}
-        color={m.color}
         title={m.label}
         right={
           <p className="pointer-events-none text-sm text-muted-foreground">

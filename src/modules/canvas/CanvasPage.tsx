@@ -396,8 +396,6 @@ export default function CanvasPage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
-        icon={m.icon}
-        color={m.color}
         title={m.label}
         right={
           running && (

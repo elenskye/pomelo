@@ -18,7 +18,7 @@ import { DragHandle, useSortable } from "@/shared/sortable";
 import { DoneToggle, StatusSelect, type StatusCode } from "@/shared/status";
 import { TagSelect } from "@/shared/tags";
 import { Button, EmptyState, IconButton, PageHeader, ProgressBar, Segmented, pct } from "@/shared/ui";
-import { CUSTOM_KEY, madeDef, useCourses, useCustomModules, useCustomMutations, useLessons, type Course, type Custom, type Lesson } from "./api";
+import { CUSTOM_KEY, useCourses, useCustomModules, useCustomMutations, useLessons, type Course, type Custom, type Lesson } from "./api";
 import { CustomDialog } from "./CustomDialog";
 import { LessonPanel, PROGRESS_ORDER, PROGRESS_STATUS } from "./LessonPanel";
 
@@ -118,7 +118,6 @@ function LessonTable(props: { lessons: Lesson[]; kinds: Kind[]; selectedId: numb
 
 function ProgressView(props: { mod: Custom }) {
   const mod = props.mod;
-  const def = madeDef(mod);
   const [cw, lw] = [mod.courseWord, mod.lessonWord];
   const { data: courses = [], isPending } = useCourses(mod.id);
   const [courseId, setCourseId] = useState<number | null>(null);
@@ -206,7 +205,7 @@ function ProgressView(props: { mod: Custom }) {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader icon={def.icon} color={def.color} title={mod.name} right={stats} />
+      <PageHeader title={mod.name} right={stats} />
       {isPending ? null : courses.length === 0 ? (
         <EmptyState
           title="慢慢来，先建第一个吧"

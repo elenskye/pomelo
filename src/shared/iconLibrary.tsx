@@ -48,7 +48,7 @@ const entry = (key: string): Entry | null => {
 
 /** The library in the picker's order: the groups above, then every drawn icon not named in them (方向、增删改… and
  *  whatever a later sync brings), so nothing drawn is missing. */
-export const LIBRARY: { name: string; icons: Entry[] }[] = (() => {
+const LIBRARY: { name: string; icons: Entry[] }[] = (() => {
   const seen = new Set<string>();
   const groups = GROUPS.map(([name, keys]) => ({
     name,

@@ -47,7 +47,7 @@ const api = {
   remove: (id: number) => invoke<void>("day_delete", { id }),
 };
 
-export const DAYS_KEY = ["days"];
+const DAYS_KEY = ["days"];
 export const useDays = () => useQuery({ queryKey: [...DAYS_KEY, "list"], queryFn: api.list });
 
 export function useDayMutations() {

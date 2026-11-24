@@ -7,6 +7,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Search, Sparkles, X } from "@/shared/icons";
 import { errorText } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
+import { stampDay } from "@/shared/dates";
 import { Switch } from "@/shared/ui";
 import { youziApi, type ChatHit } from "./api";
 
@@ -17,10 +18,7 @@ const RANGES = [
   { value: 365, label: "一年内" },
 ];
 
-const day = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : `${d.getFullYear()} / ${String(d.getMonth() + 1).padStart(2, "0")} / ${String(d.getDate()).padStart(2, "0")}`;
-};
+const day = (iso: string) => (Number.isNaN(new Date(iso).getTime()) ? iso.slice(0, 10) : stampDay(iso));
 
 /** The snippet with the query words emphasised. */
 function Marked(props: { text: string; words: string[] }) {
@@ -140,7 +138,7 @@ export function ChatSearch(props: { onOpen: (hit: ChatHit, query: string) => voi
         {q && (near.length > 0 || similar.isFetching || similar.isError) && (
           <>
             <p className="flex items-center gap-1.5 px-2.5 pt-3 pb-1 text-xs text-muted-foreground">
-              <Sparkles size={13} strokeWidth={1.75} />
+              <Sparkles size={13} />
               意思相近
               {similar.isFetching && near.length === 0 && <span className="animate-pulse">· 正在找…</span>}
               {similar.isError && <span className="truncate">· {errorText(similar.error)}</span>}

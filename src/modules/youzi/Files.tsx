@@ -1,7 +1,7 @@
 // Attachments and project files on the page: chips in the input, cards on questions, the attachment
 // library, a project's files (versions, index) and the input's 资料 menu. Rules live in Rust
 // (files.rs / index.rs); copies are opened in their default app.
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -24,7 +24,7 @@ import {
   type MessageFile,
   type ProjectFile,
 } from "./api";
-import { toolClass } from "./Composer";
+import { toolClass, usePopover } from "./Composer";
 
 const BADGE: Record<FileInfo["format"], string> = { PDF: "PDF", Markdown: "MD", 文本: "TXT", Word: "DOC", PowerPoint: "PPT", Excel: "XLS", CSV: "CSV", 图片: "图", 网页: "网" };
 
@@ -384,40 +384,13 @@ export function ProjectFiles(props: { projectId: number; projectName: string; on
 /** The input's 资料 button (conversations in a project): which project files this question uses
  *  in full; the choice stays for the next questions. */
 export function FilesButton(props: { files: ProjectFile[]; selected: number[]; onToggle: (id: number) => void; onAdd: () => void; onManage: () => void }) {
-  const [open, setOpen] = useState(false);
-  const btn = useRef<HTMLButtonElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
-  useLayoutEffect(() => {
-    if (!open || !btn.current) return;
-    const r = btn.current.getBoundingClientRect();
-    setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 330)), bottom: window.innerHeight - r.top + 6 });
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!pop.current?.contains(t) && !btn.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", outside);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("mousedown", outside);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
+  const { open, setOpen, anchor: btn, pop, pos } = usePopover<HTMLButtonElement>(330);
   const count = props.selected.length;
   const row = "flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
   return (
     <>
       <button ref={btn} type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={`${toolClass} ${open ? "bg-muted text-foreground" : ""}`}>
-        <Library size={14} strokeWidth={1.5} /> 资料{count > 0 && ` ${count}`}
+        <Library size={14} /> 资料{count > 0 && ` ${count}`}
       </button>
       {open &&
         createPortal(

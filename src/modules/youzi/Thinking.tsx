@@ -28,7 +28,7 @@ export function levelsOf(status: YouziStatus | undefined, code: string | null): 
 }
 
 /** The choices a model has: 不思考 (if it can), 思考 at its default, each level. */
-export function levelOptions(status: YouziStatus | undefined, code: string | null): { value: Level; label: string }[] {
+function levelOptions(status: YouziStatus | undefined, code: string | null): { value: Level; label: string }[] {
   const ability = thinkOf(status, code);
   const { efforts, fixed } = levelsOf(status, code);
   const off = { value: "off", label: "不思考" };
@@ -111,8 +111,8 @@ export function ThinkingButton(props: { model?: string | null; on: boolean; effo
         onChange={pick}
         renderTrigger={() => (
           <>
-            <Lightbulb size={14} strokeWidth={1.5} /> 思考{pressed && (chosen ?? def) ? ` · ${chosen ?? def}` : ""}
-            <ChevronDown size={12} strokeWidth={1.5} className="text-muted-foreground" />
+            <Lightbulb size={14} /> 思考{pressed && (chosen ?? def) ? ` · ${chosen ?? def}` : ""}
+            <ChevronDown size={12} className="text-muted-foreground" />
           </>
         )}
         triggerClassName={`${props.className} ${pressed ? "bg-accent text-accent-foreground" : ""}`}
@@ -128,7 +128,7 @@ export function ThinkingButton(props: { model?: string | null; on: boolean; effo
       onClick={() => !fixed && (props.onLevel ? props.onLevel(props.on ? "off" : "on") : props.onToggle?.())}
       className={`${props.className} ${pressed ? "bg-accent text-accent-foreground" : ""} ${fixed ? "cursor-default opacity-50" : ""}`}
     >
-      <Lightbulb size={14} strokeWidth={1.5} /> 思考
+      <Lightbulb size={14} /> 思考
     </button>
   );
 }

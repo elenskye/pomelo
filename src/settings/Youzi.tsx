@@ -77,7 +77,7 @@ function ServiceRow(props: { kind: ServiceKind; status: ServiceStatus }) {
       </Row>
       {s.issue && (
         <div className="border-b px-4 py-3">
-          <IssueNotice issue={s.issue} compact />
+          <IssueNotice issue={s.issue} />
         </div>
       )}
     </>
@@ -217,7 +217,7 @@ function CloudModels(props: { status: YouziStatus }) {
         label="云端模型"
         actions={
           <Button onClick={() => setOpen(true)}>
-            <Pencil size={14} strokeWidth={1.5} /> 编辑
+            <Pencil size={14} /> 编辑
           </Button>
         }
       >
@@ -315,10 +315,10 @@ function CloudGroup(props: { service: Service; models: CloudModel[]; open: boole
                 </span>
                 <span className="flex opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
                   <IconButton label="编辑" onClick={() => props.onEdit(m)}>
-                    <Pencil size={14} strokeWidth={1.5} />
+                    <Pencil size={14} />
                   </IconButton>
                   <IconButton label="删除" danger onClick={() => props.onRemove(m)}>
-                    <Trash2 size={14} strokeWidth={1.5} />
+                    <Trash2 size={14} />
                   </IconButton>
                 </span>
               </div>
@@ -463,7 +463,7 @@ export function YouziSection() {
       </Row>
       {local.issue && (
         <div className="border-b px-4 py-3">
-          <IssueNotice issue={local.issue} compact />
+          <IssueNotice issue={local.issue} />
         </div>
       )}
       <ServiceRow kind="embedding" status={status.embedding} />

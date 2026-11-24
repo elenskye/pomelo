@@ -52,7 +52,7 @@ export function renderCode(src: string, lang: string): string[] | null {
   return codeCache.get(k) ?? null;
 }
 
-export type Diagram = { svg: string } | { error: string };
+type Diagram = { svg: string } | { error: string };
 const diagramCache = new Map<string, Diagram>();
 const diagramWaits = new Map<string, Promise<void>>();
 let mermaidSeq = 0;

@@ -9,7 +9,7 @@ import { useHiddenModules } from "@/app/hidden";
 import { ModuleIcon } from "@/app/ModuleIcon";
 import { moduleById } from "@/app/modules";
 import { CAL_TINT } from "@/home/notes";
-import { toYmd } from "@/shared/dates";
+import { toYmd, WEEK } from "@/shared/dates";
 import { HandIcon } from "@/shared/handParts";
 import { PageHeader } from "@/shared/ui";
 import { useCalendar, type CalendarEntry } from "./api";
@@ -17,7 +17,6 @@ import "./calendar.css";
 
 const NAMES: Record<CalendarEntry["source"], string> = { todo: "待办", day: "日子", trip: "出行", job: "面试" };
 const STATE: Record<CalendarEntry["state"], string> = { due: "截止", next: "重复的下一次", done: "做完了", day: "纪念日", birthday: "生日", document: "证件到期", depart: "出发", active: "在进行", got: "拿到" };
-const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 
 export default function CalendarPage() {
   const today = toYmd(new Date());
@@ -77,13 +76,13 @@ export default function CalendarPage() {
       <div ref={box} className="cal flex min-h-0 flex-1 flex-col px-8 pb-4" onClick={(e) => !(e.target as Element).closest(".ce,.calpop") && setPop(null)}>
         <div className="calbar">
           <button type="button" className="pm-btn pm-btn--icon calnav" data-hand="round" data-seed={1401} aria-label="上个月" onClick={() => step(-1)}>
-            <HandIcon name="back" size={18} seed={1402} />
+            <HandIcon name="back" size={18} />
           </button>
           <span className="calm pm-num">
             {ym.y} 年 {ym.m + 1} 月
           </span>
           <button type="button" className="pm-btn pm-btn--icon calnav" data-hand="round" data-seed={1403} aria-label="下个月" onClick={() => step(1)}>
-            <HandIcon name="fwd" size={18} seed={1404} />
+            <HandIcon name="fwd" size={18} />
           </button>
           <button type="button" className="pm-btn pm-btn--plain calnow" data-hand="button" data-fill="card" data-seed={1405} onClick={() => (setPop(null), setYm({ y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) - 1 }))}>
             今天

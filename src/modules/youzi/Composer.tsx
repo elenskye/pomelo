@@ -33,6 +33,39 @@ const commandsFor = (q: string) => (q && ("记住".startsWith(q) || "jizhu".star
 const toolClass =
   "flex shrink-0 items-center gap-1 whitespace-nowrap rounded-control px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
 
+/** A tool button's popover above it (closes on Esc and clicks outside); its left edge stays `room` px from the window's right. */
+export function usePopover<T extends HTMLElement = HTMLDivElement>(room: number) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<T>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open || !anchor.current) return;
+    const r = anchor.current.getBoundingClientRect();
+    setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - room)), bottom: window.innerHeight - r.top + 6 });
+  }, [open, room]);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!pop.current?.contains(t) && !anchor.current?.contains(t)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", outside);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+  return { open, setOpen, anchor, pop, pos };
+}
+
 export const Composer = forwardRef<
   ComposerHandle,
   {
@@ -312,7 +345,7 @@ export const Composer = forwardRef<
               menuMaxHeight={320}
               renderTrigger={() => (
                 <span className="flex items-center gap-1">
-                  <FileText size={14} strokeWidth={1.5} /> 模板
+                  <FileText size={14} /> 模板
                 </span>
               )}
               triggerClassName={toolClass}
@@ -332,7 +365,7 @@ export const Composer = forwardRef<
               onClick={() => void send()}
               className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
             >
-              <ArrowUp size={16} strokeWidth={2} />
+              <ArrowUp size={16} />
             </button>
           )}
         </div>

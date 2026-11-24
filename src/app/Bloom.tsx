@@ -33,7 +33,7 @@ function zigzag(n: number, a0: number, a1: number): [number, number][] {
   return Array.from({ length: n }, (_, k) => [r(k), start + ((end - start) * k) / (n - 1)]);
 }
 
-const poly = (pts: [number, number][], close = true) => "M" + pts.map(([x, y]) => `${f(x)} ${f(y)}`).join(" L") + (close ? " Z" : "");
+const poly = (pts: [number, number][]) => "M" + pts.map(([x, y]) => `${f(x)} ${f(y)}`).join(" L") + " Z";
 const circlePts = (r: number) => Array.from({ length: 73 }, (_, i) => pt(r, i * 5));
 
 export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; onAsk: ((text: string) => void) | null }) {
@@ -313,7 +313,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
                   props.onClose();
                 }}
               >
-                <HandIcon name="sparkle" size={13} seed={641} />
+                <HandIcon name="sparkle" size={13} />
                 <span>问柚子「{q.trim()}」</span>
               </button>
             )}
@@ -328,7 +328,7 @@ export function Bloom(props: { anchor: HTMLElement | null; onClose: () => void; 
           {showHidden && (
             <div className="hiddenlist">
               {hidden.map((m) => (
-                <ModuleRow key={m} id={m} dock={dock} live={live[m]} menu={menu} from="hidden" onOpen={go} dim />
+                <ModuleRow key={m} id={m} dock={dock} live={live[m]} menu={menu} onOpen={go} />
               ))}
             </div>
           )}

@@ -10,13 +10,13 @@ export type AppInfo = {
   startupError: string | null;
 };
 
-export type ImportSummary = {
+type ImportSummary = {
   modules: { key: string; label: string; incoming: number; existing: number }[];
   skipped: string[];
   backup: string | null;
 };
 
-export type ExportSummary = {
+type ExportSummary = {
   path: string;
   modules: { key: string; label: string; incoming: number }[];
 };
@@ -25,7 +25,7 @@ export type ExportSummary = {
 export type BackupInfo = { fileName: string; store: "pomelo" | "youzi"; label: string; createdAt: string; size: number };
 
 /** 开机自动启动: `registers` = this copy writes the login item (the installed app); otherwise only the setting is kept. */
-export type Autostart = { on: boolean; registers: boolean };
+type Autostart = { on: boolean; registers: boolean };
 
 /** 系统通知 (Rust notify.rs): `posts` = this copy posts (the installed app); `allowed` = macOS lets it (null: not asked yet). */
 export type NotifyKinds = { todo: boolean; jobs: boolean; days: boolean; schedule: boolean };

@@ -1,7 +1,7 @@
 // Search (v0.4): typed wrappers for src-tauri/src/search (query.rs, indexer.rs). Rules live in Rust.
 import { invoke } from "@tauri-apps/api/core";
 
-export type IndexStatus = {
+type IndexStatus = {
   records: number;
   done: number;
   rebuilding: boolean;

@@ -18,8 +18,8 @@ export type Entry = {
   /** its conversation under 定时 (null once deleted) */
   sessionId: number | null;
 };
-export type YearCount = { year: string; records: number };
-export type Overview = {
+type YearCount = { year: string; records: number };
+type Overview = {
   entries: Entry[];
   years: YearCount[];
   /** the year being written right now */
@@ -31,7 +31,7 @@ export type Overview = {
   envelope: number | null;
 };
 /** One run in full, as a design draws it (shape: visual-atelier schemes/pomelo/atlas/README.md「数据」). */
-export type Full = { id: number; year: string; until: string | null; createdAt: string; design: string; modelName: string; letter: string; snapshot: unknown; scenes: unknown[] | null; error: string | null };
+type Full = { id: number; year: string; until: string | null; createdAt: string; design: string; modelName: string; letter: string; snapshot: unknown; scenes: unknown[] | null; error: string | null };
 
 export const atlasApi = {
   overview: () => invoke<Overview>("atlas_overview"),
@@ -44,5 +44,5 @@ export const atlasApi = {
 export const ATLAS_KEY = ["atlas"];
 export const OVERVIEW_KEY = [...ATLAS_KEY, "overview"];
 /** Asked again while a year is being written (and now and then: the 12 月 31 日 run writes by itself). */
-export const useAtlasOverview = (fast = false) => useQuery({ queryKey: OVERVIEW_KEY, queryFn: atlasApi.overview, refetchInterval: (q) => (fast || q.state.data?.writing ? 2000 : 20000) });
+export const useAtlasOverview = () => useQuery({ queryKey: OVERVIEW_KEY, queryFn: atlasApi.overview, refetchInterval: (q) => (q.state.data?.writing ? 2000 : 20000) });
 export const useAtlasRun = (id: number | null) => useQuery({ queryKey: [...ATLAS_KEY, "run", id], queryFn: () => atlasApi.get(id!), enabled: id !== null, staleTime: Infinity });

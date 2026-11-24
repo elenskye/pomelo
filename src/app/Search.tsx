@@ -166,7 +166,7 @@ export function SearchBox(props: { onClose: () => void; onAsk?: ((text: string) 
             <div className="rin">
               <div className="rhead">— 柚儿园 · 找东西 —</div>
               <div className="sfield">
-                <HandIcon name="search" size={20} seed={902} className="text-[var(--color-ink-soft)]" />
+                <HandIcon name="search" size={20} className="text-[var(--color-ink-soft)]" />
                 <input autoFocus aria-label="找东西" placeholder="找点什么…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
                 {q && n > 0 && <span className="scount">{n} 条</span>}
                 <span className="pm-rule sline" data-hand="rule" data-seed="901" data-sw="1.8" />
@@ -186,7 +186,7 @@ export function SearchBox(props: { onClose: () => void; onAsk?: ((text: string) 
                                 props.onClose();
                               }}
                             >
-                              <HandIcon name="sparkle" size={13} seed={903} />
+                              <HandIcon name="sparkle" size={13} />
                               问问柚子
                             </button>
                           )}

@@ -7,11 +7,10 @@ import { Plus } from "@/shared/icons";
 import { Dropdown } from "@/shared/Dropdown";
 import { errorText, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
-import { useSetting } from "@/shared/settings";
 import { EmptyState, Field, IconButton, Segmented, TextInput } from "@/shared/ui";
 import { SITE_KEY, WORKS_KEY, useWorks, workApi, type Lang, type Taxonomy, type WorkRow } from "./api";
 import { WorkEditor } from "./WorkEditor";
-import type { View } from "./parts";
+import { useSiteView } from "./parts";
 
 type LangFilter = "all" | "both" | "zh" | "en";
 const LANG_OPTIONS: { value: LangFilter; label: string }[] = [
@@ -21,7 +20,7 @@ const LANG_OPTIONS: { value: LangFilter; label: string }[] = [
   { value: "en", label: "只有英文" },
 ];
 
-export const categoryName = (tax: Taxonomy, slug: string) => tax.categories.find((c) => c.slug === slug)?.zh ?? slug;
+const categoryName = (tax: Taxonomy, slug: string) => tax.categories.find((c) => c.slug === slug)?.zh ?? slug;
 
 const trigger = (sel: { label: ReactNode } | undefined) => <span className="truncate">{sel?.label}</span>;
 const triggerClass = (on: boolean) =>
@@ -88,7 +87,7 @@ export function Works(props: { guard: { dirty: boolean; confirmLeave: () => Prom
   const toast = useToast();
   const { data } = useWorks(true);
   const [selected, setSelected] = useState<string | null>(null);
-  const [view, setView] = useSetting<View>("ui.site_work_view", "zh", (v): v is View => v === "zh" || v === "en" || v === "both");
+  const [view, setView] = useSiteView();
   const [cat, setCat] = useState("");
   const [lang, setLang] = useState<LangFilter>("all");
   const [month, setMonth] = useState("");
@@ -128,7 +127,7 @@ export function Works(props: { guard: { dirty: boolean; confirmLeave: () => Prom
           <div className="flex items-center justify-between gap-1 px-3 py-2">
             <Filters tax={tax} months={months} cat={cat} setCat={setCat} lang={lang} setLang={setLang} month={month} setMonth={setMonth} />
             <IconButton label="新作品" onClick={() => void props.guard.confirmLeave().then((ok) => ok && setCreating(true))}>
-              <Plus size={16} strokeWidth={1.5} />
+              <Plus size={16} />
             </IconButton>
           </div>
           <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">

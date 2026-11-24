@@ -6,7 +6,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { nextOnOrAfter } from "@/modules/finance/money";
 import { excerpt } from "@/modules/notes/NoteBody";
 import { tagSpans } from "@/shared/editor/lite";
-import { addDays, parseYmd, toYmd } from "@/shared/dates";
+import { addDays, pad, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/youzi/assistants/seekerApi";
 import type { SkillFlowNode } from "@/modules/youzi/api";
 import { janitorCards, janitorChat, janitorHandlers, janitorLive, janitorReply } from "./janitorMock";
@@ -202,10 +202,7 @@ const pItemHandlers = (list: "template" | "trip") => {
 
 // ---- backups (file names mirror backup.rs; restore only records the safety copy) ----
 type Backup = { fileName: string; store: "pomelo" | "youzi"; label: string; createdAt: string; size: number };
-const stamp = (d: Date) => {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-};
+const stamp = (d: Date) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 const mkBackup = (label: string, d = new Date(), store: Backup["store"] = "pomelo"): Backup => {
   const s = stamp(d);
   return {
@@ -223,8 +220,8 @@ let backups: Backup[] = [
   mkBackup("manual", new Date(Date.now() - 5 * 86400000 + 180000)),
   ...Array.from({ length: 3 }, (_, i) => mkBackup("daily", new Date(Date.now() - (i + 1) * 86400000 + 1000), "youzi")),
 ];
-const addBackup = (label: string, d = new Date(), store: Backup["store"] = "pomelo") => {
-  const b = mkBackup(label, d, store);
+const addBackup = (label: string) => {
+  const b = mkBackup(label);
   backups = [b, ...backups];
   return b;
 };
@@ -4054,10 +4051,10 @@ const pDoc = (s: PSession) =>
   [`# ${s.title}`, ...pPath(s).map((m) => [`## ${m.role === "user" ? "我" : "柚子"}`, m.content].join("\n\n"))].join("\n\n") + "\n";
 /** `&youzi=ready`: a few finished conversations and a project to organise. */
 const pSeed = () => {
-  const done = (s: PSession, q: string, a: string, model = "Qwen3.5 9B") => {
+  const done = (s: PSession, q: string, a: string) => {
     const path = pPath(s);
     const u = pAdd(s, "user", q, path[path.length - 1]?.id ?? null, null);
-    const r = pAdd(s, "assistant", a, u.id, model);
+    const r = pAdd(s, "assistant", a, u.id, "Qwen3.5 9B");
     r.state = "complete";
     pShow(s, r);
   };
@@ -4374,10 +4371,9 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
 // ---- v0.4 phase 7: 定时任务 (youzi/schedule.rs): rules, due + catch-up (checked every 5 s here), read-only runs ----
 type PRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
 type PSchedule = PRule & { id: number; name: string; prompt: string; model: string | null; thinking: boolean; effort?: string | null; keepChat?: boolean; enabled: boolean; builtin: string | null; sortOrder: number; since: string; lastSlot: string | null };
-const pad2 = (n: number) => String(n).padStart(2, "0");
 const pLocalNow = () => {
   const d = new Date();
-  return `${toYmd(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${toYmd(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 const pRunsOn = (r: PRule, date: string) => {
   const d = parseYmd(date);
@@ -4417,7 +4413,7 @@ const pScheduleCheck = (a: Args): PRule & { name: string; prompt: string; model:
   if (!["day", "week", "month", "year"].includes(every)) throw "请选什么时候运行";
   const m = /^(\d{1,2}):(\d{1,2})$/.exec(String(a.at ?? "").trim());
   if (!m || +m[1] > 23 || +m[2] > 59) throw "时间要写成 09:00 这样";
-  return { name, prompt, every, day: every === "day" ? null : day, month: every === "year" ? month : null, at: `${pad2(+m[1])}:${pad2(+m[2])}`, model: (a.model as string | null) || null, thinking: a.thinking !== false, effort: a.thinking !== false ? ((a.effort as string | null) ?? null) : null, keepChat: a.keepChat === true };
+  return { name, prompt, every, day: every === "day" ? null : day, month: every === "year" ? month : null, at: `${pad(+m[1])}:${pad(+m[2])}`, model: (a.model as string | null) || null, thinking: a.thinking !== false, effort: a.thinking !== false ? ((a.effort as string | null) ?? null) : null, keepChat: a.keepChat === true };
 };
 const pScheduleOut = (s: PSchedule) => {
   const last = [...pky.sessions].filter((x) => x.scheduleId === s.id).sort((a, b) => b.id - a.id)[0];

@@ -9,7 +9,7 @@ import { draftLang, type SeekerDraft, type SeekerEdit, type SeekerEntry, type Se
 
 /** An entry's heading as the Word export writes it (Rust output.rs `lines`): 中文 名称 ⇥ 角色 ⇥ 时间
  * (教育: 名称 ⇥ 时间, then 专业；说明); English 角色 ⇥ 时间, then 名称, 地点 (教育: 名称 ⇥ 时间, then the degree). */
-export function EntryHead({ lang, category, entry: e }: { lang: SeekerLang; category: string; entry: SeekerEntry }) {
+function EntryHead({ lang, category, entry: e }: { lang: SeekerLang; category: string; entry: SeekerEntry }) {
   const grey = (lines: string[]) => lines.filter(Boolean).map((l, i) => <p key={i} className="text-muted-foreground">{l}</p>);
   if (lang === "en") {
     const education = category === "教育";
@@ -33,7 +33,7 @@ function Remark(props: { note: SeekerNote; current: string | null; picked: boole
   const n = props.note;
   return <div data-seeker-note className="my-1 ml-6 rounded-control border-l-2 border-primary/60 bg-muted/60 px-2.5 py-1.5 text-xs">
     <div className="flex items-start gap-2">
-      <MessageSquare size={12} className="mt-1 shrink-0 text-primary" aria-hidden />
+      <MessageSquare size={12} className="mt-1 shrink-0 text-primary" />
       <p className="min-w-0 flex-1 pt-0.5 break-words whitespace-pre-wrap">{n.comment || "改成："}</p>
       <IconButton label="处理完了" disabled={props.busy} onClick={props.done}><Check size={13} /></IconButton>
     </div>

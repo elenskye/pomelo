@@ -1,5 +1,5 @@
 // Money and month helpers for 钱来钱往. Amounts are integer cents (Rust stores the same).
-import { localToday, toYmd } from "@/shared/dates";
+import { localToday } from "@/shared/dates";
 
 export type Currency = "CNY" | "SGD" | "HKD" | "USD";
 export const CURRENCIES: Currency[] = ["CNY", "SGD", "HKD", "USD"];
@@ -34,7 +34,6 @@ export function parseMoney(text: string): number | null {
 export const moneyInput = (cents: number | null | undefined) => (cents == null ? "" : String(cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)));
 
 export const thisMonth = () => localToday().slice(0, 7);
-export const shiftMonth = (ym: string, k: number) => toYmd(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1 + k, 1)).slice(0, 7);
 export const monthTitle = (ym: string) => `${Number(ym.slice(0, 4))} 年 ${Number(ym.slice(5, 7))} 月`;
 export const dayTitle = (d: string) => `${monthTitle(d)} ${Number(d.slice(8))} 日`;
 /** Chart label for a dated point: "10/7", with the year ("26/10/7") on the first point and when the year changes. */

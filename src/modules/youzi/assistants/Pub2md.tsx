@@ -28,7 +28,7 @@ import "./pub2md.css";
 import { chipLook } from "./select";
 import { showDialog } from "@/shared/dialog";
 
-export const PUB2MD_KEY = ["youzi", "pub2md"];
+const PUB2MD_KEY = ["youzi", "pub2md"];
 type Tab = "work" | "prompt" | "settings";
 const EXTENSIONS = ["pdf", "docx", "doc", "png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif", "md", "mmd", "txt", "markdown"];
 const LANGS: { value: Pub2mdSettings["lang"]; label: string }[] = [
@@ -163,7 +163,7 @@ export function Pub2mdPage() {
           <section aria-label="待发送" className="flex flex-col gap-1">
             {staged.map((d) => (
               <div key={d.files.join("|")} className="flex items-center gap-2">
-                <FileText size={13} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
+                <FileText size={13} className="shrink-0 text-muted-foreground" />
                 <span className="truncate">{d.name}</span>
                 <button type="button" aria-label="移出" title="移出" onClick={() => setStaged(staged.filter((x) => x !== d))} className="rounded-control p-1 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
                   <X size={12} />
@@ -354,7 +354,7 @@ function Current(props: { data: Pub2mdView; onStop: () => void; onOpen: (folder:
         <div className="flex-1" />
         {c.folder && (
           <button type="button" aria-label="打开文件夹" title="打开文件夹" onClick={() => props.onOpen(c.folder)} className="rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-            <FolderOpen size={14} strokeWidth={1.5} />
+            <FolderOpen size={14} />
           </button>
         )}
         <Button onClick={props.onStop}>停止</Button>
@@ -462,7 +462,7 @@ function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: strin
               </>
             )}
             <button type="button" aria-label="打开文件夹" title="打开文件夹" onClick={() => props.onOpen(r.folder)} className="rounded-control p-1.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-              <FolderOpen size={14} strokeWidth={1.5} />
+              <FolderOpen size={14} />
             </button>
           </div>
           {r.message && r.state !== "done" && <span className="text-xs text-muted-foreground">{r.message}</span>}

@@ -15,9 +15,9 @@ export type CalendarEntry = Hit & {
   note: string | null;
 };
 
-export const CALENDAR_KEY = ["calendar"];
+const CALENDAR_KEY = ["calendar"];
 
-export const calendarSpan = (from: string, to: string, hidden: string[]) => invoke<CalendarEntry[]>("calendar_span", { from, to, hidden });
+const calendarSpan = (from: string, to: string, hidden: string[]) => invoke<CalendarEntry[]>("calendar_span", { from, to, hidden });
 
 export const useCalendar = (from: string, to: string, hidden: string[]) =>
   useQuery({ queryKey: [...CALENDAR_KEY, from, to, hidden], queryFn: () => calendarSpan(from, to, hidden), refetchOnMount: "always" });

@@ -172,7 +172,7 @@ export function useSwipes(opts: {
       }, 3000);
       return out;
     };
-    const close = (r: Row | null, ms = 220) => r && r.box.isConnected && paint(r, 0, ms);
+    const close = (r: Row | null) => r && r.box.isConnected && paint(r, 0, 220);
     /** Slides the row out, folds its place away, then `then` (failing: the row comes back). */
     const remove = (r: Row, then: () => Promise<unknown>) => {
       paint(r, r.box.clientWidth, 200);

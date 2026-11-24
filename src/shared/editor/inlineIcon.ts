@@ -3,7 +3,7 @@
 // (`:name:` without `pm-` is the website's content icon: only the website draws it, here it stays as written.)
 // This file knows only the notation; the library hands in the drawings (`setIconDrawer`), so lite.ts stays plain
 // enough to run in Node.
-export const ICON_TOKEN = /:pm-([a-z0-9-]+):/g;
+const ICON_TOKEN = /:pm-([a-z0-9-]+):/g;
 export const iconToken = (key: string) => `:pm-${key}:`;
 
 let drawer: ((key: string) => string | null) | null = null;

@@ -76,7 +76,7 @@ export const HIGHLIGHTS: { patch: string; label: string; tint: string | null }[]
 ];
 
 /** A [[link]]'s inside: [target (Bear's \\x escapes undone), alias, the target as written]; the first | not escaped splits. */
-export function wikiParts(inner: string): [string, string | undefined, string] {
+function wikiParts(inner: string): [string, string | undefined, string] {
   const i = inner.search(/(?<!\\)\|/);
   const raw = i < 0 ? inner : inner.slice(0, i);
   return [raw.replace(/\\([!-/:-@[-`{-~])/g, "$1"), i < 0 ? undefined : inner.slice(i + 1), raw];
@@ -179,6 +179,9 @@ function inline(text: string, look: Look, st: St = {}, at = 0, ends: Ends = NO_E
 type Block = { kind: "fence" | "math" | "table" | "quote"; from: number; to: number; lang?: string; callout?: string; fold?: boolean };
 
 /** Code fences, $$ blocks, tables and quotes (callouts) as line ranges, inclusive. */
+/** The lines inside code and math blocks. */
+export const fencedLines = (bs: Block[]) => new Set<number>(bs.filter((b) => b.kind === "fence" || b.kind === "math").flatMap((b) => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
+
 export function blocks(lines: string[]): Block[] {
   const out: Block[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -246,14 +249,14 @@ export function cells(line: string): [number, number][] {
 const wide = (s: string) => [...s].reduce((n, c) => n + (/[ᄀ-￿]/.test(c) ? 2 : 1), 0);
 
 /** Bear's mark that a line is folded, at a heading's or list item's end (articles.rs `without_fold`). */
-export const FOLD_MARK = /\s*<!--\s*\{"fold":true\}\s*-->\s*$/;
+const FOLD_MARK = /\s*<!--\s*\{"fold":true\}\s*-->\s*$/;
 
 /** The folds Bear's marks ask for (a new box opens with them shut). */
 export function markedFolds(text: string): Set<string> {
   const out = new Set<string>();
   if (!text.includes("<!--")) return out;
   const lines = text.split("\n");
-  const fenced = new Set<number>(blocks(lines).filter((b) => b.kind === "fence" || b.kind === "math").flatMap((b) => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
+  const fenced = fencedLines(blocks(lines));
   lines.forEach((l, i) => {
     if (FOLD_MARK.test(l) && !fenced.has(i) && foldRange(lines, i, fenced)) out.add(foldKey(lines, i));
   });
@@ -349,7 +352,7 @@ export function drawDoc(text: string, pending: number | null, active: number | n
   });
   const per = new Map<Block, { code?: string; hl?: string[] | null; math?: string; html?: string | null; widths?: number[] }>();
   const of = (b: Block) => per.get(b) ?? (per.set(b, {}), per.get(b)!);
-  const fenced = new Set<number>(bs.filter((b) => b.kind === "fence" || b.kind === "math").flatMap((b) => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
+  const fenced = fencedLines(bs);
   const curBlock = active != null ? blockOf.get(active) : undefined;
   const isCur = (i: number) => active === i || (!!curBlock && i >= curBlock.from && i <= curBlock.to);
   // folds
@@ -482,12 +485,12 @@ function lineKind(line: string): LineKind | null {
   return q ? { kind: "quote", indent: 0, empty: !q[2].trim(), next: q[1].endsWith(" ") ? q[1] : `${q[1]} ` } : null;
 }
 
-export const LINE_PREFIX = /^ *(?:#{1,6} +|[-*+] +(?:\[[ xX]\] +)?|\d+[.)] +|>+ ?)/;
+const LINE_PREFIX = /^ *(?:#{1,6} +|[-*+] +(?:\[[ xX]\] +)?|\d+[.)] +|>+ ?)/;
 
 /** The right-click list: Bear's marks, 念念不忘's keys where the two differ. In layers (MdMenu's groups) — the page's
  * own on top (`lead`: 记到念念不忘, 柚子链接…), then 文字 / 段落 / 插入 and what the page adds to them or after them (公式,
  * 提示框, a table's rows and columns, 柚子). */
-export function formats(extra: Format[]): Format[] {
+function formats(extra: Format[]): Format[] {
   const lead = extra.filter((f) => f !== "-" && f.lead);
   const rest = extra.filter((f) => f === "-" || !f.lead);
   return [...lead, ...(lead.length ? ["-" as const] : []), ...BASE, ...rest];

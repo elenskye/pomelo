@@ -31,7 +31,7 @@ export type Lesson = {
   updatedAt: string;
 };
 
-export type CoursePatch = { name?: string; note?: string | null };
+type CoursePatch = { name?: string; note?: string | null };
 /** Omitted key = unchanged; null = clear. Rust auto-fills finishedMonth on → done only if omitted. */
 export type LessonPatch = Partial<Pick<Lesson, "code" | "kindId" | "title" | "status" | "finishedMonth" | "note">>;
 

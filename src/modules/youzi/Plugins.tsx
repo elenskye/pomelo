@@ -168,7 +168,7 @@ function Node(props: { t: Tree; ends: string[]; narrow?: boolean }) {
   if (t.kind === "again")
     return (
       <span className={`flex items-center gap-1.5 rounded-card border px-3 py-1 text-xs text-muted-foreground ${props.narrow ? "max-w-[9rem]" : "max-w-[15rem]"}`}>
-        <RefreshCw size={12} className="shrink-0" aria-hidden />
+        <RefreshCw size={12} className="shrink-0" />
         {t.text}，回到「{t.back}」
       </span>
     );
@@ -185,7 +185,7 @@ function Node(props: { t: Tree; ends: string[]; narrow?: boolean }) {
         <>
           <Down short />
           <span className="flex max-w-[9rem] items-center gap-1 text-center text-xs text-muted-foreground">
-            <RefreshCw size={12} className="shrink-0" aria-hidden />
+            <RefreshCw size={12} className="shrink-0" />
             回到「{c.join}」
           </span>
         </>

@@ -415,10 +415,10 @@ export default function YouziPage() {
         <h1 className="pointer-events-none">和柚子聊聊{title ? ` · ${title}` : ""}</h1>
         <div className="flex shrink-0 items-center justify-end gap-2 text-sm">
           <IconButton label={collapsed ? "展开对话列表" : "收起对话列表"} onClick={() => setCollapsed(!collapsed)}>
-            <ListToggle size={16} strokeWidth={1.5} />
+            <ListToggle size={16} />
           </IconButton>
           <Button disabled={current == null && draftProject == null && !live} onClick={() => newChat()}>
-            <SquarePen size={14} strokeWidth={1.5} /> 新对话
+            <SquarePen size={14} /> 新对话
           </Button>
           {status && !status.error && <ModelMenu status={status} />}
         </div>
@@ -477,7 +477,7 @@ export default function YouziPage() {
                             className="flex min-h-[70px] w-60 flex-col items-start gap-1 rounded-card border bg-card px-3 py-2.5 text-left outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <span className="flex w-full items-center gap-1.5 font-bold">
-                              <Pin size={13} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+                              <Pin size={13} className="shrink-0 text-muted-foreground" />
                               <span className="truncate">{t.title}</span>
                             </span>
                             <span className="line-clamp-2 text-xs leading-normal text-muted-foreground">{summary(t)}</span>
@@ -496,7 +496,7 @@ export default function YouziPage() {
               />
               <div className="px-8 pt-2">
                 <div className="mx-auto max-w-3xl space-y-2">
-                  {issue && <IssueNotice issue={issue} compact />}
+                  {issue && <IssueNotice issue={issue} />}
                   {summarizingHere ? (
                     <div className="rounded-card border bg-card px-3 py-2 text-sm">
                       <p className="font-bold">正在总结较早的内容…</p>
@@ -569,7 +569,7 @@ export default function YouziPage() {
                           else if (v === "web") setWebOpen(true);
                           else if (v === "library") setLibraryOpen(true);
                         }}
-                        renderTrigger={() => <Plus size={15} strokeWidth={1.75} />}
+                        renderTrigger={() => <Plus size={15} />}
                         triggerClassName={toolClass}
                       />
                     }
@@ -583,7 +583,7 @@ export default function YouziPage() {
                             onClick={() => ask.toggle(WEB_SKILL)}
                             className={`${toolClass} ${ask.asked.includes(WEB_SKILL) ? "bg-accent text-accent-foreground" : ""}`}
                           >
-                            <Globe size={14} strokeWidth={1.5} /> 联网
+                            <Globe size={14} /> 联网
                           </button>
                         )}
                         <KnowledgeButton kb={knowledge} plan={plan.data?.knowledge ?? null} onManage={() => setKbOpen(true)} />

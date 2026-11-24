@@ -49,7 +49,7 @@ export function targetOf(raw: string): { module: LinkModule; name: string } {
 export const escapeName = (name: string) => name.replace(/[\\|[\]]/g, (c) => `\\${c}`);
 
 /** One `[[…]]` in a line. */
-export type Found = {
+type Found = {
   /** The whole thing, `!` included: [start, end). */
   start: number;
   end: number;

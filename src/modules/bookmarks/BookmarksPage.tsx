@@ -308,8 +308,6 @@ export default function BookmarksPage() {
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       {confirmDialog}
       <PageHeader
-        icon={m.icon}
-        color={m.color}
         title={m.label}
         right={
           <p className="pointer-events-none text-sm text-muted-foreground">
@@ -321,7 +319,7 @@ export default function BookmarksPage() {
         <nav aria-label="文件夹" className="selectable -m-1 w-56 shrink-0 overflow-y-auto p-1">
           <FolderTree nodes={roots} depth={1} current={words.length ? null : current} isOpen={isOpen} toggle={toggleOpen} go={go} hint={hint} drag={treeDrag} />
           <button type="button" onClick={() => setEditing({ mode: "new", kind: "folder", parentId: null })} className="mt-1 flex w-full items-center gap-1.5 rounded-control py-1.5 pr-2 pl-7 text-left text-sm text-muted-foreground outline-none hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-            <Plus size={14} strokeWidth={1.75} className="shrink-0" /> 新文件夹
+            <Plus size={14} className="shrink-0" /> 新文件夹
           </button>
         </nav>
         <main className="flex min-w-0 flex-1 flex-col">
@@ -444,7 +442,7 @@ function TreeRow(props: { label: string; depth: number; on: boolean; hint: Hint;
         <span className="w-1" />
       )}
       <button type="button" onClick={props.onClick} className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-control">
-        <Folder size={14} strokeWidth={1.75} className="shrink-0 text-muted-foreground" />
+        <Folder size={14} className="shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{props.label}</span>
         {props.count > 0 && <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">{props.count}</span>}
       </button>
@@ -522,9 +520,9 @@ function Row(props: {
           props.picked ? "border-primary bg-primary text-primary-foreground" : `border-muted-foreground/50 ${props.picking ? "" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"}`
         }`}
       >
-        {props.picked && <Check size={11} strokeWidth={3} />}
+        {props.picked && <Check size={11} />}
       </button>
-      {folder ? <Folder size={16} strokeWidth={1.75} className="shrink-0 text-muted-foreground" /> : <SiteIcon url={n.url} icons={props.icons} />}
+      {folder ? <Folder size={16} className="shrink-0 text-muted-foreground" /> : <SiteIcon url={n.url} icons={props.icons} />}
       {props.renaming ? (
         <span className="w-2/5 min-w-0 shrink-0">
           <InlineName initial={n.title} label={`「${n.title}」改名`} max={300} onDone={props.onRenamed} />

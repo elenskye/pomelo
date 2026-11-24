@@ -69,7 +69,7 @@ export function LinkMark(props: { module: string; size?: number }) {
 
 /** `[[目标]]` (a chip: sticker + name) or `[[目标|字]]` (the words as a Pomelo link). `thing` undefined: not looked up
  *  yet; null: 找不到. */
-export function LinkChip(props: { target: string; alias?: string | null; thing: Thing | null | undefined; size?: number }) {
+export function LinkChip(props: { target: string; alias?: string | null; thing: Thing | null | undefined }) {
   const open = useOpenThing();
   const { module, name } = targetOf(props.target);
   const dead = props.thing === null;
@@ -85,7 +85,7 @@ export function LinkChip(props: { target: string; alias?: string | null; thing: 
     );
   return (
     <button type="button" onClick={go} className={`pm-lk ${dead ? "dead" : ""}`}>
-      <LinkMark module={module} size={props.size ?? 16} />
+      <LinkMark module={module} />
       <span>{props.thing?.module === "notes" ? props.thing.title : name}</span>
       {dead && <span className="pm-lk-gone">找不到</span>}
     </button>

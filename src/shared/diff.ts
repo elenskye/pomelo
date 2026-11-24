@@ -1,7 +1,7 @@
 // A small text diff for showing what 润色 changed (no library): longest common subsequence over tokens —
 // one token per Chinese character / punctuation, words and runs of spaces kept whole. Long texts fall back
 // to sentences (and lines) so the table stays small.
-export type DiffPart = { kind: "same" | "del" | "add"; text: string };
+type DiffPart = { kind: "same" | "del" | "add"; text: string };
 
 const CELLS = 2_500_000;
 

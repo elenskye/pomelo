@@ -156,7 +156,7 @@ export const ASSISTANT_MODULES: ModuleDef[] = [
 ];
 
 /** Pages that aren't modules: 首页, 模块坞, 设置. */
-export const PLACES: ModuleDef[] = [
+const PLACES: ModuleDef[] = [
   { id: "", label: "首页", icon: House, color: "var(--muted-foreground)" },
   { id: "dock", label: "模块坞", icon: LayoutGrid, color: "var(--muted-foreground)" },
   // 日历: the desk's 本月小月历 opens it (a page, not a module; 站主 2026-11-08)

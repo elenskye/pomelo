@@ -10,7 +10,7 @@ import { Section } from "./layout";
 
 const COLLAPSED = 8;
 
-export function backupLabel(label: string) {
+function backupLabel(label: string) {
   const fixed: Record<string, string> = { daily: "每日自动", manual: "手动", "before-import": "导入前", "before-restore": "恢复前" };
   const v = /^before-v(\d+)$/.exec(label);
   return fixed[label] ?? (v ? `升级前（→ 版本 ${v[1]}）` : label);
@@ -78,10 +78,10 @@ export function BackupsSection() {
       actions={
         <>
           <Button onClick={() => void api.revealBackupsDir().catch((e) => toast(errorText(e), "error"))}>
-            <FolderOpen size={14} strokeWidth={1.5} /> 打开文件夹
+            <FolderOpen size={14} /> 打开文件夹
           </Button>
           <Button variant="primary" disabled={busy} onClick={() => void backupNow()}>
-            <DatabaseBackup size={14} strokeWidth={1.5} /> 立即备份
+            <DatabaseBackup size={14} /> 立即备份
           </Button>
         </>
       }
@@ -97,7 +97,7 @@ export function BackupsSection() {
               <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{backupLabel(b.label)}</span>
               <span className="w-16 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{size(b.size)}</span>
               <Button variant="ghost" disabled={busy} className="py-1" onClick={() => void restore(b)}>
-                <ArchiveRestore size={14} strokeWidth={1.5} /> 恢复
+                <ArchiveRestore size={14} /> 恢复
               </Button>
             </li>
           ))}

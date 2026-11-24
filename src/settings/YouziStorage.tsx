@@ -113,7 +113,7 @@ export function StorageRow() {
       help="柚子的数据库，加上柚子的附件和项目资料的副本（在数据目录的 youzi-files 文件夹，不进每日备份）。和「数据 → 附件」各放各的，不重复。可以删掉不要的副本、清理 30 天没动过的空对话。"
       actions={
         <Button onClick={() => setOpen(true)}>
-          <HardDrive size={14} strokeWidth={1.5} /> 管理…
+          <HardDrive size={14} /> 管理…
         </Button>
       }
     >

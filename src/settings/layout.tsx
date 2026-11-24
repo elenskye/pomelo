@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { CircleQuestionMark } from "@/shared/icons";
 
-export function HelpTip(props: { text: ReactNode }) {
+function HelpTip(props: { text: ReactNode }) {
   return (
     <span className="group/help relative inline-flex align-middle">
       <button
@@ -11,7 +11,7 @@ export function HelpTip(props: { text: ReactNode }) {
         aria-label="说明"
         className="rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <CircleQuestionMark size={14} strokeWidth={1.75} />
+        <CircleQuestionMark size={14} />
       </button>
       <span
         role="tooltip"

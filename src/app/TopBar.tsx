@@ -47,7 +47,7 @@ function OpenTab(props: { path: string; on: boolean; fresh: boolean; onSelect: (
           close();
         }}
       >
-        <HandIcon name="x" size={11} seed={3} />
+        <HandIcon name="x" size={11} />
       </button>
       <Tip>{name}</Tip>
     </div>
@@ -92,18 +92,18 @@ export function TopBar(props: {
     <header data-tauri-drag-region className="topbar">
       <PomeloButton open={props.bloomOpen} onClick={props.onPomelo} face={props.face} />
       <button type="button" aria-label="后退" disabled={!tabs.canBack} onClick={tabs.back} onContextMenu={trail(-1)} className="navb pm-press pm-tip-host">
-        <HandIcon name="back" seed={11} />
+        <HandIcon name="back" />
         <Tip>后退</Tip>
       </button>
       <button type="button" aria-label="前进" disabled={!tabs.canForward} onClick={tabs.forward} onContextMenu={trail(1)} className="navb pm-press pm-tip-host">
-        <HandIcon name="fwd" seed={12} />
+        <HandIcon name="fwd" />
         <Tip>前进</Tip>
       </button>
       {!tabs.home && (
         <button type="button" onClick={tabs.goHome} className="tohome pm-press">
           <Tape kind="mint" rot={-2} />
           <span className="tl">
-            <HandIcon name="back2" size={17} seed={13} />
+            <HandIcon name="back2" size={17} />
             回桌面
           </span>
         </button>
@@ -120,7 +120,7 @@ export function TopBar(props: {
         ))}
       </div>
       <button type="button" aria-label="新开一页（贴纸簿）" onClick={tabs.newTab} className="ib pm-press pm-tip-host">
-        <HandIcon name="plus" seed={14} />
+        <HandIcon name="plus" />
         <Tip>新开一页</Tip>
       </button>
       {props.isDev && <span className="devchip">开发版</span>}
@@ -129,12 +129,12 @@ export function TopBar(props: {
       </span>
       {props.onSearch && (
         <button type="button" aria-label="找东西（⌘K）" onClick={props.onSearch} className="ib pm-press pm-tip-host">
-          <HandIcon name="search" size={21} seed={15} />
+          <HandIcon name="search" size={21} />
           <Tip>找东西</Tip>
         </button>
       )}
       <button type="button" aria-label="设置" onClick={() => tabs.open("/settings")} className="ib pm-press pm-tip-host">
-        <HandIcon name="gear" size={21} seed={16} />
+        <HandIcon name="gear" size={21} />
         <Tip>设置</Tip>
       </button>
       <AskButton open={props.chatOpen} onClick={props.onChat} unseen={props.unseen} />
@@ -150,7 +150,7 @@ function AskButton(props: { open: boolean; onClick?: () => void; unseen: boolean
   const dot = props.unseen && <span aria-label="有新内容" className="absolute top-0.5 right-0.5 size-2 rounded-full border border-[var(--color-top)] bg-primary" />;
   return (
     <button type="button" aria-label={`${label}（⌘J）`} aria-pressed={props.open} disabled={!props.onClick} onClick={props.onClick} className={`ask pm-press pm-tip-host ${props.open ? "on" : ""}`}>
-      {ai ? <Mark svg={ai} size={36} /> : <Bird size={16} strokeWidth={1.75} />}
+      {ai ? <Mark svg={ai} size={36} /> : <Bird size={16} />}
       {dot}
       <Tip>{label}</Tip>
     </button>

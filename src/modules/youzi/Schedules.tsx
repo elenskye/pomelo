@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "@/shared/icons";
 import { Dropdown, type DropdownOption } from "@/shared/Dropdown";
-import { formatDay, toYmd, weekday } from "@/shared/dates";
+import { formatDay, pad, toYmd, weekday } from "@/shared/dates";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Button, IconButton, Segmented, Switch, TextInput } from "@/shared/ui";
 import { BRIEF_KEY, LIBRARY_KEY, SCHEDULES_KEY, youziApi, ruleText, useBrief, useYouziStatus, useSchedules, type Schedule, type ScheduleInput } from "./api";
@@ -44,7 +44,7 @@ function slotText(slot: string): string {
 /** A stored UTC time → local 「10 月 12 日 09:00」 */
 function localText(iso: string): string {
   const d = new Date(iso);
-  return `${formatDay(toYmd(d))} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${formatDay(toYmd(d))} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function SchedulesDialog(props: { onOpenSession: (id: number) => void; onClose: () => void }) {

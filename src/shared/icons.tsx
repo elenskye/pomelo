@@ -7,7 +7,7 @@
 import type { SVGProps } from "react";
 import { markSvg } from "./marks";
 
-export type IconProps = Omit<SVGProps<SVGSVGElement>, "ref" | "children"> & { size?: number | string; strokeWidth?: number | string; absoluteStrokeWidth?: boolean };
+type IconProps = Omit<SVGProps<SVGSVGElement>, "ref" | "children"> & { size?: number | string; strokeWidth?: number | string; absoluteStrokeWidth?: boolean };
 export type IconType = (props: IconProps) => React.JSX.Element;
 
 function make(file: string): IconType {
@@ -119,7 +119,6 @@ export const Fingerprint = make("fingerprint");
 export const BrushCleaning = make("brush-cleaning");
 export const HardDrive = make("hard-drive");
 export const DatabaseBackup = make("database-backup");
-export const Stethoscope = make("stethoscope");
 export const Languages = make("languages");
 export const Brain = make("brain");
 export const Library = make("library");

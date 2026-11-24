@@ -166,7 +166,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
       data-amp="0.8"
     >
       <header className="flex h-14 shrink-0 items-end gap-1.5 px-4 pb-3">
-        <Bird size={16} strokeWidth={1.75} className="mb-1.5 shrink-0" style={{ color: "var(--module-youzi)" }} />
+        <Bird size={16} className="mb-1.5 shrink-0" style={{ color: "var(--module-youzi)" }} />
         <Dropdown<number | null>
           ariaLabel="切换对话"
           value={current}
@@ -182,10 +182,10 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
         />
         {status && !status.error && <ModelMenu status={status} />}
         <IconButton label="新对话" disabled={current == null && !live} onClick={() => (open(null), setTimeout(() => composer.current?.focus()))}>
-          <SquarePen size={15} strokeWidth={1.5} />
+          <SquarePen size={15} />
         </IconButton>
         <IconButton label="收起柚子" onClick={props.onClose}>
-          <X size={16} strokeWidth={1.5} />
+          <X size={16} />
         </IconButton>
       </header>
       {status?.error ? (
@@ -207,7 +207,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
             onStop={stop}
           />
           <div className="space-y-2 px-4 pt-2 pb-4">
-            {issue && <IssueNotice issue={issue} compact />}
+            {issue && <IssueNotice issue={issue} />}
             <PrepNotices prep={prep} />
             <Composer
               ref={composer}
@@ -227,7 +227,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
                       onClick={() => ask.toggle(WEB_SKILL)}
                       className={`${toolClass} ${ask.asked.includes(WEB_SKILL) ? "bg-accent text-accent-foreground" : ""}`}
                     >
-                      <Globe size={14} strokeWidth={1.5} /> 联网
+                      <Globe size={14} /> 联网
                     </button>
                   )}
                   <KnowledgeButton kb={knowledge} plan={kbPlan.data?.knowledge ?? null} onManage={() => setKbOpen(true)} />
@@ -239,7 +239,7 @@ export function SideChat(props: { context: PageContext | null; floating: boolean
                     <SkillChips skills={ask.skills} asked={ask.asked} onRemove={ask.toggle} />
                     {pill && (
                       <span className="flex max-w-full items-center gap-1 rounded-full bg-accent py-0.5 pr-1 pl-2 text-xs text-accent-foreground">
-                        <MapPin size={12} strokeWidth={1.75} className="shrink-0" />
+                        <MapPin size={12} className="shrink-0" />
                         <span className="truncate">{pill}</span>
                         <button
                           type="button"

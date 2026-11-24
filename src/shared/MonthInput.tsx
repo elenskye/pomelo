@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import { X } from "@/shared/icons";
+import { localToday, pad } from "./dates";
 import { Dropdown } from "./Dropdown";
 
 export const currentYear = () => String(new Date().getFullYear());
 
-export const currentMonth = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
+export const currentMonth = () => localToday().slice(0, 7);
 
 /** 'YYYY-MM' | null via two native selects (WebKit has no <input type="month">). Emits null until both parts are set. */
 export function MonthInput(props: { value: string | null; onChange: (v: string | null) => void }) {
@@ -30,7 +28,7 @@ export function MonthInput(props: { value: string | null; onChange: (v: string |
 
   const thisYear = new Date().getFullYear();
   const years = Array.from({ length: thisYear - 1950 + 2 }, (_, i) => String(thisYear + 1 - i));
-  const months = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
+  const months = Array.from({ length: 12 }, (_, i) => pad(i + 1));
 
   return (
     <div className="flex items-center gap-2">

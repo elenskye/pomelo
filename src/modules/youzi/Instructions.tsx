@@ -15,7 +15,7 @@ import { MdField } from "@/shared/editor/MdField";
 export const NO_SETTING: SessionSetting = { content: "", presetId: null };
 
 /** What the project files do for the next question (the 项目资料 part of the preview). */
-export type FilesPreview = { selected: string[]; plan: RetrievalPlan | null; cloud: boolean; onManage: () => void };
+type FilesPreview = { selected: string[]; plan: RetrievalPlan | null; cloud: boolean; onManage: () => void };
 
 function filesLines(f: FilesPreview) {
   const out = [f.selected.length ? `这条消息使用全文：${f.selected.join("、")}。` : "这条消息没有选用资料。"];
@@ -98,7 +98,7 @@ export function InstructionsButton(props: {
           if (!open) void preview.refetch();
           setOpen(!open);
         }} className={`${toolClass} ${open ? "bg-muted text-foreground" : ""}`}>
-        <SlidersHorizontal size={14} strokeWidth={1.5} /> 指令{preset && <span className="max-w-24 truncate">· {preset.name}</span>}
+        <SlidersHorizontal size={14} /> 指令{preset && <span className="max-w-24 truncate">· {preset.name}</span>}
       </button>
       {open &&
         createPortal(

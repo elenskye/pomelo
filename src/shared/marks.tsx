@@ -69,7 +69,7 @@ export function Mark(props: { svg: string; size: number; label?: string; classNa
 }
 
 /** 柚子's small badge on its 助手 (was a bird). */
-export function YouziBadge(props: { size?: number; className?: string }) {
+export function YouziBadge(props: { size?: number }) {
   const svg = markSvg("pomelo-normal");
-  return svg ? <Mark svg={svg} size={props.size ?? 14} className={props.className} label="柚子的助手" /> : null;
+  return svg ? <Mark svg={svg} size={props.size ?? 14} label="柚子的助手" /> : null;
 }

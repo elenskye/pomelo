@@ -21,7 +21,7 @@ export const STACK_SHOWN = 4;
 type Page = { id: number; path: string; seen: number };
 type State = { pages: Page[]; front: number | null; hist: string[]; i: number; book: boolean };
 
-export type TabsApi = {
+type TabsApi = {
   /** The open pages in the order they were opened (the top bar's「桌上开着」). */
   tabs: { id: number; path: string }[];
   /** The front page first, then the others by when they were last in front (the stack on the desk). `seen` grows

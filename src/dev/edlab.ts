@@ -14,7 +14,7 @@ import { showGroups } from "@/shared/editor/editable";
 import "@/shared/editor/MdMenu"; // hands the icon drawings to the editors
 
 type Fail = { check: string; where: string; detail: string };
-export type LabResult = { done: boolean; agent: string; ms: number; states: number; checks: Record<string, number>; fails: Fail[] };
+type LabResult = { done: boolean; agent: string; ms: number; states: number; checks: Record<string, number>; fails: Fail[] };
 
 const PIC = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#cde"/></svg>');
 const LOOK: Look = {

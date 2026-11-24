@@ -9,7 +9,7 @@ import { INSTRUCTIONS_KEY, LIBRARY_KEY, youziApi, type ProjectRow } from "./api"
 import { ProjectLibraries } from "./Knowledge";
 import { MdField } from "@/shared/editor/MdField";
 
-export function ProjectDialog(props: { project: ProjectRow | null; onClose: () => void; onCreated?: (id: number) => void }) {
+export function ProjectDialog(props: { project: ProjectRow | null; onClose: () => void }) {
   const [name, setName] = useState(props.project?.name ?? "");
   const [instructions, setInstructions] = useState(props.project?.instructions ?? "");
   const [globalMemories, setGlobalMemories] = useState(props.project?.includeGlobalMemories ?? true);
@@ -20,10 +20,7 @@ export function ProjectDialog(props: { project: ProjectRow | null; onClose: () =
     e.preventDefault();
     try {
       if (props.project) await youziApi.projectUpdate(props.project.id, name, instructions, globalMemories, libraries);
-      else {
-        const id = await youziApi.projectCreate(name, instructions, globalMemories, libraries);
-        props.onCreated?.(id);
-      }
+      else await youziApi.projectCreate(name, instructions, globalMemories, libraries);
       void qc.invalidateQueries({ queryKey: LIBRARY_KEY });
       void qc.invalidateQueries({ queryKey: INSTRUCTIONS_KEY });
       props.onClose();

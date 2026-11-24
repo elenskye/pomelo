@@ -96,7 +96,7 @@ function Steps(props: { statuses: Status[]; value: DraftStep[]; onChange: (v: Dr
                     s.done ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:border-foreground/40"
                   }`}
                 >
-                  {s.done && <Check size={13} strokeWidth={3} />}
+                  {s.done && <Check size={13} />}
                 </button>
                 <span className={`min-w-0 flex-1 truncate text-sm ${s.done ? "" : "text-muted-foreground"}`}>{label}</span>
                 {s.done && <DateInput clearable ariaLabel={`${label}的日期`} value={s.doneOn} onChange={(v) => set(s.statusId, { doneOn: v })} />}

@@ -162,7 +162,7 @@ function Chat(props: Props) {
             />
           )
         )}
-        {issue && <IssueNotice issue={issue} compact />}
+        {issue && <IssueNotice issue={issue} />}
         <PrepNotices prep={prep} />
         <TextArea
           ref={props.inputRef}
@@ -184,7 +184,7 @@ function Chat(props: Props) {
       <footer className="flex shrink-0 items-center gap-1.5">
         {talking && (
           <IconButton label="新对话" disabled={busy} onClick={clear}>
-            <SquarePen size={15} strokeWidth={1.5} />
+            <SquarePen size={15} />
           </IconButton>
         )}
         <ThinkingButton on={thinking} effort={effort} onToggle={toggleThinking} onEffort={pickEffort} className={toolClass} />

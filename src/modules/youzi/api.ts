@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { JanitorCard } from "./assistants/janitorApi";
 
-export type Mode = "real" | "mock";
-export type Readiness = "idle" | "loading" | "ready";
+type Mode = "real" | "mock";
+type Readiness = "idle" | "loading" | "ready";
 export type Dot = "off" | "loading" | "ready" | "error";
 export type Service = "openRouter" | "deepSeek" | "openAI" | "anthropic" | "google" | "aliyun";
 
-export type LocalModel = { key: string; name: string; title: string; note: string | null; quant: string; alias: string; context: number; thinking: boolean; listed: boolean };
+type LocalModel = { key: string; name: string; title: string; note: string | null; quant: string; alias: string; context: number; thinking: boolean; listed: boolean };
 
 export type IssueAction =
   | { kind: "retryStart"; key: string }
@@ -23,7 +23,7 @@ export type Issue = { kind: "operation" | "statusCheck" | "catalog" | ServiceKin
 
 /** The embedding (8081) and rerank (8082) services beside the chat model. */
 export type ServiceKind = "embedding" | "rerank";
-export type ServiceModel = { key: string; name: string; title: string; note: string | null; quant: string; context: number };
+type ServiceModel = { key: string; name: string; title: string; note: string | null; quant: string; context: number };
 export type ServiceStatus = {
   state: "stopped" | "starting" | "running";
   working: boolean;
@@ -72,11 +72,11 @@ export type YouziStatus = {
 /** A reply or summary being written: model "local:<key>" | "cloud:<id>"; queued = waiting for the local model. */
 export type ActiveRun = { run: number; session: number; kind: "reply" | "summary"; model: string; reading: ReadingProgress | null; queued: boolean; asking?: boolean };
 /** ASK (Rust youzi/ask.rs): a reply's questions to me, as a card. */
-export type AskQuestion = { question: string; kind: "single" | "multi" | "judge"; options: string[] };
+type AskQuestion = { question: string; kind: "single" | "multi" | "judge"; options: string[] };
 export type AskAnswer = { picked: string[]; other: string };
 export type Ask = { id: number; runId: number; questions: AskQuestion[]; answers: AskAnswer[] | null; state: "waiting" | "answered" | "cancelled" };
 
-export type YouziInfo = { mode: Mode; dbPath: string; filesDir: string; schemaVersion: number | null; error: string | null };
+type YouziInfo = { mode: Mode; dbPath: string; filesDir: string; schemaVersion: number | null; error: string | null };
 
 /** `scheduled`: written by a 定时任务 (it lies in 最近 with the rest); `unseen`: not opened since; `private`: 私密 (年度总结 and 柚子's search leave it out); `thinking`, `effort`: its 思考 switch and 思考强度 (none: the model's default);
  *  `knowledge`: its 知识库 switch, `libraries` the ones it chose (none: its project's, then all). */
@@ -161,24 +161,24 @@ export type Source = {
 /** 柚子's proposals to write (youzi/act.rs): one tick each; confirming writes the ticked ones in one ⌘Z step. */
 export type CardField = { label: string; before?: string | null; after: string; long?: boolean };
 /** A written record (opened like a 全局搜索 hit); gone = taken back (⌘Z) or deleted. */
-export type CardWritten = { module: string; kind: string; id: number; parent: number | null; day: string | null; gone: boolean };
+type CardWritten = { module: string; kind: string; id: number; parent: number | null; day: string | null; gone: boolean };
 /** Several records fit an edit: pick one (after confirming: `chosen`, its title and fields on the item). */
-export type CardOption = { title: string; fields: CardField[] };
-export type CardItem = { position: number; tool: string; module: string; label: string; title: string; fields: CardField[]; options: CardOption[] | null; chosen: number | null; checked: boolean; written: CardWritten | null };
-export type CardPick = { position: number; option: number | null };
+type CardOption = { title: string; fields: CardField[] };
+type CardItem = { position: number; tool: string; module: string; label: string; title: string; fields: CardField[]; options: CardOption[] | null; chosen: number | null; checked: boolean; written: CardWritten | null };
+type CardPick = { position: number; option: number | null };
 export type Card = { runId: number; state: "pending" | "confirmed" | "cancelled"; items: CardItem[] };
 /** What a page tells the 小窗 (ids only; Rust fetches the content under its rules). */
 export type PageContextPayload = { module: string; page: string | null; filter: string | null; record: { kind: string; id: number } | null; selected: { kind: string; id: number }[] };
 /** 设置 → 柚子: which modules may go to cloud models. */
 export type CloudData = { module: string; label: string; allowed: boolean };
-export type FileFormat = "PDF" | "Markdown" | "文本" | "Word" | "PowerPoint" | "Excel" | "CSV" | "图片" | "网页";
+type FileFormat = "PDF" | "Markdown" | "文本" | "Word" | "PowerPoint" | "Excel" | "CSV" | "图片" | "网页";
 /** pageCount: PDF pages / PowerPoint slides; rowCount: a table's rows; url: a saved web page's address. */
 export type FileInfo = { id: number; name: string; format: FileFormat; pageCount: number | null; byteCount: number; deleted: boolean; rowCount: number | null; url: string | null };
 /** A file as a question used it; project files carry their file, version and label ("资料 · 第 2 版"). */
 export type MessageFile = FileInfo & { fileId: number | null; version: number | null; label: string | null };
 export type Note = { label: string; content: string };
 export type ReadingProgress = { current: number; total: number; label: string };
-export type IndexState =
+type IndexState =
   | { kind: "none" }
   | { kind: "queued" }
   | { kind: "building"; done: number; total: number }
@@ -218,10 +218,10 @@ export type RetrievalPlan = { readyNames: string[]; pending: number; knowledge: 
 export type KbPlan = { libraries: string[]; ready: number; pending: number; skipped: string[] };
 /** A new conversation's 知识库 switch and libraries (saved with its first question). */
 export type KbDraft = { on: boolean; libraries: number[] };
-export type KbFailed = { path: string; error: string };
+type KbFailed = { path: string; error: string };
 /** 改文件 (work.rs): the file a question asked to change, and the reply's proposed changes to it. */
 export type EditTarget = { path: string; name: string };
-export type EditItem = { position: number; paragraph: number; label?: string | null; before: string; after: string; checked: boolean };
+type EditItem = { position: number; paragraph: number; label?: string | null; before: string; after: string; checked: boolean };
 /** kind new-word / new-excel (the 工具箱 create): name, path = the folder it goes to (then the file), the Markdown in items[0].after. excel: each item's label says where. */
 export type FileEdit = { runId: number; path: string; name: string; kind: "markdown" | "text" | "word" | "excel" | "new-word" | "new-excel"; total: number; state: "pending" | "written" | "cancelled"; error: string | null; items: EditItem[] };
 /** 翻译 (assistants/translate.rs): its settings (`model` null = 柚子现在选的; `keywords`: group → choice). */
@@ -262,7 +262,7 @@ export type Pub2mdSettings = {
   about?: string | null;
 };
 export type Pub2mdRecent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
-export type Pub2mdProgress = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null };
+type Pub2mdProgress = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null };
 export type Pub2mdView = {
   settings: Pub2mdSettings;
   recent: Pub2mdRecent[];
@@ -276,7 +276,7 @@ export type Pub2mdView = {
   webDefault: boolean;
   tavily: boolean;
 };
-export type TranslateGroup = { key: string; name: string; choices: { key: string; label: string; says: string }[] };
+type TranslateGroup = { key: string; name: string; choices: { key: string; label: string; says: string }[] };
 /** The last time (input, output, how it ended) and, while it runs, its status. */
 export type TranslateView = {
   settings: TranslateSettings;
@@ -312,7 +312,7 @@ export type KbSource = {
   truncated: boolean;
 };
 export type KbLibrary = { id: number; name: string; sources: KbSource[] };
-export type KbOverview = { libraries: KbLibrary[]; error: string | null };
+type KbOverview = { libraries: KbLibrary[]; error: string | null };
 
 export type StreamEvent =
   | { kind: "reasoning"; text: string }
@@ -332,21 +332,21 @@ export type StreamEvent =
   | { kind: "done"; state: string; error: string | null; reasoningMs: number | null };
 
 /** What a question brings besides its text. */
-export type Extras = { attachments: number[]; files: number[]; passages: Passage[]; memories: UsedMemory[] };
+type Extras = { attachments: number[]; files: number[]; passages: Passage[]; memories: UsedMemory[] };
 
 export type Sent = { sessionId: number; runId: number; userMessageId: number; messageId: number };
 
 export type Template = { id: number; title: string; category: string; body: string; pinned: boolean; lastUsedAt: string | null };
-export type TemplateInput = { title: string; category: string; body: string };
+type TemplateInput = { title: string; category: string; body: string };
 export type Preset = { id: number; name: string; content: string };
-export type Layer = { kind: "global" | "project" | "session" | "preset"; label: string; content: string };
+type Layer = { kind: "global" | "project" | "session" | "preset"; label: string; content: string };
 /** A conversation's own instructions and purpose preset. */
 export type SessionSetting = { content: string; presetId: number | null };
-export type InstructionPreview = { layers: Layer[]; session: SessionSetting };
+type InstructionPreview = { layers: Layer[]; session: SessionSetting };
 export type Assessment = { percent: number; nearLimit: boolean; dropped: number; fits: boolean; summarizable: boolean };
-export type SummaryEvent = { kind: "done"; state: string; error: string | null };
+type SummaryEvent = { kind: "done"; state: string; error: string | null };
 export type StoredFile = FileInfo & { bytes: number; messages: number; projectFiles: number; knowledge: number };
-export type StorageUsage = { dbBytes: number; filesBytes: number; files: StoredFile[]; strays: { name: string; bytes: number }[]; emptySessions: number };
+type StorageUsage = { dbBytes: number; filesBytes: number; files: StoredFile[]; strays: { name: string; bytes: number }[]; emptySessions: number };
 
 export const SERVICE_NAMES: Record<Service, string> = { openRouter: "OpenRouter", deepSeek: "DeepSeek", openAI: "OpenAI", anthropic: "Anthropic", google: "Google", aliyun: "Aliyun" };
 
@@ -620,7 +620,7 @@ export function useYouziUi<T>(key: string, fallback: T, valid: (v: unknown) => v
 
 /** 定时任务 (rules in Rust schedule.rs). every: day | week | month; day: 周几 1–7 / 几号 1–31; at: "HH:MM";
  * model: local:<key> | cloud:<id> | null (= 柚子现在选的). next: "YYYY-MM-DD HH:MM" (null when off). */
-export type ScheduleRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
+type ScheduleRule = { every: "day" | "week" | "month" | "year"; day: number | null; month?: number | null; at: string };
 export type ScheduleInput = ScheduleRule & { name: string; prompt: string; model: string | null; thinking: boolean; effort: string | null; keepChat: boolean };
 /** `flow`: a workflow (年度总结), drawn instead of its prompt. `keepChat`: 年度总结 keeps its conversation under 定时 (Rust schedule.rs `drop_chat`). */
 export type Schedule = ScheduleInput & { id: number; enabled: boolean; builtin: string | null; flow: SkillFlowNode[] | null; next: string | null; lastSession: number | null; lastAt: string | null; running: boolean };

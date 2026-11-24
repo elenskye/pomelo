@@ -11,7 +11,7 @@ export const CHANNELS = "job_channel";
 /** count = applications whose current status this is; used = applications with it on their timeline. */
 export type Status = { id: number; name: string; stage: Stage; sortOrder: number; count: number; used: number };
 /** One status an application goes through; doneOn only when done (may be unknown). */
-export type Step = { statusId: number; done: boolean; doneOn: string | null };
+type Step = { statusId: number; done: boolean; doneOn: string | null };
 
 export type Job = {
   id: number;
@@ -37,7 +37,7 @@ export type Job = {
   followUp: boolean;
 };
 /** 统计 (jobs.rs `stats`; 首页 and 柚子 use the same numbers). */
-export type JobStats = {
+type JobStats = {
   today: string;
   applied: number;
   thisWeek: number;
@@ -50,14 +50,14 @@ export type JobStats = {
   weeks: Bucket[];
   statuses: Status[];
 };
-export type Bucket = { from: string; to: string; count: number };
-export type JobPatch = Partial<Pick<Job, "company" | "position" | "location" | "link" | "kindId" | "resume" | "note" | "steps">>;
+type Bucket = { from: string; to: string; count: number };
+type JobPatch = Partial<Pick<Job, "company" | "position" | "location" | "link" | "kindId" | "resume" | "note" | "steps">>;
 
 const api = {
   statuses: () => invoke<Status[]>("job_statuses"),
   /** New statuses are middle steps (stage active); stages aren't shown or edited any more. */
   createStatus: (v: { name: string }) => invoke<Status>("job_status_create", v),
-  updateStatus: (v: { id: number; name?: string; stage?: Stage }) => invoke<Status>("job_status_update", v),
+  updateStatus: (v: { id: number; name: string }) => invoke<Status>("job_status_update", v),
   deleteStatus: (id: number) => invoke<void>("job_status_delete", { id }),
   reorderStatuses: (ids: number[]) => invoke<void>("job_statuses_reorder", { ids }),
   jobs: () => invoke<Job[]>("jobs_list"),

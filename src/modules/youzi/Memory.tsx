@@ -1,7 +1,7 @@
 // Memories on the page (rules in Rust memory.rs): the 记忆 tab of 管理 (filter, add, edit, switch,
 // local-only, delete, source and dates), the /记住 confirmation card, the input's 记忆 menu (this
 // question / this conversation), the preview lines and the memories a reply used.
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Brain, Check, ChevronRight, Ellipsis, Plus } from "@/shared/icons";
@@ -11,7 +11,7 @@ import { errorText, useToast } from "@/shared/feedback";
 import { Modal } from "@/shared/Modal";
 import { Button, Field, Switch, TextArea } from "@/shared/ui";
 import { MEMORIES_KEY, MEMORY_MAX, youziApi, useMemories, type Memory, type MemoryInput, type MemoryPlan, type ProjectRow, type UsedMemory } from "./api";
-import { toolClass } from "./Composer";
+import { toolClass, usePopover } from "./Composer";
 
 type Confirm = (o: { title: string; message?: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
 
@@ -41,7 +41,7 @@ function ScopePicker(props: { projects: ProjectRow[]; value: number | null; onCh
 }
 
 /** 新建 / 编辑记忆: text (up to 300), where it applies, local-only, enabled. */
-export function MemoryEditor(props: { memory: Memory | null; projects: ProjectRow[]; defaultProject?: number | null; onClose: () => void }) {
+function MemoryEditor(props: { memory: Memory | null; projects: ProjectRow[]; defaultProject?: number | null; onClose: () => void }) {
   const qc = useQueryClient();
   const m = props.memory;
   const [v, setV] = useState<MemoryInput>({
@@ -255,34 +255,7 @@ export function MemoriesTab(props: { projects: ProjectRow[]; sessionIds: number[
 
 /** The input's 记忆 button: this question / this conversation, and 管理记忆…. */
 export function MemoryButton(props: { plan: MemoryPlan | null; nextOn: boolean; conversationOff: boolean; onNext: (on: boolean) => void; onConversation: (off: boolean) => void; onManage: () => void }) {
-  const [open, setOpen] = useState(false);
-  const btn = useRef<HTMLButtonElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
-  useLayoutEffect(() => {
-    if (!open || !btn.current) return;
-    const r = btn.current.getBoundingClientRect();
-    setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 250)), bottom: window.innerHeight - r.top + 6 });
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!pop.current?.contains(t) && !btn.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", outside);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("mousedown", outside);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
+  const { open, setOpen, anchor: btn, pop, pos } = usePopover<HTMLButtonElement>(250);
   const off = props.plan?.off ?? null;
   const label = off === "everywhere" ? "记忆已停用" : off === "conversation" ? "记忆已关闭" : off === "nextMessage" ? "本条不用记忆" : "记忆";
   const row = "flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
@@ -290,7 +263,7 @@ export function MemoryButton(props: { plan: MemoryPlan | null; nextOn: boolean; 
   return (
     <>
       <button ref={btn} type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={`${toolClass} ${open ? "bg-muted text-foreground" : ""} ${off ? "opacity-60" : ""}`}>
-        <Brain size={14} strokeWidth={1.5} /> {label}
+        <Brain size={14} /> {label}
       </button>
       {open &&
         createPortal(

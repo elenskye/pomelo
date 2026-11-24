@@ -24,11 +24,11 @@ export type Note = {
 };
 export type NoteTask = { id: number; title: string; done: boolean; groupId: number; goalId: number | null };
 export type NoteFilter = { tag?: string; day?: string; q?: string; id?: number };
-export type NotePatch = { content?: string; pinned?: boolean; refs?: number[]; attachments?: number[] };
+type NotePatch = { content?: string; pinned?: boolean; refs?: number[]; attachments?: number[] };
 /** icon: emoji shown instead of 「#」; order: place among its siblings once dragged (null: after those, by pinyin). */
 export type TagCount = { tag: string; count: number; icon: string | null; order: number | null };
 /** pinned: tags in use that are pinned, in pin order. */
-export type Overview = { total: number; days: { day: string; count: number }[]; tags: TagCount[]; pinned: string[] };
+type Overview = { total: number; days: { day: string; count: number }[]; tags: TagCount[]; pinned: string[] };
 
 const api = {
   list: (filter: NoteFilter) => invoke<Note[]>("notes_list", { filter }),

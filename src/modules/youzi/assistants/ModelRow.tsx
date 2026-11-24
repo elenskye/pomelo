@@ -5,7 +5,7 @@ import { Dropdown } from "@/shared/Dropdown";
 import { useModels } from "../Schedules";
 import { LevelPicker, fromLevel, levelOf } from "../Thinking";
 
-export type ModelChoice = { model: string | null; thinking: boolean; effort?: string | null };
+type ModelChoice = { model: string | null; thinking: boolean; effort?: string | null };
 
 const SAME = "";
 

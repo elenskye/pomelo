@@ -36,7 +36,7 @@ const loaders = new Map<string, () => Promise<{ design: Design }>>(
 
 const parts = (key: string) => key.split("@")[1]?.split(".").map(Number) ?? [];
 /** The releases in the app, newest last (by version, then name). */
-export const designKeys = () => [...loaders.keys()].sort((a, b) => { const [x, y] = [parts(a), parts(b)]; return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || a.localeCompare(b); });
+const designKeys = () => [...loaders.keys()].sort((a, b) => { const [x, y] = [parts(a), parts(b)]; return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || a.localeCompare(b); });
 
 /** The release a run is drawn with: the newest of its line (same design, same first two numbers); a line the app
  *  doesn't carry (it shouldn't happen) falls back to the design's newest release, then to the newest of all. */

@@ -253,8 +253,6 @@ export default function VaultPage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
-        icon={mod.icon}
-        color={mod.color}
         title={mod.label}
         right={
           status?.state === "open" && listQ.data ? (

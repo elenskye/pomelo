@@ -35,7 +35,7 @@ export type TagScope = {
   /** More in a tag's 「⋯」 (见字如面: 导出…). */
   actions?: { value: string; label: string; run: (tag: string) => void }[];
 };
-export const NOTES_SCOPE: TagScope = {
+const NOTES_SCOPE: TagScope = {
   useMutations: useNoteMutations,
   openKey: "notes.tags_open",
   color: "var(--module-notes)",
@@ -48,7 +48,7 @@ type Node = { path: string; name: string; count: number; icon: string | null; or
 
 const collator = new Intl.Collator("zh-Hans-CN-u-co-pinyin", { numeric: true });
 
-export function buildTree(tags: TagCount[]): Node[] {
+function buildTree(tags: TagCount[]): Node[] {
   const byPath = new Map<string, Node>();
   const roots: Node[] = [];
   for (const t of [...tags].sort((a, b) => a.tag.split("/").length - b.tag.split("/").length)) {

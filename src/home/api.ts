@@ -12,7 +12,7 @@ import type { Hit } from "@/shared/open";
 export type Year = { year: string; books: number | null; films: number | null; lessons: number | null; todos: number | null; notes: number | null; jobs: number | null };
 /** total in CNY cents. */
 export type Point = { day: string; total: number };
-export type JobLine = Hit & { status: string; stage: Stage; waitingDays: number | null };
+type JobLine = Hit & { status: string; stage: Stage; waitingDays: number | null };
 export type JobsCard = { total: number; thisWeek: number; ongoing: number; got: number; follow: JobLine[]; active: JobLine[] };
 export type CourseLine = { id: number; name: string; total: number; done: number; doing: number; next: Hit | null };
 /** at: UTC timestamp; done: a task checked off (else something added). */
@@ -22,7 +22,7 @@ export type Then = { year: string; items: Hit[] };
 export type Months = { lessons: number[] | null; todos: number[] | null; notes: number[] | null; jobs: number[] | null };
 /** 念念不忘一条 on the desk: the newest pinned note, else an older one picked by the day. */
 export type DeskNote = { id: number; content: string; day: string; pinned: boolean };
-export type Overview = {
+type Overview = {
   today: string;
   year: Year;
   assets: Point[] | null;
@@ -43,7 +43,7 @@ export type Overview = {
   note: DeskNote | null;
 };
 
-export const HOME_KEY = ["home"];
+const HOME_KEY = ["home"];
 
 /** Refetched every time the page opens (other pages don't invalidate it). */
 export const useOverview = (hidden: string[]) =>

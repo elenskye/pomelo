@@ -215,7 +215,7 @@ export function useLiveReply(opts: { current: number | null; status: YouziStatus
 
 type PrepFail = { title: string; withoutLabel: string; message: string; without: () => void; retry: () => void };
 /** `retrieval`: what it searched (项目资料 / 知识库 / both), if anything. */
-export type Prepared = { passages: Passage[]; memories: UsedMemory[] } | { error: string; memory: boolean; retrieval: string | null };
+type Prepared = { passages: Passage[]; memories: UsedMemory[] } | { error: string; memory: boolean; retrieval: string | null };
 
 /** `draftProject` / `draftOff`: a new conversation's project and 「本会话关闭记忆」; `knowledge`: a draft's own 知识库
  *  switch and libraries, `knowledgeOn`: the conversation's switch. */

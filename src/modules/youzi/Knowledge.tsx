@@ -3,7 +3,7 @@
 // web pages on the right, with how their index stands and 「发给云端」), the composer's 知识库 button (kept per
 // conversation like 思考; its menu picks the libraries: the conversation's own, else its project's, else all)
 // and the project's choice (项目设置). A draft keeps its own switch and libraries until its first question.
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -15,14 +15,14 @@ import { Modal } from "@/shared/Modal";
 import { useSortable } from "@/shared/sortable";
 import { Button, IconButton, RefreshButton, Switch, TextInput } from "@/shared/ui";
 import { LIBRARY_KEY, sessionOf, youziApi, useLibrary, type KbDraft, type KbLibrary, type KbPlan, type KbSource } from "./api";
-import { toolClass } from "./Composer";
+import { toolClass, usePopover } from "./Composer";
 import { WebDialog } from "./Files";
 import { showDialog } from "@/shared/dialog";
 
-export const KB_KEY = ["youzi", "kb"];
+const KB_KEY = ["youzi", "kb"];
 
 /** Libraries with their sources (polled while the manager is open: builds move on in the background). */
-export function useKnowledgeBase(poll = false) {
+function useKnowledgeBase(poll = false) {
   return useQuery({ queryKey: KB_KEY, queryFn: youziApi.kbOverview, refetchInterval: poll ? 1500 : false });
 }
 
@@ -56,44 +56,11 @@ export function useKnowledge(current: number | null, draftKey: string, draftProj
   return { on, own, project: project ?? null, toggle, choose, forSend, clear };
 }
 
-/** A popover above an anchor (closes on Esc and clicks outside). */
-function usePopover(width: number) {
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<HTMLDivElement>(null);
-  const pop = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
-  useLayoutEffect(() => {
-    if (!open || !anchor.current) return;
-    const r = anchor.current.getBoundingClientRect();
-    setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)), bottom: window.innerHeight - r.top + 6 });
-  }, [open, width]);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!pop.current?.contains(t) && !anchor.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", outside);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("mousedown", outside);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
-  return { open, setOpen, anchor, pop, pos };
-}
-
 /** The composer's 知识库 button (pressed: this conversation searches) and its menu of libraries. */
 export function KnowledgeButton(props: { kb: ReturnType<typeof useKnowledge>; plan: KbPlan | null; onManage: () => void }) {
   const { kb } = props;
   const libraries = useKnowledgeBase().data?.libraries ?? [];
-  const p = usePopover(256);
+  const p = usePopover(264);
   const none = libraries.length === 0;
   const following = kb.own.filter((id) => libraries.some((l) => l.id === id)).length === 0;
   const projectLibs = kb.project?.libraries.filter((id) => libraries.some((l) => l.id === id)) ?? [];
@@ -114,7 +81,7 @@ export function KnowledgeButton(props: { kb: ReturnType<typeof useKnowledge>; pl
           onClick={() => (none ? p.setOpen(!p.open) : kb.toggle())}
           className={`${toolClass} rounded-r-none pr-1 ${pressed ? "bg-accent text-accent-foreground" : ""}`}
         >
-          <LibraryBig size={14} strokeWidth={1.5} /> 知识库
+          <LibraryBig size={14} /> 知识库
         </button>
         <button
           type="button"
@@ -238,7 +205,7 @@ export function KnowledgeDialog(props: { onClose: () => void }) {
         <nav aria-label="库" className="-m-1 flex w-52 shrink-0 flex-col overflow-y-auto border-r p-1 px-3 py-3">
           <div className="flex items-center justify-end px-2 pb-1">
             <IconButton label="新建库" onClick={() => setNaming({ id: null, name: "" })}>
-              <Plus size={13} strokeWidth={1.75} />
+              <Plus size={13} />
             </IconButton>
           </div>
           <div ref={sort.listRef}>
@@ -407,7 +374,7 @@ function SourceRow(props: { source: KbSource; act: (p: Promise<unknown>) => void
   return (
     <div className="border-b py-2.5 last:border-b-0">
       <div className="flex items-center gap-3">
-        <Icon size={16} strokeWidth={1.5} className="shrink-0 text-muted-foreground" />
+        <Icon size={16} className="shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <button type="button" onClick={() => open("")} className="block max-w-full truncate text-left text-sm hover:underline">
             {s.name}

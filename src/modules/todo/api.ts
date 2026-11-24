@@ -66,11 +66,11 @@ export type Task = {
   fromNote: number | null;
 };
 
-export type Log = { id: number; taskId: number; day: string; amount: number; createdAt: string };
+type Log = { id: number; taskId: number; day: string; amount: number; createdAt: string };
 
 /** A task with where it lives (今天 / 回看 lists). */
 export type PlacedTask = Task & { groupName: string; goalName: string | null; parentTitle: string | null };
-export type Agenda = { today: string; overdue: PlacedTask[]; due: PlacedTask[]; doneToday: PlacedTask[] };
+type Agenda = { today: string; overdue: PlacedTask[]; due: PlacedTask[]; doneToday: PlacedTask[] };
 /** Something finished on `day` (a checked task, or one log: 第 3 次 / 打卡 / +2 本). */
 export type DoneItem = PlacedTask & { day: string; at: string; detail: string | null };
 /** Month grid entry. what: due | range | next (later occurrence of a repeat task) | done. */
@@ -90,10 +90,10 @@ export type TaskPatch = Partial<
   /** Create only: the note it is made from. */
   fromNote?: number;
 };
-export type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "icon" | "status" | "startDate" | "endDate" | "note" | "review">> & { attachments?: number[] };
+type GoalPatch = Partial<Pick<Goal, "groupId" | "name" | "icon" | "status" | "startDate" | "endDate" | "note" | "review">> & { attachments?: number[] };
 
 /** Which place a task list shows. */
-export type Place = { groupId: number; goalId?: undefined } | { goalId: number; groupId?: undefined };
+type Place = { groupId: number; goalId?: undefined } | { goalId: number; groupId?: undefined };
 
 const api = {
   groups: () => invoke<TodoGroup[]>("todo_groups"),
@@ -126,7 +126,7 @@ const api = {
   reorderTasks: (ids: number[]) => invoke<void>("todo_tasks_reorder", { ids }),
 };
 
-export const TODO_KEY = ["todo"];
+const TODO_KEY = ["todo"];
 export const useGroups = () => useQuery({ queryKey: [...TODO_KEY, "groups"], queryFn: api.groups });
 export const useGoals = () => useQuery({ queryKey: [...TODO_KEY, "goals"], queryFn: api.goals });
 export const useTasks = (p: Place | null) =>

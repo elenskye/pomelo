@@ -175,7 +175,7 @@ export default function AtlasPage() {
       .catch(() => {});
   }, []);
 
-  if (!o) return <div className="flex h-full flex-col"><PageHeader icon={m.icon} color={m.color} title={m.label} /></div>;
+  if (!o) return <div className="flex h-full flex-col"><PageHeader title={m.label} /></div>;
   const thisYear = o.today.slice(0, 4);
   const newest = (a: Entry, b: Entry) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id;
   const byYear = new Map<string, Entry[]>();
@@ -240,8 +240,6 @@ export default function AtlasPage() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        icon={m.icon}
-        color={m.color}
         title={at.at === "year" ? `${m.label} · ${at.year} 年` : at.at === "designs" ? `${m.label} · 样式` : m.label}
         right={
           <span className="flex items-center justify-end gap-3">

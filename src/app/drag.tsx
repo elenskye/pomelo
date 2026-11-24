@@ -8,8 +8,8 @@ import { moduleById } from "./modules";
 import { ModuleIcon } from "./ModuleIcon";
 import { resolveLook, useLooks } from "./looks";
 
-export type Over = { zone: string; before?: string };
-export type DragNow = { mod: string; from: string; x: number; y: number; over: Over | null };
+type Over = { zone: string; before?: string };
+type DragNow = { mod: string; from: string; x: number; y: number; over: Over | null };
 
 let now: DragNow | null = null;
 const listeners = new Set<() => void>();
@@ -19,7 +19,7 @@ const set = (d: DragNow | null) => {
 };
 
 /** The 柚子瓣's own hit test (set while it is open). */
-export const radialDrop: { hit: ((x: number, y: number) => Over | null) | null } = { hit: null };
+const radialDrop: { hit: ((x: number, y: number) => Over | null) | null } = { hit: null };
 
 function resolve(x: number, y: number): Over | null {
   const el = document.elementFromPoint(x, y);
@@ -93,7 +93,7 @@ export function DragChip() {
   const mark = resolveLook(m, looks.lookOf(d.mod)).svg;
   return createPortal(
     <div style={{ left: d.x + 10, top: d.y + 8 }} className="pointer-events-none fixed z-[70] flex items-center gap-1.5 rounded-control border bg-popover px-2 py-1 text-sm shadow-lg">
-      {mark ? <ModuleIcon def={m} size={22} className="-my-1" /> : <Icon size={14} strokeWidth={1.75} style={{ color: m.color }} />}
+      {mark ? <ModuleIcon def={m} size={22} className="-my-1" /> : <Icon size={14} style={{ color: m.color }} />}
       {m.label}
     </div>,
     document.body,

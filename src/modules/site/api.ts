@@ -2,9 +2,10 @@
 // push and Vercel's result all happen in Rust; the page polls the overview while a publish runs.
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
+import { pad } from "@/shared/dates";
 
-export type Problem = { kind: "no-sandbox" | "missing" | "not-git" | "not-main" | "git-busy" | "no-remote" | "real-remote"; text: string };
-export type ServerView = { state: "stopped" | "starting" | "running"; ours: boolean; url: string; error: string | null };
+type Problem = { kind: "no-sandbox" | "missing" | "not-git" | "not-main" | "git-busy" | "no-remote" | "real-remote"; text: string };
+type ServerView = { state: "stopped" | "starting" | "running"; ours: boolean; url: string; error: string | null };
 export type Job = {
   id: number;
   step: "check" | "push" | "deploy";
@@ -38,9 +39,9 @@ export type Change = {
   size: number | null;
   blocked: string | null;
 };
-export type Commit = { sha: string; subject: string; time: number };
+type Commit = { sha: string; subject: string; time: number };
 export type Changes = { files: Change[]; ahead: Commit[]; token: string };
-export type DiffLine = { t: "ctx" | "add" | "del" | "hunk"; s: string };
+type DiffLine = { t: "ctx" | "add" | "del" | "hunk"; s: string };
 export type Diff =
   | { type: "text"; lines: DiffLine[]; truncated: boolean }
   | { type: "image"; before: string | null; after: string | null }
@@ -91,22 +92,21 @@ export function sizeText(n: number | null) {
 /** 10/20 21:05 (this year), else 2025/10/20 */
 export function whenText(unix: number) {
   const d = new Date(unix * 1000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  const day = d.getFullYear() === new Date().getFullYear() ? `${p(d.getMonth() + 1)}/${p(d.getDate())}` : `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`;
-  return `${day} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const day = d.getFullYear() === new Date().getFullYear() ? `${pad(d.getMonth() + 1)}/${pad(d.getDate())}` : `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+  return `${day} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // ---------- 作品 (site/wander.rs) ----------
 
 export type Lang = "zh" | "en";
-export type Term = { slug: string; zh: string; en: string };
+type Term = { slug: string; zh: string; en: string };
 export type Taxonomy = { categories: Term[]; topics: Term[] };
 export type WorkRow = { slug: string; title: string; month: string; category: string; topics: string[]; langs: Lang[] };
-export type Works = { works: WorkRow[]; taxonomy: Taxonomy; broken: string[] };
+type Works = { works: WorkRow[]; taxonomy: Taxonomy; broken: string[] };
 export type Version = { title: string; summary: string; body: string; englishTitle: string; englishSummary: string };
 /** `image`: the stored path ("public/assets/images/…"). */
 export type GalleryItem = { image: string; altZh: string; captionZh: string; altEn: string; captionEn: string };
-export type Prints = { zh: string | null; en: string | null };
+type Prints = { zh: string | null; en: string | null };
 export type Work = { slug: string; category: string; topics: string[]; month: string; cover: string | null; gallery: GalleryItem[]; zh: Version | null; en: Version | null; prints: Prints };
 export type AssetKind = "image" | "document";
 /** `alt`: an image's Alt or a document's description. */
@@ -151,7 +151,7 @@ export const pagePath = (slug: string, lang: Lang) => (lang === "en" ? `/en/wand
 
 // ---------- 柚子 in the editor (youzi/assist.rs, youzi/assistants/site.rs) ----------
 
-export type SiteEnglish = { title: string | null; summary: string | null };
+type SiteEnglish = { title: string | null; summary: string | null };
 /** 按中文起草英文版 (in memory; the page takes it into the English version and clears it). */
 export type Draft = { slug: string | null; running: boolean; title: string; summary: string; body: string; status: string | null; error: string | null; modelName: string | null; note: string | null };
 
@@ -166,18 +166,18 @@ export const siteAssist = {
 
 // ---------- Now、关于我、职业页、资源库、站点 (site/now.rs, about.rs, career.rs, registry.rs, terms.rs) ----------
 
-export type NowRow = { month: string; langs: Lang[] };
+type NowRow = { month: string; langs: Lang[] };
 export type Status = { zh: string; en: string; print: string | null };
-export type NowList = { months: NowRow[]; status: Status };
+type NowList = { months: NowRow[]; status: Status };
 /** zh / en: the bodies (null: no file in that language). */
 export type NowMonth = { month: string; zh: string | null; en: string | null; prints: Prints };
 
 export type Entry = { role: string; org: string; period: string; description: string };
 export type AboutVersion = { contextIntro: string; timeline: Entry[]; story: string };
-export type AboutImages = { portraits: string[]; artworks: string[]; print: string | null };
+type AboutImages = { portraits: string[]; artworks: string[]; print: string | null };
 export type About = { zh: AboutVersion | null; en: AboutVersion | null; images: AboutImages; prints: Prints };
 
-export type Resume = { label: string; file: string };
+type Resume = { label: string; file: string };
 export type Simple = { heading: string; items: string };
 export type Detailed = { period: string; role: string; org: string; bullets: string[] };
 export type Section = { title: string; mode: "simple" | "detailed"; simple: Simple[]; detailed: Detailed[] };

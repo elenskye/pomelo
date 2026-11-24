@@ -210,7 +210,7 @@ export function CollectionPanel(props: {
           <TextInput autoFocus={!quick || !isNew} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="必填" className={`min-w-0 flex-1 ${filled.cls("title")}`} />
           {assistOn && d.title.trim() && (
             <IconButton label={filling ? assistBusyText(status, "正在补全…") : "补全"} disabled={filling} onClick={() => void fillIn()}>
-              <Sparkles size={15} strokeWidth={1.75} className={filling ? "animate-pulse" : ""} />
+              <Sparkles size={15} className={filling ? "animate-pulse" : ""} />
             </IconButton>
           )}
         </div>

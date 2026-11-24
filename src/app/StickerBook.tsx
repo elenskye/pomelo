@@ -183,7 +183,7 @@ export function StickerBook(props: { onClose: () => void; onAsk: ((text: string)
             </div>
             <label className="pm-field bfield" data-hand="field" data-seed="821" data-r="12" data-fill="paper">
               <span className="pm-field-icon" style={{ order: -1 }}>
-                <HandIcon name="search" size={18} seed={952} />
+                <HandIcon name="search" size={18} />
               </span>
               <input
                 ref={input}
@@ -213,7 +213,7 @@ export function StickerBook(props: { onClose: () => void; onAsk: ((text: string)
                 props.onClose();
               }}
             >
-              <HandIcon name="sparkle" size={14} seed={953} />
+              <HandIcon name="sparkle" size={14} />
               <span>没有这一页，问柚子「{q.trim()}」</span>
             </button>
           )}
@@ -233,7 +233,6 @@ export function StickerBook(props: { onClose: () => void; onAsk: ((text: string)
                     return (
                       <div
                         key={m}
-                        data-stk={m}
                         role="button"
                         tabIndex={0}
                         aria-label={def.label}
@@ -268,7 +267,7 @@ export function StickerBook(props: { onClose: () => void; onAsk: ((text: string)
           {showHidden && (
             <div className="hiddenlist">
               {hidden.map((m) => (
-                <ModuleRow key={m} id={m} dock={dock} live={live[m]} menu={menu} from="hidden" onOpen={go} dim />
+                <ModuleRow key={m} id={m} dock={dock} live={live[m]} menu={menu} onOpen={go} />
               ))}
             </div>
           )}

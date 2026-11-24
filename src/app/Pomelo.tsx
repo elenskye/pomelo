@@ -1,4 +1,4 @@
-// The pomelo in the top bar (requirements「界面外框 · 柚子」): the user's four faces (平常、在想、开心、出错)
+// The pomelo in the top bar (requirements「界面外框 · 柚子的表情」): the user's four faces (平常、在想、开心、出错)
 // and four more (眨眼、哇、困了、惊讶), drawn in visual-atelier, animated by ds.css (none with 减少动态效果).
 // Which face: a status first (柚子 writing → 在想; done → 开心 and a line; something failed → 出错 and a
 // line, until the pomelo is clicked), then the pointer over it (眨眼 or 哇), then the mood (the 今日简报's
@@ -18,13 +18,13 @@ const MARK_FACE: Record<Face, string> = { idle: "normal", thinking: "think", suc
  * pomelo-*: 平常 breathes and looks around, 在想 and 困了 loop, the others play once when the face appears; with
  * 减弱动态效果 none moves). A new face is a new element, so its animation starts over. `dizzy`: the 连戳 easter egg.
  */
-export function PomeloFace(props: { face: Face; size?: number; dizzy?: boolean; className?: string }) {
+export function PomeloFace(props: { face: Face; size?: number; dizzy?: boolean }) {
   const mark = MARK_FACE[props.face];
   const size = props.size ?? 38;
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const svg = markSvg(`pomelo-${mark}`);
   const html = useMemo(() => (svg ? sizedMark(svg, size, uid) : ""), [svg, size, uid]);
-  return <span key={props.face} aria-hidden className={`pm-pomelo ${props.dizzy ? "is-dizzy" : ""} ${props.className ?? ""}`} data-face={mark} style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <span key={props.face} aria-hidden className={`pm-pomelo ${props.dizzy ? "is-dizzy" : ""}`} data-face={mark} style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // ---------- what went wrong in the background (backup, 发布, Pub2MD…): the pomelo says it ----------
@@ -36,7 +36,7 @@ export function reportProblem(text: string) {
   problem = text;
   listeners.forEach((l) => l());
 }
-export function clearProblem() {
+function clearProblem() {
   if (problem == null) return;
   problem = null;
   listeners.forEach((l) => l());

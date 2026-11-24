@@ -181,7 +181,7 @@ export function DeskCommon() {
       <button type="button" className="dstk pm-press" onClick={() => tabs.setBook(true)}>
         <span className="dic">
           <span className="bookic pm-lift" data-hand="round" data-seed="750" data-fill="card">
-            <HandIcon name="grid" size={24} seed={17} />
+            <HandIcon name="grid" size={24} />
           </span>
         </span>
         <span className="dlab">贴纸簿</span>

@@ -17,7 +17,7 @@ export default function AssistantModule(props: { which: "translate" | "pub2md" |
   const m = moduleById(props.which);
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <PageHeader icon={m.icon} color={m.color} title={m.label} badge={markSvg("pomelo-normal") ? <YouziBadge size={18} /> : <Bird size={14} strokeWidth={1.75} aria-label="柚子的助手" style={{ color: "var(--module-youzi)" }} />} />
+      <PageHeader title={m.label} badge={markSvg("pomelo-normal") ? <YouziBadge size={18} /> : <Bird size={14} aria-label="柚子的助手" style={{ color: "var(--module-youzi)" }} />} />
       {props.which === "translate" ? <TranslatePage /> : props.which === "pub2md" ? <Pub2mdPage /> : props.which === "rater" ? <RaterPage /> : props.which === "janitor" ? <JanitorPage /> : <SeekerPage />}
     </div>
   );

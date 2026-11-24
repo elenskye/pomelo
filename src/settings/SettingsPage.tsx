@@ -1,7 +1,7 @@
 // 设置: five pages on the paper's folder tabs (纸签) — 通用 (外观、启动、通知、关于), 数据 (数据、导出与导入、备份), 柚子,
 // 模块 (呦呦漫游、芝麻开门) and 体检 (Health.tsx). A bare /settings shows the one open last.
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, Settings } from "@/shared/icons";
+import { FolderOpen } from "@/shared/icons";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { api } from "@/shared/ipc";
 import { Button, PageHeader } from "@/shared/ui";
@@ -27,7 +27,7 @@ export default function SettingsPage() {
   if (!info) return null;
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      <PageHeader icon={Settings} color="var(--muted-foreground)" title="设置" />
+      <PageHeader title="设置" />
       <div className="px-8 py-4">
         {page === "general" && (
           <>
@@ -53,7 +53,7 @@ export default function SettingsPage() {
             help="所有数据都在这个文件夹里：数据库、附件和备份。不要把它放进 iCloud 这类同步文件夹。"
             actions={
               <Button onClick={() => void api.revealDataDir()}>
-                <FolderOpen size={14} strokeWidth={1.5} /> 在 Finder 中打开
+                <FolderOpen size={14} /> 在 Finder 中打开
               </Button>
             }
           >

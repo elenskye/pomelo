@@ -5,10 +5,9 @@ import { useState } from "react";
 import { FilePlus } from "@/shared/icons";
 import { useConfirm } from "@/shared/feedback";
 import { Polish } from "@/modules/youzi/Assist";
-import { useSetting } from "@/shared/settings";
 import { Field, QuietFields, Segmented, TextArea, TextInput } from "@/shared/ui";
 import { SITE_KEY, pageApi, type Career, type CareerVersion, type Detailed, type Lang, type Section, type Simple } from "./api";
-import { AddRow, BodyField, DocBar, RowControls, SITE_ICONS, SizedInput, addTo, moved, pickFiles, replaced, useDoc, usePreview, useSiteIconMenu, type View } from "./parts";
+import { AddRow, BodyField, DocBar, RowControls, SITE_ICONS, SizedInput, addTo, moved, pickFiles, replaced, useDoc, usePreview, useSiteIconMenu, useSiteView } from "./parts";
 import { AssetPicker } from "./WorkEditor";
 
 const MODES: { value: Section["mode"]; label: string }[] = [
@@ -48,7 +47,7 @@ function Resumes(props: { lang: Lang; v: CareerVersion; set: (patch: Partial<Car
       ))}
       <div className="flex gap-x-1">
         <button type="button" className={`inline-flex items-center gap-1 ${link}`} onClick={() => choose("new")}>
-          <FilePlus size={12} strokeWidth={1.5} /> 选择…
+          <FilePlus size={12} /> 选择…
         </button>
         <button type="button" className={link} onClick={() => setPicking("new")}>
           资源库…
@@ -142,7 +141,7 @@ function Sections(props: { v: CareerVersion; set: (patch: Partial<CareerVersion>
 }
 
 export function CareerPage(props: { setDirty: (d: boolean) => void; onError: (e: unknown) => void; onChanged: () => void }) {
-  const [view, setView] = useSetting<View>("ui.site_work_view", "zh", (v): v is View => v === "zh" || v === "en" || v === "both");
+  const [view, setView] = useSiteView();
   const doc = useDoc<Career>([...SITE_KEY, "career"], pageApi.career, pageApi.careerSave, props.setDirty, props.onError, props.onChanged);
   const { previewing, preview } = usePreview(props.onError);
   const icons = useSiteIconMenu();

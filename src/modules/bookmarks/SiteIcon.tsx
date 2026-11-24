@@ -1,8 +1,9 @@
 // A site's icon (icons.rs, fetched once by the real app), else the host's first letter on a plain square.
 import { hostOf, iconKey } from "./api";
 
-export function SiteIcon(props: { url: string; icons: Record<string, string>; size?: number }) {
-  const size = props.size ?? 16;
+const size = 16;
+
+export function SiteIcon(props: { url: string; icons: Record<string, string> }) {
   const host = hostOf(props.url);
   const src = props.icons[iconKey(host)];
   if (src) return <img src={src} alt="" width={size} height={size} draggable={false} className="shrink-0 rounded-[3px] object-contain" />;

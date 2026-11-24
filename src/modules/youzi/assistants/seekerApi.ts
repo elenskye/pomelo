@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 export type SeekerHeader = { id: string; label: string; value: string; visible: boolean };
 export type SeekerPoint = { id: string; text: string };
-export type SeekerSource = { recordId: string; revision: number; pointIds: string[] };
+type SeekerSource = { recordId: string; revision: number; pointIds: string[] };
 export type SeekerEntry = { id: string; time: string; name: string; role: string; location: string; note: string; points: SeekerPoint[]; source?: SeekerSource | null };
-export type SeekerSection = { id: string; title: string; entries: SeekerEntry[]; category?: string };
+type SeekerSection = { id: string; title: string; entries: SeekerEntry[]; category?: string };
 export type SeekerJobRef = { id: number; createdAt: string };
 /** A resume's language: each has its own materials, rules, draft, template and exports. */
 export type SeekerLang = "cn" | "en";
@@ -22,27 +22,27 @@ export const SHARED_KINDS = ["fact", "application", "application_line"];
 /** Whether a page in `lang` shows the record (Rust catalog.rs `for_lang`). */
 export const recordIn = (r: SeekerRecord, lang: SeekerLang) => SHARED_KINDS.includes(r.kind) || r.lang === "" || (r.lang ?? "cn") === lang;
 /** lang: the language the page shows ("en"; else Chinese). */
-export type SeekerModel = { model: string | null; thinking: boolean; effort?: string | null };
+type SeekerModel = { model: string | null; thinking: boolean; effort?: string | null };
 /** The default model and 思考, and the functions that have their own (Rust catalog.rs `Settings`). */
 export type SeekerSettings = SeekerModel & { features: Record<string, SeekerModel>; cloudAllowed: boolean; lang?: string };
 export const seekerModel = (s: SeekerSettings, kind: string): SeekerModel => s.features[kind] ?? { model: s.model, thinking: s.thinking, effort: s.effort };
-export type SeekerRevision = { id: number; recordId: string; body: SeekerRecord; savedAt: string };
+type SeekerRevision = { id: number; recordId: string; body: SeekerRecord; savedAt: string };
 /** A page's group (Rust catalog.rs `GroupName`): the name a built-in group of 素材 / 规则 shows (`label`, "" = its own) and its place (`sort`, 上移 / 下移). kind: the page (application: both 网申 kinds; rule: 豁免情况 too); lang: 素材's, else "". */
 export type SeekerGroupKind = "material" | "rule" | "fact" | "application";
 export type SeekerGroupName = { kind: SeekerGroupKind; lang: string; category: string; label: string; sort?: number | null };
 export type SeekerCatalog = { records: SeekerRecord[]; revisions: SeekerRevision[]; groups: SeekerGroupName[]; settings: SeekerSettings };
 /** The name a group shows: the user's for a built-in one, else its own. */
 export const groupName = (c: SeekerCatalog | undefined, kind: "material" | "rule", lang: string, category: string) => c?.groups.find((g) => g.kind === kind && g.lang === (kind === "rule" ? "" : lang) && g.category === category)?.label || category;
-/** A page's groups (`categories`, in the page's own order) in the user's: the ones with a place first, by it. */
-export function orderedGroups(c: SeekerCatalog, kind: SeekerGroupKind, lang: string, categories: string[]): string[] {
-  const place = (g: string) => c.groups.find((x) => x.kind === kind && x.lang === (kind === "material" ? lang : "") && x.category === g)?.sort ?? Infinity;
+/** A page's groups (`categories`, in the page's own order) in the user's: the ones with a place first, by it (素材's groups keep their own order). */
+export function orderedGroups(c: SeekerCatalog, kind: Exclude<SeekerGroupKind, "material">, categories: string[]): string[] {
+  const place = (g: string) => c.groups.find((x) => x.kind === kind && x.lang === "" && x.category === g)?.sort ?? Infinity;
   return categories.map((g, i) => ({ g, i, at: place(g) })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.g);
 }
 /** The 规则 page's group of 豁免情况 (kind example; Rust catalog.rs `EXEMPT`). */
 export const EXEMPT = "豁免情况";
 /** One function's 发给模型的说明 (Rust model.rs `PromptView`): the rule groups it reads, its system message. */
 export type SeekerPromptView = { key: string; label: string; groups: string[]; system: string };
-export type SeekerChoice = { jobId: number; jobCreatedAt: string; folder: string };
+type SeekerChoice = { jobId: number; jobCreatedAt: string; folder: string };
 /** One language's draft, its baseline and the reminders about it. */
 export type SeekerDesk = { draft: SeekerDraft | null; updatedAt: string | null; baseline: SeekerDraft | null; warnings?: string[] };
 /** The Chinese desk at the top (its names from before English), the English one in `en`. */
@@ -50,26 +50,26 @@ export type SeekerWorkspace = SeekerDesk & { folder: string; en: SeekerDesk; cat
 export const deskOf = (w: SeekerWorkspace, lang: SeekerLang): SeekerDesk => (lang === "en" ? w.en : w);
 export const pageLang = (w: SeekerWorkspace | undefined): SeekerLang => (w?.catalog.settings.lang === "en" ? "en" : "cn");
 /** Template paragraph for each part of the resume (contact2, education, note, summary, blank: optional; blank: an empty paragraph). */
-export type SeekerSlots = { name: number; contact: number; contact2?: number | null; section: number; entry: number; point: number; education: number | null; note: number | null; summary?: number | null; blank?: number | null };
-export type SeekerTemplate = { path: string; slots: SeekerSlots; paragraphs: (string | null)[] };
+type SeekerSlots = { name: number; contact: number; contact2?: number | null; section: number; entry: number; point: number; education: number | null; note: number | null; summary?: number | null; blank?: number | null };
+type SeekerTemplate = { path: string; slots: SeekerSlots; paragraphs: (string | null)[] };
 /** A Word export: a record only (Seeker keeps no copy of the résumé); `materials`: what it was made from. */
 export type SeekerExport = { id: string; label: string; path: string; lang: SeekerLang; materials: string[]; createdAt: string };
-export type SeekerJobSnapshot = { id: number; company: string; position: string | null; location: string | null; link: string | null; note: string | null; createdAt: string };
+type SeekerJobSnapshot = { id: number; company: string; position: string | null; location: string | null; link: string | null; note: string | null; createdAt: string };
 /** A résumé file a job used (an export's path, or any résumé under cv/); one per job is current (本次使用). */
-export type SeekerJobResume = { id: string; path: string; job: SeekerJobSnapshot; jd: string; createdAt: string; current: boolean };
+type SeekerJobResume = { id: string; path: string; job: SeekerJobSnapshot; jd: string; createdAt: string; current: boolean };
 export type SeekerOutput = { template: SeekerTemplate | null; templateEn?: SeekerTemplate | null; exports: SeekerExport[]; links: SeekerJobResume[] };
 /** knowledge/ of the Seeker folder: where it is, the 知识库 it is in, its companies (one folder each). */
 /** `name`: the user's name for it (设置) or `auto`, the one found in 招聘索引.md or the folder's. */
 export type SeekerCompany = { folder: string; name: string; auto: string };
-export type SeekerKnowledge = { path: string | null; library: string | null; companies: SeekerCompany[]; error: string | null; cv?: string | null; cvLibrary?: string | null };
+type SeekerKnowledge = { path: string | null; library: string | null; companies: SeekerCompany[]; error: string | null; cv?: string | null; cvLibrary?: string | null };
 /** cv/ and material/ of the Seeker folder (Rust seeker/files.rs); modified: seconds since 1970. */
 export type SeekerCvFile = { path: string; name: string; lang: SeekerLang; series: string; version: number | null; modified: number; size: number; template: boolean; export: boolean; exportId: string | null; jobs: string[] };
-export type SeekerMaterialFile = { path: string; name: string; group: string; size: number; modified: number };
-export type SeekerFiles = { cv: SeekerCvFile[]; material: SeekerMaterialFile[]; transfer: boolean; error: string | null };
+type SeekerMaterialFile = { path: string; name: string; group: string; size: number; modified: number };
+type SeekerFiles = { cv: SeekerCvFile[]; material: SeekerMaterialFile[]; transfer: boolean; error: string | null };
 export const SEEKER_FILES_KEY = ["youzi", "seeker", "files"];
 /** A job's résumés still under cv/ (Rust output.rs `job_resumes`) and cv/'s résumés to pick from (templates too). */
 export type SeekerLinked = { path: string; name: string; lang: SeekerLang; current: boolean; jd: string; job: SeekerJobSnapshot; createdAt: string; exportId: string | null };
-export type SeekerJobResumes = { linked: SeekerLinked[]; files: SeekerCvFile[]; noFolder: boolean; error: string | null };
+type SeekerJobResumes = { linked: SeekerLinked[]; files: SeekerCvFile[]; noFolder: boolean; error: string | null };
 export const SEEKER_JOB_RESUMES_KEY = ["youzi", "seeker", "jobResumes"];
 export const seekerJobResumesKey = (jobId: number) => [...SEEKER_JOB_RESUMES_KEY, jobId];
 /** A job's company folder: by name (auto), or the user's choice ("" = none). */

@@ -13,12 +13,12 @@ import { ASSISTANT_MODULES, type ModuleDef } from "./modules";
 const KEY = "ui.dock";
 const QUERY = ["setting", KEY];
 
-export type Cat = { id: string; name: string; tone: number; mods: string[] };
-export type Layout = { cats: Cat[]; pinned: string[] };
+type Cat = { id: string; name: string; tone: number; mods: string[] };
+type Layout = { cats: Cat[]; pinned: string[] };
 
 /** The scheme's five category colors (visual-atelier DESIGN.md §2: 日常薄荷、兴趣樱粉、求职葡萄紫、柚子橙、工具天蓝), by `tone`. */
-export const CAT_TINTS = ["mint", "pink", "grape", "orange", "sky"] as const;
-export type CatTint = (typeof CAT_TINTS)[number];
+const CAT_TINTS = ["mint", "pink", "grape", "orange", "sky"] as const;
+type CatTint = (typeof CAT_TINTS)[number];
 /** The color a category's name means (also for layouts saved before the five, 2026-11-08); other names go by `tone`. */
 const NAME_TINT: Record<string, CatTint> = { 日常: "mint", 生活: "mint", 兴趣: "pink", 创作: "pink", 求职: "grape", 柚子: "orange", 工具: "sky" };
 export const catTint = (c: { name: string; tone: number }): CatTint => NAME_TINT[c.name] ?? CAT_TINTS[((c.tone % 5) + 5) % 5];
@@ -27,7 +27,7 @@ export const toneColor = (c: { name: string; tone: number }) => `var(--pm-cat-${
 
 const INTEREST = "c3";
 /** The scheme's five categories, like the module stickers' colors (the 柚子瓣 has a color per wedge). */
-export const DEFAULT: Layout = {
+const DEFAULT: Layout = {
   cats: [
     { id: "c1", name: "日常", tone: 0, mods: ["todo", "notes", "articles", "days", "finance", "packing"] },
     { id: INTEREST, name: "兴趣", tone: 1, mods: ["books", "films", "games", "drawing", "site", "canvas"] },
@@ -51,7 +51,7 @@ const isLayout = (v: unknown): v is Layout => {
 };
 
 /** Every known module in exactly one category; unknown ones dropped. */
-export function normalize(saved: Layout, known: string[]): Layout {
+function normalize(saved: Layout, known: string[]): Layout {
   const seen = new Set<string>();
   const cats = saved.cats.map((c) => ({ ...c, mods: c.mods.filter((m) => known.includes(m) && !seen.has(m) && (seen.add(m), true)) }));
   for (const m of known.filter((k) => !seen.has(k))) {
