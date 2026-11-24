@@ -5,7 +5,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## 开工前
 
 1. **先问我这次属于哪种程度的开发**（见「版本」），定了版本号再动手。
-2. 读 `docs/roadmap.md`（做到哪了、正式版装到哪个版本）和 `docs/requirements.md` 里要动的那几节。
+2. 读 `HANDOFF.md`（交接：现在到哪、正式版装到哪个版本、没做完的、等我做的）、`docs/roadmap.md`（以后做什么、做完的版本）和 `docs/requirements.md` 里要动的那几节。
 3. 按需读：`docs/schema.md`（表和规则）、`docs/design.md`（视觉和做界面的规矩）、`docs/architecture.md`（存放、备份、安全、柚子的做法）、`docs/testing.md`（怎么测）。
 
 ## 版本
@@ -22,17 +22,18 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## 工作方式
 
 - **优化清单**：我写在 `docs/pomelo-improve-N.rtf`（`textutil -convert txt -stdout` 读）或直接在对话里给。做完删掉清单，更新 `roadmap.md`。
+- **交接**：根目录的 `HANDOFF.md` 是每轮开发的交接文档，不是日志，也不是开发计划：只写现状、没做完的、等我做的、要留意的，让新会话或新 Agent 不用我提醒就能接手。每轮收尾都更新（做完的删掉），汇报里说改了哪几条。
 - **汇报**：中文、简洁：每条改了什么、我自己选的地方、旧数据会怎么变、怎么验证的。
 - **能直接改的**：这边的文档、代码、`package.json`、版本号。
 - **正式版**（`pnpm app:install`，装之前先做升级测试，见 `docs/testing.md`）：升最后一位的（1.0.0 → 1.0.1）做完直接装；升中间一位、第一位的（→ 1.1.0、→ 2.0.0）只在最后一轮收尾时自动装，中间的 Phase 我说要装才装（我也可能自己装）。
-- **Git**：在 main 上做，每一轮开发你自己提交（不用问，可以分几个），推送由我来做。提交信息一行 `vX.Y.Z: 概括`，越短越好（`v1.0.1: fix some problems`、`v1.1.0: minor improvement` 都行），不署名（不加 Co-Authored-By 之类）。每轮汇报列出这一轮的提交：哈希前 7 位、提交信息、各改了什么。
+- **Git**：在 main 上做，每一轮开发你自己提交（不用问，可以分几个），推送由我来做。提交信息全英文（不夹中文），一行 `vX.Y.Z: 概括`，越短越好（`v1.0.1: fix some problems`、`v1.1.0: minor improvement` 都行），不署名（不加 Co-Authored-By 之类）。每轮汇报列出这一轮的提交：哈希前 7 位、提交信息、各改了什么。
 - **只在主目录做**：`~/Documents/GitHub/pomelo`（main）是我日常用的，不开 worktree；`pnpm app:install` 只在这里做。`pnpm dev` 固定 1420 端口，同时只能一个。
 - **代码格式**：没有格式化配置，照周围的写法手动排（长行）；不跑 prettier 这类工具。
 
 ## visual-atelier（视觉）
 
 - 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。那边另有一个会话，照它的 `ROADMAP.md` 做；在那边做事照它的 `CLAUDE.md`（「几个会话怎么分」）。
-- **这边的会话在那边能动的**：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`，`CHANGELOG.md` 里自己的条目，`ROADMAP.md`「现在」里 Pomelo 那一行。别的（`bench/`、别的 `tooling/`、`package.json`……）要改先问我。几个项目共用一个仓库：只提交、只打自己做的那部分，提交写 `pomelo 1.0.0: …`、tag `pomelo-v1.0.0`（这是视觉方案的版本，和 App 的版本号无关）。
+- **这边的会话在那边能动的**：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`，`CHANGELOG.md` 里自己的条目，`ROADMAP.md`「现在」里 Pomelo 那一行。别的（`bench/`、别的 `tooling/`、`package.json`……）要改先问我。几个项目共用一个仓库：只提交、只打自己做的那部分，提交信息同样全英文，写 `pomelo 1.0.0: …`、tag `pomelo-v1.0.0`（这是视觉方案的版本，和 App 的版本号无关）。
 - **新设计**：先在现用账号的云端画布上出样子，我在那里批；批了源进 `canvases/pomelo-<名字>/`、资产进 `schemes/pomelo/`，再发版、提交、打 tag、核对 tag、同步。方案发版、Design System「Pomelo 柚儿园」的发布、同步进来都由这边的会话做。
 - **同步来的资产**在 `src/vendor/pomelo/`（单向，核对 tag 后 `sync`，不手改，要改回那边改）：`pomelo.css`、`ds.css`、`tokens.ts`、手画零件 `handmade.js`、`marks/`（柚子的表情、模块贴纸、界面小图标、空状态插图、菜单栏和 App 图标……）、Atlas 的设计快照、`VERSION`、`SHA256SUMS`。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
 - **图标**：界面小图标从 `@/shared/icons` 取（名字沿用 Lucide 的 `Plus`、`Trash2`…；没有也不装 lucide-react）。新图标回那边 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行。柚子的表情、模块贴纸用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark`（每次换一套 id，同一张能放很多次）。
@@ -104,9 +105,9 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## 文档规则
 
-- **给我看的**：`README.md`、`CLAUDE.md`、`AGENTS.md`、`docs/`。越短越好，通俗、全中文，只写现状、规则和决定，不写变更历史、不写只为旧数据的说明；各页的具体样子（布局、宽度、按钮上的字）以代码为准，不写进文档。
+- **给我看的**：`README.md`、`CLAUDE.md`、`AGENTS.md`、`HANDOFF.md`、`docs/`。越短越好，通俗、全中文，只写现状、规则和决定，不写变更历史、不写只为旧数据的说明；各页的具体样子（布局、宽度、按钮上的字）以代码为准，不写进文档。
 - **不给我看的**：代码、注释、脚本、提交信息，按 Agent 效率最高的方式写。
-- 一个版本（或 Phase）做完更新 `roadmap.md`；需求变了改 `requirements.md`，数据结构变了改 `schema.md`（含版本记录），视觉变了改 `design.md`，做法变了改 `architecture.md`，测法变了改 `testing.md`。
+- 每轮更新 `HANDOFF.md`；一个版本（或 Phase）做完更新 `roadmap.md`；需求变了改 `requirements.md`，数据结构变了改 `schema.md`（含版本记录），视觉变了改 `design.md`，做法变了改 `architecture.md`，测法变了改 `testing.md`。
 
 ## 代码地图
 

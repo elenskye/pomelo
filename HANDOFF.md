@@ -1,0 +1,47 @@
+# 交接
+
+每轮开发收尾时更新（规则见 `CLAUDE.md`「工作方式」）。不是日志，也不是计划：只写接手的人要知道的现状、没做完的、等站主做的、要留意的。做完的删掉，做过什么看 `docs/roadmap.md`「已完成的版本」和 Git。
+
+## 现在（2026-11-24）
+
+- **正式版 1.0.4**（11-24 装）。库和格式的版本从 1.0.0 起没变：`pomelo.db` 43、`youzi.db` 43、`search.db` 3、`janitor.db` 1、数据文件格式 43。
+- **视觉方案** Pomelo `1.0.0`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画），Design System「Pomelo 柚儿园」按 1.0.0 发在现用账号。
+- **两个会话**：Pomelo 一个；visual-atelier 一个，照它的 `ROADMAP.md` 做（这边能动那边哪些文件见 `CLAUDE.md`）。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
+
+## 没做完的
+
+1. **侧栏展开的动效零件 `fold`**：样子发在云端画布 [Pomelo Fold](https://claude.ai/artifact/U7ieNnEjrX3dEdF2427atr)（现用账号），等站主批。源在 visual-atelier 的 `canvases/pomelo-fold/`，**还没提交**（站主说 atelier 在开发，先不同步）。Pomelo 现在用的是临时拷贝 `src/shared/fold.css`，和画布 `<helmet>` 里的零件 CSS 一字不差，改一边就改另一边。批了、站主说可以同步时：
+   - CSS 搬进 `schemes/pomelo/motion/fold/`（照别的零件：`motion.json`、`fold.css`、演示片段），登记进 `motion/README.md` 的零件表；
+   - 方案发 1.0.1（`scheme.json`、`CHANGELOG.md`），Design System 重建、重发；只提交 pomelo 的部分（英文提交信息），打 tag `pomelo-v1.0.1`，核对 tag；
+   - 同步进 `src/vendor/pomelo/`，删掉 `src/shared/fold.css` 和 `src/index.css` 里引它的那一行。
+2. **Bear 搬家还没核对完**：macOS 不让 Claude 读 Bear 的数据（「App 数据」保护），只核对了 Pomelo 这边：143 篇、37 张图、25 个标签都对得上；84 处柚子链接只有《侍奉真理使你走投无路 | 窄门》里的 `[[与美 | 窄门]]` 找不到。从外面看 Bear 的 `Local Files` 里有约 29 个文件附件、约 42 张图，Pomelo 一个文件附件也没有、图 37 张：可能是加密的笔记（导入器搬不了）、废纸篓、没清掉的旧文件，也可能是没搬过来。站主在「终端」App 里跑下面这段、拷出 Bear 的库以后才能逐篇对；**对完之前别卸载 Bear**。
+
+   ```bash
+   D="$HOME/Downloads/Bear 核对"; B="$HOME/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data"; mkdir -p "$D" && sqlite3 -readonly "$B/database.sqlite" ".backup '$D/bear.sqlite'" && (cd "$B/Local Files" && find . -type f ! -name .DS_Store -exec stat -f '%z%t%N' {} \;) > "$D/bear_files.tsv" && echo done
+   ```
+
+## 等你做的
+
+1. **批 [Pomelo Fold](https://claude.ai/artifact/U7ieNnEjrX3dEdF2427atr)**（侧栏展开的动效），方便时说一声同步。
+2. **在「终端」App 里跑上面那段 Bear 的命令**，跑完告诉我。
+3. **在正式版里看 v1.0 的新东西**：
+   - 见字如面：用输入法新写一篇（在标签下）、段落后回车接着写；翻几篇搬过来的（有图、公式和代码、折着的标题）；双指左滑一下只收一栏；正文右键看分层的菜单，选一段点「柚子链接…」；格式条「更多格式」里的「提示框」；提示框开头的图标和字在一条线上；窗口拉宽指一下「引用」「柚子链接」，落签贴着图标；导出 PDF 两种样式、Word、Markdown 各一次。
+   - 柚子链接和玩物有志：念念不忘、见字如面里打 `[[`；正文右上羽毛开书架、拖一条笔记进去；书影游面板最下面「记一条」；五花八门「玩物有志」清单 ⋯ →「搬到玩物有志…」（完成 → 完成时间，常青算在玩、写进备注）。
+   - 通知：打开柚儿园 15 秒内弹今天的（有才弹），点一条能打开它；「设置 → 通用 → 通知」一种一行。
+   - 柚子：对话列表、项目文件夹、消息上右键；「设置 → 柚子 → 柚子的数据」的「归档的对话」点「在柚子里看」。
+   - 贴纸簿右上「＋ 模块」「＋ 分类」，自建模块右键「删除…」（试的话删完 ⌘Z）；柚子瓣念念不忘那片叶子周围没有方块；点顶栏「＋」再关掉贴纸簿，顶栏不被挤上去。
+   - Atlas：玩物有志、自建模块、见字如面的两幕要新写一份年度总结才有（「立即运行」用你选的模型写一份到今天）。
+   - 柚子 →「定时」→ 年度总结：「留对话」默认关，写完那个对话会删掉；想留就打开、保存。
+4. 钥匙串访问里「Pomelo OS 芝麻开门」：下次用主密码打开芝麻开门后只留最新的一项，其余手动删。
+5. 一网打尽里没显示全的网址填的是网站首页，要换成具体的页：Paint 里三个「课后挑战」（`appqm4zd22n4131.h5.xiaoeknow.com`）、《原创绘画全攻略》《通用板绘上手》（`appwtd0zghj7591.h5.xet.pomoho.com`）；API 里的「API keys」（`console.mathpix.com`）；Scholar 里的 ESS「Themes - Politics」（`ess.sikt.no/en/`）。
+6. Excel 原表的小瑕疵，需要时在 App 里改：「绘画大地图」在 3 门课里同时是第 0 节和第 1 节；有一节课名只有「加餐 -」；`7S_1` 和 `7S_2` 同名。
+7. 一步一步的分组名里以前打的 emoji（🖥️、📈 这些）还在名字里：想换成图标，在「编辑分组」里把 emoji 删掉，再点名字前那一格挑一个。
+8. 今日简报的提示词你在正式版里改过，不会自动更新：在「定时 → 今日简报」里把两条新规则加进去（笔记带日期、心情多了「一般」，原文见「恢复默认」），或者点「恢复默认」再改回你的说法。
+
+## 要留意
+
+- 每装一次新版，打开时 macOS 弹一次钥匙串授权框（Key），第一次用 Touch ID 开芝麻开门前再弹一次：输登录密码、点「始终允许」（原因见 `architecture.md`「开发版和正式版」）。
+- Importer：没有月份的截图靠星期几推月份，微信转账算支出还是不计收支，都因模型而异，导入前加一条提示词清单最稳。
+- 卡片练习、面试的追问和复盘建议，参考答案偶尔会替你补资料里没有的过程，存进题库前看一眼。
+- OpenRouter 的 GLM 5.3 FlashX 思考要设「只能思考」。
+- Atlas：12 月 31 日真模型第一次写完全年，再按写出来的样子调各幕的提示词。
