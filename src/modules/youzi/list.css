@@ -33,7 +33,7 @@
 .yz-row.dragged { opacity: .4; }
 .yz-title { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; padding: 5px 0 5px 12px; font-size: 14px; text-align: left; white-space: nowrap; outline: none; }
 .yz-title:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; border-radius: 4px; }
-.yz-title > .yz-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.yz-title > .yz-t { min-width: 0; overflow: clip; text-overflow: ellipsis; }
 
 /* 小纸条 */
 .yz-slip { width: calc(100% - 34px); height: 36px; margin: 9px 0 9px var(--x, 0px); }
@@ -84,5 +84,5 @@
 
 /* 线圈本的页头：和柚子聊聊 · 这一段的名字 */
 .yz-top { display: flex; flex-shrink: 0; align-items: flex-end; justify-content: space-between; gap: 16px; height: 72px; padding: 0 32px 10px 26px; }
-.yz-top h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 22px; line-height: 30px; font-weight: 700; }
+.yz-top h1 { min-width: 0; overflow: clip; text-overflow: ellipsis; white-space: nowrap; font-size: 22px; line-height: 30px; font-weight: 700; }
 .yz-top h1 > span { font-weight: 400; }

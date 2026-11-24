@@ -55,7 +55,7 @@ function Folding(props: { children: ReactNode }) {
   const folded = tall && !open;
   return (
     <div>
-      <div ref={ref} className="relative overflow-hidden" style={folded ? { maxHeight: FOLD_PX } : undefined}>
+      <div ref={ref} className="relative overflow-clip" style={folded ? { maxHeight: FOLD_PX } : undefined}>
         {props.children}
         {folded && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />}
       </div>

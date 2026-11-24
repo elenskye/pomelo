@@ -154,6 +154,16 @@ const lint = () => {
       if (near.some(Boolean)) { out.push({ kind: 'covers-frame', el: name(host), child: name(c).slice(0, 70), bg: cs.backgroundColor }); break; }
     }
   }
+  // 6. wheel traps: inside an area that scrolls, a box with overflow: hidden that does hide something — in WebKit the
+  //    mouse wheel stops at it and the area doesn't scroll (a box that only cuts things off uses overflow: clip)
+  for (const el of root.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if ((cs.overflowX !== 'hidden' && cs.overflowY !== 'hidden') || /(auto|scroll)/.test(cs.overflowX + cs.overflowY)) continue;
+    if (!(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) || !vis(el)) continue;
+    let sc = el.parentElement;
+    while (sc && sc !== document.body && !(/(auto|scroll)/.test(getComputedStyle(sc).overflowY) && sc.scrollHeight > sc.clientHeight + 1)) sc = sc.parentElement;
+    if (sc && sc !== document.body) out.push({ kind: 'wheel-trap', el: name(el), by: name(sc).slice(0, 60) });
+  }
   // 5. render errors shown by the page boundary
   if (!root.children.length || (root.innerText || '').trim().length < 5) out.push({ kind: 'BLANK' });
   return out;

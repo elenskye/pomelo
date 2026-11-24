@@ -42,7 +42,7 @@
 .clabel .tl { position: relative; z-index: 1; display: grid; place-items: center; height: 100%; }
 .dstk { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; width: 78px; font-size: 13px; line-height: 18px; color: var(--color-ink); }
 .dstk .dic { display: grid; place-items: center; height: 62px; }
-.dstk .dlab { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dstk .dlab { max-width: 100%; overflow: clip; text-overflow: ellipsis; white-space: nowrap; }
 .dstk .bookic { position: relative; display: grid; place-items: center; width: 52px; height: 52px; color: var(--color-pen); }
 /* 纸的上边插着纸签、左上角拍着贴纸，右边露出叠着的页 */
 .stack { position: absolute; inset: 30px 112px 16px 30px; isolation: isolate; }
@@ -155,8 +155,8 @@
 .sres { min-height: 0; overflow-y: auto; }
 .sgh { display: flex; align-items: center; gap: 6px; height: 26px; margin-top: 8px; padding: 0 12px; font-size: 13px; color: var(--color-ink-soft); }
 .srow { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; height: 36px; padding: 0 12px; border-radius: 9px; font-size: 15px; text-align: left; cursor: default; }
-.srow .rt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.srow .rd { max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 12px; white-space: nowrap; color: var(--color-ink-soft); font-variant-numeric: tabular-nums; }
+.srow .rt { flex: 1; min-width: 0; overflow: clip; text-overflow: ellipsis; white-space: nowrap; }
+.srow .rd { max-width: 45%; overflow: clip; text-overflow: ellipsis; font-size: 12px; white-space: nowrap; color: var(--color-ink-soft); font-variant-numeric: tabular-nums; }
 .srow.on { background: var(--color-selected); }
 .snear { display: flex; align-items: center; gap: 8px; margin: 14px 4px 0; font-size: 12px; color: var(--color-ink-soft); }
 .snear i { flex: 1; border-top: 2px dashed var(--color-line); }

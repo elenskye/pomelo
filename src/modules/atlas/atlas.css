@@ -23,7 +23,7 @@ button:hover > .atlas-cover .atlas-cover-paper { transform: rotate(0deg) transla
 .atlas-cover-name { position: absolute; left: 18px; top: 20px; font-size: 11px; line-height: 16px; color: var(--color-print-ink-soft); }
 .atlas-cover-year { position: absolute; left: 16px; top: 44px; font-size: 38px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
 .atlas-cover-bar { position: absolute; left: 18px; top: 90px; width: 70px; height: 8px; border-radius: 4px; background: var(--color-yuzu); }
-.atlas-cover-foot { position: absolute; left: 18px; right: 12px; bottom: 12px; font-size: 11px; line-height: 16px; color: var(--color-print-ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.atlas-cover-foot { position: absolute; left: 18px; right: 12px; bottom: 12px; font-size: 11px; line-height: 16px; color: var(--color-print-ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: clip; text-overflow: ellipsis; }
 /* 今年没过完：封面上盖一个「截至某日」的章 */
 .atlas-cover-stamp { position: absolute; left: 18px; top: 112px; padding: 1px 7px; border: 1.5px solid currentColor; border-radius: 4px; font-size: 11px; line-height: 16px; color: var(--color-print-ink-soft); transform: rotate(-4deg); white-space: nowrap; }
 .atlas-cover.is-none { display: grid; place-items: center; border: 2px dashed var(--color-line); border-radius: 6px; font-size: 13px; color: var(--color-ink-soft); }

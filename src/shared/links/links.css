@@ -50,8 +50,8 @@
 /* [[ 的提示：贴纸、名字（打的字划荧光笔）、一行淡墨 */
 .pm-sug { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 3px 0; white-space: normal; }
 .pm-sug-t { display: flex; min-width: 0; flex: 1; flex-direction: column; line-height: 1.35; }
-.pm-sug-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--foreground); }
-.pm-sug-m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted-foreground); }
+.pm-sug-n { overflow: clip; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--foreground); }
+.pm-sug-m { overflow: clip; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted-foreground); }
 .pm-sug-hit { font-style: normal; background: linear-gradient(transparent 52%, var(--pm-marker) 52%, var(--pm-marker) 92%, transparent 92%); }
 
 /* 写的时候（边写边显示的框）：记号变淡，名字是柚子链接色 */

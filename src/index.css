@@ -121,6 +121,11 @@
   }
 }
 
+/* Words cut off (… after one line, a few lines): clip, not hidden. In WebKit a hidden box whose words are cut off is a
+   scroll container of its own and catches the mouse wheel: the list under the pointer doesn't scroll (scripts/css-lint.mjs
+   keeps the module stylesheets so). */
+.truncate, [class*="line-clamp-"] { overflow: clip; }
+
 /* Rater 卡片：点一下翻面（两面叠在同一格，高度取两面里高的那面） */
 .rater-flip { perspective: 1400px; }
 .rater-flip-inner { display: grid; transform-style: preserve-3d; transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1); }

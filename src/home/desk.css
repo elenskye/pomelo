@@ -23,7 +23,7 @@
 .dk-title { display: flex; align-items: center; gap: 8px; text-align: left; border-radius: 6px; outline: none; }
 .dk-title:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .dk-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; font-size: 14px; text-align: left; }
-.dk-row > .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-row > .t { flex: 1; min-width: 0; overflow: clip; text-overflow: ellipsis; white-space: nowrap; }
 .dk-row > .d { flex: none; font-size: 12px; color: var(--color-ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dk-row + .dk-row { border-top: 1px dashed var(--color-line); }
 .dk-lined .dk-row + .dk-row { border-top: 0; }
@@ -39,7 +39,7 @@
 .dk-brief .brief-body p { margin: 0 0 4px; }
 
 /* 今天的待办 */
-.dk-todo .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 15px; }
+.dk-todo .t { flex: 1; min-width: 0; overflow: clip; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 15px; }
 
 .dk-todo .due { flex: none; font-size: 12px; white-space: nowrap; color: var(--color-ink-soft); }
 .dk-todo .due.late { color: var(--color-danger); }
@@ -47,7 +47,7 @@
 /* 快到的日子 */
 .dk-day { display: flex; align-items: center; width: 100%; min-height: 46px; text-align: left; }
 .dk-day .n { display: flex; flex-direction: column; min-width: 0; }
-.dk-day .n > span:first-child { font-size: 15px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-day .n > span:first-child { font-size: 15px; line-height: 22px; overflow: clip; text-overflow: ellipsis; white-space: nowrap; }
 .dk-day .n > span:last-child { font-size: 12px; line-height: 16px; color: var(--color-ink-soft); }
 .dk-day .pm-stat { margin-left: auto; padding-left: 10px; white-space: nowrap; }
 
@@ -102,7 +102,7 @@
 .dk-jnums .soft { color: var(--color-ink-soft); }
 
 /* 那年今日 */
-.dk-then .txt { margin-top: 8px; font-size: 15px; line-height: 1.65; text-align: left; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.dk-then .txt { margin-top: 8px; font-size: 15px; line-height: 1.65; text-align: left; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: clip; }
 
 /* 一网打尽 */
 .dk-links .dk-row { white-space: nowrap; }
