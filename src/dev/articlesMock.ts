@@ -53,6 +53,7 @@ const marksOff = (s: string) =>
 const lineText = (l: string) =>
   marksOff(
     l
+      .replace(/\s*<!--\s*\{"fold":true\}\s*-->\s*$/, "")
       .replace(/^\s*(>\s*)+/, "")
       .replace(/^#{1,6}\s+/, "")
       .replace(/^\s*([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/, "")
@@ -241,6 +242,28 @@ function seed() {
       "[^1]: 摘自一份编的课堂笔记。",
     ].join("\n"),
     { ago: 11 },
+  );
+  // headings folded in Bear (its marks at the line ends): they open shut
+  add(
+    [
+      "# PyTorch 入门",
+      "#学习和编程/ml",
+      "",
+      '### 什么是 Tensor <!-- {"fold":true} -->',
+      "多维数组，能放到 GPU 上算。",
+      "",
+      '### 代码实现：创建 Tensor <!-- {"fold":true} -->',
+      "```python",
+      "x = torch.zeros(2, 3)",
+      "```",
+      "",
+      '### 代码实现：广播 <!-- {"fold":true} -->',
+      "形状不同的两个 Tensor 也能相加。",
+      "",
+      "### 小结",
+      "先会建、会算，再学自动求导。",
+    ].join("\n"),
+    { ago: 12 },
   );
   add("# 读《夜航西飞》\n#读书/摘抄\n\n「我学会了，一个人可以在不完美里活得很好。」这句抄在书签上。\n\n==🔵飞行== 那几章最好看，~夜里的机场~ 写得像一首诗。", { ago: 16 });
   add("# 给小林的生日信\n#生活\n\n小林：生日快乐！这一年辛苦啦。", { locked: true, ago: 13 });

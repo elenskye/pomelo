@@ -12,6 +12,8 @@ export function Menu(props: MenuAt & { onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const items = props.rows.flatMap((r, i) => (typeof r === "object" && "onSelect" in r ? [i] : []));
+  // the icon / dot column only when some row has one: plain rows sit as close to the edge as the 「⋯」 menus' (Dropdown)
+  const lead = props.rows.some((r) => typeof r === "object" && "onSelect" in r && (r.icon || r.dot));
   const [active, setActive] = useState(-1);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -53,12 +55,12 @@ export function Menu(props: MenuAt & { onClose: () => void }) {
       ref={ref}
       role="menu"
       style={{ position: "fixed", left: pos?.left ?? props.x, top: pos?.top ?? props.y, visibility: pos ? "visible" : "hidden" }}
-      className="z-[60] min-w-40 animate-pop-in rounded-card border bg-popover p-1 text-foreground shadow-lg"
+      className="z-[60] min-w-24 animate-pop-in rounded-card border bg-popover p-1 text-foreground shadow-lg"
       onContextMenu={(e) => e.preventDefault()}
     >
       {props.rows.map((r, i) => {
         if (r === "-") return <div key={i} className="mx-1 my-1 border-t" />;
-        if ("head" in r) return <div key={i} className="px-2 pt-1 pb-0.5 text-xs text-muted-foreground">{r.head}</div>;
+        if ("head" in r) return <div key={i} className={`${lead ? "px-2" : "px-3"} pt-1 pb-0.5 text-xs text-muted-foreground`}>{r.head}</div>;
         return (
           <button
             key={i}
@@ -69,9 +71,9 @@ export function Menu(props: MenuAt & { onClose: () => void }) {
               props.onClose();
               r.onSelect();
             }}
-            className={`flex w-full cursor-default items-center gap-2 rounded-md py-1.5 pr-3 pl-2 text-left text-sm whitespace-nowrap outline-none ${i === active ? "bg-muted" : ""}`}
+            className={`flex w-full cursor-default items-center gap-2 rounded-md py-1.5 pr-3 ${lead ? "pl-2" : "pl-3"} text-left text-sm whitespace-nowrap outline-none ${i === active ? "bg-muted" : ""}`}
           >
-            <span className="flex w-4 shrink-0 justify-center text-muted-foreground">{r.dot ? <span className="size-2 rounded-full" style={{ background: r.dot }} /> : r.icon}</span>
+            {lead && <span className="flex w-4 shrink-0 justify-center text-muted-foreground">{r.dot ? <span className="size-2 rounded-full" style={{ background: r.dot }} /> : r.icon}</span>}
             <span className="min-w-0 flex-1 truncate">{r.label}</span>
             {r.checked && <Check size={14} className="shrink-0 text-primary" />}
           </button>

@@ -183,13 +183,14 @@
 .ar-text .pv-err { color: var(--destructive); font-size: 0.85em; }
 .ar-text .pv-wait { color: var(--muted-foreground); font-size: 0.85em; }
 
-/* folding */
-.ar-text .fold { position: absolute; left: -1.35em; top: 0.35em; width: 1em; height: 1em; cursor: pointer; opacity: 0; transition: opacity 150ms; text-indent: 0; }
+/* folding (the arrow sits over a heading's level mark .hg, which reaches into the same margin) */
+.ar-text .fold { position: absolute; z-index: 1; left: -1.35em; top: 0.35em; width: 1em; height: 1em; cursor: pointer; opacity: 0; transition: opacity 150ms; text-indent: 0; }
 .ar-text .fold::before { content: ""; position: absolute; left: 0.3em; top: 0.22em; border: solid var(--pm-pen); border-width: 0 0.12em 0.12em 0; width: 0.38em; height: 0.38em; transform: rotate(45deg); transition: transform 150ms; }
 .ar-text .fold.shut::before { transform: rotate(-45deg); left: 0.18em; top: 0.3em; }
 .ar-text .ln:hover > .fold, .ar-text .fold.shut { opacity: 0.75; }
 .ar-text .h > .fold { font-size: var(--ar-size); left: calc(-1 * var(--gut) - var(--ar-size) * 0.1); top: calc(var(--hs) * var(--ar-size) * 0.7 - 0.5em); }
-.ar-text .folded { margin-left: 0.4em; padding: 0 0.35em; border-radius: 6px; background: var(--muted); color: var(--muted-foreground); font-size: 0.85em; text-indent: 0; }
+.ar-text .folded { margin-left: 0.4em; padding: 0 0.35em; border-radius: 6px; background: var(--muted); color: var(--muted-foreground); font-size: 0.85em; text-indent: 0; cursor: pointer; }
+.ar-text .folded:hover { color: var(--foreground); }
 
 /* ---------- the format bar ---------- */
 .ar-bar-dock { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 5; max-width: calc(100% - 24px); }

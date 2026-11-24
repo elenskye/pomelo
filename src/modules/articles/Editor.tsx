@@ -702,7 +702,8 @@ export const ArticleEditor = forwardRef<
       }
       return;
     }
-    const fold = el.closest<HTMLElement>("[data-fold]");
+    // the arrow, or the 「…」 after a folded line (opens it, as in Bear)
+    const fold = el.closest<HTMLElement>("[data-fold]") ?? (el.closest(".folded") ? ln?.querySelector<HTMLElement>(":scope > [data-fold]") : null);
     if (fold) {
       stop();
       const key = fold.dataset.fold!;
