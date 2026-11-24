@@ -109,7 +109,7 @@ export default function CalendarPage() {
               const list = es.length <= 3 ? es : es.slice(0, 2);
               return (
                 <div key={key} className={`cc ${d.getMonth() !== ym.m ? "out" : ""} ${i % 7 >= 5 ? "we" : ""} ${key === today ? "now" : ""}`}>
-                  <span className="cd">
+                  <span className="cal-day">
                     {key === today && <span className="cnow" data-hand="frame" data-r="half" data-sw="1.8" data-amp="0.7" data-seed={1410} />}
                     <span className="relative">{d.getDate()}</span>
                   </span>

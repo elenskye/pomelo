@@ -111,21 +111,21 @@
 ::highlight(youzi-find-current) { background-color: #f3c64f; color: #2b2824; }
 
 /* syntax colors (light / dark), quiet like the rest of Pomelo */
-.hljs-comment, .hljs-quote { color: #8a8378; font-style: italic; }
-.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-literal, .hljs-type { color: #a1432f; }
-.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-template-tag { color: #3f6d27; }
-.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable { color: #855c00; }
-.hljs-title, .hljs-section, .hljs-function .hljs-title, .hljs-title.function_, .hljs-title.class_ { color: #33628f; }
-.hljs-meta, .hljs-name, .hljs-selector-id, .hljs-selector-class, .hljs-attr, .hljs-property { color: #8466c4; }
-.hljs-deletion { color: #b8322f; }
-.hljs-emphasis { font-style: italic; }
-.hljs-strong { font-weight: 600; }
+.md .hljs-comment, .md .hljs-quote { color: #8a8378; font-style: italic; }
+.md .hljs-keyword, .md .hljs-selector-tag, .md .hljs-built_in, .md .hljs-literal, .md .hljs-type { color: #a1432f; }
+.md .hljs-string, .md .hljs-regexp, .md .hljs-addition, .md .hljs-attribute, .md .hljs-template-tag { color: #3f6d27; }
+.md .hljs-number, .md .hljs-symbol, .md .hljs-bullet, .md .hljs-variable, .md .hljs-template-variable { color: #855c00; }
+.md .hljs-title, .md .hljs-section, .md .hljs-function .hljs-title, .md .hljs-title.function_, .md .hljs-title.class_ { color: #33628f; }
+.md .hljs-meta, .md .hljs-name, .md .hljs-selector-id, .md .hljs-selector-class, .md .hljs-attr, .md .hljs-property { color: #8466c4; }
+.md .hljs-deletion { color: #b8322f; }
+.md .hljs-emphasis { font-style: italic; }
+.md .hljs-strong { font-weight: 600; }
 /* dark: shared/appearance.ts writes the mode in effect as data-theme */
-[data-theme="dark"] .hljs-comment, [data-theme="dark"] .hljs-quote { color: #8f887e; }
-[data-theme="dark"] .hljs-keyword, [data-theme="dark"] .hljs-selector-tag, [data-theme="dark"] .hljs-built_in, [data-theme="dark"] .hljs-literal, [data-theme="dark"] .hljs-type { color: #ee8b78; }
-[data-theme="dark"] .hljs-string, [data-theme="dark"] .hljs-regexp, [data-theme="dark"] .hljs-addition, [data-theme="dark"] .hljs-attribute, [data-theme="dark"] .hljs-template-tag { color: #93c77a; }
-[data-theme="dark"] .hljs-number, [data-theme="dark"] .hljs-symbol, [data-theme="dark"] .hljs-bullet, [data-theme="dark"] .hljs-variable, [data-theme="dark"] .hljs-template-variable { color: #e8c063; }
-[data-theme="dark"] .hljs-title, [data-theme="dark"] .hljs-section, [data-theme="dark"] .hljs-function .hljs-title, [data-theme="dark"] .hljs-title.function_, [data-theme="dark"] .hljs-title.class_ { color: #8db8e6; }
-[data-theme="dark"] .hljs-meta, [data-theme="dark"] .hljs-name, [data-theme="dark"] .hljs-selector-id, [data-theme="dark"] .hljs-selector-class, [data-theme="dark"] .hljs-attr, [data-theme="dark"] .hljs-property { color: #b9a3ec; }
-[data-theme="dark"] .hljs-deletion { color: #f07167; }
+[data-theme="dark"] .md .hljs-comment, [data-theme="dark"] .md .hljs-quote { color: #8f887e; }
+[data-theme="dark"] .md .hljs-keyword, [data-theme="dark"] .md .hljs-selector-tag, [data-theme="dark"] .md .hljs-built_in, [data-theme="dark"] .md .hljs-literal, [data-theme="dark"] .md .hljs-type { color: #ee8b78; }
+[data-theme="dark"] .md .hljs-string, [data-theme="dark"] .md .hljs-regexp, [data-theme="dark"] .md .hljs-addition, [data-theme="dark"] .md .hljs-attribute, [data-theme="dark"] .md .hljs-template-tag { color: #93c77a; }
+[data-theme="dark"] .md .hljs-number, [data-theme="dark"] .md .hljs-symbol, [data-theme="dark"] .md .hljs-bullet, [data-theme="dark"] .md .hljs-variable, [data-theme="dark"] .md .hljs-template-variable { color: #e8c063; }
+[data-theme="dark"] .md .hljs-title, [data-theme="dark"] .md .hljs-section, [data-theme="dark"] .md .hljs-function .hljs-title, [data-theme="dark"] .md .hljs-title.function_, [data-theme="dark"] .md .hljs-title.class_ { color: #8db8e6; }
+[data-theme="dark"] .md .hljs-meta, [data-theme="dark"] .md .hljs-name, [data-theme="dark"] .md .hljs-selector-id, [data-theme="dark"] .md .hljs-selector-class, [data-theme="dark"] .md .hljs-attr, [data-theme="dark"] .md .hljs-property { color: #b9a3ec; }
+[data-theme="dark"] .md .hljs-deletion { color: #f07167; }
 [data-theme="dark"] ::highlight(youzi-find-current) { background-color: #c99a2e; color: #1c1b19; }

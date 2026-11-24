@@ -14,14 +14,14 @@
 .cc { position: relative; min-width: 0; overflow: hidden; padding: 4px 6px 2px; border-top: 1.5px dashed var(--color-line); }
 .cc:not(:nth-child(7n + 1)) { border-left: 1.5px dashed var(--color-line); }
 .cc.we { background: color-mix(in srgb, var(--color-desk) 35%, transparent); }
-.cc.out .cd { color: var(--color-ink-soft); opacity: .55; }
-.cd { position: relative; display: inline-grid; place-items: center; width: 26px; height: 24px; font-size: 14px; }
-.cc.now .cd { font-weight: 700; }
+.cc.out .cal-day { color: var(--color-ink-soft); opacity: .55; }
+.cal-day { position: relative; display: inline-grid; place-items: center; width: 26px; height: 24px; font-size: 14px; }
+.cc.now .cal-day { font-weight: 700; }
 .cnow { position: absolute; left: -2px; top: -2px; width: 30px; height: 28px; }
 .ce { position: relative; display: flex; align-items: center; gap: 5px; width: 100%; height: 20px; padding: 0 4px; border-radius: 6px; font-size: 12.5px; text-align: left; white-space: nowrap; }
 .ce:hover { background: color-mix(in srgb, var(--color-selected) 60%, transparent); }
 .ce i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--pm-dot); }
-.ce span { overflow: hidden; text-overflow: ellipsis; }
+.ce span { overflow: clip; text-overflow: ellipsis; }
 .ce.next { color: var(--color-ink-soft); }
 .ce.next i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--pm-dot); }
 .ce.done span { color: var(--color-ink-soft); text-decoration: line-through; text-decoration-color: var(--color-ink-soft); }

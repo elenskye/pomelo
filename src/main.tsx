@@ -35,6 +35,11 @@ import { startTips } from "@/shared/tips";
 import { ToastProvider } from "@/shared/feedback";
 import { Oops } from "@/shared/Oops";
 import "./index.css";
+// the lazy pages' stylesheets load at start too: what the cascade does never depends on which pages were opened
+// (scripts/css-lint.mjs keeps one module's class rules out of the others)
+import "@/modules/youzi/messages.css";
+import "@/modules/youzi/list.css";
+import "@/modules/youzi/assistants/pub2md.css";
 
 // Browser-only UI testing: `pnpm dev` → http://localhost:1420/?mock (tree-shaken from builds).
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
@@ -45,6 +50,9 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
   // 写字的框在 WebKit 里的自测：`&edtest=<端口>`（docs/testing.md）
   const edtest = new URLSearchParams(location.search).get("edtest");
   if (edtest) void import("./dev/edtest").then((m) => m.runEdTest(edtest));
+  // 写字的框的测试台：`&edlab=1`（无头 Chrome，scripts/editor-lab.mjs）或 `&edlab=<端口>`（Safari）
+  const edlab = new URLSearchParams(location.search).get("edlab");
+  if (edlab) void import("./dev/edlab").then((m) => m.runEdLab(edlab));
   // 在 Safari 里遥控：`&drive=<端口>`（docs/testing.md）
   const drive = new URLSearchParams(location.search).get("drive");
   if (drive) void import("./dev/drive").then((m) => m.runDrive(drive));
