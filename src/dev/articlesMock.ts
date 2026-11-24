@@ -243,6 +243,28 @@ function seed() {
     ].join("\n"),
     { ago: 11 },
   );
+  // inline code in a paragraph and in a table's cells (1.0.5: words drawn over each other)
+  add(
+    [
+      "# Pebble 的设计",
+      "#学习和编程",
+      "",
+      "### 1. 插件按需加载是给谁的",
+      "**只给 Pebble Loop。** 命令行的插件由命令行自己管，比如 `shell` 本来就会按需加载。",
+      "",
+      "### 2. 功能清单",
+      "依据 `docs/design.md`，分三类。",
+      "",
+      "**一、两边都给（作为外壳提供的）**",
+      "",
+      "| 功能 | 循环 | 命令行 |",
+      "| --- | --- | --- |",
+      "| 一句话一个任务，前后各拍一份快照 | ✓ | ✓ |",
+      "| 回退（`restore` / `undo` snapshot） | ✓ | ✓ |",
+      "| 同一项目一次只跑一个任务 | ✓ |  |",
+    ].join("\n"),
+    { ago: 13 },
+  );
   // headings folded in Bear (its marks at the line ends): they open shut
   add(
     [

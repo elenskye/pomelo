@@ -38,7 +38,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { lineStart, lineStartsOf, select, selectionIn, serialize, pointAt } from "./editable";
+import { lineStart, lineStartsOf, paint, select, selectionIn, serialize, pointAt } from "./editable";
 import { MdMenu } from "./MdMenu";
 
 /** What ↩ continues on a line: a list item or a quote; `next` starts the new line (indent + marker). */
@@ -108,59 +108,6 @@ function blankAt(text: string, pos: number): number | null {
   const le = text.indexOf("\n", pos);
   if (text.slice(ls, le < 0 ? text.length : le).trim()) return null;
   return text.slice(0, ls).split("\n").length - 1;
-}
-
-const OPEN = /^<div(?: class="([^"]*)")?(?: style="([^"]*)")?>/;
-/** A line's HTML as its own tag's class / style and the rest. */
-const parts = (h: string) => {
-  const m = OPEN.exec(h);
-  return m ? { cls: m[1] ?? null, style: m[2] ?? null, inner: h.slice(m[0].length) } : null;
-};
-const tpl = typeof document === "undefined" ? null : document.createElement("template");
-const nodes = (html: string) => {
-  tpl!.innerHTML = html;
-  return tpl!.content;
-};
-
-/** Brings the box from `prev` (what was drawn) to `next`, touching only lines that differ; true when nodes were replaced. */
-function paint(el: HTMLElement, prev: string[], next: string[]): boolean {
-  const kids = Array.from(el.children) as HTMLElement[];
-  const n = kids.length;
-  if (!prev.length || el.childNodes.length !== n || kids.some((k) => k.nodeName !== "DIV")) {
-    el.innerHTML = next.join("");
-    return true;
-  }
-  const lim = Math.min(prev.length, next.length, n);
-  let p = 0;
-  while (p < lim && prev[p] === next[p]) p++;
-  let s = 0;
-  while (s < lim - p && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++;
-  if (n === prev.length && n === next.length) {
-    let replaced = false;
-    for (let i = p; i < n - s; i++) {
-      if (prev[i] === next[i]) continue;
-      const k = kids[i];
-      const a = parts(prev[i]);
-      const b = parts(next[i]);
-      if (a && b && a.inner === b.inner) {
-        // only the line's own class / style: its nodes (and a caret in them) stay
-        if (b.cls === null) k.removeAttribute("class");
-        else k.className = b.cls;
-        if (b.style === null) k.removeAttribute("style");
-        else k.setAttribute("style", b.style);
-        continue;
-      }
-      if (k.outerHTML === next[i]) continue; // the browser typed it just so
-      k.replaceWith(nodes(next[i]));
-      replaced = true;
-    }
-    return replaced;
-  }
-  // lines came or went (↩, a deletion across lines): the middle is drawn again
-  const anchor = kids[n - s] ?? null;
-  for (let i = p; i < n - s; i++) kids[i].remove();
-  el.insertBefore(nodes(next.slice(p, next.length - s).join("")), anchor);
-  return true;
 }
 
 export const LiveText = forwardRef<

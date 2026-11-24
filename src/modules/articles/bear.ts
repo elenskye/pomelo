@@ -151,7 +151,7 @@ function inline(text: string, look: Look, st: St = {}, at = 0, ends: Ends = NO_E
     } else if (m[7] !== undefined) out += fx(`<sup class="fn">${mk("[^")}${esc(m[7])}${mk("]")}</sup>`);
     else if (m[9] !== undefined) {
       const name = decodeName(m[9]);
-      if (look.file(name) || look.image(name)) out += fx(mk("[") + `<span class="${cls(st, "att")}" data-file="${esc(name)}">📎 ${esc(m[8])}</span>` + mk(`](${m[9]})`, "url"));
+      if (look.file(name) || look.image(name)) out += fx(mk("[") + `<span class="${cls(st, "att")}" data-file="${esc(name)}">${pv("📎 ", 'class="att-ico"')}${esc(m[8])}</span>` + mk(`](${m[9]})`, "url"));
       else out += fx(mk("[") + `<span class="${cls({ ...st, link: true })}" data-href="${esc(m[9])}">${sub(m[8], { ...st, link: true }, 1)}</span>` + mk(`](${m[9]})`, "url"));
     } else if (m[10] !== undefined) out += fx(mk(m[10]) + sub(m[11], { ...st, b: true }, m[10].length) + mk(m[10]));
     else if (m[12] !== undefined) out += fx(mk("~~") + sub(m[12], { ...st, s: true }, 2) + mk("~~"));
