@@ -2,7 +2,7 @@
 //! is its own sidebar module with the key "list/<id>" / "progress/<id>" (also its route); sidebar
 //! order, 隐藏, 发给云端, search hits and 柚子 all go by that key. Rules (all here):
 //! - Name: 1–20 chars, unique among them and not a built-in module's. Icon: one of `ICONS`; the color
-//!   comes from the template (index.css `--module-list` / `--module-progress`).
+//!   comes from the template (pomelo.css `--module-list` / `--module-progress`).
 //! - 循序渐进 names its two levels (default 课程 / 课节, 1–6 chars each); 五花八门 has none.
 //! - The template never changes. Deleting a module deletes everything in it (FK cascade, one ⌘Z).
 //!   Ids are never reused (AUTOINCREMENT), so a new module never inherits an old one's settings.
@@ -10,7 +10,7 @@
 //!   deleted with the module). Export / import: every made module in `custom` (fields, items, kinds,
 //!   courses and lessons by name); importing replaces them all (new ids).
 
-use super::common::{self, err, str_enum};
+use super::common::{self, err, NOW, str_enum};
 use super::{kinds, lists, progress};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -19,7 +19,6 @@ use tauri::State;
 
 pub const KEY: &str = "custom";
 pub const LABEL: &str = "五花八门 · 循序渐进";
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 pub const MAX_NAME: usize = 20;
 pub const MAX_WORD: usize = 6;
 pub const DEFAULT_WORDS: (&str, &str) = ("课程", "课节");

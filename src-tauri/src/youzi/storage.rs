@@ -127,13 +127,9 @@ pub fn clean_empty(conn: &Connection) -> Result<usize, String> {
 
 // ---------- commands ----------
 
-fn db_path(state: &AppState) -> std::path::PathBuf {
-    state.paths.youzi_db.clone()
-}
-
 #[tauri::command]
 pub fn youzi_storage(state: State<AppState>) -> Result<Usage, String> {
-    let (db, dir) = (db_path(&state), state.youzi.files_dir().to_path_buf());
+    let (db, dir) = (state.paths.youzi_db.clone(), state.youzi.files_dir().to_path_buf());
     state.youzi.with_db(|c| usage(c, &db, &dir))
 }
 

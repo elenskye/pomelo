@@ -1,4 +1,4 @@
-//! 首页 (simple version): one read-only summary over the modules, so the page (and later AI) asks once.
+//! 首页: one read-only summary over the modules, so the page asks once.
 //! Modules hidden in the 模块坞 are passed in and left out (their parts are None / skipped).
 //! 芝麻开门 never appears. 今天的待办 isn't here: the page uses todo_agenda (same list as 一步一步 → 今天).
 //! - 今年: 读完 / 看完 = books / films finished this year (their 完成时间, or a 重读 / 重看 in this year),
@@ -17,7 +17,7 @@
 //! - 那年今日: earlier years' records on today's month-day (local): notes written, goals done (their
 //!   end date), tasks checked off, trips leaving; per year notes first, newest year first. The page shows
 //!   one per year (换一条 = the next); no year with any → no card. 02-29 only matches 02-29.
-//! Full version (v0.9, the desk; 站主 2026-11-07):
+//! The desk (v0.9):
 //! - 本月: this month's 月历 (calendar.rs, same rules and hidden modules).
 //! - 今年按月: lessons, tasks done, notes and 投递 per month of this year (12 numbers each, the same
 //!   counting as 今年的数字). Books and films keep only the year they were finished, so they have none.

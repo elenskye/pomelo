@@ -56,7 +56,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 43, name: "schedule_keep_chat", sql: include_str!("../../migrations/youzi/0043_schedule_keep_chat.sql") },
 ];
 
-pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+pub use crate::modules::common::NOW;
 
 /// Opens (creating if needed) and migrates youzi.db, then marks replies left streaming by a
 /// previous run of the app as interrupted.

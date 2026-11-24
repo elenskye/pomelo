@@ -79,6 +79,67 @@ pub fn user_version(conn: &Connection) -> Result<i64, String> {
         .map_err(|e| e.to_string())
 }
 
+/// A database computed from the data (search.db, janitor.db): never migrated, backed up or undone. One that
+/// can't be used as is (missing, broken, another version) is deleted and made again from `schema`.
+pub struct Derived {
+    /// What errors call it.
+    pub what: &'static str,
+    /// The error for a database that holds something else.
+    pub not_it: &'static str,
+    pub version: i64,
+    pub schema: &'static str,
+    /// A table read to tell the file works.
+    pub probe: &'static str,
+}
+
+impl Derived {
+    pub fn open(&self, path: &Path) -> Result<Connection, String> {
+        self.open_as_is(path).or_else(|_| {
+            remove_files(path);
+            self.open_as_is(path).map_err(|e| format!("{}打不开：{e}", self.what))
+        })
+    }
+
+    fn open_as_is(&self, path: &Path) -> Result<Connection, String> {
+        let c = open(path)?;
+        self.prepare(&c)?;
+        Ok(c)
+    }
+
+    /// Creates the schema in an empty database, accepts the current version, refuses anything else.
+    pub fn prepare(&self, c: &Connection) -> Result<(), String> {
+        let err = |e: rusqlite::Error| e.to_string();
+        match user_version(c)? {
+            v if v == self.version => c.query_row(&format!("SELECT count(*) FROM {}", self.probe), [], |r| r.get::<_, i64>(0)).map(|_| ()).map_err(err),
+            0 => {
+                let tables: i64 = c.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0)).map_err(err)?;
+                if tables > 0 {
+                    return Err(self.not_it.into());
+                }
+                c.execute_batch(&format!("BEGIN; {} PRAGMA user_version = {}; COMMIT;", self.schema, self.version)).map_err(err)
+            }
+            v => Err(format!("版本 {v} 不是现在的 {}", self.version)),
+        }
+    }
+}
+
+/// Deletes a database file and its WAL files.
+pub fn remove_files(path: &Path) {
+    for p in [path.to_path_buf(), path.with_extension("db-wal"), path.with_extension("db-shm")] {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// A derived database's `meta` (key → value) entry.
+pub fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
+    use rusqlite::OptionalExtension;
+    c.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional().map_err(|e| e.to_string())
+}
+
+pub fn set_meta(c: &Connection, key: &str, value: &str) -> Result<(), String> {
+    c.execute("INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]).map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Applies pending migrations. If the DB already has data (version > 0), takes a
 /// snapshot backup into `backups_dir` first. Returns the resulting version.
 pub fn migrate(conn: &mut Connection, migrations: &[Migration], backups_dir: &Path) -> Result<i64, String> {

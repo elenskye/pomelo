@@ -32,7 +32,7 @@ pub struct ProjectRec {
     pub name: String,
     #[serde(default)]
     pub instructions: String,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub include_global_memories: bool,
 }
 
@@ -65,7 +65,7 @@ pub struct MemoryRec {
     pub project: Option<String>,
     #[serde(default)]
     pub shared_projects: Vec<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub enabled: bool,
     #[serde(default)]
     pub local_only: bool,
@@ -87,12 +87,12 @@ pub struct ScheduleRec {
     pub at: String,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub enabled: bool,
     #[serde(default)]
     pub builtin: Option<String>,
     /// From format 13 (before: on).
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub thinking: bool,
     /// From format 36.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,9 +108,6 @@ impl ScheduleRec {
     }
 }
 
-fn yes() -> bool {
-    true
-}
 fn manual() -> String {
     "manual".into()
 }

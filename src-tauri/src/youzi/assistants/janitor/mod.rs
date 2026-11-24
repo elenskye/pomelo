@@ -1,5 +1,5 @@
 //! DevJanitor (v0.8 阶段 6～8; requirements「DevJanitor」): 柚子's 电脑管家. Its page is the module
-//! `/janitor` (磁盘 · 清理 · 环境 · 设置); the Agent comes in 阶段 8.
+//! `/janitor` (磁盘 · 清理 · 环境 · 设置) and its Agent (agent.rs).
 //! - Mode: `Real` only for the installed app on the real data dir: the real disk, real deleting. Otherwise
 //!   `Sandbox`: the fake Mac in `<data dir>/janitor-sandbox` (fake.rs) — scanning, deleting and the Trash all
 //!   happen there, commands aren't run.
@@ -154,12 +154,7 @@ impl Janitor {
     }
 
     pub fn real_of(&self, virt: &str) -> PathBuf {
-        let rel = virt.trim_start_matches('/');
-        if rel.is_empty() {
-            self.root.clone()
-        } else {
-            self.root.join(rel)
-        }
+        scan::real_of(&self.root, virt)
     }
 
     pub fn status(&self) -> ScanState {

@@ -437,11 +437,6 @@ fn relations(data: &[u8], rels: &str, dir: &str) -> std::collections::HashMap<St
     }
 }
 
-fn short(text: &str) -> String {
-    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() > 24 { format!("{}…", flat.chars().take(24).collect::<String>()) } else { flat }
-}
-
 /// The images of a Word document in reading order, each placed by the text near it.
 fn word_images(data: &[u8]) -> Result<Vec<Embedded>, String> {
     use quick_xml::events::Event;
@@ -455,7 +450,7 @@ fn word_images(data: &[u8]) -> Result<Vec<Embedded>, String> {
         let Some(part) = id.and_then(|i| rels.get(&i).cloned()) else { return };
         if !out.iter().any(|e| e.part == part) {
             let media = embedded_media(&part);
-            out.push(Embedded { place: if near.is_empty() { "在文档开头".into() } else { format!("在「{}」那里", short(near)) }, part, page: None, media });
+            out.push(Embedded { place: if near.is_empty() { "在文档开头".into() } else { format!("在「{}」那里", super::data::clip(near, 24)) }, part, page: None, media });
         }
     };
     loop {

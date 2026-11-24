@@ -14,7 +14,7 @@
 //!   recent first). Pinned: at most one (the big card); pinning one unpins the other, and pinning
 //!   alone keeps 修改于.
 
-use super::common::{self, err, some, str_enum};
+use super::common::{self, err, NOW, some, str_enum};
 use super::todo::today;
 use crate::AppState;
 use rusqlite::{params, Connection, Row};
@@ -26,7 +26,6 @@ pub const KEY: &str = "days";
 pub const LABEL: &str = "来日方长";
 pub const MAX_REMIND: usize = 5;
 pub const MAX_GIFTS: usize = 100;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 fn gone() -> String {
     "找不到这个日子，可能已经被删除了".into()

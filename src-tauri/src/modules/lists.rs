@@ -12,7 +12,7 @@
 //! - Item order: `sort_order` (new ones last; dragged in the table when it isn't sorted). Sorting and
 //!   filtering are views in the page.
 
-use super::common::{self, err, str_enum};
+use super::common::{self, err, NOW, str_enum};
 use super::custom::{self, Template};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -23,7 +23,6 @@ use tauri::State;
 
 pub const MAX_FIELDS: usize = 20;
 pub const MAX_OPTIONS: usize = 50;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 str_enum!(FieldType, default = Text, {
     Text => "text",
@@ -404,12 +403,8 @@ pub struct FieldRecord {
     pub kind: FieldType,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "common::yes")]
     pub shown: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// Files before v18 had 日期 fields: read as 年份 (their values keep the year).

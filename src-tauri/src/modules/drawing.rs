@@ -4,7 +4,7 @@
 //! Pace (柚子 「照现在的速度什么时候画完」): lessons finished in the last `PACE_MONTHS` months (this
 //! month included) ÷ `PACE_MONTHS` = per month; remaining ÷ that, rounded up = months left.
 
-use super::common::{self, err, some, Status};
+use super::common::{self, err, NOW, some, Status};
 use super::kinds;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -15,7 +15,6 @@ pub const KEY: &str = "drawing";
 pub const LABEL: &str = "随意画画";
 const COURSE_NOT_FOUND: &str = "找不到这门课程，可能已经被删除了";
 const LESSON_NOT_FOUND: &str = "找不到这节课，可能已经被删除了";
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 // ---------- courses ----------
 

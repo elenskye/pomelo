@@ -7,7 +7,8 @@
 //!   else wanted; 随意画画: lessons done / all; 投石问路: to follow up, else active, else all; 芝麻开门:
 //!   locked / open; 一网打尽: how many links; made modules: items (五花八门) or lessons done / all (循序渐进).
 //! - 柚子: writing, else conversations; Translator: its target; Pub2MD: being done + waiting; Seeker: a
-//!   draft; DevJanitor: what 一键清理 could free (janitor.db). 呦呦漫游 says nothing (its changes need git).
+//!   draft; Rater: how many questions; Importer: bills to check (hidden with 钱来钱往); DevJanitor: what
+//!   一键清理 could free (janitor.db). 呦呦漫游 says nothing (its changes need git).
 
 use crate::modules::common::{err, Status};
 use crate::modules::{bookmarks, books, custom, days, films, games, jobs, todo, vault};

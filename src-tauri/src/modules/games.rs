@@ -285,7 +285,6 @@ fn target_of(name: &str, ty: lists::FieldType) -> &'static str {
         ("状态", T::Select | T::Text) => "状态",
         (_, T::Rating) => "尝尝咸淡",
         ("完成" | "完成年份" | "完成时间" | "通关" | "通关年份" | "年份", T::Year | T::Number | T::Text) => "完成时间",
-        ("备注" | "笔记" | "感想", T::Text | T::LongText) => "备注",
         _ => "备注",
     }
 }

@@ -9,6 +9,7 @@
 //!   the 模块坞 isn't read (Seeker: everything but questions / practice; Rater: those). data.rs `Access`.
 //! - The text is cut to the room left (data.rs `Found`). Rules, 档案 and 网申 aren't offered.
 use crate::youzi::assistants::rater::{self, interview, practice};
+use crate::modules::common;
 use crate::youzi::Mode;
 use crate::youzi::assistants::seeker;
 use crate::youzi::data::{self, Access, Answer, Found};
@@ -176,7 +177,7 @@ pub fn run(c: &Connection, mode: Mode, access: &Access, arguments: &str, budget:
                 Err(e) => failed("Seeker 资料 · 没读成", format!("没读成：{e}")),
             };
         }
-        let mut rows: Vec<String> = files.cv.iter().map(|f| format!("- cv/{}（{}{}{}，{}）", f.name, lang_name(&f.lang), f.version.map(|v| format!("，第 {v} 版")).unwrap_or_default(), if f.template { "，模板" } else { "" }, day(f.modified))).collect();
+        let mut rows: Vec<String> = files.cv.iter().map(|f| format!("- cv/{}（{}{}{}，{}）", f.name, lang_name(&f.lang), f.version.map(|v| format!("，第 {v} 版")).unwrap_or_default(), if f.template { "，模板" } else { "" }, common::from_day_number(f.modified.div_euclid(86_400)))).collect(); // UTC
         let mut groups: Vec<&str> = files.material.iter().map(|m| m.group.as_str()).collect();
         groups.dedup();
         rows.extend(groups.iter().map(|g| format!("- material/{}：{}", if g.is_empty() { "" } else { g }, files.material.iter().filter(|m| m.group == *g).map(|m| m.name.as_str()).collect::<Vec<_>>().join("、"))));
@@ -221,21 +222,6 @@ pub fn run(c: &Connection, mode: Mode, access: &Access, arguments: &str, budget:
             done(Found::new(String::new(), vec![format!("导出过的 Word {} 份：", rows.len())]).rows(rows.into_iter().map(data::row).collect()))
         }
     }
-}
-
-/// A date (UTC) from seconds since 1970.
-fn day(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    // civil from days (Howard Hinnant)
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    format!("{:04}-{m:02}-{d:02}", yoe + era * 400 + i64::from(m <= 2))
 }
 
 fn prep_text(p: &interview::Prep) -> String {

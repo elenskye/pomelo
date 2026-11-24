@@ -1,4 +1,4 @@
-//! Atlas's groundwork (v0.8; the journey itself is v0.9 — 第十四轮问卷, requirements「以后 · Atlas」): each
+//! Atlas's groundwork (requirements「Atlas（年度总结）」): each
 //! 年度总结 keeps its 「呈现结果」 (youzi.db `year_atlas`), written once right after the letter:
 //! - `Snapshot` (Rust): the year's numbers and last year's up to the same day, the 之最, each day's
 //!   records (heatmap / star map), check-ins, 钱来钱往 (data.rs `year_money`), the records the scenes
@@ -29,7 +29,7 @@
 //!   sentence) and a postscript (`lines`). The articles' text is only in memory for this (`Snapshot::texts`), never saved.
 
 use super::context::{self, size, Counter};
-use super::data::{self, clip, md, Access, YearMoney};
+use super::data::{self, clip, md, rows, Access, YearMoney};
 use super::provider::{Msg, Target};
 use super::yearly::{Facts, Sink};
 use crate::modules::common::err;
@@ -235,10 +235,9 @@ pub struct Scene {
     pub quotes: Vec<Quote>,
 }
 
-fn rows<T>(c: &Connection, sql: &str, args: impl rusqlite::Params, f: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>) -> Result<Vec<T>, String> {
-    let mut st = c.prepare(sql).map_err(err)?;
-    let out = st.query_map(args, f).map_err(err)?.collect::<Result<_, _>>().map_err(err);
-    out
+/// (id, day, text) rows.
+fn id_day_text(r: &rusqlite::Row) -> rusqlite::Result<(i64, String, String)> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
 }
 
 /// What pomelo.db gives: records, each day's counts, check-ins, money, same-day pairs.
@@ -280,13 +279,10 @@ fn pomelo_part(c: &Connection, access: &Access, year: &str, from: &str, to: &str
         e.1 += 1;
     };
     if access.allows("notes") {
-        let mine = rows(c, "SELECT id, date(created_at, 'localtime'), content FROM notes WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2 ORDER BY created_at, id", [from, to], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        })?;
+        let notes_in = |from: &str, to: &str| rows(c, "SELECT id, date(created_at, 'localtime'), content FROM notes WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2 ORDER BY created_at, id", [from, to], id_day_text);
+        let mine = notes_in(from, to)?;
         let prev = (year.parse::<i64>().unwrap_or(1971) - 1).to_string();
-        let before = rows(c, "SELECT id, date(created_at, 'localtime'), content FROM notes WHERE date(created_at, 'localtime') BETWEEN ?1 AND ?2 ORDER BY created_at, id", [format!("{prev}-01-01"), format!("{prev}-12-31")], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        })?;
+        let before = notes_in(&format!("{prev}-01-01"), &format!("{prev}-12-31"))?;
         let mut pairs: BTreeMap<String, (Vec<String>, Vec<String>)> = BTreeMap::new();
         for (id, day, _) in &mine {
             pairs.entry(day[5..].to_string()).or_default().0.push(format!("note:{id}"));
@@ -320,9 +316,7 @@ fn pomelo_part(c: &Connection, access: &Access, year: &str, from: &str, to: &str
         for d in todo::done_between(c, from, to)? {
             bump(&mut p, &d.day, false);
         }
-        for (id, day, name) in rows(c, "SELECT id, end_date, name FROM todo_goals WHERE status = 'done' AND end_date BETWEEN ?1 AND ?2 ORDER BY end_date, id", [from, to], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        })? {
+        for (id, day, name) in rows(c, "SELECT id, end_date, name FROM todo_goals WHERE status = 'done' AND end_date BETWEEN ?1 AND ?2 ORDER BY end_date, id", [from, to], id_day_text)? {
             bump(&mut p, &day, false);
             p.records.push(rec("goal", id, Some(day), name));
         }
@@ -371,9 +365,7 @@ fn pomelo_part(c: &Connection, access: &Access, year: &str, from: &str, to: &str
         }
     }
     if access.allows("packing") {
-        for (id, day, name) in rows(c, "SELECT id, depart_on, name FROM trips WHERE depart_on BETWEEN ?1 AND ?2 ORDER BY depart_on, id", [from, to], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        })? {
+        for (id, day, name) in rows(c, "SELECT id, depart_on, name FROM trips WHERE depart_on BETWEEN ?1 AND ?2 ORDER BY depart_on, id", [from, to], id_day_text)? {
             bump(&mut p, &day, false);
             p.records.push(rec("trip", id, Some(day), name));
         }
@@ -426,9 +418,7 @@ pub(crate) fn snapshot(sink: &impl Sink, access: &Access, year: &str, facts: &Fa
     let (from, to) = (format!("{year}-01-01"), facts.until.clone().unwrap_or_else(|| format!("{year}-12-31")));
     let mut p = sink.with_pomelo(|c| pomelo_part(c, access, year, &from, &to))?;
     let talks = sink.with_youzi(|c| {
-        rows(c, "SELECT id, date(created_at, 'localtime'), title FROM sessions WHERE NOT private AND NOT scheduled AND date(created_at, 'localtime') BETWEEN ?1 AND ?2 ORDER BY created_at, id", [&from, &to], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        })
+        rows(c, "SELECT id, date(created_at, 'localtime'), title FROM sessions WHERE NOT private AND NOT scheduled AND date(created_at, 'localtime') BETWEEN ?1 AND ?2 ORDER BY created_at, id", [&from, &to], id_day_text)
     })?;
     for (id, day, title) in talks {
         let e = p.heat.entry(day.clone()).or_default();

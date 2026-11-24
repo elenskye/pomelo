@@ -196,12 +196,7 @@ fn found(d: &Doc, snippet: String, score: f32, by: Way) -> Found {
 }
 
 fn flat_snippet(p: &str) -> String {
-    let flat: String = p.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut s: String = flat.chars().take(SNIPPET * 2 + 10).collect();
-    if flat.chars().count() > SNIPPET * 2 + 10 {
-        s.push('…');
-    }
-    s
+    crate::youzi::data::clip(p, SNIPPET * 2 + 10)
 }
 
 /// Meaning hits: (doc, best passage ordinal, cosine). Errors when the embedding service can't help.
@@ -398,7 +393,7 @@ mod tests {
     use super::*;
     use crate::search::indexer::{apply, load, pending, save_vectors};
     use crate::search::store::tests::memory_db;
-    use crate::search::vectors::{quantize, VectorIndex};
+    use crate::search::vectors::quantize;
 
     fn ids(v: &[(Doc, f32)]) -> Vec<i64> {
         v.iter().map(|(d, _)| d.ref_id).collect()

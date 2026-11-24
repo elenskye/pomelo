@@ -1,7 +1,7 @@
 //! Vectors in memory: each passage vector is normalised and stored as int8 with one f32 scale
 //! (1 KB for 1024 dimensions; ~200 MB at 200 000 passages). A search quantises the question
 //! the same way and compares every allowed passage (integer dot products), keeping each doc's
-//! best passage. `VectorIndex` is the part a smarter (approximate) index would replace.
+//! best passage.
 
 use std::collections::{HashMap, HashSet};
 
@@ -49,14 +49,6 @@ pub struct Hit {
     pub score: f32,
 }
 
-pub trait VectorIndex: Send + Sync {
-    fn model(&self) -> &str;
-    fn add(&mut self, e: Entry, q: &Quantized);
-    fn remove(&mut self, docs: &HashSet<i64>);
-    /// The `k` best docs among passages whose source bit is set in `allow`, scoring ≥ `min`.
-    fn search(&self, question: &[f32], allow: u32, k: usize, min: f32) -> Vec<Hit>;
-}
-
 /// Compares the question with every passage.
 pub struct Flat {
     model: String,
@@ -74,17 +66,10 @@ impl Flat {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
-}
-
-pub fn dot(a: &[i8], b: &[i8]) -> i32 {
-    a.iter().zip(b).map(|(x, y)| i32::from(*x) * i32::from(*y)).sum()
-}
-
-impl VectorIndex for Flat {
-    fn model(&self) -> &str {
+    pub fn model(&self) -> &str {
         &self.model
     }
-    fn add(&mut self, e: Entry, q: &Quantized) {
+    pub fn add(&mut self, e: Entry, q: &Quantized) {
         if self.dims == 0 {
             self.dims = q.values.len();
         }
@@ -95,7 +80,7 @@ impl VectorIndex for Flat {
         self.scales.push(q.scale);
         self.data.extend_from_slice(&q.values);
     }
-    fn remove(&mut self, docs: &HashSet<i64>) {
+    pub fn remove(&mut self, docs: &HashSet<i64>) {
         if docs.is_empty() {
             return;
         }
@@ -115,7 +100,8 @@ impl VectorIndex for Flat {
         self.scales.truncate(keep);
         self.data.truncate(keep * self.dims);
     }
-    fn search(&self, question: &[f32], allow: u32, k: usize, min: f32) -> Vec<Hit> {
+    /// The `k` best docs among passages whose source bit is set in `allow`, scoring ≥ `min`.
+    pub fn search(&self, question: &[f32], allow: u32, k: usize, min: f32) -> Vec<Hit> {
         if self.entries.is_empty() || question.len() != self.dims || k == 0 {
             return vec![];
         }
@@ -149,6 +135,10 @@ impl VectorIndex for Flat {
         out.truncate(k);
         out
     }
+}
+
+pub fn dot(a: &[i8], b: &[i8]) -> i32 {
+    a.iter().zip(b).map(|(x, y)| i32::from(*x) * i32::from(*y)).sum()
 }
 
 #[cfg(test)]

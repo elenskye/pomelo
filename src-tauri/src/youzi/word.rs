@@ -25,7 +25,7 @@ use std::io::{Read, Write};
 
 // ---------- writing a report ----------
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 

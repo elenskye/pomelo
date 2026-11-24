@@ -17,7 +17,7 @@
 //!   status checks don't count as use), on 锁上, on restore. vault_meta is app state: not undoable.
 //! - 见字如面 locks articles with the same key (seal_article; articles.rs): the vault open, they open too.
 
-use super::common::{self, err};
+use super::common::{self, err, NOW};
 use crate::{secure, AppState};
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -39,7 +39,6 @@ const AD_ITEM: &[u8] = b"pomelo-vault-item";
 const AD_CATEGORY: &[u8] = b"pomelo-vault-category";
 const AD_ARTICLE: &[u8] = b"pomelo-article";
 pub const CATEGORY_MAX: usize = 20;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 /// Argon2id (memory KiB, iterations, lanes): 256 MiB × 3 ≈ 0.3 s per try on an M3, which is what an
 /// offline guesser with a copied database pays too. Stored per vault, so it can be raised later.
 /// Tests use the minimum.

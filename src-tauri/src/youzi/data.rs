@@ -93,13 +93,9 @@ pub const WEB: &str = "web";
 pub const SEEKER: &str = "seeker";
 pub const RATER: &str = "rater";
 
-fn module(key: &str) -> Option<&'static Module> {
-    MODULES.iter().chain(HELP_ONLY).find(|m| m.key == key)
-}
-
 /// A module 柚子 knows (reads or helps in).
-pub fn module_info(key: &str) -> Option<&'static Module> {
-    module(key)
+pub fn module(key: &str) -> Option<&'static Module> {
+    MODULES.iter().chain(HELP_ONLY).find(|m| m.key == key)
 }
 
 // ---------- 设置 → 柚子: 允许发给云端 ----------
@@ -261,12 +257,10 @@ fn cloud_sentence(labels: &[&str]) -> String {
     format!("{}不发给云端，这部分没看", labels.join("、"))
 }
 
-const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
-
 /// The part of the system message about looking things up.
 /// `verify`: 书单 / 影单检索 are offered (recommendations get checked).
 pub fn instructions(today: &str, access: &Access, verify: bool) -> String {
-    let wd = WEEKDAYS[(common::weekday(today) as usize + 6) % 7];
+    let wd = common::WEEKDAYS[(common::weekday(today) as usize + 6) % 7];
     let monday = jobs::week_start(today);
     let (last_mon, last_sun) = (common::add_days(&monday, -7), common::add_days(&monday, -1));
     let sunday = common::add_days(&monday, 6);
@@ -732,14 +726,7 @@ fn currency_name(c: Currency) -> &'static str {
 pub fn money(cents: i64, c: Currency) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let a = cents.unsigned_abs();
-    let units = (a / 100).to_string();
-    let mut grouped = String::new();
-    for (i, ch) in units.chars().enumerate() {
-        if i > 0 && (units.len() - i).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(ch);
-    }
+    let grouped = grouped((a / 100) as i64);
     let frac = if a.is_multiple_of(100) { String::new() } else { format!(".{:02}", a % 100) };
     format!("{sign}{}{grouped}{frac}", symbol(c))
 }
@@ -789,7 +776,7 @@ fn rule_text(rule: &str) -> String {
     let list = |s: &str, f: &dyn Fn(&str) -> String| s.split(',').map(f).collect::<Vec<_>>().join("、");
     match kind {
         "daily" => "每天".into(),
-        "weekly" => format!("每周{}", list(v, &|d| WEEKDAYS.get(d.parse::<usize>().unwrap_or(1).saturating_sub(1)).unwrap_or(&"?").to_string())),
+        "weekly" => format!("每周{}", list(v, &|d| common::WEEKDAYS.get(d.parse::<usize>().unwrap_or(1).saturating_sub(1)).unwrap_or(&"?").to_string())),
         "monthly" => format!("每月 {} 号", list(v, &|d| d.to_string())),
         "yearly" => {
             let (md, every) = v.split_once('/').unwrap_or((v, "1"));
@@ -2103,10 +2090,6 @@ pub(crate) fn year_writing(conn: &Connection, from: &str, to: &str) -> Result<(O
 
 // ---------- 来日方长 ----------
 
-fn day_when(d: &days::Day) -> String {
-    days::when(d)
-}
-
 fn remind_text(r: &[i64]) -> String {
     if r.is_empty() {
         return String::new();
@@ -2135,7 +2118,7 @@ fn day_bits(d: &days::Day) -> Vec<String> {
         (_, Some(n)) => format!("第 {n} 周年"),
         _ => String::new(),
     };
-    let mut bits = vec![d.kind.label().to_string(), date, repeat.into(), next, day_when(d), nth, remind_text(&d.remind), if d.pinned { "置顶".into() } else { String::new() }];
+    let mut bits = vec![d.kind.label().to_string(), date, repeat.into(), next, days::when(d), nth, remind_text(&d.remind), if d.pinned { "置顶".into() } else { String::new() }];
     if d.kind != days::Kind::Document {
         bits.push(d.note.as_deref().map(|n| format!("备注：{}", clip(n, 200))).unwrap_or_default());
     }
@@ -2325,14 +2308,6 @@ fn lists_view(conn: &Connection, a: &Args, readable: &[&Made]) -> Result<(Found,
     }
 }
 
-fn progress_status(s: Mark) -> &'static str {
-    match s {
-        Mark::Done => "已完成",
-        Mark::Doing => "进行中",
-        _ => "未开始",
-    }
-}
-
 fn plesson_title(l: &progress::Lesson) -> String {
     format!("{}{}", l.code.as_deref().map(|c| format!("{c} ")).unwrap_or_default(), l.title)
 }
@@ -2384,10 +2359,10 @@ fn progress_view(conn: &Connection, a: &Args, readable: &[&Made], today: &str) -
                     let done = l.finished_month.as_deref().filter(|_| l.status == Mark::Done).map(|mo| format!("（{mo}）")).unwrap_or_default();
                     let note = l.note.as_deref().map(|n| format!(" · 备注：{}", clip(n, 80))).unwrap_or_default();
                     let kind = l.kind_id.and_then(|k| kind_names.get(&k)).map(|k| format!("（{k}）")).unwrap_or_default();
-                    Row { text: format!("- {}{kind}：{}{done}{note}", plesson_title(l), progress_status(l.status)), rec: Some(Rec { parent: Some(c.id), ..rec(&m.key, "progress_lesson", l.id, &plesson_title(l)) }) }
+                    Row { text: format!("- {}{kind}：{}{done}{note}", plesson_title(l), lesson_status(l.status)), rec: Some(Rec { parent: Some(c.id), ..rec(&m.key, "progress_lesson", l.id, &plesson_title(l)) }) }
                 })
                 .collect();
-            let head = vec![format!("{} · {}：完成 {} / {} {lw}，按顺序列出{}。", m.name, c.name, c.done, c.total, status.map(|s| format!("{}的", progress_status(s))).unwrap_or_default())];
+            let head = vec![format!("{} · {}：完成 {} / {} {lw}，按顺序列出{}。", m.name, c.name, c.done, c.total, status.map(|s| format!("{}的", lesson_status(s))).unwrap_or_default())];
             Ok((Found::new(format!("{} · {}（{} {lw}）", m.name, c.name, shown.len()), head).rows(rows), Some(m.key.clone())))
         }
     }
@@ -2653,7 +2628,7 @@ fn made_record(conn: &Connection, today: &str, r: &PageRef) -> Option<Result<(St
         let m = custom::get(conn, c.module_id)?;
         let ls = progress::lessons(conn, c.id)?;
         let lw = &m.lesson_word;
-        let list = ls.iter().map(|l| format!("{}（{}）", plesson_title(l), progress_status(l.status))).collect::<Vec<_>>().join("、");
+        let list = ls.iter().map(|l| format!("{}（{}）", plesson_title(l), lesson_status(l.status))).collect::<Vec<_>>().join("、");
         let mut lines = vec![format!("{}：{}", m.name, c.name), format!("进度：完成 {} / {} {lw}，{}", c.done, c.total, pace_words(&progress::pace(&ls, today), lw, "完成"))];
         lines.extend(progress::next(&ls).map(|l| format!("下一{lw}：{}", plesson_title(l))));
         lines.extend(c.note.as_ref().map(|n| format!("备注：{n}")));
@@ -2665,7 +2640,7 @@ fn made_record(conn: &Connection, today: &str, r: &PageRef) -> Option<Result<(St
         let c = progress::course(conn, l.course_id)?;
         let m = custom::get(conn, c.module_id)?;
         let title = plesson_title(&l);
-        let mut lines = vec![format!("{} · {}：{title}", m.name, c.name), format!("状态：{}", progress_status(l.status))];
+        let mut lines = vec![format!("{} · {}：{title}", m.name, c.name), format!("状态：{}", lesson_status(l.status))];
         lines.extend(l.finished_month.as_ref().filter(|_| l.status == Mark::Done).map(|mo| format!("完成时间：{mo}")));
         lines.extend(l.note.as_ref().map(|n| format!("备注：{n}")));
         Ok((title.clone(), lines.join("\n"), Rec { parent: Some(c.id), ..rec(&m.key, "progress_lesson", l.id, &title) }))
@@ -3347,7 +3322,7 @@ fn shown(access: &Access, key: &str) -> bool {
 /// Done tasks listed per month (more are only counted).
 const DONE_LINES: usize = 30;
 
-fn rows<T>(conn: &Connection, sql: &str, args: impl rusqlite::Params, f: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>) -> Result<Vec<T>, String> {
+pub(crate) fn rows<T>(conn: &Connection, sql: &str, args: impl rusqlite::Params, f: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>) -> Result<Vec<T>, String> {
     let mut st = conn.prepare(sql).map_err(common::err)?;
     let out = st.query_map(args, f).map_err(common::err)?.collect::<Result<_, _>>().map_err(common::err);
     out

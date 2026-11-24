@@ -91,21 +91,10 @@ fn fitted(src: &Path, ext: &str, tmp: &Path) -> Result<(PathBuf, String), String
     Err("这张图片缩小不到 1.5 MB 以内".into())
 }
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    for e in rd.filter_map(|e| e.ok()) {
-        match e.file_type() {
-            Ok(t) if t.is_dir() => walk(&e.path(), out),
-            Ok(t) if t.is_file() => out.push(e.path()),
-            _ => {}
-        }
-    }
-}
-
 /// A file under public/ with exactly these bytes, as its stored path ("public/…").
 fn same_file(folder: &Path, bytes: &[u8]) -> Option<String> {
     let mut files = vec![];
-    walk(&folder.join("public"), &mut files);
+    registry::walk(&folder.join("public"), &mut files);
     // one in the library first
     let lib = folder.join("public/assets");
     files.sort_by_key(|p| (!p.starts_with(&lib), p.clone()));

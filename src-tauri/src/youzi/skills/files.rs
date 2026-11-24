@@ -47,11 +47,6 @@ pub fn materials(sources: &[Source]) -> Vec<Material> {
     out
 }
 
-fn flat(s: &str, n: usize) -> String {
-    let f: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if f.chars().count() > n { format!("{}…", f.chars().take(n).collect::<String>()) } else { f }
-}
-
 /// One file's outline: 「第 3 段 · 第 2 页：开头的字…」 per segment (a long one shows its start and end);
 /// no brackets, which are for citing.
 pub(crate) fn outline(name: &str, segs: &[Segment], lines_max: usize) -> String {
@@ -59,7 +54,7 @@ pub(crate) fn outline(name: &str, segs: &[Segment], lines_max: usize) -> String 
     let start = |s: &Segment| {
         let c = s.content.trim_start();
         let body = if c.starts_with('#') { c.split_once('\n').map_or("", |x| x.1) } else { c };
-        flat(body, OUTLINE_START)
+        crate::youzi::data::clip(body, OUTLINE_START)
     };
     let line = |s: &Segment| {
         let (n, label) = (format!("第 {} 段", s.ordinal + 1), s.label());
@@ -293,7 +288,7 @@ pub(crate) fn find_view(what: &str, files: &[(&str, &[Segment])], args: &Value, 
         let at = lower.find(words[0].as_str()).map_or(0, |b| lower[..b].chars().count());
         let snippet: String = s.content.chars().skip(at.saturating_sub(150)).take(400).collect();
         let label = format!("{} · {}", files[i].0, s.label());
-        let body = format!("{label}（第 {} 段）：{}", s.ordinal + 1, flat(&snippet, 400));
+        let body = format!("{label}（第 {} 段）：{}", s.ordinal + 1, crate::youzi::data::clip(&snippet, 400));
         if used + est(&body) + 4 > budget {
             lines.push("……后面的放不下了，可以换更具体的字".into());
             break;

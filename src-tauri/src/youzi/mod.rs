@@ -3,7 +3,7 @@
 //! - Data: youzi.db (store.rs), never pomelo.db. Only Rust reads/writes it.
 //! - Models: local models via ~/Documents/LLM/scripts/llmctl.sh and config/models.json
 //!   (runtime.rs, catalog.rs): chat one at a time on 8080, the embedding (8081) and rerank (8082)
-//!   services Pomelo starts on demand and stops when idle; and three cloud services (cloud.rs,
+//!   services Pomelo starts on demand and stops when idle; and six cloud services (cloud.rs,
 //!   provider.rs). Pomelo never modifies the LLM folder.
 //! - Mode: `Real` only for the installed app on the real data dir (or POMELO_REAL_MODELS=1);
 //!   dev builds, tests and scratch data dirs are `Mock`: built-in catalog, simulated operations,

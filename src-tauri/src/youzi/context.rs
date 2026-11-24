@@ -211,11 +211,11 @@ impl Request {
     fn messages_from(&self, skip: usize) -> Vec<Msg> {
         self.messages_with(skip, &self.prompt)
     }
-    /// Leaving out the `skip` oldest history messages, with `last` as the question's text.
     /// Instructions, memories, then how to look things up: the system message.
     pub fn system_text(&self) -> String {
         [self.system.as_str(), self.memory.as_str(), self.data.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join("\n\n")
     }
+    /// Leaving out the `skip` oldest history messages, with `last` as the question's text.
     pub fn messages_with(&self, skip: usize, last: &str) -> Vec<Msg> {
         let mut out = vec![];
         let system = self.system_text();

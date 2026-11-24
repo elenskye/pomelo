@@ -7,15 +7,13 @@
 //!   done without one), 备注 (5000). New ones go last; both lists are dragged into order.
 //! - Pace and 下一节 as 随意画画 (drawing::pace_of): finished in the last 6 months → months left.
 
-use super::common::{self, err, some, Status};
+use super::common::{self, err, NOW, some, Status};
 use super::custom::{self, Template};
 use super::{drawing, kinds};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 // ---------- courses ----------
 

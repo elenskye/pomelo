@@ -19,7 +19,7 @@
 //! (2 spaces per level), bare URLs.
 
 use super::attachments::{self, AttachmentRecord, FileInfo, Owner};
-use super::common::{self, err};
+use super::common::{self, err, NOW};
 use super::tags;
 use crate::AppState;
 use rusqlite::types::Value;
@@ -33,7 +33,6 @@ pub const LABEL: &str = "念念不忘";
 pub const MAX_CHARS: usize = 50_000;
 pub const MAX_REFS: usize = 50;
 const EXCERPT_CHARS: usize = 60;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 fn gone() -> String {
     "找不到这条笔记，可能已经被删除了".into()
@@ -184,21 +183,6 @@ pub(crate) fn check_stamp(s: &str) -> Result<(), String> {
     } else {
         Err(format!("时间格式不对：{s}"))
     }
-}
-
-/// Now, nudged by 1 ms until no note has it (created_at is unique).
-fn fresh_stamp(conn: &Connection) -> Result<String, String> {
-    let mut s: String = conn.query_row(&format!("SELECT {NOW}"), [], |r| r.get(0)).map_err(err)?;
-    for _ in 0..10_000 {
-        let taken: bool = conn.query_row("SELECT EXISTS (SELECT 1 FROM notes WHERE created_at = ?1)", [&s], |r| r.get(0)).map_err(err)?;
-        if !taken {
-            return Ok(s);
-        }
-        s = conn
-            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, '+0.001 seconds')", [&s], |r| r.get(0))
-            .map_err(err)?;
-    }
-    Err("时间冲突，请稍后再试".into())
 }
 
 // ---------- notes ----------
@@ -431,7 +415,7 @@ pub fn create(conn: &Connection, p: NotePatch) -> Result<Note, String> {
     let content = clean_content(p.content.as_deref().unwrap_or(""))?;
     let refs = clean_refs(conn, None, &p.refs.unwrap_or_default())?;
     let files = attachments::clean_ids(conn, &p.attachments.unwrap_or_default())?;
-    let stamp = fresh_stamp(conn)?;
+    let stamp = common::free_stamp(conn, "notes", None)?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
         "INSERT INTO notes (content, pinned, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
@@ -501,10 +485,6 @@ pub fn delete_tag(conn: &Connection, tag: &str, notes: bool) -> Result<(usize, u
     tags::delete(conn, &NoteItems, tag, notes)
 }
 
-pub fn parent_of(tag: &str) -> Option<&str> {
-    tags::parent_of(tag)
-}
-
 /// Drag in the tag list (tags.rs `place`). Returns the notes rewritten by the move.
 pub fn place_tag(conn: &Connection, tag: &str, parent: Option<&str>, order: &[String]) -> Result<usize, String> {
     tags::place(conn, &NoteItems, tag, parent, order)
@@ -520,7 +500,6 @@ pub use super::tags::{TagCount, TagPatch, TagRecord};
 pub fn set_tag(conn: &Connection, tag: &str, p: TagPatch) -> Result<(), String> {
     tags::set(conn, &TABLES, tag, p)
 }
-
 
 // ---------- overview (left column: counts, heatmap, tag tree) ----------
 
@@ -645,7 +624,7 @@ pub fn replace_all(conn: &Connection, rec: &NotesRecord) -> Result<usize, String
         let content = clean_content(&n.content)?;
         let stamp = match &n.created_at {
             Some(s) => s.clone(),
-            None => fresh_stamp(conn)?,
+            None => common::free_stamp(conn, "notes", None)?,
         };
         conn.execute(
             "INSERT INTO notes (content, pinned, created_at, updated_at) VALUES (?1, ?2, ?3, coalesce(?4, ?3))",
@@ -728,12 +707,7 @@ pub fn note_delete(state: State<AppState>, id: i64) -> Result<(), String> {
 }
 #[tauri::command]
 pub fn notes_tag_set(state: State<AppState>, tag: String, patch: TagPatch) -> Result<(), String> {
-    let label = match (patch.pinned, &patch.icon) {
-        (Some(true), _) => "置顶标签",
-        (Some(false), _) => "取消置顶标签",
-        _ => "标签图标",
-    };
-    state.with_undo(label, |c| set_tag(c, &tag, patch))
+    state.with_undo(patch.label(), |c| set_tag(c, &tag, patch))
 }
 #[tauri::command]
 pub fn notes_tag_rename(state: State<AppState>, from: String, to: String) -> Result<usize, String> {
@@ -741,7 +715,7 @@ pub fn notes_tag_rename(state: State<AppState>, from: String, to: String) -> Res
 }
 #[tauri::command]
 pub fn notes_tag_place(state: State<AppState>, tag: String, parent: Option<String>, order: Vec<String>) -> Result<usize, String> {
-    let moved = parent_of(tag.trim().trim_start_matches('#')) != parent.as_deref().map(|p| p.trim().trim_start_matches('#')).filter(|p| !p.is_empty());
+    let moved = tags::parent_of(tag.trim().trim_start_matches('#')) != parent.as_deref().map(|p| p.trim().trim_start_matches('#')).filter(|p| !p.is_empty());
     state.with_undo(if moved { "移动标签" } else { "标签排序" }, |c| place_tag(c, &tag, parent.as_deref(), &order))
 }
 #[tauri::command]

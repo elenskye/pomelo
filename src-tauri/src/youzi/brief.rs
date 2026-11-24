@@ -25,7 +25,7 @@ use super::data::{self, Part};
 use super::provider::{self, Event, Msg, Options};
 use super::store::{pref_get, pref_set, NOW};
 use super::{schedule, Youzi};
-use crate::modules::common::err;
+use crate::modules::common::{err, weekday, WEEKDAYS};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -176,8 +176,6 @@ fn save_failed(conn: &Connection, day: &str, error: &str) -> Result<(), String> 
     conn.execute(&format!("UPDATE briefs SET state = 'failed', error = ?2, updated_at = {NOW} WHERE day = ?1"), params![day, error]).map(|_| ()).map_err(err)
 }
 
-const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
-
 /// The prompt 定时 shows and the user may rewrite (preference `brief.prompt`, None = this). Its last
 /// rule gives the mood line; without one the face goes by the hour.
 pub const DEFAULT_PROMPT: &str = "你是柚子，用户自己的生活记录 App「柚儿园」里的助手，在帮用户写今天的简报。
@@ -208,7 +206,7 @@ pub fn set_prompt(conn: &Connection, prompt: Option<&str>) -> Result<(), String>
 
 /// The request: the prompt (and the user's instructions, for the tone), then the day and what was read.
 pub fn prompt(written: &str, parts: &[Part], today: &str, instructions: &str) -> Vec<Msg> {
-    let wd = WEEKDAYS[(crate::modules::common::weekday(today) as usize).clamp(1, 7) - 1];
+    let wd = WEEKDAYS[(weekday(today) as usize).clamp(1, 7) - 1];
     let tone = if instructions.trim().is_empty() { String::new() } else { format!("\n- 用户的指令只管语气：{}", instructions.trim()) };
     let system = format!("{MARK}{}{tone}", written.trim());
     let read: Vec<String> = parts.iter().map(|p| format!("【{}】\n{}", p.title, p.text)).collect();

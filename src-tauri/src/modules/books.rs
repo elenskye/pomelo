@@ -1,5 +1,5 @@
 //! 摸鱼读读 (books). Core fns take `&Connection` (unit-testable); `#[tauri::command]`
-//! wrappers at the bottom are the application-service API used by UI (and later AI tools).
+//! wrappers at the bottom are the application-service API used by UI.
 //! films.rs mirrors this file (author→director); keep them in step. 类型 = kinds.rs (module "books").
 
 use super::common::{self, err, some, Status};

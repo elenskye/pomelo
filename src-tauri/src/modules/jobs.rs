@@ -14,7 +14,7 @@
 //!   any step checked. Applications per day (last 30) and per week (last 12, Monday first).
 //! 渠道 = kinds.rs module "job_channel".
 
-use super::common::{self, err, gone, some, str_enum};
+use super::common::{self, err, gone, NOW, some, str_enum};
 use super::{kinds, todo::{self, today}};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -26,7 +26,6 @@ pub const KEY: &str = "jobs";
 pub const LABEL: &str = "投石问路";
 pub const CHANNELS: &str = "job_channel";
 pub const FOLLOW_UP_DAYS: i64 = 14;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 str_enum!(Stage, default = Wish, {
     Wish => "wish",

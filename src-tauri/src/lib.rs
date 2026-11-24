@@ -1,5 +1,5 @@
 //! Pomelo OS backend. The only place that touches SQLite.
-//! Tauri commands here are the application-service layer shared by UI (and later AI tools).
+//! Tauri commands here are the application-service layer the UI calls.
 //! Commands return `Result<T, String>`; error strings are user-facing Chinese.
 
 mod autostart;

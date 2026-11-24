@@ -16,7 +16,7 @@
 //!   deleting a work leaves them there.
 
 pub use super::doc::Prints;
-use super::doc::{fingerprint, read_md as read_doc, Doc};
+use super::doc::{self, fingerprint, read_md as read_doc, strings, text, Doc};
 use super::yaml::{self, Y};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -81,14 +81,6 @@ pub fn public_file(folder: &Path, stored: &str) -> Option<PathBuf> {
         return None;
     }
     Some(folder.join("public").join(rel))
-}
-
-fn text(front: &Y, key: &str) -> String {
-    front.get(key).and_then(Y::text).unwrap_or_default()
-}
-
-fn strings(front: &Y, key: &str) -> Vec<String> {
-    front.get(key).map(|v| v.seq().iter().filter_map(Y::text).collect()).unwrap_or_default()
 }
 
 // ---------- the list ----------
@@ -271,20 +263,6 @@ fn check_prints(folder: &Path, slug: &str, prints: &Prints) -> Result<(), String
     Ok(())
 }
 
-fn set_text(front: &mut Y, key: &str, v: &str) {
-    if v.is_empty() {
-        front.remove(key);
-    } else {
-        front.set(key, Y::Str(v.to_string()), after(key));
-    }
-}
-
-/// The schema keys after `key` (a new key goes before the first of them present).
-fn after(key: &str) -> &'static [&'static str] {
-    let i = ORDER.iter().position(|k| *k == key).map_or(ORDER.len(), |i| i + 1);
-    &ORDER[i..]
-}
-
 /// A library image that exists.
 pub fn check_image(folder: &Path, stored: &str, what: &str) -> Result<(), String> {
     if !stored.starts_with("public/assets/images/") {
@@ -304,18 +282,18 @@ pub fn title_of(folder: &Path, slug: &str) -> Option<String> {
 /// The fields and body a version's file would have.
 fn render(old: Option<&Doc>, lang: &str, w: &Work, v: &Version) -> (Y, String) {
     let mut front = old.map(|d| d.front.clone()).unwrap_or(Y::Map(vec![]));
-    front.set("title", Y::Str(v.title.trim().to_string()), after("title"));
-    front.set("language", Y::Str(lang.into()), after("language"));
-    front.set("category", Y::Str(w.category.clone()), after("category"));
-    front.set("topics", Y::Seq(w.topics.iter().map(|t| Y::Str(t.clone())).collect()), after("topics"));
-    set_text(&mut front, "month", &w.month);
-    set_text(&mut front, "summary", v.summary.trim_end());
+    front.set("title", Y::Str(v.title.trim().to_string()), doc::after(&ORDER, "title"));
+    front.set("language", Y::Str(lang.into()), doc::after(&ORDER, "language"));
+    front.set("category", Y::Str(w.category.clone()), doc::after(&ORDER, "category"));
+    front.set("topics", Y::Seq(w.topics.iter().map(|t| Y::Str(t.clone())).collect()), doc::after(&ORDER, "topics"));
+    doc::set_text(&mut front, &ORDER, "month", &w.month);
+    doc::set_text(&mut front, &ORDER, "summary", v.summary.trim_end());
     if lang == "zh" {
-        set_text(&mut front, "englishTitle", v.english_title.trim());
-        set_text(&mut front, "englishSummary", v.english_summary.trim_end());
+        doc::set_text(&mut front, &ORDER, "englishTitle", v.english_title.trim());
+        doc::set_text(&mut front, &ORDER, "englishSummary", v.english_summary.trim_end());
     }
     match &w.cover {
-        Some(c) => front.set("thumbnailRef", Y::Str(c.clone()), after("thumbnailRef")),
+        Some(c) => front.set("thumbnailRef", Y::Str(c.clone()), doc::after(&ORDER, "thumbnailRef")),
         None => front.remove("thumbnailRef"),
     }
     let items: Vec<Y> = w
@@ -333,16 +311,9 @@ fn render(old: Option<&Doc>, lang: &str, w: &Work, v: &Version) -> (Y, String) {
         })
         .collect();
     if !items.is_empty() || front.get("gallery").is_some() {
-        front.set("gallery", Y::Seq(items), after("gallery"));
+        front.set("gallery", Y::Seq(items), doc::after(&ORDER, "gallery"));
     }
-    let mut body = v.body.clone();
-    if !body.trim().is_empty() && !body.ends_with('\n') {
-        body.push('\n');
-    }
-    if body.trim().is_empty() {
-        body.clear();
-    }
-    (front, body)
+    (front, doc::body(&v.body))
 }
 
 fn render_text(old: Option<&Doc>, lang: &str, w: &Work, v: &Version) -> String {

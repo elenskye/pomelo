@@ -102,11 +102,6 @@ pub fn fit<T>(items: Vec<T>, name: impl Fn(&T) -> String, query: &str) -> Vec<T>
     scored.into_iter().map(|(_, _, t)| t).collect()
 }
 
-fn names_of(list: impl IntoIterator<Item = String>) -> String {
-    let v: Vec<String> = list.into_iter().collect();
-    if v.is_empty() { "（没有）".into() } else { v.join("、") }
-}
-
 pub fn plan(c: &Connection, tool: &str, a: &Value, question: &str, today: &str) -> Result<Plan, String> {
     match tool {
         ADD_ENTRY => add_entry(c, a, question, today),
@@ -217,7 +212,7 @@ fn set_balance(c: &Connection, a: &Value, question: &str, today: &str) -> Result
     let amount = cents(a, "amount").ok_or("没说余额是多少")?;
     let day = dates(a, &["day"], question, today).remove(0).unwrap_or_else(|| today.to_string());
     let open: Vec<finance::Account> = finance::accounts(c)?.into_iter().filter(|x| !x.closed).collect();
-    let all = names_of(open.iter().map(|x| x.name.clone()));
+    let all = joined(open.iter().map(|x| x.name.clone()).collect());
     let found = fit(open, |x| x.name.clone(), &name);
     if found.is_empty() {
         return Err(format!("没有叫「{name}」的账户（有：{all}）：请问用户是哪个"));
@@ -298,7 +293,7 @@ fn edit_task(c: &Connection, a: &Value, question: &str, today: &str) -> Result<P
         patch["goalId"] = json!(id);
     } else if let Some(g) = text(a, "group", 60) {
         let groups: Vec<(i64, String)> = todo::groups(c)?.into_iter().map(|x| (x.id, x.name)).collect();
-        let id = assist::pick(Some(g.clone()), &groups).ok_or(format!("没有叫「{g}」的分组（有：{}）", names_of(groups.iter().map(|x| x.1.clone()))))?;
+        let id = assist::pick(Some(g.clone()), &groups).ok_or(format!("没有叫「{g}」的分组（有：{}）", joined(groups.iter().map(|x| x.1.clone()).collect())))?;
         patch["groupId"] = json!(id);
         patch["goalId"] = Value::Null;
     }
@@ -324,7 +319,7 @@ fn add_job(c: &Connection, a: &Value, question: &str, today: &str) -> Result<Pla
         let sts: Vec<jobs::Status> = jobs::statuses(c)?.into_iter().filter(|x| x.stage != jobs::Stage::Wish).collect();
         f.status_id = Some(match sts.iter().find(|x| s.contains('投') && x.stage == jobs::Stage::Applied) {
             Some(x) => x.id,
-            None => return Err(format!("没有「{s}」这个状态（有：{}）", names_of(sts.iter().map(|x| x.name.clone())))),
+            None => return Err(format!("没有「{s}」这个状态（有：{}）", joined(sts.iter().map(|x| x.name.clone()).collect()))),
         });
     }
     let mut patch = json!({ "company": f.company.clone().unwrap_or_default() });
@@ -363,7 +358,7 @@ fn edit_job(c: &Connection, a: &Value, question: &str, today: &str) -> Result<Pl
     }
     let sts: Vec<(i64, String)> = jobs::statuses(c)?.into_iter().filter(|x| x.stage != jobs::Stage::Wish).map(|x| (x.id, x.name)).collect();
     let step = match &status {
-        Some(s) => Some(assist::pick(Some(s.clone()), &sts).ok_or(format!("没有「{s}」这个状态（有：{}）", names_of(sts.iter().map(|x| x.1.clone()))))?),
+        Some(s) => Some(assist::pick(Some(s.clone()), &sts).ok_or(format!("没有「{s}」这个状态（有：{}）", joined(sts.iter().map(|x| x.1.clone()).collect())))?),
         None => None,
     };
     let day = dates(a, &["day"], question, today).remove(0).unwrap_or_else(|| today.to_string());
@@ -476,7 +471,7 @@ fn finish_lesson(c: &Connection, a: &Value) -> Result<Plan, String> {
         return Err("没说是哪门课、哪一节".into());
     }
     let all = drawing::courses(c)?;
-    let names = names_of(all.iter().map(|x| x.name.clone()));
+    let names = joined(all.iter().map(|x| x.name.clone()).collect());
     let courses = match &course {
         Some(q) => fit(all, |x| x.name.clone(), q),
         None => all,

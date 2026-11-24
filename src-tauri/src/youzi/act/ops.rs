@@ -530,11 +530,7 @@ pub fn name_of(kind: &str, lines: &[Line]) -> String {
         "lesson" => [v("课程"), v("课节")].into_iter().flatten().collect::<Vec<_>>().join(" · "),
         "trip" => v("出行").unwrap_or_default().to_string(),
         "article" => format!("《{}》", v("标题").unwrap_or_default()),
-        "note" => {
-            let t = v("内容").unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ");
-            let short: String = t.chars().take(30).collect();
-            if short.chars().count() < t.chars().count() { format!("{short}…") } else { short }
-        }
+        "note" => crate::youzi::data::clip(v("内容").unwrap_or_default(), 30),
         _ => v("名称").map(|n| if kind == "book" { format!("《{n}》") } else { n.to_string() }).unwrap_or_default(),
     };
     s.replace('\n', " ")

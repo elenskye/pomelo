@@ -26,7 +26,7 @@ pub mod export;
 pub mod import;
 
 use super::attachments::{self, AttachmentRecord, FileInfo, Owner};
-use super::common::{self, err};
+use super::common::{self, err, NOW};
 use super::tags::{self, TagCount, TagPatch, TagRecord};
 use super::vault::{self, Key};
 use crate::AppState;
@@ -41,7 +41,6 @@ pub const LABEL: &str = "见字如面";
 pub const MAX_CHARS: usize = 500_000;
 pub const TITLE_MAX: usize = 200;
 const PREVIEW_CHARS: usize = 140;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 pub const LOCKED: &str = "这篇加密了：先用 Touch ID 打开芝麻开门";
 
 pub static TABLES: tags::Tables = tags::Tables {
@@ -539,7 +538,6 @@ pub fn readable(conn: &Connection) -> Result<Vec<(i64, String, String)>, String>
     Ok(rows)
 }
 
-
 fn assemble(conn: &Connection, r: Row, content: Option<String>) -> Result<Article, String> {
     let stored = tags_of(conn)?.remove(&r.id).unwrap_or_default();
     let tags = match &content {
@@ -584,27 +582,9 @@ pub fn titles(conn: &Connection) -> Result<Vec<Link>, String> {
 
 // ---------- writing ----------
 
-/// Now, nudged by 1 ms until no article has it (created_at is unique).
-fn fresh_stamp(conn: &Connection) -> Result<String, String> {
-    let s: String = conn.query_row(&format!("SELECT {NOW}"), [], |r| r.get(0)).map_err(err)?;
-    free_stamp(conn, s)
-}
-
 /// A time as articles keep it (UTC, ms: 2026-11-13T06:41:08.000Z) from a form SQLite reads (`…Z`, `…+08:00`).
 pub(crate) fn stamp_of(conn: &Connection, s: &str) -> Option<String> {
     conn.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1)", [s], |r| r.get::<_, Option<String>>(0)).ok().flatten()
-}
-
-/// `s`, nudged by 1 ms until no article has it.
-fn free_stamp(conn: &Connection, mut s: String) -> Result<String, String> {
-    for _ in 0..10_000 {
-        let taken: bool = conn.query_row("SELECT EXISTS (SELECT 1 FROM articles WHERE created_at = ?1)", [&s], |r| r.get(0)).map_err(err)?;
-        if !taken {
-            return Ok(s);
-        }
-        s = conn.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, '+0.001 seconds')", [&s], |r| r.get(0)).map_err(err)?;
-    }
-    Err("时间冲突，请稍后再试".into())
 }
 
 /// A new text for a readable article (links.rs follows a renamed work).
@@ -675,7 +655,7 @@ pub struct Patch {
 pub fn create(conn: &Connection, p: Patch) -> Result<Article, String> {
     let content = clean_content(p.content.as_deref().unwrap_or(""))?;
     let files = attachments::clean_ids(conn, &p.attachments.unwrap_or_default())?;
-    let stamp = fresh_stamp(conn)?;
+    let stamp = common::free_stamp(conn, "articles", None)?;
     let tx = common::Tx::begin(conn)?;
     tx.execute(
         "INSERT INTO articles (title, content, pinned, archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
@@ -694,10 +674,7 @@ pub fn create(conn: &Connection, p: Patch) -> Result<Article, String> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert(conn: &Connection, content: &str, created: Option<&str>, updated: Option<&str>, pinned: bool, archived: bool, trashed_at: Option<&str>, files: &[i64]) -> Result<i64, String> {
     let content = clean_content(content)?;
-    let stamp = match created.and_then(|s| stamp_of(conn, s)) {
-        Some(s) => free_stamp(conn, s)?,
-        None => fresh_stamp(conn)?,
-    };
+    let stamp = common::free_stamp(conn, "articles", created.and_then(|s| stamp_of(conn, s)))?;
     let updated = updated.and_then(|s| stamp_of(conn, s)).filter(|u| *u >= stamp).unwrap_or_else(|| stamp.clone());
     let trashed = trashed_at.and_then(|s| stamp_of(conn, s));
     conn.execute(
@@ -927,7 +904,7 @@ pub fn replace_all(conn: &Connection, rec: &ArticlesRecord) -> Result<usize, Str
     for a in &rec.articles {
         let stamp = match &a.created_at {
             Some(s) => s.clone(),
-            None => fresh_stamp(conn)?,
+            None => common::free_stamp(conn, "articles", None)?,
         };
         let files = attachments::import_records(conn, &a.attachments)?;
         let mut content = a.content.clone();
@@ -1052,12 +1029,7 @@ pub fn article_lock(state: State<AppState>, id: i64, lock: bool) -> Result<Artic
 }
 #[tauri::command]
 pub fn articles_tag_set(state: State<AppState>, tag: String, patch: TagPatch) -> Result<(), String> {
-    let label = match (patch.pinned, &patch.icon) {
-        (Some(true), _) => "置顶标签",
-        (Some(false), _) => "取消置顶标签",
-        _ => "标签图标",
-    };
-    state.with_undo(label, |c| tags::set(c, &TABLES, &tag, patch))
+    state.with_undo(patch.label(), |c| tags::set(c, &TABLES, &tag, patch))
 }
 #[tauri::command]
 pub fn articles_tag_rename(state: State<AppState>, from: String, to: String) -> Result<usize, String> {

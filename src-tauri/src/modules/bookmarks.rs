@@ -321,13 +321,9 @@ pub struct BookmarkRecord {
     pub updated_at: Option<String>,
 }
 
-fn record_count(records: &[BookmarkRecord]) -> usize {
-    records.iter().map(|r| 1 + record_count(&r.children)).sum()
-}
-
 /// Folders and links in the file.
 pub fn records_len(records: &[BookmarkRecord]) -> usize {
-    record_count(records)
+    records.iter().map(|r| 1 + records_len(&r.children)).sum()
 }
 
 fn check_record(r: &BookmarkRecord) -> Result<(String, String), String> {
@@ -403,7 +399,7 @@ pub fn replace_all(conn: &Connection, records: &[BookmarkRecord]) -> Result<usiz
         Ok(())
     }
     put(conn, None, records)?;
-    Ok(record_count(records))
+    Ok(records_len(records))
 }
 
 // ---------- commands ----------

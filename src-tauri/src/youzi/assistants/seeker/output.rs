@@ -71,7 +71,7 @@ pub struct Export {
     pub id: String,
     pub label: String,
     pub path: String,
-    #[serde(default = "cn")]
+    #[serde(default = "super::cn")]
     pub lang: String,
     /// The materials it was made from (their ids): an interview on it reads their 简历题 and 档案.
     #[serde(default)]
@@ -80,10 +80,6 @@ pub struct Export {
     /// Data files before format 27 carried the draft: read for its language and materials, never kept.
     #[serde(default, skip_serializing)]
     pub draft: Option<Draft>,
-}
-
-fn cn() -> String {
-    "cn".into()
 }
 
 /// The materials a draft was made from (their ids, in order, once each).

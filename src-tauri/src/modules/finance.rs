@@ -13,7 +13,7 @@
 //! - Budgets: monthly amount per 支出分类 + currency.
 //! 分类 = kinds.rs modules "fin_out" (支出) / "fin_in" (收入).
 
-use super::common::{self, err, gone, is_false, some, str_enum};
+use super::common::{self, err, gone, is_false, NOW, some, str_enum};
 use super::kinds;
 use super::todo::today;
 use crate::AppState;
@@ -28,7 +28,6 @@ pub const KEY: &str = "finance";
 pub const LABEL: &str = "钱来钱往";
 pub const OUT_KINDS: &str = "fin_out";
 pub const IN_KINDS: &str = "fin_in";
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 const MAX_CENTS: i64 = 1_000_000_000_000; // 100 亿
 
 str_enum!(Currency, default = Cny, {
@@ -627,7 +626,6 @@ pub fn create_entry(conn: &Connection, p: EntryPatch) -> Result<Entry, String> {
     let id = insert_entry(conn, &f, None)?;
     entry(conn, id)
 }
-
 
 pub fn update_entry(conn: &Connection, id: i64, p: EntryPatch) -> Result<Entry, String> {
     let old = entry(conn, id)?;

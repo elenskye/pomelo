@@ -12,7 +12,7 @@
 //! - 类型: 漫画 / 非虚构 / 虚构 for books, 动漫 / 剧集 / 电影 for films, matched to the user's 类型 by
 //!   name (`kind_id`); a name the user doesn't have stays unmatched.
 //! - Requests to Wikidata are paced (it throttles bursts; a 429 waits and tries once more) and
-//!   answers cached for the session. Jikan is given little time (it was often unreachable).
+//!   answers cached for 6 hours (`CACHE_FOR`). Jikan is given little time (it was often unreachable).
 //! - Mock (dev / tests): a few made-up entries; 「检索失败测试」 fails like the services being down.
 
 use crate::modules::common::{err, norm};

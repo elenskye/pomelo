@@ -44,12 +44,17 @@ pub struct Config {
 
 impl Config {
     pub fn real_of(&self, virt: &str) -> PathBuf {
-        let rel = virt.trim_start_matches('/');
-        if rel.is_empty() {
-            self.root.clone()
-        } else {
-            self.root.join(rel)
-        }
+        real_of(&self.root, virt)
+    }
+}
+
+/// The real path of a virtual one under `root` (the real disk's `/` or the fake Mac's folder).
+pub(super) fn real_of(root: &Path, virt: &str) -> PathBuf {
+    let rel = virt.trim_start_matches('/');
+    if rel.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel)
     }
 }
 
@@ -182,7 +187,7 @@ struct Walk<'a> {
     app_dirs: Vec<String>,
 }
 
-fn join(virt: &str, name: &str) -> String {
+pub(super) fn join(virt: &str, name: &str) -> String {
     if virt == "/" {
         format!("/{name}")
     } else {

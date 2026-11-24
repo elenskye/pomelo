@@ -1,5 +1,5 @@
 //! Pomelo data file (export + import), one JSON for all modules:
-//! `{"format":"pomelo-export","formatVersion":13,"exportedAt":..,"appVersion":..,
+//! `{"format":"pomelo-export","formatVersion":FORMAT_VERSION,"exportedAt":..,"appVersion":..,
 //!   "kinds":{"books":["虚构",..],..},"modules":{"books":[BookRecord..],..}}`
 //! v1 = no `kinds` and no packing timestamps (xlsx converter still writes v1); v2 = no todo task
 //! types / logs; v3 = repeat occurrence in planDate, no doneBefore; v4 = check-in start / end in

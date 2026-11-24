@@ -83,13 +83,7 @@ const CHECKPOINT: Duration = Duration::from_millis(750);
 
 pub fn auto_title(prompt: &str) -> String {
     let line = prompt.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).find(|l| !l.is_empty()).unwrap_or_default();
-    if line.is_empty() {
-        NEW_TITLE.into()
-    } else if line.chars().count() > 40 {
-        format!("{}…", line.chars().take(40).collect::<String>())
-    } else {
-        line
-    }
+    if line.is_empty() { NEW_TITLE.into() } else { data::clip(&line, 40) }
 }
 
 // ---------- reads ----------
@@ -1149,9 +1143,7 @@ trait Host {
     /// A round that asked for lookups: its usage joins the total.
     fn fold_usage(&self);
     /// Images a lookup looked at (查知识库's look), sent after the round's results.
-    fn take_images(&mut self) -> Vec<Image> {
-        vec![]
-    }
+    fn take_images(&mut self) -> Vec<Image>;
 }
 
 struct AppHost<'a> {
@@ -1196,9 +1188,6 @@ impl AppHost<'_> {
         }
     }
 
-    /// A write tool: checked, then into the reply's card (sent to the page), or with `replace` in a
-    /// pending item's place (this reply's card or an earlier one's). A 新书影 gets its creator /
-    /// country / 类型 from 书单 / 影单检索 first (when on).
     /// ASK: the card goes to the page and this reply stops here until I answer (or 停止 ends its task).
     async fn ask_me(&self, call: &ToolCall) -> data::Answer {
         let not_asked = |text: String| data::Answer { module: None, label: "没问成".into(), state: "failed", text, records: vec![] };
@@ -1283,6 +1272,9 @@ impl AppHost<'_> {
         }
     }
 
+    /// A write tool: checked, then into the reply's card (sent to the page), or with `replace` in a
+    /// pending item's place (this reply's card or an earlier one's). A 新书影 gets its creator /
+    /// country / 类型 from 书单 / 影单检索 first (when on).
     async fn propose(&self, call: &ToolCall) -> data::Answer {
         if let Some(refusal) = act::refused(&self.access, &call.name, &call.arguments) {
             return refusal;

@@ -78,7 +78,7 @@ pub async fn ready_local(p: &Youzi, want: Option<&str>) -> Result<Option<String>
 
 /// A module's data may go to this model (a cloud model only gets the allowed ones).
 pub(crate) fn check(p: &Youzi, route: &Route, module: &str) -> Result<(), String> {
-    let m = data::module_info(module).ok_or_else(|| format!("没有这个模块：{module}"))?;
+    let m = data::module(module).ok_or_else(|| format!("没有这个模块：{module}"))?;
     if !route.model.starts_with("cloud:") {
         return Ok(());
     }
@@ -160,7 +160,9 @@ pub fn clean_text(reply: &str) -> String {
 
 pub const POLISH: &str = "你是文字润色助手。按用户这次的要求改写原文，保持原意和原来的语言，保留原文的换行和列表；只输出改好的全文，不要解释，不要加引号或标题。";
 
-async fn polish(app: &AppHandle, module: &str, text: &str, request: &str) -> Result<String, String> {
+#[tauri::command]
+pub async fn youzi_polish(app: AppHandle, module: String, text: String, request: String) -> Result<String, String> {
+    let (app, module, text, request) = (&app, module.as_str(), text.as_str(), request.as_str());
     if module == "notes" {
         return Err("念念不忘的笔记不润色".into());
     }
@@ -275,7 +277,10 @@ pub fn parse_site_english(reply: &str) -> Result<SiteEnglish, String> {
     Ok(out)
 }
 
-async fn site_english(app: &AppHandle, title: &str, summary: &str, body: &str) -> Result<SiteEnglish, String> {
+/// 呦呦漫游: the English stub's title and summary, drafted from the Chinese.
+#[tauri::command]
+pub async fn youzi_site_english(app: AppHandle, title: String, summary: String, body: String) -> Result<SiteEnglish, String> {
+    let (app, title, summary, body) = (&app, title.as_str(), summary.as_str(), body.as_str());
     if title.trim().is_empty() && body.trim().is_empty() {
         return Err("先写中文的标题或正文".into());
     }
@@ -330,7 +335,9 @@ pub fn parse_work(reply: &str, kinds: &[(i64, String)]) -> Result<WorkFill, Stri
 
 /// 补全: 书单 / 影单检索 first (v0.4 phase 6, when on); the model only fills what it didn't find
 /// (and is not even started when it found everything). 玩物有志 has no lookup: the model fills 国家 and 类型.
-async fn fill_work(app: &AppHandle, module: &str, title: &str) -> Result<WorkFill, String> {
+#[tauri::command]
+pub async fn youzi_fill_work(app: AppHandle, module: String, title: String) -> Result<WorkFill, String> {
+    let (app, module, title) = (&app, module.as_str(), title.as_str());
     if !matches!(module, "books" | "films" | "games") {
         return Err("只能补全书、影视和游戏".into());
     }
@@ -374,7 +381,9 @@ pub fn parse_job(reply: &str) -> Result<JobFill, String> {
     Ok(JobFill { company: field(&v, "company", 100), position: field(&v, "position", 100), location: field(&v, "location", 100) })
 }
 
-async fn fill_job(app: &AppHandle, jd: &str) -> Result<JobFill, String> {
+#[tauri::command]
+pub async fn youzi_fill_job(app: AppHandle, jd: String) -> Result<JobFill, String> {
+    let (app, jd) = (&app, jd.as_str());
     let jd = jd.trim();
     if jd.is_empty() {
         return Err("先贴进 JD".into());
@@ -422,7 +431,9 @@ pub fn parse_list(reply: &str, max: usize, have: &[String]) -> Result<Vec<String
     Ok(out)
 }
 
-async fn split_task(app: &AppHandle, task_id: i64) -> Result<Vec<String>, String> {
+#[tauri::command]
+pub async fn youzi_split_task(app: AppHandle, task_id: i64) -> Result<Vec<String>, String> {
+    let app = &app;
     let p = &app.state::<AppState>().youzi;
     let route = route(p).await?;
     check(p, &route, "todo")?;
@@ -479,7 +490,9 @@ pub fn parse_note_tasks(reply: &str, places: &TaskPlaces, note: &str, have: &[St
 
 /// 念念不忘 柚子转为待办: the model decides how many tasks a note holds and writes each card (内容, 类型, 规则,
 /// 时间, 位置…); those already made from it are left out. Nothing is added until the user picks.
-async fn note_tasks(app: &AppHandle, note_id: i64) -> Result<Vec<QuickFill>, String> {
+#[tauri::command]
+pub async fn youzi_note_tasks(app: AppHandle, note_id: i64) -> Result<Vec<QuickFill>, String> {
+    let app = &app;
     let p = &app.state::<AppState>().youzi;
     let route = route(p).await?;
     check(p, &route, "notes")?;
@@ -537,7 +550,9 @@ pub fn parse_items(reply: &str, kinds: &[(i64, String)], have: &[String]) -> Res
     Ok(out)
 }
 
-async fn trip_missing(app: &AppHandle, trip_id: i64) -> Result<Vec<ItemIdea>, String> {
+#[tauri::command]
+pub async fn youzi_trip_missing(app: AppHandle, trip_id: i64) -> Result<Vec<ItemIdea>, String> {
+    let app = &app;
     let p = &app.state::<AppState>().youzi;
     let route = route(p).await?;
     check(p, &route, "packing")?;
@@ -573,16 +588,14 @@ async fn trip_missing(app: &AppHandle, trip_id: i64) -> Result<Vec<ItemIdea>, St
 
 pub const QUICK: &str = "用户用一句话说要新建的一条记录，你把它拆成各个字段。只输出一个 JSON 对象，只写这句话里说到的、或能确定的字段，其他的不要写，不要编造。日期写成 YYYY-MM-DD，按下面的日历算。";
 
-const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
-
 /// Today and the weeks around it written as the words people use (这周五 / 下周五 / 上周三…), so a
 /// small model copies the date instead of counting.
 pub fn calendar(today: &str) -> String {
     let monday = crate::modules::jobs::week_start(today);
-    let week = |word: &str, start: &str| (0..7).map(|i| format!("{word}{} {}", WEEKDAYS[i as usize], common::add_days(start, i))).collect::<Vec<_>>().join("、");
+    let week = |word: &str, start: &str| (0..7).map(|i| format!("{word}{} {}", common::WEEKDAYS[i as usize], common::add_days(start, i))).collect::<Vec<_>>().join("、");
     format!(
         "今天是 {today}（周{}），昨天 {}，明天 {}，后天 {}。{}。{}。{}。",
-        WEEKDAYS[(common::weekday(today) as usize + 6) % 7],
+        common::WEEKDAYS[(common::weekday(today) as usize + 6) % 7],
         common::add_days(today, -1),
         common::add_days(today, 1),
         common::add_days(today, 2),
@@ -1027,7 +1040,9 @@ fn record_kind(module: &str) -> Option<&'static str> {
 pub const QUICK_EDIT: &str = "用户用一句话说要怎么改一条已有的记录（最后是它现在的样子），你写出要改的字段。只输出一个 JSON 对象，只写这句话要改的字段，没提到的不要写，不要编造；要清空的字段把字段名放进 \"clear\" 数组（比如 {\"clear\": [\"link\"]}）；改内容、备注这类长文字时写改好后的全文。日期写成 YYYY-MM-DD，按下面的日历算。";
 
 /// 一句话填好 (`record` None: a new one) or 改好 (the record the panel edits).
-async fn quick_fill(app: &AppHandle, module: &str, sentence: &str, record: Option<i64>) -> Result<QuickFill, String> {
+#[tauri::command]
+pub async fn youzi_quick_fill(app: AppHandle, module: String, sentence: String, record: Option<i64>) -> Result<QuickFill, String> {
+    let (app, module, sentence) = (&app, module.as_str(), sentence.as_str());
     let sentence = sentence.trim();
     if sentence.is_empty() {
         return Err("先写一句话".into());
@@ -1063,11 +1078,6 @@ async fn quick_fill(app: &AppHandle, module: &str, sentence: &str, record: Optio
         }
     }
     Ok(f)
-}
-
-#[tauri::command]
-pub async fn youzi_quick_fill(app: AppHandle, module: String, sentence: String, record: Option<i64>) -> Result<QuickFill, String> {
-    quick_fill(&app, &module, &sentence, record).await
 }
 
 // ---------- mock model (dev builds, tests; mockIpc.ts mirrors it) ----------
@@ -1253,47 +1263,11 @@ pub fn youzi_assist_level_set(state: tauri::State<AppState>, level: Level) -> Re
     })
 }
 
-#[tauri::command]
-pub async fn youzi_polish(app: AppHandle, module: String, text: String, request: String) -> Result<String, String> {
-    polish(&app, &module, &text, &request).await
-}
-
 /// 见字如面: `mode` polish (`text` the passage picked) | continue (`text` before the caret, `after` after it);
 /// `request` this time's ask (optional). Only the proposed text: the page confirms and writes it.
 #[tauri::command]
 pub async fn article_assist(app: AppHandle, id: i64, mode: String, text: String, after: Option<String>, request: Option<String>) -> Result<AssistOut, String> {
     article_assist_on(&app.state::<AppState>(), id, &mode, &text, after.as_deref(), request.as_deref()).await
-}
-
-/// 呦呦漫游: the English stub's title and summary, drafted from the Chinese.
-#[tauri::command]
-pub async fn youzi_site_english(app: AppHandle, title: String, summary: String, body: String) -> Result<SiteEnglish, String> {
-    site_english(&app, &title, &summary, &body).await
-}
-
-#[tauri::command]
-pub async fn youzi_fill_work(app: AppHandle, module: String, title: String) -> Result<WorkFill, String> {
-    fill_work(&app, &module, &title).await
-}
-
-#[tauri::command]
-pub async fn youzi_fill_job(app: AppHandle, jd: String) -> Result<JobFill, String> {
-    fill_job(&app, &jd).await
-}
-
-#[tauri::command]
-pub async fn youzi_split_task(app: AppHandle, task_id: i64) -> Result<Vec<String>, String> {
-    split_task(&app, task_id).await
-}
-
-#[tauri::command]
-pub async fn youzi_note_tasks(app: AppHandle, note_id: i64) -> Result<Vec<QuickFill>, String> {
-    note_tasks(&app, note_id).await
-}
-
-#[tauri::command]
-pub async fn youzi_trip_missing(app: AppHandle, trip_id: i64) -> Result<Vec<ItemIdea>, String> {
-    trip_missing(&app, trip_id).await
 }
 
 /// Remembers the local model picked (select() calls it), for starting it when a help needs one.

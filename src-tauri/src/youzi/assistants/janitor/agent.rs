@@ -22,7 +22,7 @@
 //! - 柚子 reads DevJanitor through `INFO` (read only), where it may (hidden, 发给云端).
 
 use super::rules::{self, Protected};
-use super::{store, Janitor, Mode};
+use super::{site_folder, store, Janitor, Mode};
 use crate::modules::common::{err, Tx};
 use crate::youzi::data::Answer;
 use crate::youzi::store::{pref_get, pref_set};
@@ -615,10 +615,6 @@ pub fn look_with(j: &Janitor, s: &super::Settings, rs: &[Rule], site: &str, args
         Ok((label, text)) => answer(label, true, fit(text, budget)),
         Err(e) => answer("DevJanitor · 没看成", false, format!("没看成：{e}")),
     }
-}
-
-fn site_folder(st: &AppState, j: &Janitor) -> String {
-    super::site_folder(st, j)
 }
 
 // ---- read-only commands ----

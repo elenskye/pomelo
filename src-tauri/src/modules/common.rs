@@ -93,6 +93,14 @@ pub fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// For `#[serde(default = "common::yes")]`.
+pub fn yes() -> bool {
+    true
+}
+
+/// SQLite's current UTC time as the rows' `created_at` / `updated_at` stamps.
+pub const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+
 /// Nestable transaction (a SAVEPOINT): module functions call each other (投石问路 → 一步一步) and
 /// run inside an import's transaction, where a plain BEGIN would fail. Rolls back unless committed.
 pub struct Tx<'c> {
@@ -190,7 +198,7 @@ pub fn check_month(m: &Option<String>) -> Result<(), String> {
     }
 }
 
-/// `YYYY-MM-DD`, a real calendar date, year 1900–2100.
+/// `YYYY`, year 1900–2100.
 pub fn check_year(y: &Option<String>) -> Result<(), String> {
     let Some(y) = y else { return Ok(()) };
     if y.len() == 4 && y.parse::<u32>().is_ok_and(|y| (1900..=2100).contains(&y)) {
@@ -256,6 +264,7 @@ pub fn year_of(y: Option<String>) -> Option<String> {
     clean(y).map(|y| if y.len() == 7 && y.as_bytes()[4] == b'-' { y[..4].to_string() } else { y })
 }
 
+/// `YYYY-MM-DD`, a real calendar date, year 1900–2100.
 pub fn check_date(d: &Option<String>, label: &str) -> Result<(), String> {
     let Some(d) = d else { return Ok(()) };
     let parts: Vec<u32> = d.split('-').filter_map(|p| p.parse().ok()).collect();
@@ -263,17 +272,7 @@ pub fn check_date(d: &Option<String>, label: &str) -> Result<(), String> {
         && parts.len() == 3
         && (1900..=2100).contains(&parts[0])
         && (1..=12).contains(&parts[1])
-        && {
-            let (y, m, day) = (parts[0], parts[1], parts[2]);
-            let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-            let max = match m {
-                2 if leap => 29,
-                2 => 28,
-                4 | 6 | 9 | 11 => 30,
-                _ => 31,
-            };
-            (1..=max).contains(&day)
-        };
+        && (1..=days_in_month(parts[0] as i64, parts[1])).contains(&parts[2]);
     if ok {
         Ok(())
     } else {
@@ -283,34 +282,46 @@ pub fn check_date(d: &Option<String>, label: &str) -> Result<(), String> {
 
 // ---------- civil dates ("YYYY-MM-DD", proleptic Gregorian; H. Hinnant's algorithms) ----------
 
+/// Days since 1970-01-01 of (year, month, day).
+pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = y - (m <= 2) as i64;
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (m as i64 + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// (year, month, day) of days since 1970-01-01.
+pub fn civil_from_days(n: i64) -> (i64, u32, u32) {
+    let z = n + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + (m <= 2) as i64, m, d)
+}
+
 /// Days since 1970-01-01. Input must already be a valid date (`check_date`).
 pub fn day_number(d: &str) -> i64 {
-    let (y, m, dd) = (d[..4].parse::<i64>().unwrap(), d[5..7].parse::<i64>().unwrap(), d[8..10].parse::<i64>().unwrap());
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + dd - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
+    days_from_civil(d[..4].parse().unwrap(), d[5..7].parse().unwrap(), d[8..10].parse().unwrap())
 }
 
 pub fn from_day_number(n: i64) -> String {
-    let z = n + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    let (y, m, d) = civil_from_days(n);
     format!("{y:04}-{m:02}-{d:02}")
 }
 
 pub fn add_days(d: &str, n: i64) -> String {
     from_day_number(day_number(d) + n)
 }
+
+/// 一 … 日: `WEEKDAYS[weekday(d) - 1]`.
+pub const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 
 /// Monday = 1 … Sunday = 7.
 pub fn weekday(d: &str) -> u32 {
@@ -358,6 +369,22 @@ pub fn reorder(conn: &Connection, table: &str, scope: &str, args: &[&dyn rusqlit
             .map_err(err)?;
     }
     tx.commit().map_err(err)
+}
+
+/// `s` (now when None), nudged by 1 ms until no row of `table` has it (its created_at is unique).
+pub fn free_stamp(conn: &Connection, table: &str, s: Option<String>) -> Result<String, String> {
+    let mut s = match s {
+        Some(s) => s,
+        None => conn.query_row(&format!("SELECT {NOW}"), [], |r| r.get(0)).map_err(err)?,
+    };
+    for _ in 0..10_000 {
+        let taken: bool = conn.query_row(&format!("SELECT EXISTS (SELECT 1 FROM {table} WHERE created_at = ?1)"), [&s], |r| r.get(0)).map_err(err)?;
+        if !taken {
+            return Ok(s);
+        }
+        s = conn.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, '+0.001 seconds')", [&s], |r| r.get(0)).map_err(err)?;
+    }
+    Err("时间冲突，请稍后再试".into())
 }
 
 /// Seconds since 1970-01-01 UTC.

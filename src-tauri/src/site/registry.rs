@@ -181,7 +181,7 @@ pub struct Citation {
     pub role: Option<String>,
 }
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(super) fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.filter_map(|e| e.ok()) {
         let p = e.path();

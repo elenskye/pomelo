@@ -37,7 +37,6 @@ use tauri::{AppHandle, Manager, State};
 
 const NAME_MAX: usize = 30;
 const PROMPT_MAX: usize = 2000;
-const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
 
 /// When a schedule runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +67,7 @@ impl Rule {
     /// 「每周一 09:00」
     pub fn text(&self) -> String {
         match (self.every.as_str(), self.day) {
-            ("week", Some(d)) => format!("每周{} {}", WEEKDAYS[(d.clamp(1, 7) - 1) as usize], self.at),
+            ("week", Some(d)) => format!("每周{} {}", common::WEEKDAYS[(d.clamp(1, 7) - 1) as usize], self.at),
             ("month", Some(d)) => format!("每月 {d} 号 {}", self.at),
             ("year", Some(d)) => format!("每年 {} 月 {d} 日 {}", self.month.unwrap_or(1), self.at),
             _ => format!("每天 {}", self.at),
@@ -147,17 +146,13 @@ pub struct ScheduleInput {
     pub at: String,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "common::yes")]
     pub thinking: bool,
     #[serde(default)]
     pub effort: Option<String>,
     /// 年度总结 only (the others write into their conversation, so it always stays).
     #[serde(default)]
     pub keep_chat: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// Cleaned, or what's wrong.

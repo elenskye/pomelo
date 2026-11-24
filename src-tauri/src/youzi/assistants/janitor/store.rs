@@ -47,48 +47,12 @@ CREATE TABLE items (
 ) STRICT;
 ";
 
+const DB: db::Derived = db::Derived { what: "DevJanitor 的扫描结果", not_it: "不是 DevJanitor 的扫描结果", version: VERSION, schema: SCHEMA, probe: "items" };
+
+pub use crate::db::{meta, set_meta};
+
 pub fn open(path: &Path) -> Result<Connection, String> {
-    match open_as_is(path) {
-        Ok(c) => Ok(c),
-        Err(_) => {
-            remove(path);
-            open_as_is(path).map_err(|e| format!("DevJanitor 的扫描结果打不开：{e}"))
-        }
-    }
-}
-
-pub fn remove(path: &Path) {
-    for p in [path.to_path_buf(), path.with_extension("db-wal"), path.with_extension("db-shm")] {
-        let _ = std::fs::remove_file(p);
-    }
-}
-
-fn open_as_is(path: &Path) -> Result<Connection, String> {
-    let c = db::open(path)?;
-    prepare(&c)?;
-    Ok(c)
-}
-
-pub fn prepare(c: &Connection) -> Result<(), String> {
-    match db::user_version(c)? {
-        VERSION => c.query_row("SELECT count(*) FROM items", [], |r| r.get::<_, i64>(0)).map(|_| ()).map_err(err),
-        0 => {
-            let tables: i64 = c.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0)).map_err(err)?;
-            if tables > 0 {
-                return Err("不是 DevJanitor 的扫描结果".into());
-            }
-            c.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = {VERSION}; COMMIT;")).map_err(err)
-        }
-        v => Err(format!("版本 {v} 不是现在的 {VERSION}")),
-    }
-}
-
-pub fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
-    c.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional().map_err(err)
-}
-
-pub fn set_meta(c: &Connection, key: &str, value: &str) -> Result<(), String> {
-    c.execute("INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]).map(|_| ()).map_err(err)
+    DB.open(path)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,7 +200,7 @@ pub mod tests {
     pub fn memory_db() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         db::configure(&c).unwrap();
-        prepare(&c).unwrap();
+        DB.prepare(&c).unwrap();
         c
     }
 
@@ -264,6 +228,6 @@ pub mod tests {
         assert_eq!(meta(&c, "summary").unwrap().as_deref(), Some("{\"at\":1}"));
         // an old version is refused (open() then makes a new file)
         c.pragma_update(None, "user_version", 99).unwrap();
-        assert!(prepare(&c).is_err());
+        assert!(DB.prepare(&c).is_err());
     }
 }

@@ -16,8 +16,7 @@
 //! - v3: 柚子's docs are module `youzi` (were `picky`); nothing else changed.
 
 use crate::db;
-use crate::modules::common::err;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use std::path::Path;
 
 pub const VERSION: i64 = 3;
@@ -100,54 +99,13 @@ CREATE TABLE kb_chunks (
 INSERT INTO meta (key, value) VALUES ('rebuild', '1');
 ";
 
+const DB: db::Derived = db::Derived { what: "搜索索引", not_it: "不是搜索索引", version: VERSION, schema: SCHEMA, probe: "docs" };
+
+pub use crate::db::{meta, remove_files as remove, set_meta};
+
 /// Opens search.db, starting over (delete + create) when it can't be used as is.
 pub fn open(path: &Path) -> Result<Connection, String> {
-    match open_as_is(path) {
-        Ok(c) => Ok(c),
-        Err(_) => {
-            remove(path);
-            open_as_is(path).map_err(|e| format!("搜索索引打不开：{e}"))
-        }
-    }
-}
-
-/// Deletes search.db and its WAL files.
-pub fn remove(path: &Path) {
-    for p in [path.to_path_buf(), path.with_extension("db-wal"), path.with_extension("db-shm")] {
-        let _ = std::fs::remove_file(p);
-    }
-}
-
-fn open_as_is(path: &Path) -> Result<Connection, String> {
-    let c = db::open(path)?;
-    prepare(&c)?;
-    Ok(c)
-}
-
-/// Creates the schema in an empty database, accepts the current version, refuses anything else.
-pub fn prepare(c: &Connection) -> Result<(), String> {
-    match db::user_version(c)? {
-        VERSION => {
-            c.query_row("SELECT count(*) FROM docs", [], |r| r.get::<_, i64>(0)).map_err(err)?;
-            Ok(())
-        }
-        0 => {
-            let tables: i64 = c.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0)).map_err(err)?;
-            if tables > 0 {
-                return Err("不是搜索索引".into());
-            }
-            c.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = {VERSION}; COMMIT;")).map_err(err)
-        }
-        v => Err(format!("版本 {v} 不是现在的 {VERSION}")),
-    }
-}
-
-pub fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
-    c.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional().map_err(err)
-}
-
-pub fn set_meta(c: &Connection, key: &str, value: &str) -> Result<(), String> {
-    c.execute("INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]).map(|_| ()).map_err(err)
+    DB.open(path)
 }
 
 #[cfg(test)]
@@ -157,7 +115,7 @@ pub mod tests {
     pub fn memory_db() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         db::configure(&c).unwrap();
-        prepare(&c).unwrap();
+        DB.prepare(&c).unwrap();
         c
     }
 
@@ -167,7 +125,7 @@ pub mod tests {
         assert_eq!(meta(&c, "rebuild").unwrap().as_deref(), Some("1"));
         set_meta(&c, "rebuild", "0").unwrap();
         assert_eq!(meta(&c, "rebuild").unwrap().as_deref(), Some("0"));
-        prepare(&c).unwrap(); // the current version is kept as is
+        DB.prepare(&c).unwrap(); // the current version is kept as is
 
         let dir = crate::db::tests::temp_dir("search-store");
         let path = dir.join("search.db");

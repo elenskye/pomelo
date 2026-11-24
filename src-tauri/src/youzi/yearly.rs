@@ -178,16 +178,12 @@ pub fn talks(conn: &Connection, month: &str) -> Result<String, String> {
     if all.is_empty() {
         return Ok(String::new());
     }
-    let flat = |s: &str, n: usize| {
-        let t = s.split_whitespace().collect::<Vec<_>>().join(" ");
-        if t.chars().count() > n { format!("{}…", t.chars().take(n).collect::<String>()) } else { t }
-    };
     let mut lines: Vec<String> = all
         .iter()
         .take(TALK_LINES)
-        .map(|(day, title, first)| match first.as_deref().map(|f| flat(f, 60)).filter(|f| !f.is_empty() && !f.starts_with(title.trim_end_matches('…'))) {
-            Some(q) => format!("- {day} {}：{q}", flat(title, 30)),
-            None => format!("- {day} {}", flat(title, 60)),
+        .map(|(day, title, first)| match first.as_deref().map(|f| data::clip(f, 60)).filter(|f| !f.is_empty() && !f.starts_with(title.trim_end_matches('…'))) {
+            Some(q) => format!("- {day} {}：{q}", data::clip(title, 30)),
+            None => format!("- {day} {}", data::clip(title, 60)),
         })
         .collect();
     if all.len() > TALK_LINES {

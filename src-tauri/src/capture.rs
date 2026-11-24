@@ -34,7 +34,6 @@ pub const LABEL: &str = "capture";
 const DRAFT: &str = "capture.draft";
 const FILES: &str = "capture.files";
 const PIN: &str = "capture.pin";
-const HIDDEN: &str = "ui.module_hidden";
 /// Shown in the menu bar when ⌥Space could not be had (another app holds it); None: registered.
 static SHORTCUT: Mutex<Option<String>> = Mutex::new(None);
 /// The app in front before ⌥Space (its pid), to give the focus back on Esc.
@@ -93,7 +92,7 @@ fn files_info(conn: &Connection) -> Result<Vec<attachments::FileInfo>, String> {
 }
 
 pub fn snapshot(conn: &Connection) -> Result<Snapshot, String> {
-    let hidden = settings::get(conn, HIDDEN)?.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let hidden = settings::get(conn, crate::youzi::data::HIDDEN_KEY)?.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
     Ok(Snapshot {
         draft: draft(conn)?,
         files: files_info(conn)?,
@@ -577,7 +576,7 @@ mod tests {
     fn snapshot_reads_an_old_or_odd_draft_as_empty() {
         let c = memory_db();
         settings::set(&c, DRAFT, &json!("旧格式")).unwrap();
-        settings::set(&c, HIDDEN, &json!(["youzi"])).unwrap();
+        settings::set(&c, crate::youzi::data::HIDDEN_KEY, &json!(["youzi"])).unwrap();
         group(&c);
         let s = snapshot(&c).unwrap();
         assert_eq!((s.draft, s.pinned, s.hidden, s.groups.len()), (Draft::default(), false, vec!["youzi".to_string()], 1));

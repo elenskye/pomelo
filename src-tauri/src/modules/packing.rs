@@ -5,7 +5,7 @@
 //! 可能漏的 (柚子): names in the templates or other trips that this trip lacks (case / spaces
 //! ignored), most frequent first; its own template's come first.
 
-use super::common::{self, err, gone, some};
+use super::common::{self, err, gone, NOW, some};
 use super::kinds;
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -15,7 +15,6 @@ use tauri::State;
 
 pub const KEY: &str = "packing";
 pub const LABEL: &str = "出门走走";
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 /// Several new items at the end of a list, as one step (柚子's ideas the user picked).
 pub fn create_items(conn: &Connection, list: List, parent_id: i64, patches: Vec<ItemPatch>) -> Result<Vec<Item>, String> {

@@ -11,7 +11,7 @@
 //!   disk, the fake Mac answers from `.janitor-fake.json`.
 
 use super::rules::{self, Protected};
-use super::scan::{Config, Tree};
+use super::scan::{join, Config, Tree};
 use super::store::ItemRow;
 use super::system::Sys;
 use serde::{Deserialize, Serialize};
@@ -55,14 +55,6 @@ pub struct Ctx<'a> {
     pub tree: &'a Tree<'a>,
     pub items: &'a [ItemRow],
     pub protected: &'a Protected,
-}
-
-fn join(a: &str, b: &str) -> String {
-    if a == "/" {
-        format!("/{b}")
-    } else {
-        format!("{a}/{b}")
-    }
 }
 
 /// "17.2 (21C62)" / "v24.16.0" / "gradle-8.5-bin" → numbers to sort by.

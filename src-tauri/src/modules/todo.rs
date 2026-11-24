@@ -11,7 +11,7 @@
 //! (plan_date on normal tasks only exists in data older than v10 and is read as a range start.)
 
 use super::attachments::{self, AttachmentRecord, Owner};
-use super::common::{self, err, gone, is_false, some, str_enum};
+use super::common::{self, err, gone, is_false, NOW, some, str_enum};
 use crate::AppState;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,6 @@ use tauri::State;
 
 pub const KEY: &str = "todo";
 pub const LABEL: &str = "一步一步";
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 /// A leaf = a task without subtasks (progress counts leaves).
 const IS_LEAF: &str = "NOT EXISTS (SELECT 1 FROM todo_tasks c WHERE c.parent_id = t.id)";
 

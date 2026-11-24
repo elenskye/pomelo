@@ -11,13 +11,12 @@
 //!   place among siblings (dragged; never-placed ones follow in pinyin order, the UI sorts). They outlive
 //!   a tag's last item, move on rename; deleting a tag drops those no item uses any more.
 
-use super::common::{self, err};
+use super::common::{self, err, NOW};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const TAG_MAX: usize = 50;
-const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 /// One module's tag tables. `items` has `id`; `tags` is (`fk`, tag); `live` is an SQL condition on
 /// the item (alias `n`) for what the tag tree counts.
@@ -448,6 +447,17 @@ pub struct TagPatch {
     /// null = back to 「#」.
     #[serde(default, deserialize_with = "common::some")]
     pub icon: Option<Option<String>>,
+}
+
+impl TagPatch {
+    /// The undo label.
+    pub fn label(&self) -> &'static str {
+        match self.pinned {
+            Some(true) => "置顶标签",
+            Some(false) => "取消置顶标签",
+            None => "标签图标",
+        }
+    }
 }
 
 /// Pins / unpins a first-level tag (a new pin goes last) or sets any tag's icon. Only tags some item uses.

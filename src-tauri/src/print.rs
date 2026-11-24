@@ -362,7 +362,15 @@ pub async fn print_picture(app: AppHandle, job: u64, w: f64, h: f64) -> Result<u
     })
 }
 
-fn progress(app: &AppHandle, j: &Job) {
+/// Item `index` written or not: counted (a failure noted under its title), the page told.
+fn settle(app: &AppHandle, j: &mut Job, index: usize, made: Result<(), String>) {
+    match made {
+        Ok(()) => j.written += 1,
+        Err(what) => {
+            j.failed += 1;
+            j.left.push(Left { title: j.items.get(index).map(|i| i.title.clone()).unwrap_or_default(), what });
+        }
+    }
     let _ = app.emit_to("main", "articles-export", serde_json::json!({ "done": j.written + j.failed, "total": j.items.len() }));
 }
 
@@ -376,14 +384,7 @@ pub async fn print_pdf_save(app: AppHandle, job: u64, index: usize, links: Vec<P
     })?;
     let made = tauri::async_runtime::spawn_blocking(move || assemble(&pages, &links, &outline, &title).and_then(|pdf| write_new(&path, &pdf))).await.map_err(|e| e.to_string())?;
     print.with(job, |j| {
-        match made {
-            Ok(()) => j.written += 1,
-            Err(e) => {
-                j.failed += 1;
-                j.left.push(Left { title: j.items[index].title.clone(), what: e });
-            }
-        }
-        progress(&app, j);
+        settle(&app, j, index, made);
         Ok(())
     })
 }
@@ -409,14 +410,7 @@ pub async fn print_docx_save(app: AppHandle, state: State<'_, AppState>, job: u6
     let path = item.path.clone();
     let made = tauri::async_runtime::spawn_blocking(move || docx::write(&doc, &options, &pictures, &files).and_then(|b| write_new(&path, &b))).await.map_err(|e| e.to_string())?;
     print.with(job, |j| {
-        match made {
-            Ok(()) => j.written += 1,
-            Err(e) => {
-                j.failed += 1;
-                j.left.push(Left { title: item.title.clone(), what: e });
-            }
-        }
-        progress(&app, j);
+        settle(&app, j, index, made);
         Ok(())
     })
 }
@@ -427,10 +421,7 @@ pub fn print_fail(app: AppHandle, print: State<Print>, job: u64, index: usize, e
     print.with(job, |j| {
         j.pages.clear();
         j.pictures.clear();
-        let title = j.items.get(index).map(|i| i.title.clone()).unwrap_or_default();
-        j.failed += 1;
-        j.left.push(Left { title, what: error });
-        progress(&app, j);
+        settle(&app, j, index, Err(error));
         Ok(())
     })
 }

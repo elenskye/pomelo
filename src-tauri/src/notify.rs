@@ -51,20 +51,16 @@ pub struct Note {
     pub open: Value,
 }
 
-fn yes() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Kinds {
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub todo: bool,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub jobs: bool,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub days: bool,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::modules::common::yes")]
     pub schedule: bool,
 }
 

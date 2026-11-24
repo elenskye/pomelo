@@ -16,7 +16,7 @@
 
 use super::{encode_name, insert, links_in, names, title_of};
 use crate::modules::attachments::{self, MAX_BYTES, MAX_PER_RECORD};
-use crate::modules::common::{err, Tx};
+use crate::modules::common::{self, err, Tx};
 use crate::modules::tags;
 use crate::AppState;
 use rusqlite::Connection;
@@ -567,25 +567,8 @@ fn stamp_of_time(t: std::io::Result<std::time::SystemTime>) -> Option<String> {
     let s = t.ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64;
     let secs = s.div_euclid(1000);
     let ms = s.rem_euclid(1000);
-    // civil date from days (UTC)
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let (y, m, d) = civil(days);
-    Some(format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{ms:03}Z", rem / 3600, rem % 3600 / 60, rem % 60))
-}
-
-/// Days since 1970-01-01 → (year, month, day) (Howard Hinnant's algorithm).
-fn civil(z: i64) -> (i64, i64, i64) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
+    let rem = secs.rem_euclid(86_400); // UTC
+    Some(format!("{}T{:02}:{:02}:{:02}.{ms:03}Z", common::from_day_number(secs.div_euclid(86_400)), rem / 3600, rem % 3600 / 60, rem % 60))
 }
 
 struct Got {
@@ -922,8 +905,7 @@ mod tests {
     #[test]
     fn relinking_and_dates() {
         assert_eq!(relink("![](a%20b.png) `![](a%20b.png)` [x](<a b.png>) [y](https://a.b)", |t| (t == "a b.png").then(|| "c (1).png".into())), "![](c%20%281%29.png) `![](a%20b.png)` [x](c%20%281%29.png) [y](https://a.b)");
-        assert_eq!(civil(0), (1970, 1, 1));
-        assert_eq!(civil(20_406), (2025, 11, 14));
+        assert_eq!(stamp_of_time(Ok(std::time::UNIX_EPOCH + std::time::Duration::from_millis(20_406 * 86_400_000 + 3_723_004))).as_deref(), Some("2025-11-14T01:02:03.004Z"));
         assert_eq!(tag_level(" 读书 笔记#1 "), "读书-笔记1");
         assert_eq!(with_tag("# 标题\n正文", "读书"), "# 标题\n#读书\n正文");
         assert_eq!(with_tag("# 标题 #读书/小说", "读书"), "# 标题 #读书/小说");

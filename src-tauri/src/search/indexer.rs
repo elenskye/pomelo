@@ -15,7 +15,7 @@
 use super::sources::{self, Db, Row, SOURCES};
 use super::store;
 use super::text::{self, RULES};
-use super::vectors::{self, Entry, Flat, VectorIndex};
+use super::vectors::{self, Entry, Flat};
 use crate::modules::common::{err, Tx};
 use crate::paths::DataPaths;
 use crate::youzi::catalog::ServiceModel;
@@ -64,7 +64,7 @@ pub struct Search {
     youzi_path: PathBuf,
     conn: Mutex<Option<Connection>>,
     readers: Mutex<Readers>,
-    flat: RwLock<Option<Box<dyn VectorIndex>>>,
+    flat: RwLock<Option<Flat>>,
     status: Mutex<IndexStatus>,
     fill_lock: tokio::sync::Mutex<()>,
     /// After a failed start or fill, background filling waits until then.
@@ -318,16 +318,16 @@ impl Search {
         tauri::async_runtime::spawn_blocking(move || {
             let s = &app2.state::<AppState>().search;
             let flat = s.with_db(|c| load(c, &model))?;
-            *s.flat.write().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(flat));
+            *s.flat.write().unwrap_or_else(|e| e.into_inner()) = Some(flat);
             Ok(())
         })
         .await
         .map_err(|e| e.to_string())?
     }
 
-    pub fn with_vectors<T>(&self, f: impl FnOnce(Option<&dyn VectorIndex>) -> T) -> T {
+    pub fn with_vectors<T>(&self, f: impl FnOnce(Option<&Flat>) -> T) -> T {
         let guard = self.flat.read().unwrap_or_else(|e| e.into_inner());
-        f(guard.as_deref())
+        f(guard.as_ref())
     }
 
     fn count(&self, model: &str) -> Result<(i64, i64), String> {
