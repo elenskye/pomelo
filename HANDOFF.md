@@ -4,7 +4,7 @@
 
 ## 现在（2026-11-24）
 
-- **正式版 1.0.5**（11-24 装）。库和格式的版本从 1.0.0 起没变：`pomelo.db` 43、`youzi.db` 43、`search.db` 3、`janitor.db` 1、数据文件格式 43。
+- **正式版 1.0.6**（11-24 装）。库和格式的版本从 1.0.0 起没变：`pomelo.db` 43、`youzi.db` 43、`search.db` 3、`janitor.db` 1、数据文件格式 43。
 - **视觉方案** Pomelo `1.0.0`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画），Design System「Pomelo 柚儿园」按 1.0.0 发在现用账号。
 - **两个会话**：Pomelo 一个；visual-atelier 一个，照它的 `ROADMAP.md` 做（这边能动那边哪些文件见 `CLAUDE.md`）。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
 
@@ -14,11 +14,13 @@
    - CSS 搬进 `schemes/pomelo/motion/fold/`（照别的零件：`motion.json`、`fold.css`、演示片段），登记进 `motion/README.md` 的零件表；
    - 方案发 1.0.1（`scheme.json`、`CHANGELOG.md`），Design System 重建、重发；只提交 pomelo 的部分（英文提交信息），打 tag `pomelo-v1.0.1`，核对 tag；
    - 同步进 `src/vendor/pomelo/`，删掉 `src/shared/fold.css` 和 `src/index.css` 里引它的那一行。
+2. **1.1.0 的问卷**：源在 visual-atelier 的 `canvases/pomelo-v1-1-questionnaire/`（已提交），发在云端（slug 和读法见它的 `README.md`）。站主填完：`db_get` 读 `survey/answers`，存一份回本地；结论写进 `requirements.md`（文件备份模块一节）和 `roadmap.md`（1.1.0 分 Phase）；模块名字、要不要加 rclone、数据怎么存都在问卷里问了，照答案定；然后问站主删不删问卷目录。
 
 ## 等你做的
 
-1. **批 [Pomelo Fold](https://claude.ai/artifact/U7ieNnEjrX3dEdF2427atr)**（侧栏展开的动效），方便时说一声同步。
-2. **在正式版里看 v1.0 的新东西**：
+1. **填 [Pomelo 1.1 问卷](https://claude.ai/artifact/FFKndGb8zxLCwXoK3TFQF4)**：1.1.0 做什么、文件备份模块怎么做（6 页，每页能一键按建议填）。
+2. **批 [Pomelo Fold](https://claude.ai/artifact/U7ieNnEjrX3dEdF2427atr)**（侧栏展开的动效），方便时说一声同步。
+3. **在正式版里看 v1.0 的新东西**：
    - 见字如面：用输入法新写一篇（在标签下）、段落后回车接着写；翻几篇搬过来的（有图、公式和代码、折着的标题）；双指左滑一下只收一栏；正文右键看分层的菜单，选一段点「柚子链接…」；格式条「更多格式」里的「提示框」；提示框开头的图标和字在一条线上；窗口拉宽指一下「引用」「柚子链接」，落签贴着图标；导出 PDF 两种样式、Word、Markdown 各一次。
    - 柚子链接和玩物有志：念念不忘、见字如面里打 `[[`；正文右上羽毛开书架、拖一条笔记进去；书影游面板最下面「记一条」；五花八门「玩物有志」清单 ⋯ →「搬到玩物有志…」（完成 → 完成时间，常青算在玩、写进备注）。
    - 通知：打开柚儿园 15 秒内弹今天的（有才弹），点一条能打开它；「设置 → 通用 → 通知」一种一行。
@@ -26,11 +28,11 @@
    - 贴纸簿右上「＋ 模块」「＋ 分类」，自建模块右键「删除…」（试的话删完 ⌘Z）；柚子瓣念念不忘那片叶子周围没有方块；点顶栏「＋」再关掉贴纸簿，顶栏不被挤上去。
    - Atlas：玩物有志、自建模块、见字如面的两幕要新写一份年度总结才有（「立即运行」用你选的模型写一份到今天）。
    - 柚子 →「定时」→ 年度总结：「留对话」默认关，写完那个对话会删掉；想留就打开、保存。
-3. 钥匙串访问里「Pomelo OS 芝麻开门」：下次用主密码打开芝麻开门后只留最新的一项，其余手动删。
-4. 一网打尽里没显示全的网址填的是网站首页，要换成具体的页：Paint 里三个「课后挑战」（`appqm4zd22n4131.h5.xiaoeknow.com`）、《原创绘画全攻略》《通用板绘上手》（`appwtd0zghj7591.h5.xet.pomoho.com`）；API 里的「API keys」（`console.mathpix.com`）；Scholar 里的 ESS「Themes - Politics」（`ess.sikt.no/en/`）。
-5. Excel 原表的小瑕疵，需要时在 App 里改：「绘画大地图」在 3 门课里同时是第 0 节和第 1 节；有一节课名只有「加餐 -」；`7S_1` 和 `7S_2` 同名。
-6. 一步一步的分组名里以前打的 emoji（🖥️、📈 这些）还在名字里：想换成图标，在「编辑分组」里把 emoji 删掉，再点名字前那一格挑一个。
-7. 今日简报的提示词你在正式版里改过，不会自动更新：在「定时 → 今日简报」里把两条新规则加进去（笔记带日期、心情多了「一般」，原文见「恢复默认」），或者点「恢复默认」再改回你的说法。
+4. 钥匙串访问里「Pomelo OS 芝麻开门」：下次用主密码打开芝麻开门后只留最新的一项，其余手动删。
+5. 一网打尽里没显示全的网址填的是网站首页，要换成具体的页：Paint 里三个「课后挑战」（`appqm4zd22n4131.h5.xiaoeknow.com`）、《原创绘画全攻略》《通用板绘上手》（`appwtd0zghj7591.h5.xet.pomoho.com`）；API 里的「API keys」（`console.mathpix.com`）；Scholar 里的 ESS「Themes - Politics」（`ess.sikt.no/en/`）。
+6. Excel 原表的小瑕疵，需要时在 App 里改：「绘画大地图」在 3 门课里同时是第 0 节和第 1 节；有一节课名只有「加餐 -」；`7S_1` 和 `7S_2` 同名。
+7. 一步一步的分组名里以前打的 emoji（🖥️、📈 这些）还在名字里：想换成图标，在「编辑分组」里把 emoji 删掉，再点名字前那一格挑一个。
+8. 今日简报的提示词你在正式版里改过，不会自动更新：在「定时 → 今日简报」里把两条新规则加进去（笔记带日期、心情多了「一般」，原文见「恢复默认」），或者点「恢复默认」再改回你的说法。
 
 ## 要留意
 
@@ -39,3 +41,4 @@
 - 卡片练习、面试的追问和复盘建议，参考答案偶尔会替你补资料里没有的过程，存进题库前看一眼。
 - OpenRouter 的 GLM 5.3 FlashX 思考要设「只能思考」。
 - Atlas：12 月 31 日真模型第一次写完全年，再按写出来的样子调各幕的提示词。
+- `prototype/` 里现在没有真实的导入文件（`pomelo-import.json` 等），`transfer::tests::real_` 和 `seed_scratch_db` 会报「文件不在」，要用时先放回去。
