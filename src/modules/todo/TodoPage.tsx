@@ -34,6 +34,7 @@ import { ReviewView } from "./ReviewView";
 import { PlacedList, TaskTree } from "./TaskList";
 import { TaskPanel, type NewTask } from "./TaskPanel";
 import { usePageContext } from "@/app/pageContext";
+import { Fold, foldByHand } from "@/shared/Fold";
 
 type View = { kind: "today" } | { kind: "month" } | { kind: "review" } | { kind: "group"; id: number } | { kind: "goal"; id: number };
 
@@ -100,10 +101,13 @@ function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (
                     type="button"
                     aria-label={open ? `收起「${g.name}」的目标` : `展开「${g.name}」的目标`}
                     aria-expanded={open}
-                    onClick={() => toggle(g.id)}
+                    onClick={() => {
+                      foldByHand();
+                      toggle(g.id);
+                    }}
                     className="mr-1.5 rounded p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <ChevronDown size={13} className={`transition-transform duration-150 ${open ? "" : "-rotate-90"}`} />
+                    <ChevronDown size={13} className={`pm-fold-chev ${open ? "" : "-rotate-90"}`} />
                   </button>
                 )
               }
@@ -112,7 +116,7 @@ function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (
               <span className="min-w-0 flex-1 truncate">{g.name}</span>
               <span className="shrink-0 text-xs font-normal text-muted-foreground">{g.open || ""}</span>
             </NavButton>
-            {open && <GoalNav goals={goals} groupId={g.id} view={props.view} go={props.go} />}
+            <GoalNav open={open} goals={goals} groupId={g.id} view={props.view} go={props.go} />
           </div>
         );
       })}
@@ -120,11 +124,11 @@ function GroupNav(props: { groups: TodoGroup[]; goals: Goal[]; view: View; go: (
   );
 }
 
-function GoalNav(props: { goals: Goal[]; groupId: number; view: View; go: (v: View) => void }) {
+function GoalNav(props: { open: boolean; goals: Goal[]; groupId: number; view: View; go: (v: View) => void }) {
   const m = useTodoMutations();
   const sort = useSortable((ids) => m.reorderGoals.mutate({ groupId: props.groupId, ids }));
   return (
-    <div ref={sort.listRef}>
+    <Fold open={props.open} boxRef={sort.listRef}>
       {props.goals.map((o) => (
         <div key={o.id} {...sort.item(o.id)}>
           <NavButton
@@ -137,7 +141,7 @@ function GoalNav(props: { goals: Goal[]; groupId: number; view: View; go: (v: Vi
           </NavButton>
         </div>
       ))}
-    </div>
+    </Fold>
   );
 }
 

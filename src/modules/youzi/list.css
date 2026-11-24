@@ -26,7 +26,7 @@
 .yz-lab { display: flex; flex: 1; align-items: center; gap: 2px; min-width: 0; text-align: left; cursor: default; outline: none; }
 .yz-lab:focus-visible .yz-lt { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 4px; }
 .yz-lt { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 700; line-height: 20px; white-space: nowrap; }
-.yz-chev { transition: transform .15s; }
+
 .yz-chev.shut { transform: rotate(-90deg); }
 
 .yz-row { position: relative; isolation: isolate; display: flex; align-items: center; gap: 4px; min-height: 34px; padding-right: 4px; }

@@ -23,6 +23,7 @@ import { isNumberArray, isStringArray, useSetting } from "@/shared/settings";
 import { Button, EmptyState, Field, PageHeader, SearchInput, Switch, TextInput, Picked } from "@/shared/ui";
 import { buildTree, linksIn, pathTo, useBookmarkMutations, useBookmarks, useSiteIcons, type Node } from "./api";
 import { SiteIcon } from "./SiteIcon";
+import { Fold, foldByHand } from "@/shared/Fold";
 
 const OPEN_KEY = "bookmarks.open";
 /** The folder looked at last ([id]). */
@@ -431,10 +432,13 @@ function TreeRow(props: { label: string; depth: number; on: boolean; hint: Hint;
           data-fold
           aria-label={props.kids?.open ? "收起" : "展开"}
           disabled={!props.kids}
-          onClick={props.kids?.toggle}
+          onClick={() => {
+            foldByHand();
+            props.kids?.toggle();
+          }}
           className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:invisible"
         >
-          <ChevronRight size={13} className={`transition-transform duration-150 ${props.kids?.open ? "rotate-90" : ""}`} />
+          <ChevronRight size={13} className={`pm-fold-chev ${props.kids?.open ? "rotate-90" : ""}`} />
         </button>
       ) : (
         <span className="w-1" />
@@ -459,7 +463,11 @@ function FolderTree(props: { nodes: Node[]; depth: number; current: number | nul
           return (
             <div key={n.id}>
               <TreeRow label={n.title} depth={props.depth} on={props.current === n.id} hint={props.hint(n.id)} drop={String(n.id)} count={linksIn(n)} kids={sub ? { open, toggle: () => props.toggle(n.id) } : undefined} drag={props.drag(n)} onClick={() => props.go(n.id)} />
-              {open && <FolderTree {...props} nodes={n.kids} depth={props.depth + 1} />}
+              {sub && (
+                <Fold open={open}>
+                  <FolderTree {...props} nodes={n.kids} depth={props.depth + 1} />
+                </Fold>
+              )}
             </div>
           );
         })}

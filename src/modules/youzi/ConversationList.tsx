@@ -22,6 +22,7 @@ import { Menu, type MenuAt, type MenuRow } from "@/app/Menu";
 import { LIBRARY_KEY, youziApi, useYouziUi, type Library, type ListKey, type ProjectRow, type SessionRow } from "./api";
 import { useConversationActions } from "./actions";
 import { ProjectDialog } from "./ProjectDialog";
+import { Fold, foldByHand } from "@/shared/Fold";
 import "./list.css";
 
 type Target = { list: ListKey; before?: number; after?: number; header?: boolean };
@@ -377,8 +378,8 @@ export function ConversationList(props: {
         className={`yz-label ${hot ? "hot" : ""}`}
       >
         {folding ? (
-          <button type="button" aria-expanded={folding.open} onClick={() => !swallow() && folding.toggle()} className="yz-lab">
-            <HandIcon name="down" size={14} seed={1201} className={`yz-chev ${folding.open ? "" : "shut"}`} />
+          <button type="button" aria-expanded={folding.open} onClick={() => !swallow() && (foldByHand(), folding.toggle())} className="yz-lab">
+            <HandIcon name="down" size={14} seed={1201} className={`yz-chev pm-fold-chev ${folding.open ? "" : "shut"}`} />
             <span className="yz-lt">{text}</span>
           </button>
         ) : (
@@ -423,7 +424,7 @@ export function ConversationList(props: {
         <button
           type="button"
           aria-expanded={!isCollapsed}
-          onClick={() => !swallow() && setCollapsed(isCollapsed ? collapsed.filter((x) => x !== p.id) : [...collapsed, p.id])}
+          onClick={() => !swallow() && (foldByHand(), setCollapsed(isCollapsed ? collapsed.filter((x) => x !== p.id) : [...collapsed, p.id]))}
           className="yz-title"
         >
           <span className="yz-t">{p.name}</span>
@@ -477,31 +478,34 @@ export function ConversationList(props: {
           </IconButton>,
           fold("projects"),
         )}
-        {open("projects") &&
-          lib.projects.map((p, i) => (
+        <Fold open={open("projects")}>
+          {lib.projects.map((p, i) => (
             <div key={p.id}>
               {projectHeader(p, i)}
-              {!collapsed.includes(p.id) && (
-                <div className="yz-sub">
-                  {p.files > 0 && (
-                    <div className="yz-row yz-files">
-                      <button type="button" onClick={() => props.onProjectFiles(p.id)} className="yz-title">
-                        <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
-                      </button>
-                    </div>
-                  )}
-                  {p.sessions.map((s, i) => row(s, `project:${p.id}`, i))}
-                </div>
-              )}
+              <Fold open={!collapsed.includes(p.id)} className="yz-sub">
+                {p.files > 0 && (
+                  <div className="yz-row yz-files">
+                    <button type="button" onClick={() => props.onProjectFiles(p.id)} className="yz-title">
+                      <LibraryIcon size={13} strokeWidth={1.5} /> 资料 <span className="text-xs">{p.files}</span>
+                    </button>
+                  </div>
+                )}
+                {p.sessions.map((s, i) => row(s, `project:${p.id}`, i))}
+              </Fold>
             </div>
           ))}
+        </Fold>
 
         {(lib.recent.length > 0 || dragging) && label("最近", "recent", null, fold("recent"))}
-        {open("recent") && lib.recent.map((s, i) => row(s, "recent", i))}
+        <Fold open={open("recent")}>
+          {lib.recent.map((s, i) => row(s, "recent", i))}
+        </Fold>
 
         {(lib.archived.length > 0 || dragging) &&
           label(<>归档 {lib.archived.length || ""}</>, "archived", null, { open: archiveOpen, toggle: () => (setArchiveShown(false), setArchiveOpen(!archiveOpen)) })}
-        {archiveOpen && lib.archived.map((s, i) => row(s, "archived", i))}
+        <Fold open={archiveOpen}>
+          {lib.archived.map((s, i) => row(s, "archived", i))}
+        </Fold>
       </div>
 
       {sel.length > 0 && (

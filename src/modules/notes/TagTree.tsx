@@ -20,6 +20,7 @@ import { InlineName } from "@/shared/InlineName";
 import { Picked, Segmented } from "@/shared/ui";
 import { useNoteMutations, type TagCount } from "./api";
 import { Menu, type MenuAt } from "@/app/Menu";
+import { Fold, foldByHand } from "@/shared/Fold";
 
 /** A module's tag commands and words (念念不忘's by default). */
 export type TagScope = {
@@ -148,7 +149,10 @@ function Tree(props: { tags: TagCount[]; pinned: string[]; active: string | null
   const walk = (ns: Node[]) => ns.forEach((n) => (nodes.set(n.path, n), walk(n.kids)));
   walk(roots);
   const isOpen = (n: Node) => open.includes(n.path) || (!!props.active && props.active.startsWith(`${n.path}/`));
-  const toggle = (n: Node) => setOpen(open.includes(n.path) ? open.filter((p) => p !== n.path) : [...open, n.path]);
+  const toggle = (n: Node) => {
+    foldByHand();
+    setOpen(open.includes(n.path) ? open.filter((p) => p !== n.path) : [...open, n.path]);
+  };
   // pinned first-level tags (with their sub-tags) go on top and aren't repeated in the tree
   const pinnedRoots = props.pinned.map((p) => roots.find((r) => r.path === p)).filter((n) => n !== undefined);
   const rest = roots.filter((r) => !props.pinned.includes(r.path));
@@ -373,7 +377,7 @@ function Tree(props: { tags: TagCount[]; pinned: string[]; active: string | null
               onClick={kids.onToggle}
               className="rounded p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <ChevronDown size={13} className={`transition-transform duration-150 ${kids.expanded ? "" : "-rotate-90"}`} />
+              <ChevronDown size={13} className={`pm-fold-chev ${kids.expanded ? "" : "-rotate-90"}`} />
             </button>
           )}
         </span>
@@ -386,7 +390,7 @@ function Tree(props: { tags: TagCount[]; pinned: string[]; active: string | null
     return (
       <div key={n.path}>
         {row(byPath.get(n.path) ?? { tag: n.path, count: n.count, icon: n.icon, order: n.order }, n.name, depth, n.kids.length > 0 ? { expanded, onToggle: () => toggle(n) } : undefined)}
-        {expanded && n.kids.map((k) => node(k, depth + 1))}
+        <Fold open={expanded}>{n.kids.map((k) => node(k, depth + 1))}</Fold>
       </div>
     );
   };

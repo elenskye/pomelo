@@ -1,0 +1,13 @@
+/* TEMPORARY copy of the proposed motion part motion/fold (visual-atelier canvas pomelo-fold, awaiting approval).
+   When Pomelo scheme 1.0.1 is synced, ds.css carries these exact rules: delete this file and its @import in index.css
+   (HANDOFF.md tracks it). Used by shared/Fold.tsx. */
+.pm-fold { transition: height .3s cubic-bezier(.3, 1.25, .5, 1); }
+.pm-fold.is-open, .pm-fold.is-closing { clip-path: inset(0 -100vw); }
+.pm-fold.is-open > * { animation: pm-fold-in .32s cubic-bezier(.3, 1.6, .5, 1) both; animation-delay: calc(min(var(--pm-i, 0), 9) * 28ms); }
+.pm-fold.is-closing > * { animation: pm-fold-out .16s ease-in both; animation-delay: calc(min(var(--pm-r, 0), 9) * 16ms); }
+.pm-fold-chev { transition: transform .3s cubic-bezier(.3, 1.6, .5, 1), rotate .3s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes pm-fold-in { 0% { opacity: 0; transform: translateY(-80%) rotate(-1.5deg); } 50% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+@keyframes pm-fold-out { 100% { opacity: 0; transform: translateY(-50%) scale(.96); } }
+@media (prefers-reduced-motion: reduce) {
+  .pm-fold, .pm-fold.is-open > *, .pm-fold.is-closing > *, .pm-fold-chev { transition: none !important; animation: none !important; }
+}

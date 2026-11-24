@@ -26,6 +26,7 @@ import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { isStringArray, useSetting } from "@/shared/settings";
 import { InlineName } from "@/shared/InlineName";
 import { Button, EmptyState, PageHeader, Picked, RefreshButton } from "@/shared/ui";
+import { Fold, foldByHand } from "@/shared/Fold";
 import { addressOf, CANVAS_KEY, canvasApi, OVERVIEW_KEY, reviewsOf, useCanvasBoards, useCanvasList, useCanvasOverview, type Board, type CanvasRow, type Detail, type Kind, type Overview, type Page, type Review, type Section } from "./api";
 import "./canvas.css";
 
@@ -100,10 +101,19 @@ function ReviewMark({ r }: { r: Review }) {
 }
 
 /** The little arrow in front of something that folds. */
-function Fold(props: { open: boolean; label: string; onToggle: () => void }) {
+function FoldArrow(props: { open: boolean; label: string; onToggle: () => void }) {
   return (
-    <button type="button" aria-expanded={props.open} aria-label={`${props.open ? "收起" : "展开"}${props.label}`} onClick={props.onToggle} className="cv-fold">
-      <ChevronRight size={13} className={`transition-transform duration-150 ${props.open ? "rotate-90" : ""}`} />
+    <button
+      type="button"
+      aria-expanded={props.open}
+      aria-label={`${props.open ? "收起" : "展开"}${props.label}`}
+      onClick={() => {
+        foldByHand();
+        props.onToggle();
+      }}
+      className="cv-fold"
+    >
+      <ChevronRight size={13} className={`pm-fold-chev ${props.open ? "rotate-90" : ""}`} />
     </button>
   );
 }
@@ -366,7 +376,7 @@ export default function CanvasPage() {
       return (
         <div key={p.id}>
           <div className="cv-page-row" onContextMenu={onRight(r, p)}>
-            <Fold open={open} label={p.name} onToggle={() => togglePage(p.id)} />
+            <FoldArrow open={open} label={p.name} onToggle={() => togglePage(p.id)} />
             {isRenaming(r, p, null) ? (
               <div className="min-w-0 flex-1">{renameBox(r, p, null, p.name)}</div>
             ) : (
@@ -377,7 +387,7 @@ export default function CanvasPage() {
             <span className="cv-count">{boards.length}</span>
             <MoreButton label={p.name} onOpen={(el) => below(el, r, p)} />
           </div>
-          {open && boards.map(boardRow)}
+          <Fold open={open}>{boards.map(boardRow)}</Fold>
         </div>
       );
     });
@@ -417,13 +427,21 @@ export default function CanvasPage() {
                   const open = !closed.includes(sec.id);
                   return (
                     <section key={sec.id} aria-label={sec.title} className="cv-sec">
-                      <button type="button" aria-expanded={open} onClick={() => toggleSection(sec.id)} className="cv-sec-head">
-                        <ChevronRight size={13} className={`shrink-0 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        onClick={() => {
+                          foldByHand();
+                          toggleSection(sec.id);
+                        }}
+                        className="cv-sec-head"
+                      >
+                        <ChevronRight size={13} className={`pm-fold-chev shrink-0 ${open ? "rotate-90" : ""}`} />
                         <span className="min-w-0 flex-1 truncate">{sec.title}</span>
                         <span className="cv-count">{sec.items.length}</span>
                       </button>
-                      {open &&
-                        (sec.items.length ? (
+                      <Fold open={open}>
+                        {sec.items.length ? (
                           sec.items.map((r) => {
                             const on = same(r, at);
                             const deck = on && r.kind === "canvas";
@@ -432,7 +450,7 @@ export default function CanvasPage() {
                             return (
                               <div key={`${r.kind}:${r.name}`}>
                                 <div className="cv-item" onContextMenu={fixed ? undefined : onRight(r)}>
-                                  {deck ? <Fold open={!treeShut} label={r.title} onToggle={() => setTreeShut(!treeShut)} /> : <span className="cv-fold" aria-hidden />}
+                                  {deck ? <FoldArrow open={!treeShut} label={r.title} onToggle={() => setTreeShut(!treeShut)} /> : <span className="cv-fold" aria-hidden />}
                                   {isRenaming(r, null, null) ? (
                                     <div className="min-w-0 flex-1 py-0.5">{renameBox(r, null, null, r.title)}</div>
                                   ) : (
@@ -444,13 +462,18 @@ export default function CanvasPage() {
                                   )}
                                   {!fixed && <MoreButton label={r.title} what={scheme(r) ? "改名" : undefined} onOpen={(el) => below(el, r)} />}
                                 </div>
-                                {deck && !treeShut && <div className="cv-tree">{tree(r)}</div>}
+                                {deck && (
+                                  <Fold open={!treeShut} className="cv-tree">
+                                    {tree(r)}
+                                  </Fold>
+                                )}
                               </div>
                             );
                           })
                         ) : (
                           <p className="cv-none">没有</p>
-                        ))}
+                        )}
+                      </Fold>
                     </section>
                   );
                 })}
