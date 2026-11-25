@@ -5,10 +5,12 @@
 // on the drive only when picked here. The page asks every few seconds, so plugging the drive in shows up.
 // 柚子 (Phase 2; backup/look.rs): after a drive is plugged in, DevJanitor's Agent looks at what the comparison
 // and the clues say; its reply and cards (JanitorCards.tsx) show here and in Agent. 柚子看一眼 asks again.
+// PikPak (Phase 3; backup/pikpak.rs): the whole drive mirrored there in the background while it's in; its card
+// says how far, stops and carries on; logging in and the folder / limit are dialogs.
 import { useState, type FormEvent } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, HardDrive, Pencil, Plus, Trash2 } from "@/shared/icons";
+import { ChevronRight, HardDrive, Pencil, Plus, Settings2, Trash2 } from "@/shared/icons";
 import { Section } from "@/settings/layout";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
@@ -18,14 +20,14 @@ import { pad } from "@/shared/dates";
 import { subNav } from "@/app/subpage";
 import { MarkdownView } from "../MarkdownView";
 import { JanitorCards } from "./JanitorCards";
-import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask } from "./janitorApi";
+import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask, type PikPakView } from "./janitorApi";
 
 export function useBackup() {
   return useQuery({
     queryKey: BACKUP_KEY,
     queryFn: backupApi.overview,
     refetchOnMount: "always",
-    refetchInterval: (q) => (q.state.data?.run.running ? 700 : q.state.data?.comparing || q.state.data?.look?.state === "running" ? 1000 : 4000),
+    refetchInterval: (q) => (q.state.data?.run.running ? 700 : q.state.data?.comparing || q.state.data?.look?.state === "running" || q.state.data?.pikpak.running ? 1000 : 4000),
   });
 }
 
@@ -152,6 +154,7 @@ function BackupBody(props: { ov: BackupOverview }) {
         )}
         {!run.running && run.ended && <p className="text-sm text-muted-foreground">{run.ended}</p>}
       </div>
+      <PikPakCard ov={ov} />
       {ov.look && <LookCard look={ov.look} />}
       <Section title="任务" actions={<Button disabled={run.running} onClick={() => setEditing("new")}><Plus size={14} />任务</Button>}>
         {ov.tasks.length ? (
@@ -323,7 +326,126 @@ function LookCard(props: { look: BackupLook }) {
   );
 }
 
+/** 「2 小时 5 分」「12 分」「40 秒」. */
+function left(s: number): string {
+  if (s >= 3600) return `${Math.floor(s / 3600)} 小时${Math.floor((s % 3600) / 60) ? ` ${Math.floor((s % 3600) / 60)} 分` : ""}`;
+  if (s >= 60) return `${Math.round(s / 60)} 分`;
+  return `${s} 秒`;
+}
+
+const LIMITS = [0, 1, 2, 5, 10, 20, 50];
+const limitText = (n: number) => (n ? `${n} MB/s` : "不限速");
+
+/** PikPak: where the mirror stands, 停下 / 接着传 / 照样同步, the login and its settings. */
+function PikPakCard(props: { ov: BackupOverview }) {
+  const p = props.ov.pikpak;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [dialog, setDialog] = useState<"login" | "settings" | null>(null);
+  const set = (o: BackupOverview) => qc.setQueryData(BACKUP_KEY, o);
+  const fail = (e: unknown) => toast(errorText(e), "error");
+  const go = (force: boolean) => void backupApi.pikpakGo(force).then(set, fail);
+  const stop = () => void backupApi.pikpakStop().then(() => qc.invalidateQueries({ queryKey: BACKUP_KEY }), fail);
+  const status = !p.installed
+    ? "没装 rclone：在终端里跑 brew install rclone"
+    : !p.account
+      ? "没登录"
+      : p.running
+        ? p.checking
+          ? "正在对比…"
+          : `${p.files} / ${p.totalFiles} 个 · ${bytes(p.bytes)} / ${bytes(p.totalBytes)}${p.speed ? ` · ${bytes(p.speed)}/s` : ""}${p.eta ? ` · 还要 ${left(p.eta)}` : ""}`
+        : (p.ended ?? p.waiting ?? "");
+  const facts = p.account ? [p.account, `PikPak 上的「${p.folder}」`, limitText(p.limit), p.used != null && p.total ? `用了 ${bytes(p.used)} / ${bytes(p.total)}` : ""].filter(Boolean) : [];
+  return (
+    <div className="mb-4 space-y-2 rounded-card border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-base font-bold">PikPak</span>
+        <span className={`min-w-0 flex-1 truncate text-sm tabular-nums ${p.held ? "text-destructive" : "text-muted-foreground"}`}>{status}</span>
+        {p.installed && !p.account && <Button variant="primary" className="ml-auto" onClick={() => setDialog("login")}>登录</Button>}
+        {p.account && p.running && <Button className="ml-auto" onClick={stop}>停下</Button>}
+        {p.account && !p.running && p.held && <Button variant="primary" className="ml-auto" onClick={() => go(true)}>照样同步</Button>}
+        {p.account && !p.running && !p.held && p.waiting === "停下了" && <Button className="ml-auto" onClick={() => go(false)}>接着传</Button>}
+        {p.account && <IconButton label="PikPak 的设置" tip="设置" onClick={() => setDialog("settings")}><Settings2 size={14} /></IconButton>}
+      </div>
+      {p.running && !p.checking && p.totalBytes > 0 && <ProgressBar done={p.bytes} total={p.totalBytes} />}
+      {p.running && p.current.length > 0 && <p className="truncate text-xs text-muted-foreground">{p.current.join("、")}</p>}
+      {facts.length > 0 && <p className="selectable truncate text-xs text-muted-foreground">{facts.join(" · ")}</p>}
+      {dialog === "login" && <PikPakLogin close={() => setDialog(null)} />}
+      {dialog === "settings" && <PikPakSettings p={p} close={() => setDialog(null)} />}
+    </div>
+  );
+}
+
+function PikPakLogin(props: { close: () => void }) {
+  const qc = useQueryClient();
+  const [account, setAccount] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      qc.setQueryData(BACKUP_KEY, await backupApi.pikpakLogin(account, password));
+      props.close();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="登录 PikPak" error={error} onClose={props.close} onSubmit={submit} submitLabel={busy ? "正在登录…" : "登录"} submitDisabled={busy || !account.trim() || !password}>
+      <Field label="账号">
+        <TextInput aria-label="PikPak 的账号" value={account} maxLength={200} onChange={(e) => setAccount(e.target.value)} />
+      </Field>
+      <Field label="密码">
+        <TextInput type="password" aria-label="PikPak 的密码" value={password} maxLength={200} onChange={(e) => setPassword(e.target.value)} />
+      </Field>
+    </Modal>
+  );
+}
+
+function PikPakSettings(props: { p: PikPakView; close: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [confirm, confirmDialog] = useConfirm();
+  const [folder, setFolder] = useState(props.p.folder);
+  const [limit, setLimit] = useState(props.p.limit);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      qc.setQueryData(BACKUP_KEY, await backupApi.pikpakSet(folder, limit));
+      props.close();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  const logout = async () => {
+    if (!(await confirm({ title: "退出 PikPak？", message: "同步停下，PikPak 上的文件都不动。", confirmLabel: "退出", danger: true }))) return;
+    backupApi.pikpakLogout().then((o) => { qc.setQueryData(BACKUP_KEY, o); props.close(); }, (err) => toast(errorText(err), "error"));
+  };
+  return (
+    <Modal title="PikPak" error={error} onClose={props.close} onSubmit={submit} submitLabel="保存" submitDisabled={!folder.trim()}>
+      {confirmDialog}
+      <Field label="PikPak 上的文件夹">
+        <TextInput aria-label="PikPak 上的文件夹" value={folder} maxLength={200} onChange={(e) => setFolder(e.target.value)} />
+      </Field>
+      <Field label="限速">
+        <Dropdown<number> block ariaLabel="限速" value={limit} options={LIMITS.map((n) => ({ value: n, label: limitText(n) }))} onChange={setLimit} />
+      </Field>
+      <div className="flex items-center gap-2 pt-1 text-sm">
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{props.p.account}</span>
+        <Button onClick={() => void logout()}>退出登录</Button>
+      </div>
+    </Modal>
+  );
+}
+
 const STATUS = { running: "还在备份", done: "备份好了", stopped: "停下了", failed: "没备成" } as const;
+const PIKPAK_STATUS = { running: "还在传", done: "传好了", stopped: "停下了", failed: "没传完" } as const;
 
 function RecordRow(props: { r: BackupRecord }) {
   const { r } = props;
@@ -333,9 +455,9 @@ function RecordRow(props: { r: BackupRecord }) {
     <li className="px-4 py-2 text-sm">
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
         <span className="tabular-nums">{when(r.startedAt)}</span>
-        <span className={r.status === "failed" ? "text-destructive" : "text-muted-foreground"}>{STATUS[r.status]}</span>
-        <span className="min-w-0 truncate text-muted-foreground">{r.tasks.map((t) => t.target).join("、")}</span>
-        <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">复制 {r.files} 个 · {bytes(r.bytes)}</span>
+        <span className={r.status === "failed" ? "text-destructive" : "text-muted-foreground"}>{(r.dest === "pikpak" ? PIKPAK_STATUS : STATUS)[r.status]}</span>
+        <span className="min-w-0 truncate text-muted-foreground">{r.dest === "pikpak" ? "PikPak" : r.tasks.map((t) => t.target).join("、")}</span>
+        <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">{r.dest === "pikpak" ? "传了" : "复制"} {r.files} 个 · {bytes(r.bytes)}</span>
         {more && (
           <button type="button" onClick={() => setOpen((o) => !o)} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">
             {r.errors.length ? `${r.errors.length} 个没成` : "详情"}

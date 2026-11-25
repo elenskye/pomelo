@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const PART: &str = ".pomelo-part-";
 
 /// Names never backed up, on either side.
-const JUNK: [&str; 9] = [".DS_Store", ".localized", ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems", ".DocumentRevisions-V100", ".apdisk", ".com.apple.timemachine.donotpresent"];
+pub const JUNK: [&str; 9] = [".DS_Store", ".localized", ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems", ".DocumentRevisions-V100", ".apdisk", ".com.apple.timemachine.donotpresent"];
 /// Files still downloading.
 const PARTIAL: [&str; 4] = [".crdownload", ".download", ".part", ".partial"];
 /// Folders that rebuild (a project's).

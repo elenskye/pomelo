@@ -28,6 +28,10 @@ pub fn is_tool(name: &str) -> bool {
     [MOVE, TRASH, TASK].contains(&name)
 }
 
+fn card_kind_moves(kind: &str) -> bool {
+    kind == "move" || kind == "drive_trash"
+}
+
 pub fn is_kind(kind: &str) -> bool {
     ["move", "drive_trash", "task"].contains(&kind)
 }
@@ -279,12 +283,13 @@ pub fn run(j: &Janitor, s: &Settings, c: &Card, picked: &[usize]) -> Result<(&'s
 
 /// 在硬盘上改 / 移到硬盘的废纸篓 / 建任务: the picked items of a backup card (a task card: all of it).
 #[tauri::command]
-pub async fn janitor_card_backup(state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, picked: Vec<usize>) -> Result<Card, String> {
+pub async fn janitor_card_backup(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, picked: Vec<usize>) -> Result<Card, String> {
     if janitor.backup.running() {
         return Err("正在备份，等它做完或先停下".into());
     }
     super::ensure_fake(&janitor)?;
     let card = state.youzi.with_db(|c| agent::card(c, id))?;
+    let card_kind = card.kind.clone();
     let s = super::load(&state);
     let j = janitor.inner().clone();
     let (st, result, after) = tauri::async_runtime::spawn_blocking(move || run(&j, &s, &card, &picked)).await.map_err(|e| e.to_string())??;
@@ -293,5 +298,9 @@ pub async fn janitor_card_backup(state: State<'_, AppState>, janitor: State<'_, 
     }
     state.youzi.with_db(|c| agent::set_state(c, id, st, Some(&result)))?;
     super::compare_in_background(&janitor, super::load(&state));
+    // the drive changed: PikPak follows
+    if st == "done" && card_kind_moves(&card_kind) {
+        super::pikpak::kick(&app);
+    }
     state.youzi.with_db(|c| agent::card(c, id))
 }

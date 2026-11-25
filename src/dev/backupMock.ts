@@ -3,7 +3,9 @@
 // is added; 在硬盘上跟着改 takes the moves off; 重新对比 says 正在对比 for a second. `&backup=none`: no drive picked.
 // 柚子 has looked already (three cards: a new task, a renamed folder, a dup; janitorMock.ts `backupCards`);
 // 柚子看一眼 looks again for a second and a half. A done task card adds the task, a done move takes the moves off.
-import type { BackupDiff, BackupLook, BackupOverview, BackupRecord, BackupTask, BackupTaskInput } from "@/modules/youzi/assistants/janitorApi";
+// PikPak: logged in and in step (`&pikpak=none`: not logged in; `&pikpak=held`: stopped at too many deletions); a sync
+// (接着传, a backup ending, logging in) runs five seconds; 停下 stops it.
+import type { BackupDiff, BackupLook, BackupOverview, BackupRecord, BackupTask, BackupTaskInput, PikPakView } from "@/modules/youzi/assistants/janitorApi";
 import { BACKUP_TEXT, backupCardHooks, backupCards, janitorCards } from "./janitorMock";
 
 type Args = Record<string, unknown>;
@@ -43,6 +45,52 @@ let runs: BackupRecord[] = [];
 let comparingUntil = 0;
 let run: { until: number; ids: number[]; files: number; bytes: number } | null = null;
 let ended: string | null = null;
+const pikParam = () => new URLSearchParams(location.search).get("pikpak");
+let pik = { account: pikParam() === "none" ? null as string | null : "xiaoyou@example.com", folder: "小柚的硬盘", limit: 5, ended: "传了 17 个（12 MB）" as string | null, paused: false, held: pikParam() === "held", until: 0 };
+const PIK_FILES = 6;
+const PIK_BYTES = 9_000_000;
+
+function pikSettle() {
+  if (!pik.until || Date.now() < pik.until) return;
+  pik.until = 0;
+  pik.ended = `传了 ${PIK_FILES} 个（9 MB）`;
+  runs = [{ id: runs.length + 1, dest: "pikpak", drive: DRIVE.name, status: "done", tasks: [], files: PIK_FILES, bytes: PIK_BYTES, errors: [], note: null, startedAt: new Date(Date.now() - 5000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
+}
+
+function pikStart() {
+  if (!pik.account || pik.until || pik.held) return;
+  pik.paused = false;
+  pik.until = Date.now() + 5000;
+}
+
+function pikView(): PikPakView {
+  pikSettle();
+  const running = pik.until > 0;
+  const frac = running ? Math.min(1, 1 - (pik.until - Date.now()) / 5000) : 0;
+  const checking = running && frac < 0.2;
+  return {
+    installed: true,
+    account: pik.account,
+    folder: pik.folder,
+    limit: pik.limit,
+    running,
+    checking,
+    bytes: running && !checking ? Math.floor(PIK_BYTES * frac) : 0,
+    totalBytes: running && !checking ? PIK_BYTES : 0,
+    files: running && !checking ? Math.floor(PIK_FILES * frac) : 0,
+    totalFiles: running && !checking ? PIK_FILES : 0,
+    deletes: 0,
+    speed: running && !checking ? 1_800_000 : 0,
+    eta: running && !checking ? Math.ceil((pik.until - Date.now()) / 1000) : 0,
+    current: running && !checking ? ["照片/截图/截屏 1.png"] : [],
+    ended: running ? null : pik.held ? "要挪进 PikPak 回收站的超过 100 个，先停下了" : pik.ended,
+    waiting: running ? null : !pik.account ? "没登录" : pik.paused ? "停下了" : pik.held ? "等你确认" : null,
+    held: pik.held,
+    used: pik.account ? 812_000_000_000 : null,
+    total: pik.account ? 6_000_000_000_000 : null,
+  };
+}
+
 /** 柚子's look: its (made-up) reply's id, when, until when it's still writing. */
 let look: { msg: number; at: number; until: number } | null = null;
 let lookMsg = 900_000;
@@ -70,8 +118,9 @@ function settle() {
   const r = run;
   run = null;
   tasks = tasks.map((t) => (r.ids.includes(t.id) && t.diff ? { ...t, last: new Date().toISOString(), diff: { ...t.diff, new: group([]), changed: group([]), same: t.diff.same + t.diff.new.count + t.diff.changed.count } } : t));
-  runs = [{ id: runs.length + 1, drive: DRIVE.name, status: "done", tasks: tasks.filter((t) => r.ids.includes(t.id)).map((t) => ({ id: t.id, source: t.source, target: t.target, files: 0, bytes: 0, updated: 0, done: true })), files: r.files, bytes: r.bytes, errors: [], note: null, startedAt: new Date(r.until - 3000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
+  runs = [{ id: runs.length + 1, dest: "drive", drive: DRIVE.name, status: "done", tasks: tasks.filter((t) => r.ids.includes(t.id)).map((t) => ({ id: t.id, source: t.source, target: t.target, files: 0, bytes: 0, updated: 0, done: true })), files: r.files, bytes: r.bytes, errors: [], note: null, startedAt: new Date(r.until - 3000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
   ended = `备份好了：复制了 ${r.files} 个文件`;
+  pikStart();
 }
 
 function view(): BackupOverview {
@@ -90,11 +139,40 @@ function view(): BackupOverview {
     run: { running, filesTotal: run?.files ?? 0, filesDone: Math.floor((run?.files ?? 0) * frac), bytesTotal: run?.bytes ?? 0, bytesDone: Math.floor((run?.bytes ?? 0) * frac), task: running ? "照片" : "", current: running ? "截图/截屏 1.png" : "", ended: running ? null : ended },
     runs,
     look: lookView(),
+    pikpak: pikView(),
   };
 }
 
 export const backupHandlers: Record<string, (a: Args) => unknown> = {
   janitor_backup_overview: () => view(),
+  janitor_pikpak_login: (a) => {
+    if (!String(a.account).trim() || !a.password) throw "要写 PikPak 的账号和密码";
+    if (a.password === "wrong") throw "没登录上：账号或密码不对";
+    pik.account = String(a.account).trim();
+    pikStart();
+    return view();
+  },
+  janitor_pikpak_logout: () => {
+    pik = { ...pik, account: null, until: 0 };
+    return view();
+  },
+  janitor_pikpak_set: (a) => {
+    const f = String(a.folder).trim().replace(/^\/+|\/+$/g, "");
+    if (!f || f.split("/").some((p) => p === ".." || p.startsWith("."))) throw "文件夹的名字不对";
+    pik = { ...pik, folder: f, limit: Number(a.limit) };
+    return view();
+  },
+  janitor_pikpak_stop: () => {
+    if (pik.until) pik.ended = "停下了：传了 2 个（3 MB）";
+    pik = { ...pik, until: 0, paused: true };
+    return null;
+  },
+  janitor_pikpak_go: (a) => {
+    if (a.force) pik.held = false;
+    pik.paused = false;
+    pikStart();
+    return view();
+  },
   janitor_backup_look: () => {
     look = { msg: ++lookMsg, at: Math.floor(Date.now() / 1000), until: Date.now() + 1500 };
     backupCards(look.msg);

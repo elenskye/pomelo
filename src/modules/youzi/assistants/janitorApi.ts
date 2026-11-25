@@ -164,10 +164,12 @@ type BackupDrive = { uuid: string; name: string; connected: boolean; fs: string 
 type BackupVolume = { name: string; uuid: string; fs: string; total: number; free: number };
 type BackupRun = { running: boolean; filesTotal: number; filesDone: number; bytesTotal: number; bytesDone: number; task: string; current: string; ended: string | null };
 type BackupRunTask = { id: number; source: string; target: string; files: number; bytes: number; updated: number; done: boolean };
-export type BackupRecord = { id: number; drive: string; status: "running" | "done" | "stopped" | "failed"; tasks: BackupRunTask[]; files: number; bytes: number; errors: [string, string][]; note: string | null; startedAt: string; finishedAt: string | null };
+export type BackupRecord = { id: number; dest: "drive" | "pikpak"; drive: string; status: "running" | "done" | "stopped" | "failed"; tasks: BackupRunTask[]; files: number; bytes: number; errors: [string, string][]; note: string | null; startedAt: string; finishedAt: string | null };
 /** 柚子's last look (Rust backup/look.rs): its reply and cards; `stale`: the clues changed since. */
 export type BackupLook = { at: number; state: "running" | "done" | "failed"; text: string; error: string | null; cards: JanitorCard[]; stale: boolean };
-export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null };
+/** PikPak (Rust backup/pikpak.rs): the account, where the drive goes, the limit (MB/s, 0: none), a sync's progress; `waiting`: why none runs. */
+export type PikPakView = { installed: boolean; account: string | null; folder: string; limit: number; running: boolean; checking: boolean; bytes: number; totalBytes: number; files: number; totalFiles: number; deletes: number; speed: number; eta: number; current: string[]; ended: string | null; waiting: string | null; held: boolean; used: number | null; total: number | null };
+export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null; pikpak: PikPakView };
 export type BackupTaskInput = { id: number | null; source: string; target: string; excludes: string[] };
 
 export const BACKUP_KEY = [...JANITOR_KEY, "backup"];
@@ -185,4 +187,10 @@ export const backupApi = {
   move: (id: number, paths: string[]) => invoke<{ done: number; failed: [string, string][]; overview: BackupOverview }>("janitor_backup_move", { id, paths }),
   /** 柚子看一眼: the Agent looks now. */
   look: () => invoke<BackupOverview>("janitor_backup_look"),
+  pikpakLogin: (account: string, password: string) => invoke<BackupOverview>("janitor_pikpak_login", { account, password }),
+  pikpakLogout: () => invoke<BackupOverview>("janitor_pikpak_logout"),
+  pikpakSet: (folder: string, limit: number) => invoke<BackupOverview>("janitor_pikpak_set", { folder, limit }),
+  pikpakStop: () => invoke<void>("janitor_pikpak_stop"),
+  /** 接着传; `force`: 照样同步 past the deletion limit. */
+  pikpakGo: (force: boolean) => invoke<BackupOverview>("janitor_pikpak_go", { force }),
 };

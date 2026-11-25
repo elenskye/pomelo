@@ -11,12 +11,15 @@
 //! - Sandbox (dev, tests, a scratch data dir): the fake Mac's folders and fake drives in `<data>/janitor-volumes`.
 //! - 柚子 (Phase 2): each comparison also works out clues (hints.rs); the Agent reads them and proposes cards
 //!   (cards.rs); a drive plugged in gets an automatic look (look.rs).
+//! - PikPak (Phase 3): the whole drive mirrored by rclone in the background while it's in (pikpak.rs, rclone.rs).
 
 pub mod cards;
 pub mod copy;
 pub mod diff;
 pub mod hints;
 pub mod look;
+pub mod pikpak;
+pub mod rclone;
 pub mod volumes;
 #[cfg(test)]
 mod tests;
@@ -50,6 +53,7 @@ pub struct Settings {
     pub drive: Option<DriveId>,
     pub tasks: Vec<Task>,
     pub next_id: i64,
+    pub pikpak: pikpak::PikPak,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -115,6 +119,10 @@ pub struct Backup {
     /// The last run's end (error or how it ended), for the page.
     ended: Mutex<Option<String>>,
     last_names: Mutex<Vec<String>>,
+    /// Pomelo's data dir (rclone's config, the fake cloud).
+    pub data: PathBuf,
+    /// PikPak's sync (pikpak.rs).
+    pub cloud: pikpak::Cloud,
 }
 
 impl Backup {
@@ -123,7 +131,7 @@ impl Backup {
             Mode::Real => Volumes::new(PathBuf::from("/Volumes"), false),
             Mode::Sandbox => Volumes::new(data.join(FAKE_VOLUMES), true),
         };
-        Self { volumes, snapshot: Mutex::new(None), comparing: AtomicBool::new(false), running: AtomicBool::new(false), run: Mutex::new(Arc::default()), ended: Mutex::new(None), last_names: Mutex::new(Vec::new()) }
+        Self { volumes, snapshot: Mutex::new(None), comparing: AtomicBool::new(false), running: AtomicBool::new(false), run: Mutex::new(Arc::default()), ended: Mutex::new(None), last_names: Mutex::new(Vec::new()), data: data.to_path_buf(), cloud: pikpak::Cloud::default() }
     }
 
     pub fn running(&self) -> bool {
@@ -379,6 +387,8 @@ pub struct RunTask {
 #[serde(rename_all = "camelCase")]
 pub struct RunRow {
     pub id: i64,
+    /// drive | pikpak
+    pub dest: String,
     pub drive: String,
     pub status: String,
     pub tasks: Vec<RunTask>,
@@ -405,6 +415,7 @@ pub struct Overview {
     pub runs: Vec<RunRow>,
     /// 柚子's last look (look.rs).
     pub look: Option<look::LookView>,
+    pub pikpak: pikpak::PikPakView,
 }
 
 fn top_folders(v: &Volume) -> Vec<String> {
@@ -477,6 +488,7 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
         run: run_view(j),
         runs,
         look: None,
+        pikpak: pikpak::view(j, s),
     }
 }
 
@@ -658,11 +670,12 @@ fn local_day(c: &Connection) -> String {
 
 pub fn runs(c: &Connection, limit: i64) -> Result<Vec<RunRow>, String> {
     let err = crate::modules::common::err;
-    let mut s = c.prepare("SELECT id, drive, status, tasks, files, bytes, errors, note, started_at, finished_at FROM backup_runs ORDER BY id DESC LIMIT ?1").map_err(err)?;
+    let mut s = c.prepare("SELECT id, drive, status, tasks, files, bytes, errors, note, started_at, finished_at, dest FROM backup_runs ORDER BY id DESC LIMIT ?1").map_err(err)?;
     let rows = s
         .query_map([limit], |r| {
             Ok(RunRow {
                 id: r.get(0)?,
+                dest: r.get(10)?,
                 drive: r.get(1)?,
                 status: r.get(2)?,
                 tasks: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or_default(),
@@ -678,9 +691,9 @@ pub fn runs(c: &Connection, limit: i64) -> Result<Vec<RunRow>, String> {
     rows.collect::<Result<_, _>>().map_err(err)
 }
 
-/// A run left `running` (the App quit mid-run) is said as stopped.
-fn settle_stale(c: &Connection) -> Result<(), String> {
-    c.execute("UPDATE backup_runs SET status = 'stopped', note = coalesce(note, 'App 关掉时还没做完'), finished_at = coalesce(finished_at, started_at) WHERE status = 'running'", []).map(|_| ()).map_err(crate::modules::common::err)
+/// A run left `running` (the App quit mid-run) is said as stopped (`dest`: the kind not running now).
+fn settle_stale(c: &Connection, dest: &str) -> Result<(), String> {
+    c.execute("UPDATE backup_runs SET status = 'stopped', note = coalesce(note, 'App 关掉时还没做完'), finished_at = coalesce(finished_at, started_at) WHERE status = 'running' AND dest = ?1", [dest]).map(|_| ()).map_err(crate::modules::common::err)
 }
 
 fn record_start(c: &Connection, drive: &str, tasks: &[Task]) -> Result<i64, String> {
@@ -730,7 +743,10 @@ fn overview_now(state: &AppState, j: &Janitor) -> Result<Overview, String> {
     let s = load(state);
     let runs = state.youzi.with_db(|c| {
         if !j.backup.running() {
-            settle_stale(c)?;
+            settle_stale(c, "drive")?;
+        }
+        if !j.backup.cloud.running() {
+            settle_stale(c, "pikpak")?;
         }
         runs(c, 30)
     })?;
@@ -771,6 +787,7 @@ pub async fn janitor_backup_drive(app: tauri::AppHandle, state: State<'_, AppSta
         let (j, s) = (janitor.inner().clone(), s.clone());
         tauri::async_runtime::spawn(async move {
             let _ = tauri::async_runtime::spawn_blocking(move || compare_all(&j, &s)).await;
+            pikpak::plugged(&app);
             let _ = look::maybe(&app, false).await;
         });
     }
@@ -812,6 +829,8 @@ pub async fn janitor_backup_start(app: tauri::AppHandle, state: State<'_, AppSta
     if janitor.backup.running.swap(true, Ordering::SeqCst) {
         return Err("正在备份".into());
     }
+    // PikPak gives way while the drive is written
+    pikpak::yield_to_backup(&janitor);
     let run = Arc::new(Run::default());
     if let Ok(mut g) = janitor.backup.run.lock() {
         *g = run.clone();
@@ -836,6 +855,7 @@ pub async fn janitor_backup_start(app: tauri::AppHandle, state: State<'_, AppSta
         }
         j.backup.running.store(false, Ordering::SeqCst);
         compare_all(&j, &load(&st));
+        pikpak::after_backup(&app);
     });
     overview_now(&state, &janitor)
 }
@@ -891,6 +911,7 @@ pub fn watch(app: tauri::AppHandle) {
         }
         compare_all(&j, &s);
         if drive_of(&j, &s).is_some() {
+            pikpak::plugged(&app);
             look::maybe_later(&app);
         }
     });

@@ -183,7 +183,7 @@ fn tasks_are_checked() {
 #[test]
 fn the_page_gets_counts_and_the_first_rows() {
     let (_d, j, _v) = sandbox("overview");
-    let s = Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), tasks: vec![task(1, "资料", "资料")], next_id: 1 };
+    let s = Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), tasks: vec![task(1, "资料", "资料")], next_id: 1, ..Default::default() };
     compare_all(&j, &s);
     let o = overview(&j, &s, Vec::new());
     let d = o.drive.as_ref().unwrap();
@@ -202,7 +202,7 @@ fn runs_are_recorded() {
     let c = crate::youzi::store::tests::memory_db();
     let id = record_start(&c, "盘", &[task(1, "资料", "资料")]).unwrap();
     assert_eq!(runs(&c, 10).unwrap()[0].status, "running");
-    settle_stale(&c).unwrap();
+    settle_stale(&c, "drive").unwrap();
     assert_eq!(runs(&c, 10).unwrap()[0].note.as_deref(), Some("App 关掉时还没做完"));
     let o = Outcome { tasks: vec![RunTask { id: 1, source: "s".into(), target: "资料".into(), files: 2, bytes: 10, updated: 1, done: true }], files: 2, bytes: 10, errors: vec![("资料/x".into(), "没权限".into())], ..Default::default() };
     record_end(&c, id, &o).unwrap();
@@ -275,7 +275,7 @@ fn real_backup_volumes() {
 
 fn with_tasks(tasks: Vec<Task>) -> Settings {
     let next_id = tasks.iter().map(|t| t.id).max().unwrap_or(0);
-    Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), tasks, next_id }
+    Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), tasks, next_id, ..Default::default() }
 }
 
 fn clues(j: &Janitor, s: &Settings) -> hints::Hints {
@@ -455,4 +455,172 @@ fn the_page_reads_the_last_look_from_its_reply() {
     assert_eq!(look::view(&c, None).unwrap().unwrap().error.as_deref(), Some("没有模型"));
     crate::youzi::store::pref_set(&c, look::PREF, &look::LookState { fingerprint: "a".into(), reply: Some(99_999), at: 100, error: None }).unwrap();
     assert!(look::view(&c, None).unwrap().is_none());
+}
+
+// ---- Phase 3: PikPak (rclone into a local folder standing in for it) ----
+
+fn with_pikpak(limit: u32) -> Settings {
+    Settings { pikpak: pikpak::PikPak { account: Some("xiaoyou@example.com".into()), folder: String::new(), limit }, ..with_tasks(vec![]) }
+}
+
+fn cloud_files(j: &Janitor, folder: &str) -> Vec<String> {
+    let l = diff::list(&rclone::fake_root(j).join(folder), &Skip::default(), &AtomicBool::new(false)).unwrap();
+    l.files.keys().cloned().collect()
+}
+
+fn has_rclone() -> bool {
+    if rclone::binary().is_none() {
+        eprintln!("rclone isn't installed (brew install rclone): the PikPak tests didn't run");
+        return false;
+    }
+    true
+}
+
+#[test]
+fn pikpak_logs_in_through_an_encrypted_config() {
+    if !has_rclone() {
+        return;
+    }
+    let (_d, j, _v) = sandbox("pikpak-login");
+    let rc = rclone::Rclone::new(&j, None).unwrap();
+    let (used, total) = rc.login("xiaoyou@example.com", "not-a-real-password").unwrap();
+    assert_eq!((used, total), (0, 6_000 * rules::GB));
+    let conf = std::fs::read_to_string(j.backup.data.join("rclone/rclone.conf")).unwrap();
+    assert!(conf.contains("RCLONE_ENCRYPT_V0") && !conf.contains("pikpak") && !conf.contains("type"), "{conf}");
+    rc.logout();
+    assert!(!j.backup.data.join("rclone/rclone.conf").exists());
+    assert!(rc.about().is_ok(), "the fake cloud's size needs no login");
+    assert!(rclone::folder_of("../x").is_err() && rclone::folder_of("备份/VAULT").is_err() && rclone::folder_of(" ").is_err() && rclone::folder_of(".x").is_err());
+    assert_eq!(rclone::folder_of("/备份/小柚的硬盘/").unwrap(), "备份/小柚的硬盘");
+}
+
+#[test]
+fn pikpak_mirrors_the_drive_and_follows_renames_and_deletions() {
+    if !has_rclone() {
+        return;
+    }
+    let (_d, j, v) = sandbox("pikpak-sync");
+    let s = with_pikpak(0);
+    rclone::Rclone::new(&j, None).unwrap().login("xiaoyou@example.com", "x").unwrap();
+    // the whole drive but VAULT and the junk, names in NFC
+    std::fs::create_dir_all(v.path.join(".Trashes/501")).unwrap();
+    std::fs::write(v.path.join(".Trashes/501/扔掉的.txt"), "x").unwrap();
+    std::fs::write(v.path.join("照片/.DS_Store"), "x").unwrap();
+    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    assert!(d.ok && d.errors.is_empty(), "{d:?}");
+    let up = cloud_files(&j, fake::DRIVE);
+    let on_drive: Vec<String> = diff::list(&v.path, &Skip::default(), &AtomicBool::new(false)).unwrap().files.into_keys().filter(|k| k != volumes::FAKE_FILE).collect();
+    assert_eq!(up, on_drive, "a mirror of the drive");
+    assert!(up.iter().all(|k| !k.to_lowercase().contains("vault") && !k.contains(".Trashes") && !k.contains("DS_Store") && !k.contains(".pomelo")), "{up:?}");
+    assert!(up.contains(&"照片/Caf\u{e9}.jpg".to_string()));
+    let raw: Vec<String> = std::fs::read_dir(rclone::fake_root(&j).join(fake::DRIVE).join("照片")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(raw.contains(&"Caf\u{e9}.jpg".to_string()), "uploaded in NFC: {raw:?}");
+    assert_eq!((p.files.load(Ordering::Relaxed), p.total_files.load(Ordering::Relaxed)), (up.len() as u64, up.len() as u64));
+    assert_eq!(p.bytes.load(Ordering::Relaxed), p.total_bytes.load(Ordering::Relaxed));
+    assert_eq!(pikpak::ended_text(&p, &d), format!("传了 {} 个（{}）", up.len(), gb(p.bytes.load(Ordering::Relaxed))));
+    // nothing changed: nothing goes up
+    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    assert!(d.ok && p.files.load(Ordering::Relaxed) == 0);
+    assert_eq!(pikpak::ended_text(&p, &d), "和硬盘上一样");
+    // a folder renamed on the drive (柚子's card) is a move up there, not an upload
+    std::fs::rename(v.path.join("照片/其它"), v.path.join("照片/其他")).unwrap();
+    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    assert!(d.ok, "{d:?}");
+    assert_eq!((p.files.load(Ordering::Relaxed), p.renames.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed)), (0, 2, 0));
+    assert_eq!(pikpak::ended_text(&p, &d), "在 PikPak 上挪了 2 个");
+    let c = crate::youzi::store::tests::memory_db();
+    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
+    pikpak::record_end(&c, id, &p, &d).unwrap();
+    assert_eq!(runs(&c, 10).unwrap()[0].note.as_deref(), Some("在 PikPak 上挪了 2 个"), "a sync that only moved is kept");
+    assert!(cloud_files(&j, fake::DRIVE).contains(&"照片/其他/IMG_0101.jpg".to_string()));
+    // a duplicate trashed on the drive: in the cloud's trash, not gone
+    std::fs::remove_dir_all(v.path.join("回忆_2606")).unwrap();
+    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    assert!(d.ok && p.deletes.load(Ordering::Relaxed) == 1, "{d:?}");
+    assert!(rclone::fake_trash(&j).join("2026-11-25/回忆_2606/小柚/2024/a.mov").exists());
+    assert!(!cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("回忆_2606")));
+    // the records: what moved; an empty sync leaves none
+    let c = crate::youzi::store::tests::memory_db();
+    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
+    pikpak::record_end(&c, id, &p, &d).unwrap();
+    let r = &runs(&c, 10).unwrap()[0];
+    assert_eq!((r.dest.as_str(), r.status.as_str(), r.note.as_deref()), ("pikpak", "done", Some("挪进 PikPak 回收站 1 个")));
+    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
+    pikpak::record_end(&c, id, &rclone::Progress::new(), &rclone::Done { ok: true, ..Default::default() }).unwrap();
+    assert_eq!(runs(&c, 10).unwrap().len(), 1);
+    // a run left running: each kind settles on its own
+    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
+    settle_stale(&c, "drive").unwrap();
+    assert_eq!(runs(&c, 10).unwrap()[0].status, "running");
+    settle_stale(&c, "pikpak").unwrap();
+    assert_eq!(runs(&c, 10).unwrap().iter().find(|r| r.id == id).unwrap().status, "stopped");
+}
+
+#[test]
+fn pikpak_holds_back_many_deletions_and_stops_without_half_files() {
+    if !has_rclone() {
+        return;
+    }
+    let (_d, j, v) = sandbox("pikpak-guard");
+    rclone::Rclone::new(&j, None).unwrap().login("xiaoyou@example.com", "x").unwrap();
+    let many = v.path.join("影音/零碎");
+    std::fs::create_dir_all(&many).unwrap();
+    for i in 0..(rclone::MAX_DELETE + 20) {
+        std::fs::write(many.join(format!("{i}.txt")), format!("{i}")).unwrap();
+    }
+    let s = with_pikpak(0);
+    assert!(pikpak::sync_for_test(&j, &s, false).1.ok);
+    // the drive suddenly misses a lot: the sync stops at the limit and waits for 照样同步
+    std::fs::remove_dir_all(&many).unwrap();
+    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    assert!(!d.ok && d.too_many_deletes, "{d:?}");
+    assert!(pikpak::ended_text(&p, &d).starts_with("要挪进 PikPak 回收站的超过 100 个"));
+    assert!(cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("影音/零碎/")));
+    let (_, d) = pikpak::sync_for_test(&j, &s, true);
+    assert!(d.ok, "{d:?}");
+    assert!(!cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("影音/零碎/")));
+    // stopped halfway (a slow line): no half file up there; the next sync carries on
+    let big = v.path.join("影音/长片.mov");
+    std::fs::write(&big, vec![7u8; 3_000_000]).unwrap();
+    let slow = with_pikpak(1);
+    let drive = drive_of(&j, &slow).unwrap();
+    let p = std::sync::Arc::new(rclone::Progress::new());
+    let stopper = {
+        let p = p.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            p.kill();
+        })
+    };
+    let d = rclone::Rclone::new(&j, None).unwrap().sync(&drive.path, fake::DRIVE, 1, false, "2026-11-25", &p);
+    stopper.join().unwrap();
+    assert!(d.stopped && !d.ok, "{d:?}");
+    let up = cloud_files(&j, fake::DRIVE);
+    assert!(!up.contains(&"影音/长片.mov".to_string()) && up.iter().all(|k| !k.contains("partial")), "{up:?}");
+    let (p, d) = pikpak::sync_for_test(&j, &with_pikpak(0), false);
+    assert!(d.ok && p.files.load(Ordering::Relaxed) == 1, "{d:?}");
+}
+
+#[test]
+fn rclone_lines_are_read_into_progress() {
+    let p = rclone::Progress::new();
+    let mut d = rclone::Done::default();
+    p.read_line(r#"{"level":"notice","msg":"x","stats":{"bytes":0,"totalBytes":0,"transfers":0,"totalTransfers":0,"checks":40,"totalChecks":120}}"#, &mut d);
+    assert!(p.checking.load(Ordering::Relaxed), "still comparing");
+    p.read_line(r#"{"level":"notice","msg":"x","stats":{"bytes":500,"totalBytes":2000,"transfers":1,"totalTransfers":4,"deletes":2,"renames":1,"speed":250.5,"eta":6,"transferring":[{"name":"照片/a.jpg"}]}}"#, &mut d);
+    p.read_line(r#"{"level":"error","msg":"Failed to copy: permission denied","object":"资料/x.pdf"}"#, &mut d);
+    p.read_line(r#"{"level":"error","msg":"Failed to copy: denied","object":"VAULT/秘密.txt"}"#, &mut d);
+    p.read_line(r#"{"level":"error","msg":"Cancelling sync due to fatal error: failed to delete 1 files"}"#, &mut d);
+    p.read_line(r#"{"level":"error","msg":"Got fatal error on delete: --max-delete threshold reached","object":"a.txt"}"#, &mut d);
+    p.read_line("not json", &mut d);
+    assert!(!p.checking.load(Ordering::Relaxed));
+    assert_eq!((p.bytes.load(Ordering::Relaxed), p.total_files.load(Ordering::Relaxed), p.speed.load(Ordering::Relaxed), p.eta.load(Ordering::Relaxed)), (500, 4, 250, 6));
+    assert_eq!(*p.current.lock().unwrap(), ["照片/a.jpg"]);
+    assert!(d.too_many_deletes);
+    assert_eq!(d.errors.iter().map(|(o, _)| o.as_str()).collect::<Vec<_>>(), ["资料/x.pdf", "a.txt"], "VAULT never named, summaries left out");
+    let f = rclone::filters();
+    for rule in ["- vault/**", "- vault.*", "- .Trashes/**", "- .DS_Store", "- ._*", "- .pomelo-part-*"] {
+        assert!(f.iter().any(|x| x == rule), "{rule}: {f:?}");
+    }
+    assert!(f.contains(&"--ignore-case".to_string()));
 }

@@ -747,6 +747,11 @@ pub fn run() {
             youzi::assistants::janitor::backup::janitor_backup_move,
             youzi::assistants::janitor::backup::look::janitor_backup_look,
             youzi::assistants::janitor::backup::cards::janitor_card_backup,
+            youzi::assistants::janitor::backup::pikpak::janitor_pikpak_login,
+            youzi::assistants::janitor::backup::pikpak::janitor_pikpak_logout,
+            youzi::assistants::janitor::backup::pikpak::janitor_pikpak_set,
+            youzi::assistants::janitor::backup::pikpak::janitor_pikpak_stop,
+            youzi::assistants::janitor::backup::pikpak::janitor_pikpak_go,
             site::site_overview,
             site::site_changes,
             site::site_diff,
@@ -866,6 +871,7 @@ pub fn run() {
             RunEvent::Exit => {
                 capture::unregister(app);
                 youzi::chat::shutdown(app);
+                youzi::assistants::janitor::backup::pikpak::on_exit(app);
                 app.state::<AppState>().youzi.runtime.stop_ours_on_exit();
                 app.state::<site::Site>().on_exit();
                 app.state::<canvas::Canvas>().on_exit();

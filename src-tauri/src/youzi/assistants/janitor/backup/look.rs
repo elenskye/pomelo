@@ -133,6 +133,7 @@ pub fn situation(j: &Janitor, s: &Settings) -> String {
         None if snap.is_none() => out.push_str("正在对比，线索等对完才有。\n"),
         None => {}
     }
+    out.push_str(&super::pikpak::situation(j, s));
     out
 }
 
