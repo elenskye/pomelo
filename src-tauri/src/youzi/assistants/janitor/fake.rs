@@ -11,8 +11,12 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 /// Bumped when the fake Mac changes (an older one is made again).
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 pub const HOME: &str = "/Users/me";
+/// The fake external drive (backup/), in `<data>/janitor-volumes`.
+pub const DRIVE: &str = "小柚的硬盘";
+pub const DRIVE_UUID: &str = "FAKE-0000-0000-0001";
+const DRIVE_VERSION: u32 = 1;
 
 fn at(root: &Path, virt: &str) -> std::path::PathBuf {
     root.join(virt.trim_start_matches('/'))
@@ -246,6 +250,10 @@ pub fn build(root: &Path, now: SystemTime) -> Result<(), String> {
     symlink(root, "/usr/local/mysql", "mysql-9.4.0-macos15-arm64")?;
     f(".claude/projects/pomelo/session.jsonl", 120 * MB, 0)?;
     abs("/usr/local/lib/libsomething.dylib", 50 * MB, 200)?;
+    // 备份 (1.1.0): the Mac side of the backup tasks, and VAULT (nothing may list it)
+    for (virt, size, seed, days) in MAC_BACKUP {
+        dated(root, &format!("{HOME}/Downloads/{virt}"), *size, *seed, *days)?;
+    }
     let gb = |n: f64| (n * GB as f64) as u64;
     let fake = Fake {
         disk_total: 460 * GB,
@@ -266,6 +274,85 @@ pub fn build(root: &Path, now: SystemTime) -> Result<(), String> {
     let mut v = serde_json::to_value(&fake).map_err(|e| e.to_string())?;
     v["version"] = serde_json::json!(VERSION);
     fs::write(root.join(FAKE_FILE), v.to_string()).map_err(|e| e.to_string())
+}
+
+/// Backup fixtures are dated from a fixed day, so the Mac and the drive (made at other times) agree.
+const BASE: u64 = 1_788_220_800; // 2026-09-01
+
+/// A file with real bytes, last changed `days` before `BASE`.
+fn dated(root: &Path, virt: &str, size: usize, seed: u8, days: u64) -> Result<(), String> {
+    bytes(root, virt, size, seed, 0, SystemTime::now())?;
+    let t = SystemTime::UNIX_EPOCH + Duration::from_secs(BASE - days * 86400);
+    File::options().write(true).open(at(root, virt)).and_then(|f| f.set_times(FileTimes::new().set_modified(t).set_accessed(t))).map_err(|e| e.to_string())
+}
+
+/// The Mac's `Downloads` for the backup: (path, size, seed, days before BASE).
+const MAC_BACKUP: &[(&str, usize, u8, u64)] = &[
+    ("资料/2501 申请/成绩单.pdf", 40_000, 1, 300),
+    ("资料/2501 申请/推荐信.docx", 30_000, 2, 290),
+    ("资料/2609 实习/周报.docx", 20_000, 3, 60),
+    ("资料/2609 实习/合同.pdf", 50_000, 4, 5),
+    ("资料/2609 实习/日程.xlsx", 15_000, 5, 1),
+    ("资料/~$周报.docx", 165, 6, 1),
+    ("照片/城市/IMG_0001.jpg", 200_000, 7, 100),
+    ("照片/城市/IMG_0002.jpg", 210_000, 8, 100),
+    ("照片/其他/IMG_0101.jpg", 120_000, 9, 80),
+    ("照片/其他/IMG_0102.jpg", 130_000, 10, 80),
+    ("照片/截图/截屏 1.png", 60_000, 11, 2),
+    ("照片/截图/截屏 2.png", 61_000, 12, 1),
+    ("照片/Caf\u{e9}.jpg", 90_000, 13, 50),
+    ("小柚/2024/a.mov", 2_000_000, 14, 500),
+    ("小柚/2024/b.jpg", 150_000, 15, 480),
+    ("小柚/2026/c.jpg", 160_000, 16, 3),
+    ("小柚/2026/d.jpg", 170_000, 17, 3),
+    ("作品/设计/海报.psd", 1_000_000, 18, 20),
+    ("作品/笔记/读书.md", 8_000, 19, 10),
+    ("作品/lab/.ipynb_checkpoints/train-checkpoint.ipynb", 9_000, 20, 10),
+    ("作品/lab/train.ipynb", 12_000, 21, 9),
+    ("作品/web/node_modules/vite/index.js", 50_000, 22, 9),
+    ("作品/web/index.html", 3_000, 23, 9),
+    ("VAULT.sparsebundle/bands/0", 4_000, 24, 30),
+];
+
+/// The fake drive: the same files where they were backed up, plus what's only there.
+const DRIVE_BACKUP: &[(&str, usize, u8, u64)] = &[
+    ("资料/2501 申请/成绩单.pdf", 40_000, 1, 300),
+    ("资料/2501 申请/推荐信.docx", 30_000, 2, 290),
+    ("资料/2609 实习/周报.docx", 20_000, 3, 60),
+    ("资料/2609 实习/日程.xlsx", 16_000, 5, 30),
+    ("资料/2302 证书.zip", 300_000, 30, 900),
+    ("资料/2507 课程/大作业.zip", 900_000, 31, 400),
+    ("照片/城市/IMG_0001.jpg", 200_000, 7, 100),
+    ("照片/城市/IMG_0002.jpg", 210_000, 8, 100),
+    ("照片/其它/IMG_0101.jpg", 120_000, 9, 80),
+    ("照片/其它/IMG_0102.jpg", 130_000, 10, 80),
+    ("照片/素材/纹理.zip", 400_000, 32, 200),
+    ("照片/Cafe\u{301}.jpg", 90_000, 13, 50),
+    ("回忆/小柚/2024/a.mov", 2_000_000, 14, 500),
+    ("回忆/小柚/2024/b.jpg", 150_000, 15, 480),
+    ("回忆/小柚/2026/d.jpg", 170_000, 33, 0),
+    ("回忆_2606/小柚/2024/a.mov", 2_000_000, 14, 500),
+    ("影音/电影/片.mkv", 5_000_000, 34, 700),
+    ("VAULT/秘密.txt", 2_000, 35, 30),
+];
+
+/// The fake drives in `dir`, made (again) when missing or older.
+pub fn ensure_volumes(dir: &Path) -> Result<(), String> {
+    let drive = dir.join(DRIVE);
+    let file = drive.join(super::backup::volumes::FAKE_FILE);
+    let current = fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| v["version"].as_u64()) == Some(DRIVE_VERSION as u64);
+    if current {
+        return Ok(());
+    }
+    if drive.exists() {
+        fs::remove_dir_all(&drive).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&drive).map_err(|e| e.to_string())?;
+    for (rel, size, seed, days) in DRIVE_BACKUP {
+        dated(&drive, rel, *size, *seed, *days)?;
+    }
+    let v = serde_json::json!({ "uuid": DRIVE_UUID, "fs": "Mac OS Extended (Journaled)", "total": 2_000 * GB, "version": DRIVE_VERSION });
+    fs::write(file, v.to_string()).map_err(|e| e.to_string())
 }
 
 /// The fake Mac in `root`, made (again) when missing or older.

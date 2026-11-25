@@ -1,5 +1,5 @@
 //! DevJanitor (v0.8 阶段 6～8; requirements「DevJanitor」): 柚子's 电脑管家. Its page is the module
-//! `/janitor` (磁盘 · 清理 · 环境 · 设置) and its Agent (agent.rs).
+//! `/janitor` (磁盘 · 清理 · 备份 · 环境 · 设置) and its Agent (agent.rs); 备份 (1.1.0) is backup/.
 //! - Mode: `Real` only for the installed app on the real data dir: the real disk, real deleting. Otherwise
 //!   `Sandbox`: the fake Mac in `<data dir>/janitor-sandbox` (fake.rs) — scanning, deleting and the Trash all
 //!   happen there, commands aren't run.
@@ -14,6 +14,7 @@
 //!   in 一键清理; adding and deleting one is an undo step.
 
 pub mod agent;
+pub mod backup;
 pub mod env;
 pub mod fake;
 pub mod readonly;
@@ -111,6 +112,8 @@ pub struct Inner {
     busy: AtomicBool,
     /// The Agent's commands running, by card.
     pub cmds: agent::Cmds,
+    /// 备份 (backup/): the drives, the last comparison, a run.
+    pub backup: backup::Backup,
 }
 
 #[derive(Clone)]
@@ -130,7 +133,7 @@ impl Janitor {
             Mode::Real => (PathBuf::from("/"), home.to_string_lossy().into_owned()),
             Mode::Sandbox => (data.join(SANDBOX), fake::HOME.to_string()),
         };
-        Self(Arc::new(Inner { mode, root, home, db_path: data.join("janitor.db"), db: Mutex::new(None), state: Mutex::default(), progress: Mutex::new(Arc::default()), busy: AtomicBool::new(false), cmds: Mutex::default() }))
+        Self(Arc::new(Inner { mode, root, home, db_path: data.join("janitor.db"), db: Mutex::new(None), state: Mutex::default(), progress: Mutex::new(Arc::default()), busy: AtomicBool::new(false), cmds: Mutex::default(), backup: backup::Backup::new(mode, data) }))
     }
 
     pub fn with_db<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {

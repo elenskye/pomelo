@@ -321,8 +321,13 @@ impl<'a> Walk<'a> {
         };
         let mut list: Vec<(String, std::fs::Metadata)> = Vec::new();
         for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // VAULT: not entered, not counted, not named
+            if rules::sealed_name(&name) {
+                continue;
+            }
             if let Ok(m) = e.metadata() {
-                list.push((e.file_name().to_string_lossy().into_owned(), m));
+                list.push((name, m));
             }
         }
         let markers = list.iter().fold(0u16, |b, (n, _)| b | rules::marker_bit(n));

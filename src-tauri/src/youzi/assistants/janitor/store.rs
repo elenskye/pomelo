@@ -8,13 +8,15 @@
 //!   `project_newest` is the newest file of the item's project outside its rebuildable dirs; `extra` (JSON)
 //!   holds the rest (`how`, `inUse`, `protected`, `note`, `tag`, `dup`, `opened`).
 //! - meta `envs` (阶段 7): the 开发环境 (env.rs `Env`, JSON), replaced with the rest.
+//! - backup_seen (v2, 1.1.0): what each backup task's Mac folder held when it was last backed up (path relative to
+//!   it, size, mtime), to tell 「just deleted on the Mac」 from 「archived long ago」. A scan never touches it.
 
 use crate::db;
 use crate::modules::common::err;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
-pub const VERSION: i64 = 1;
+pub const VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE meta (
@@ -45,6 +47,13 @@ CREATE TABLE items (
   project_newest INTEGER,
   extra          TEXT NOT NULL
 ) STRICT;
+CREATE TABLE backup_seen (
+  task  INTEGER NOT NULL,
+  path  TEXT NOT NULL,
+  size  INTEGER NOT NULL,
+  mtime INTEGER NOT NULL,
+  PRIMARY KEY (task, path)
+) STRICT, WITHOUT ROWID;
 ";
 
 const DB: db::Derived = db::Derived { what: "DevJanitor 的扫描结果", not_it: "不是 DevJanitor 的扫描结果", version: VERSION, schema: SCHEMA, probe: "items" };
@@ -190,6 +199,26 @@ pub fn forget(c: &mut Connection, gone: &[(i64, Vec<String>, u64)]) -> Result<()
     }
     // folders that fell under what the chart draws go (the whole disk and its first ring stay)
     tx.execute("DELETE FROM nodes WHERE size < ?1 AND parent IS NOT NULL AND parent != 1", [super::scan::KEEP as i64]).map_err(err)?;
+    tx.commit().map_err(err)
+}
+
+/// A backup task's Mac folder as of its last backup: relative path → (size, mtime).
+pub fn seen(c: &Connection, task: i64) -> Result<std::collections::HashMap<String, (u64, i64)>, String> {
+    let mut s = c.prepare("SELECT path, size, mtime FROM backup_seen WHERE task = ?1").map_err(err)?;
+    let rows = s.query_map([task], |r| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)? as u64, r.get::<_, i64>(2)?)))).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
+}
+
+/// Replaces what a task's Mac folder held (after a backup of it finished); None forgets the task.
+pub fn set_seen(c: &mut Connection, task: i64, files: Option<&[(String, u64, i64)]>) -> Result<(), String> {
+    let tx = c.transaction().map_err(err)?;
+    tx.execute("DELETE FROM backup_seen WHERE task = ?1", [task]).map_err(err)?;
+    {
+        let mut ins = tx.prepare("INSERT OR REPLACE INTO backup_seen (task, path, size, mtime) VALUES (?1, ?2, ?3, ?4)").map_err(err)?;
+        for (p, size, t) in files.unwrap_or_default() {
+            ins.execute(params![task, p, *size as i64, t]).map_err(err)?;
+        }
+    }
     tx.commit().map_err(err)
 }
 

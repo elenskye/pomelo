@@ -265,6 +265,9 @@ fn du(real: &Path, allocated: bool, left: &mut usize) -> (u64, bool) {
     while let Some(d) = stack.pop() {
         let Ok(r) = std::fs::read_dir(&d) else { continue };
         for e in r.flatten() {
+            if rules::sealed_name(&e.file_name().to_string_lossy()) {
+                continue;
+            }
             if *left == 0 {
                 return (total, false);
             }
@@ -305,6 +308,9 @@ fn folder(j: &Janitor, protected: &Protected, virt: &str) -> Result<String, Stri
     let mut rows: Vec<(String, u64, bool, i64, &'static str)> = Vec::new();
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
+        if rules::sealed_name(&name) {
+            continue;
+        }
         let child = if virt == "/" { format!("/{name}") } else { format!("{virt}/{name}") };
         let kind = match e.file_type() {
             Ok(t) if t.is_symlink() => "替身",
@@ -348,6 +354,9 @@ fn find(j: &Janitor, protected: &Protected, virt: &str, args: &Value) -> Result<
             left -= 1;
             let Ok(m) = e.metadata() else { continue };
             let n = e.file_name().to_string_lossy().into_owned();
+            if rules::sealed_name(&n) {
+                continue;
+            }
             let cv = format!("{v}/{n}");
             if m.is_dir() {
                 stack.push((e.path(), cv));
@@ -602,6 +611,9 @@ pub fn look_with(j: &Janitor, s: &super::Settings, rs: &[Rule], site: &str, args
     let view = v["view"].as_str().unwrap_or("overview");
     let protected = Protected::new(&j.home, site);
     let path = v["path"].as_str().map(|p| virt_of(&j.home, p));
+    if path.as_ref().is_some_and(|p| p.as_ref().is_ok_and(|p| rules::sealed(p))) {
+        return answer("DevJanitor · 没看成", false, "没看成：这个地方不能看".to_string());
+    }
     let r = match (view, path) {
         ("folder", Some(Ok(p))) => folder(j, &protected, &p).map(|t| (format!("DevJanitor · 看 {p}"), t)),
         ("find", Some(Ok(p))) => find(j, &protected, &p, &v).map(|t| (format!("DevJanitor · 在 {p} 里找"), t)),
@@ -632,9 +644,12 @@ pub fn run_readonly_with(j: &Janitor, args: &str, budget: i64) -> Answer {
     if let Err(e) = super::readonly::check(&cmd) {
         return answer(format!("DevJanitor · 没跑 {short}"), false, format!("没跑：{e}。要跑就用 pomelo_janitor_command 提议卡片，用户点了才跑。"));
     }
+    if rules::mentions_sealed(&cmd) {
+        return answer("DevJanitor · 没跑", false, "没跑：命令碰到了不能看的地方".to_string());
+    }
     let out = match j.mode {
         Mode::Sandbox => format!("$ {cmd}\n（假 Mac：开发版和测试不真跑命令，这是编的结果）\n12M\t{}/Library/Caches/com.example.tool", j.home),
-        Mode::Real => format!("$ {cmd}\n{}", super::readonly::run(&cmd, &j.real_of(&j.home))),
+        Mode::Real => format!("$ {cmd}\n{}", rules::unsealed_text(&super::readonly::run(&cmd, &j.real_of(&j.home)))),
     };
     answer(format!("DevJanitor · 跑了 {short}"), true, fit(out, budget))
 }
@@ -836,6 +851,9 @@ pub fn proposed(card: &Card) -> Answer {
 /// A proposal checked into a card: paths exist and get their sizes, protected places marked, sudo found,
 /// a rule's pattern checked and expanded.
 pub fn build_card(j: &Janitor, site: &str, name: &str, args: &str) -> Result<Card, String> {
+    if rules::mentions_sealed(args) {
+        return Err("碰到了不能动的地方，不提议".into());
+    }
     let protected = Protected::new(&j.home, site);
     let v: Value = serde_json::from_str(args).map_err(|_| "参数不是 JSON".to_string())?;
     let text = |k: &str, max: usize| -> String { v[k].as_str().unwrap_or("").trim().chars().take(max).collect() };
@@ -905,7 +923,7 @@ pub fn expand(j: &Janitor, pattern: &str) -> (u64, u64) {
                 if let Ok(r) = std::fs::read_dir(j.real_of(&dir)) {
                     for e in r.flatten() {
                         let n = e.file_name().to_string_lossy().into_owned();
-                        if glob(s, &n) {
+                        if glob(s, &n) && !rules::sealed_name(&n) {
                             next.push(format!("{base}/{n}"));
                         }
                     }

@@ -141,3 +141,36 @@ export function ago(t: number): string {
 }
 
 export const dayOf = (t: number) => toYmd(new Date(t * 1000));
+
+// ---- 备份 (Rust janitor/backup/) ----
+
+type BackupRow = { path: string; size: number; mtime: number };
+type BackupMove = { from: string; to: string; size: number };
+type BackupHeld = { path: string; size: number; why: string };
+/** A group of a comparison: how many, how big, the first 300. */
+type BackupGroup<T> = { count: number; bytes: number; rows: T[] };
+export type BackupDiff = { new: BackupGroup<BackupRow>; changed: BackupGroup<BackupRow>; moved: BackupGroup<BackupMove>; held: BackupGroup<BackupHeld>; recent: BackupGroup<BackupRow>; archived: BackupGroup<BackupRow>; same: number; sameBytes: number; denied: string[] };
+/** `source`: a path on this Mac (virtual in the sandbox); `target`: relative to the drive's root. */
+export type BackupTask = { id: number; source: string; target: string; excludes: string[]; last: string | null; diff: BackupDiff | null; problem: string | null };
+type BackupDrive = { uuid: string; name: string; connected: boolean; fs: string | null; total: number; free: number; path: string | null; folders: string[] };
+type BackupVolume = { name: string; uuid: string; fs: string; total: number; free: number };
+type BackupRun = { running: boolean; filesTotal: number; filesDone: number; bytesTotal: number; bytesDone: number; task: string; current: string; ended: string | null };
+type BackupRunTask = { id: number; source: string; target: string; files: number; bytes: number; updated: number; done: boolean };
+export type BackupRecord = { id: number; drive: string; status: "running" | "done" | "stopped" | "failed"; tasks: BackupRunTask[]; files: number; bytes: number; errors: [string, string][]; note: string | null; startedAt: string; finishedAt: string | null };
+export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[] };
+export type BackupTaskInput = { id: number | null; source: string; target: string; excludes: string[] };
+
+export const BACKUP_KEY = [...JANITOR_KEY, "backup"];
+
+export const backupApi = {
+  overview: () => invoke<BackupOverview>("janitor_backup_overview"),
+  compare: () => invoke<BackupOverview>("janitor_backup_compare"),
+  /** null: forget the drive. */
+  drive: (uuid: string | null) => invoke<BackupOverview>("janitor_backup_drive", { uuid }),
+  taskSave: (task: BackupTaskInput) => invoke<BackupOverview>("janitor_backup_task_save", { task }),
+  taskDelete: (id: number) => invoke<BackupOverview>("janitor_backup_task_delete", { id }),
+  start: (ids: number[]) => invoke<BackupOverview>("janitor_backup_start", { ids }),
+  stop: () => invoke<void>("janitor_backup_stop"),
+  /** Renames on the drive the moves picked (by their path on the Mac). */
+  move: (id: number, paths: string[]) => invoke<{ done: number; failed: [string, string][]; overview: BackupOverview }>("janitor_backup_move", { id, paths }),
+};

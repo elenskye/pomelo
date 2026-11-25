@@ -270,6 +270,44 @@ pub const POMELO_DATA: [&str; 2] = ["Library/Application Support/Pomelo OS", "Li
 /// System folders (outside home).
 const SYSTEM: [&str; 9] = ["/System", "/bin", "/sbin", "/usr", "/private", "/cores", "/Library/Apple", "/Library/Keychains", "/Library/Developer/CommandLineTools"];
 
+/// VAULT (requirements「DevJanitor › 备份」): a name whose part before the first `.` is `vault` (any case:
+/// `VAULT`, `VAULT.sparsebundle`). Stronger than protected: the scan, the Agent's looking and commands, its
+/// cards and the backup never list it, enter it, copy it or say its name to a model.
+pub fn sealed_name(name: &str) -> bool {
+    name.split('.').next().is_some_and(|s| s.eq_ignore_ascii_case("vault"))
+}
+
+/// A path with a sealed part anywhere (the place itself or inside it).
+pub fn sealed(path: &str) -> bool {
+    path.split('/').any(sealed_name)
+}
+
+/// Does free text (a command, a card's JSON, a line of output) name a sealed place?
+pub fn mentions_sealed(text: &str) -> bool {
+    text.split(|c: char| c == '/' || c.is_whitespace() || matches!(c, ':' | '"' | '\'' | ',' | '{' | '}' | '[' | ']' | '*' | '?' | '=')).any(sealed_name)
+}
+
+/// Text with every line naming a sealed place dropped (a command's output; `ls` blocks under a sealed
+/// folder's `name:` heading go whole).
+pub fn unsealed_text(out: &str) -> String {
+    let names = mentions_sealed;
+    let mut kept = Vec::new();
+    let mut skipping = false;
+    for l in out.lines() {
+        if l.trim().is_empty() && skipping {
+            skipping = false;
+            continue;
+        } else if l.trim_end().ends_with(':') && names(l) {
+            skipping = true;
+            continue;
+        }
+        if !skipping && !names(l) {
+            kept.push(l);
+        }
+    }
+    kept.join("\n")
+}
+
 /// Protected places, as the requirements list them. Shared by the one-click list (never enters), the
 /// listed groups and the Agent's cards (marked, confirmed twice).
 #[derive(Debug, Clone)]
@@ -299,6 +337,9 @@ impl Protected {
         if path == "/" {
             return Some("系统");
         }
+        if sealed(path) {
+            return Some("VAULT");
+        }
         if within(path, &self.site) {
             return if path[self.site.len()..].split('/').any(|c| BUILD_DIRS.contains(&c)) { None } else { Some("个人网站") };
         }
@@ -321,6 +362,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vault_is_never_named() {
+        assert!(sealed_name("VAULT") && sealed_name("VAULT.sparsebundle") && sealed_name("vault.dmg") && !sealed_name("Vaulted") && !sealed_name("my vault"));
+        let ls = "a.txt\nVAULT.sparsebundle\nb\n\n/Users/me/Downloads/VAULT.sparsebundle/bands:\n0\n1\n\n/Users/me/Downloads/b:\nc";
+        assert_eq!(unsealed_text(ls), "a.txt\nb\n\n/Users/me/Downloads/b:\nc");
+        assert_eq!(unsealed_text("12M\t/Volumes/盘/VAULT/x\n3M\t/Volumes/盘/MEMORY"), "3M\t/Volumes/盘/MEMORY");
+    }
+
+    #[test]
     fn protected_places() {
         let p = Protected::new("/Users/me", "/Users/me/Documents/GitHub/personal-website");
         assert_eq!(p.of("/Users/me/Documents/LLM/models/a.gguf"), Some("本地模型"));
@@ -330,6 +379,9 @@ mod tests {
         assert_eq!(p.of("/System/Library"), Some("系统"));
         assert_eq!(p.of("/usr/local/bin"), None);
         assert_eq!(p.of("/usr/bin"), Some("系统"));
+        assert_eq!(p.of("/Users/me/Downloads/VAULT.sparsebundle/bands/0"), Some("VAULT"));
+        assert_eq!(p.of("/Volumes/备份盘/vault"), Some("VAULT"));
+        assert_eq!(p.of("/Users/me/Downloads/Vaulted"), None);
         // the website's sources are protected, its deps and builds aren't
         assert_eq!(p.of("/Users/me/Documents/GitHub/personal-website/src/content"), Some("个人网站"));
         assert_eq!(p.of("/Users/me/Documents/GitHub/personal-website/node_modules"), None);

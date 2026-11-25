@@ -10,6 +10,7 @@ import { addDays, pad, parseYmd, toYmd } from "@/shared/dates";
 import type { SeekerWorkspace } from "@/modules/youzi/assistants/seekerApi";
 import type { SkillFlowNode } from "@/modules/youzi/api";
 import { janitorCards, janitorChat, janitorHandlers, janitorLive, janitorReply } from "./janitorMock";
+import { backupHandlers } from "./backupMock";
 import { atlasHandlers } from "./atlasMock";
 import { bm, bookmarkHandlers, bookmarksHome } from "./bookmarksMock";
 import { ar, articleHandlers, initArticles } from "./articlesMock";
@@ -5350,6 +5351,7 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
   youzi_translate_stop: () => (pTr.running && pTrEnd("已停止"), pTrView()),
   // reading, settings and the Word export itself aren't undone (as in Rust)
   ...janitorHandlers,
+  ...backupHandlers,
   ...Object.fromEntries(Object.entries(seekerHandlers).map(([key, handler]) => [key, ["youzi_rater", "youzi_rater_interviews", "youzi_rater_prep", "youzi_rater_summarize", "youzi_rater_prep_word_place", "youzi_rater_prep_word", "youzi_seeker_files", "youzi_seeker_cv_text", "youzi_rater_practice", "youzi_rater_round", "youzi_rater_pick", "youzi_rater_follow", "youzi_rater_comment", "youzi_rater_seconds", "youzi_rater_suggest", "youzi_rater_defaults", "youzi_rater_options", "youzi_rater_options_set", "youzi_seeker", "youzi_seeker_folder", "youzi_seeker_settings", "youzi_seeker_sources", "youzi_seeker_suggest", "youzi_seeker_review", "youzi_seeker_notes_settle", "youzi_seeker_export_name", "youzi_seeker_import_preview", "youzi_seeker_output_save", "youzi_seeker_knowledge", "youzi_seeker_knowledge_add", "youzi_seeker_company_names", "youzi_seeker_job_company", "youzi_seeker_job_resumes", "youzi_seeker_prompts", "youzi_rater_prompts"].includes(key) ? handler : undoable(key === "youzi_seeker_records_order" ? "调整 Seeker 资料的顺序" : key === "youzi_seeker_records_enable" ? "启用 / 停用 Seeker 资料" : key === "youzi_seeker_records_delete" ? "删除 Seeker 资料" : key === "youzi_rater_order" ? "调整题目顺序" : key === "youzi_rater_delete_many" ? "删除题目" : key === "youzi_rater_rounds_delete" ? "删除练习" : key === "youzi_rater_prep_save" ? "改速查卡" : key === "youzi_rater_prep_keep" ? "追问存进题库" : key === "youzi_rater_review_save" ? "记复盘" : key === "youzi_rater_review_keep" ? "复盘的题存进题库" : key === "youzi_rater_review_rule" ? "复盘的约定加进规则" : key === "youzi_rater_interview_delete" ? "删除面试记录" : key === "youzi_rater_add" ? "补题" : key === "youzi_rater_round_start" ? "开始练习" : key === "youzi_rater_mark" ? "练习" : key === "youzi_rater_stop" ? "停下练习" : key === "youzi_rater_round_delete" ? "删除这一轮" : key === "youzi_rater_keep" ? "追问存进题库" : key === "youzi_rater_save" ? "保存题目" : key === "youzi_rater_delete" ? "删除题目" : key === "youzi_seeker_job_resume" ? "关联简历" : key === "youzi_seeker_group_rename" ? "分组改名" : key === "youzi_seeker_use_job" ? "为岗位做简历" : key === "youzi_seeker_job_company_set" ? "选公司资料" : "编辑 Seeker", handler)])),
   youzi_pub2md: () => p2View(),
   youzi_pub2md_settings: (a) => {

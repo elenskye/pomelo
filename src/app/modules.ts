@@ -146,6 +146,7 @@ export const ASSISTANT_MODULES: ModuleDef[] = [
     subs: [
       { value: "disk", label: "磁盘" },
       { value: "clean", label: "清理" },
+      { value: "backup", label: "备份" },
       { value: "env", label: "环境" },
       { value: "agent", label: "Agent" },
       { value: "settings", label: "设置" },

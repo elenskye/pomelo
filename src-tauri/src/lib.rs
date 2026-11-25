@@ -183,6 +183,8 @@ pub fn run() {
             app.manage(AppState::init(DataPaths::new(root), &home, mode));
             let handle = app.handle().clone();
             app.state::<AppState>().youzi.set_app(handle.clone());
+            // DevJanitor 备份: compares when the drive is plugged in
+            youzi::assistants::janitor::backup::watch(handle.clone());
             // the API keys' keychain item: read once now (a new build's one prompt), not mid-reply
             let keys = handle.clone();
             std::thread::spawn(move || keys.state::<AppState>().youzi.keys.load());
@@ -735,6 +737,14 @@ pub fn run() {
             youzi::assistants::janitor::janitor_card_stop,
             youzi::assistants::janitor::janitor_card_rule,
             youzi::assistants::janitor::janitor_card_cancel,
+            youzi::assistants::janitor::backup::janitor_backup_overview,
+            youzi::assistants::janitor::backup::janitor_backup_compare,
+            youzi::assistants::janitor::backup::janitor_backup_drive,
+            youzi::assistants::janitor::backup::janitor_backup_task_save,
+            youzi::assistants::janitor::backup::janitor_backup_task_delete,
+            youzi::assistants::janitor::backup::janitor_backup_start,
+            youzi::assistants::janitor::backup::janitor_backup_stop,
+            youzi::assistants::janitor::backup::janitor_backup_move,
             site::site_overview,
             site::site_changes,
             site::site_diff,
