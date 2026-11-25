@@ -1,7 +1,10 @@
 // DevJanitor 备份 in the browser mock (`?mock#/janitor/backup`): the fake drive and three tasks shaped like the
 // fake Mac's (Rust janitor/fake.rs). 开始备份 runs for three seconds, then the copied groups empty and a record
 // is added; 在硬盘上跟着改 takes the moves off; 重新对比 says 正在对比 for a second. `&backup=none`: no drive picked.
-import type { BackupDiff, BackupOverview, BackupRecord, BackupTask, BackupTaskInput } from "@/modules/youzi/assistants/janitorApi";
+// 柚子 has looked already (three cards: a new task, a renamed folder, a dup; janitorMock.ts `backupCards`);
+// 柚子看一眼 looks again for a second and a half. A done task card adds the task, a done move takes the moves off.
+import type { BackupDiff, BackupLook, BackupOverview, BackupRecord, BackupTask, BackupTaskInput } from "@/modules/youzi/assistants/janitorApi";
+import { BACKUP_TEXT, backupCardHooks, backupCards, janitorCards } from "./janitorMock";
 
 type Args = Record<string, unknown>;
 
@@ -40,6 +43,26 @@ let runs: BackupRecord[] = [];
 let comparingUntil = 0;
 let run: { until: number; ids: number[]; files: number; bytes: number } | null = null;
 let ended: string | null = null;
+/** 柚子's look: its (made-up) reply's id, when, until when it's still writing. */
+let look: { msg: number; at: number; until: number } | null = null;
+let lookMsg = 900_000;
+
+function lookView(): BackupLook | null {
+  if (!picked) return null;
+  if (!look) {
+    look = { msg: ++lookMsg, at: Math.floor(Date.now() / 1000) - 60, until: 0 };
+    backupCards(look.msg);
+  }
+  const running = Date.now() < look.until;
+  return { at: look.at, state: running ? "running" : "done", text: running ? "" : BACKUP_TEXT, error: null, cards: running ? [] : structuredClone(janitorCards.get(look.msg) ?? []), stale: false };
+}
+
+backupCardHooks.done = (c) => {
+  if (c.kind === "task" && c.task) {
+    tasks = [...tasks, { id: nextId++, source: c.task.source, target: c.task.target, excludes: [], last: null, problem: null, diff: diff({ new: [row("设计/海报.psd", 1_000_000), row("笔记/读书.md", 8_000), row("lab/train.ipynb", 12_000), row("web/index.html", 3_000)] }) }];
+  }
+  if (c.kind === "move") tasks = tasks.map((t) => (t.diff && t.diff.moved.count ? { ...t, diff: { ...t.diff, moved: group([]), same: t.diff.same + t.diff.moved.count } } : t));
+};
 
 /** A finished run: what it copied leaves the comparison. */
 function settle() {
@@ -66,11 +89,17 @@ function view(): BackupOverview {
     comparedAt: Math.floor(now / 1000),
     run: { running, filesTotal: run?.files ?? 0, filesDone: Math.floor((run?.files ?? 0) * frac), bytesTotal: run?.bytes ?? 0, bytesDone: Math.floor((run?.bytes ?? 0) * frac), task: running ? "照片" : "", current: running ? "截图/截屏 1.png" : "", ended: running ? null : ended },
     runs,
+    look: lookView(),
   };
 }
 
 export const backupHandlers: Record<string, (a: Args) => unknown> = {
   janitor_backup_overview: () => view(),
+  janitor_backup_look: () => {
+    look = { msg: ++lookMsg, at: Math.floor(Date.now() / 1000), until: Date.now() + 1500 };
+    backupCards(look.msg);
+    return view();
+  },
   janitor_backup_compare: () => {
     comparingUntil = Date.now() + 1000;
     return view();

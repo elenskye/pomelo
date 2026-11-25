@@ -756,15 +756,15 @@ pub fn janitor_agent_set(state: State<'_, AppState>, choice: crate::youzi::assis
     janitor_agent(state)
 }
 
-/// What the Agent is told (its SKILL, mine to rewrite, and the situation now).
+/// What the Agent is told (its SKILL, mine to rewrite, and the situation now). Async: the situation asks the drives.
 #[tauri::command]
-pub fn janitor_agent_prompt(state: State<'_, AppState>, janitor: State<'_, Janitor>) -> agent::Prompt {
-    agent::prompt(&state, &janitor)
+pub async fn janitor_agent_prompt(state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<agent::Prompt, String> {
+    Ok(agent::prompt(&state, &janitor))
 }
 
 /// My SKILL for the Agent (None: back to the built-in one). A setting: not undone.
 #[tauri::command]
-pub fn janitor_agent_skill(state: State<'_, AppState>, janitor: State<'_, Janitor>, skill: Option<String>) -> Result<agent::Prompt, String> {
+pub async fn janitor_agent_skill(state: State<'_, AppState>, janitor: State<'_, Janitor>, skill: Option<String>) -> Result<agent::Prompt, String> {
     state.youzi.with_db(|c| agent::set_skill(c, skill.as_deref()))?;
     Ok(agent::prompt(&state, &janitor))
 }

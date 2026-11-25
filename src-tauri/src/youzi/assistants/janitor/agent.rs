@@ -19,6 +19,8 @@
 //!   home; sandbox: not run, a made-up result), a rule into `janitor_rules` (one undo step, then a rescan).
 //!   None of the first two is undone. A command runs in the background (output kept in memory while it
 //!   runs, the last part saved with the card) and can be stopped (its process group).
+//! - 备份 (1.1.0 Phase 2, backup/look.rs and cards.rs): the backup's part of the situation, `BACKUP` to look, and
+//!   three more cards (move and trash on the drive, a task); the Agent also looks by itself after a comparison.
 //! - 柚子 reads DevJanitor through `INFO` (read only), where it may (hidden, 发给云端).
 
 use super::rules::{self, Protected};
@@ -57,7 +59,7 @@ pub const ROUNDS: usize = 12;
 pub const MODULE: &str = "janitor";
 
 pub fn is_proposal(name: &str) -> bool {
-    [TRASH, COMMAND, RULE].contains(&name)
+    [TRASH, COMMAND, RULE].contains(&name) || super::backup::cards::is_tool(name)
 }
 
 fn answer(label: impl Into<String>, ok: bool, text: impl Into<String>) -> Answer {
@@ -65,7 +67,7 @@ fn answer(label: impl Into<String>, ok: bool, text: impl Into<String>) -> Answer
 }
 
 /// Text cut to what `budget` tokens hold (about two characters a token, said where it was cut).
-fn fit(text: String, budget: i64) -> String {
+pub fn fit(text: String, budget: i64) -> String {
     let max = (budget.max(200) as usize) * 2;
     if text.chars().count() <= max {
         return text;
@@ -523,7 +525,13 @@ const SKILL: &str = "## 工作方式（DevJanitor 的 SKILL）
 5. 受保护的地方：Pomelo 的数据目录、钥匙串、本地模型（~/Documents/LLM）、Seeker 文件夹、个人网站里除了依赖和构建产物的东西、系统本身。能看；真要动也能提议，但说清楚风险（卡片会标「受保护」，用户要再确认一次）。
 6. 文稿、下载、桌面、图片这些是用户自己的东西：用户没问就只说、不提议删。已经在一键清理里的东西，叫用户去「清理」页点，不用再提议。
 7. 邮件（Mail）：~/Library/Mail 是 Mail 存在这台 Mac 上的邮件，~/Library/Containers/com.apple.mail 里有打开过的附件和缓存（清理页「只列出来」里的「邮件（Mail）的数据」）。用户不用 Mail 时：先请用户在「系统设置 → 互联网账户」里把每个账户的「邮件」关掉（不然打开 Mail 会重新下载）、退出 Mail，再提议移到废纸篓；「我的 Mac 上」的邮箱只存在本机，删之前问清楚。
-8. 回答用中文、简洁：先说结论（能腾出多少、建议怎么做），再说为什么；卡片里已经写了路径和大小，回答里不用一一重复。";
+8. 备份（「现在的情况」的「备份」，细节用 pomelo_janitor_backup）：程序只按名字、大小、修改时间对，不看内容。
+   - 电脑上的文件夹在硬盘上换了名字或位置放着、或者从没备过：pomelo_janitor_backup_task 提议新建或改任务（硬盘那边照已经有的放，没有就用电脑上的名字）。
+   - 任务里整个文件夹改了名：pomelo_janitor_backup_move 提议在硬盘上把那个文件夹改过去（一个文件夹一项）；零散挪了位置的文件叫用户在「备份」页点「在硬盘上跟着改」。
+   - 硬盘里重复的：确认一样的那份还在（任务用着的那份留着），再用 pomelo_janitor_backup_trash 提议把多的那份移到硬盘的废纸篓。
+   - 只在硬盘上的分清楚：电脑上别处有一样的，是改名或挪走留下的旧名字（跟着改或去重）；哪儿都没有的是归档，留着，不提议删。
+   - 拿不准对不对得上，先用 pomelo_janitor_backup 的 compare 比一比、drive 往里看。「旧版」由用户自己清，不提议。
+9. 回答用中文、简洁：先说结论（能腾出多少、建议怎么做），再说为什么；卡片里已经写了路径和大小，回答里不用一一重复。";
 
 /// The SKILL in use: mine, or the built-in one (and whether it's mine).
 pub fn skill(c: &Connection) -> (String, bool) {
@@ -552,8 +560,9 @@ pub struct Prompt {
 pub fn prompt(state: &AppState, j: &Janitor) -> Prompt {
     let (s, rs, (skill, custom)) = state.youzi.with_db(|c| Ok((super::settings(c), rules(c)?, skill(c)))).unwrap_or_else(|_| (Default::default(), vec![], (SKILL.to_string(), false)));
     let added = if rs.is_empty() { String::new() } else { format!("\n已经加进一键清理的规则：{}\n", rs.iter().map(|r| format!("{}（{}）", r.name, r.pattern)).collect::<Vec<_>>().join("、")) };
-    let head = format!("{MARK}，柚儿园里帮用户管这台 Mac 磁盘的助手（柚子的一个助手）。程序已经扫过一遍磁盘（粗的一层：各处多大、大文件、明显能清的）；细的——一个文件夹里哪些留哪些删——是你的事。个人文件夹是 {}。", j.home);
-    Prompt { skill, custom, head, situation: format!("{}{added}", situation(j, &s, &rs, false)) }
+    let head = format!("{MARK}，柚儿园里帮用户管这台 Mac 磁盘和备份的助手（柚子的一个助手）。程序已经扫过一遍磁盘（粗的一层：各处多大、大文件、明显能清的）；细的——一个文件夹里哪些留哪些删——是你的事。备份由程序复制，你帮着对上文件夹、认出改名和重复。个人文件夹是 {}。", j.home);
+    let backup = super::backup::look::situation(j, &state.youzi.with_db(|c| Ok(super::backup::settings(c))).unwrap_or_default());
+    Prompt { skill, custom, head, situation: format!("{}{added}\n### 备份\n{backup}", situation(j, &s, &rs, false)) }
 }
 
 /// The system message's part for DevJanitor's conversation: the SKILL and the situation now.
@@ -562,8 +571,14 @@ pub fn system(state: &AppState, j: &Janitor) -> String {
     format!("{}\n\n{}\n\n## 现在的情况\n{}", p.head, p.skill.trim(), p.situation)
 }
 
-/// The tools of DevJanitor's conversation.
+/// The tools of DevJanitor's conversation (备份's from backup/look.rs).
 pub fn tools() -> Vec<Value> {
+    let mut v = base_tools();
+    v.extend(super::backup::look::tools());
+    v
+}
+
+fn base_tools() -> Vec<Value> {
     let s = |d: &str| json!({ "type": "string", "description": d });
     vec![
         json!({ "type": "function", "function": { "name": LOOK, "description": "看这台 Mac 的磁盘（只读，只看名字、大小、时间）。", "parameters": { "type": "object", "properties": {
@@ -663,17 +678,22 @@ pub fn in_history(cards: &[Card]) -> String {
             let what = match c.kind.as_str() {
                 "trash" => format!("移到废纸篓「{}」", c.title),
                 "command" => format!("跑命令 {}", c.command),
+                "move" => format!("在硬盘上改名或挪「{}」", c.title),
+                "drive_trash" => format!("移到硬盘的废纸篓「{}」", c.title),
+                "task" => c.task.as_ref().map_or_else(|| c.title.clone(), |t| format!("{} {} → {}", c.title, t.source, t.target)),
                 _ => format!("加进一键清理「{}」", c.title),
             };
             let how = match (c.kind.as_str(), c.state.as_str()) {
                 (_, "cancelled") => "用户点了「不要」".to_string(),
                 (_, "running") => "还在跑".to_string(),
                 (_, "stopped") => format!("用户停下了{}", tail_of(&c.output)),
-                ("trash", _) => {
+                ("trash" | "drive_trash" | "move", _) => {
+                    let verb = if c.kind == "move" { "改" } else { "移" };
                     let done = c.items.iter().filter(|i| i.done).count();
                     let not: Vec<String> = c.items.iter().filter(|i| !i.done).map(|i| format!("{}（{}）", i.path, i.error.as_deref().unwrap_or("没勾"))).collect();
-                    if not.is_empty() { format!("移了 {done} 项") } else { format!("移了 {done} 项；没移：{}", not.join("、")) }
+                    if not.is_empty() { format!("{verb}了 {done} 项") } else { format!("{verb}了 {done} 项；没{verb}：{}", not.join("、")) }
                 }
+                ("task", "done") => "存好了".to_string(),
                 ("command", s) => format!("{}（退出码 {}）{}", if s == "done" { "跑完了" } else { "没成功" }, c.code.map_or("—".into(), |x| x.to_string()), tail_of(&c.output)),
                 (_, "done") => "加上了".to_string(),
                 _ => c.error.clone().unwrap_or_else(|| c.state.clone()),
@@ -705,9 +725,13 @@ fn tail_of(output: &str) -> String {
 #[serde(rename_all = "camelCase", default)]
 pub struct TrashItem {
     pub path: String,
+    /// A move on the drive: where to.
+    pub to: Option<String>,
     pub why: String,
     pub size: u64,
     pub protected: Option<String>,
+    /// What else to know (a task's drive folder follows a move…).
+    pub note: Option<String>,
     pub kind: String,
     /// After 移到废纸篓: moved, or why not.
     pub done: bool,
@@ -719,7 +743,7 @@ pub struct TrashItem {
 pub struct Card {
     pub id: i64,
     pub run_id: i64,
-    /// trash | command | rule
+    /// trash | command | rule; 备份 (backup/cards.rs): move | drive_trash | task
     pub kind: String,
     pub state: String,
     pub title: String,
@@ -740,6 +764,9 @@ pub struct Card {
     pub output: String,
     pub code: Option<i32>,
     pub error: Option<String>,
+    /// A backup card: the drive it's for (its UUID).
+    pub drive: Option<String>,
+    pub task: Option<super::backup::cards::TaskPlan>,
 }
 
 fn card_row(r: &rusqlite::Row) -> rusqlite::Result<Card> {
@@ -827,7 +854,12 @@ pub fn propose(app: &AppHandle, run: i64, name: &str, args: &str) -> Answer {
     let j = app.state::<Janitor>();
     let st = app.state::<AppState>();
     // the card is checked off the youzi.db lock (sizes come from janitor.db and the disk), then saved
-    let card = match build_card(&j, &site_folder(&st, &j), name, args) {
+    let built = if super::backup::cards::is_tool(name) {
+        super::backup::cards::build(&j, &st.youzi.with_db(|c| Ok(super::backup::settings(c))).unwrap_or_default(), name, args)
+    } else {
+        build_card(&j, &site_folder(&st, &j), name, args)
+    };
+    let card = match built {
         Ok(c) => c,
         Err(e) => return answer("DevJanitor · 没提议成", false, e),
     };
@@ -842,6 +874,9 @@ pub fn proposed(card: &Card) -> Answer {
     let what = match card.kind.as_str() {
         "trash" => format!("移到废纸篓 · {} 项 · {}", card.items.len(), gb(card.items.iter().map(|i| i.size).sum())),
         "command" => format!("跑命令 · {}", card.command.chars().take(40).collect::<String>()),
+        "move" => format!("在硬盘上改名或挪 · {} 项", card.items.len()),
+        "drive_trash" => format!("移到硬盘的废纸篓 · {} 项 · {}", card.items.len(), gb(card.items.iter().map(|i| i.size).sum())),
+        "task" => card.task.as_ref().map_or_else(|| card.title.clone(), |t| format!("{} · {} → {}", card.title, t.source, t.target)),
         _ => format!("加进一键清理 · {}（现在有 {} 处，{}）", card.title, card.matches, gb(card.match_size)),
     };
     let note = if card.sudo { "（要管理员密码：卡片上只给命令，用户自己去终端跑）" } else if card.protected.is_some() { "（碰到受保护的地方，用户要再确认一次）" } else { "" };
@@ -1199,9 +1234,13 @@ pub fn info(app: &AppHandle, args: &str, budget: i64) -> Answer {
 
 // ---- the mock model ----
 
-/// What the mock model calls in DevJanitor's conversation: a look, then cards by what's asked.
-pub fn mock_calls(question: &str) -> Vec<crate::youzi::provider::ToolCall> {
+/// What the mock model calls in DevJanitor's conversation: a look, then cards by what's asked (备份: the
+/// clues' suggestions in `system`, backup/look.rs).
+pub fn mock_calls(question: &str, system: &str) -> Vec<crate::youzi::provider::ToolCall> {
     use crate::youzi::provider::ToolCall;
+    if question.contains(super::backup::look::MARK) || question.contains("备份") || question.contains("硬盘") {
+        return super::backup::look::mock_calls(system);
+    }
     let call = |id: &str, name: &str, args: Value| ToolCall { id: id.into(), name: name.into(), arguments: args.to_string() };
     let mut out = vec![call("j0", LOOK, json!({ "view": if question.contains("环境") { "envs" } else { "overview" } }))];
     if question.contains("看看") || question.contains("文件夹") {
@@ -1232,8 +1271,11 @@ pub fn mock_calls(question: &str) -> Vec<crate::youzi::provider::ToolCall> {
 pub fn mock_answer(messages: &[crate::youzi::provider::Msg]) -> String {
     let cards = messages.iter().filter(|m| m.role == "tool" && m.content.starts_with("放进卡片了")).count();
     let looked = messages.iter().filter(|m| m.role == "tool" && !m.content.starts_with("放进卡片了")).count();
+    let kept = if messages.iter().any(|m| m.role == "tool" && m.content.contains("像是归档")) { "只在硬盘上、像是归档的留着就好。" } else { "" };
     if cards > 0 {
-        format!("这是开发版的**模拟回答**：看了 {looked} 处，放进了 {cards} 张卡片，看过没问题再点。")
+        format!("这是开发版的**模拟回答**：看了 {looked} 处，放进了 {cards} 张卡片，看过没问题再点。{kept}")
+    } else if !kept.is_empty() {
+        format!("这是开发版的**模拟回答**：看了 {looked} 处，没有要改的。{kept}")
     } else {
         format!("这是开发版的**模拟回答**：看了 {looked} 处。说「删」「命令」「规则」我会提议卡片。")
     }

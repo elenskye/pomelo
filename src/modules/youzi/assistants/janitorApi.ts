@@ -63,12 +63,15 @@ type JanitorSettingsView = { settings: JanitorSettings; categories: JanitorCateg
 /** The Agent's rules in 一键清理 (janitor/agent.rs `Rule`). */
 export type JanitorRule = { id: number; name: string; pattern: string; recognize: string; rebuild: string; checked: boolean; createdAt: string };
 
-type JanitorTrashItem = { path: string; why: string; size: number; protected: string | null; kind: string; done: boolean; error: string | null };
-/** One of the Agent's cards (janitor/agent.rs `Card`): trash | command | rule. */
+/** `to`: a move on the drive (relative to its root); `note`: what else to know. */
+type JanitorTrashItem = { path: string; to: string | null; why: string; size: number; protected: string | null; note: string | null; kind: string; done: boolean; error: string | null };
+/** A task card's task (Rust backup/cards.rs `TaskPlan`): what its folders compare to when proposed (`same` null: the drive wasn't in). */
+type JanitorTaskPlan = { id: number | null; source: string; target: string; why: string; same: number | null; new: number; changed: number; moved: number; archived: number; was: [string, string] | null };
+/** One of the Agent's cards (janitor/agent.rs `Card`): trash | command | rule; 备份 (backup/cards.rs): move | drive_trash | task. */
 export type JanitorCard = {
   id: number;
   runId: number;
-  kind: "trash" | "command" | "rule";
+  kind: "trash" | "command" | "rule" | "move" | "drive_trash" | "task";
   state: "pending" | "running" | "done" | "failed" | "stopped" | "cancelled";
   title: string;
   items: JanitorTrashItem[];
@@ -85,6 +88,9 @@ export type JanitorCard = {
   output: string;
   code: number | null;
   error: string | null;
+  /** A backup card: the drive's UUID. */
+  drive: string | null;
+  task: JanitorTaskPlan | null;
 };
 export type JanitorChoice = { model: string | null; thinking: boolean; effort?: string | null };
 type JanitorAgent = { session: number; choice: JanitorChoice };
@@ -119,6 +125,8 @@ export const janitorApi = {
   cardStop: (id: number) => invoke<JanitorCard>("janitor_card_stop", { id }),
   cardRule: (id: number) => invoke<JanitorCard>("janitor_card_rule", { id }),
   cardCancel: (id: number) => invoke<JanitorCard>("janitor_card_cancel", { id }),
+  /** A backup card: its picked items (a task card: all of it). */
+  cardBackup: (id: number, picked: number[]) => invoke<JanitorCard>("janitor_card_backup", { id, picked }),
 };
 
 /** Decimal, as Finder counts: 12.3 GB, 420 MB. */
@@ -157,7 +165,9 @@ type BackupVolume = { name: string; uuid: string; fs: string; total: number; fre
 type BackupRun = { running: boolean; filesTotal: number; filesDone: number; bytesTotal: number; bytesDone: number; task: string; current: string; ended: string | null };
 type BackupRunTask = { id: number; source: string; target: string; files: number; bytes: number; updated: number; done: boolean };
 export type BackupRecord = { id: number; drive: string; status: "running" | "done" | "stopped" | "failed"; tasks: BackupRunTask[]; files: number; bytes: number; errors: [string, string][]; note: string | null; startedAt: string; finishedAt: string | null };
-export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[] };
+/** 柚子's last look (Rust backup/look.rs): its reply and cards; `stale`: the clues changed since. */
+export type BackupLook = { at: number; state: "running" | "done" | "failed"; text: string; error: string | null; cards: JanitorCard[]; stale: boolean };
+export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null };
 export type BackupTaskInput = { id: number | null; source: string; target: string; excludes: string[] };
 
 export const BACKUP_KEY = [...JANITOR_KEY, "backup"];
@@ -173,4 +183,6 @@ export const backupApi = {
   stop: () => invoke<void>("janitor_backup_stop"),
   /** Renames on the drive the moves picked (by their path on the Mac). */
   move: (id: number, paths: string[]) => invoke<{ done: number; failed: [string, string][]; overview: BackupOverview }>("janitor_backup_move", { id, paths }),
+  /** 柚子看一眼: the Agent looks now. */
+  look: () => invoke<BackupOverview>("janitor_backup_look"),
 };

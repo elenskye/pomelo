@@ -497,10 +497,10 @@ mod agent_tests {
 
     #[test]
     fn the_mock_model_proposes_by_what_is_asked() {
-        let names = |q: &str| agent::mock_calls(q).into_iter().map(|c| c.name).collect::<Vec<_>>();
+        let names = |q: &str| agent::mock_calls(q, "").into_iter().map(|c| c.name).collect::<Vec<_>>();
         assert_eq!(names("看看能清什么"), [agent::LOOK, agent::LOOK]);
         assert_eq!(names("帮我删掉没用的，再给条 conda 命令，加个规则"), [agent::LOOK, agent::TRASH, agent::COMMAND, agent::RULE]);
-        assert!(agent::mock_calls("删掉 JDK 8 sudo").iter().any(|c| c.arguments.contains("sudo")));
+        assert!(agent::mock_calls("删掉 JDK 8 sudo", "").iter().any(|c| c.arguments.contains("sudo")));
         assert_eq!(names("用只读的看看清单"), [agent::LOOK, agent::LOOK, agent::RUN, agent::LOOK]);
     }
 }

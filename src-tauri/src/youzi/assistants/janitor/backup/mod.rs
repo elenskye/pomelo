@@ -9,9 +9,14 @@
 //!   one newer on the drive is held. A rename or move is done on the drive only when I say so (`apply_moves`).
 //! - VAULT (rules::sealed) and the drive's 旧版 are never a task's source or target, never listed.
 //! - Sandbox (dev, tests, a scratch data dir): the fake Mac's folders and fake drives in `<data>/janitor-volumes`.
+//! - 柚子 (Phase 2): each comparison also works out clues (hints.rs); the Agent reads them and proposes cards
+//!   (cards.rs); a drive plugged in gets an automatic look (look.rs).
 
+pub mod cards;
 pub mod copy;
 pub mod diff;
+pub mod hints;
+pub mod look;
 pub mod volumes;
 #[cfg(test)]
 mod tests;
@@ -84,12 +89,21 @@ pub struct Run {
 }
 
 #[derive(Debug, Clone)]
-struct Snapshot {
+pub struct Snapshot {
     uuid: String,
     at: i64,
     /// Same tasks as now? (their JSON)
     tasks: String,
     diffs: HashMap<i64, Result<Diff, String>>,
+    /// 柚子's clues (None: they couldn't be worked out).
+    hints: Option<hints::Hints>,
+}
+
+/// The last comparison, when it's of the drive connected now and the tasks as they are.
+fn fresh_snapshot(j: &Janitor, s: &Settings) -> Option<Snapshot> {
+    let v = drive_of(j, s)?;
+    let tasks = serde_json::to_string(&s.tasks).unwrap_or_default();
+    j.backup.snapshot.lock().ok().and_then(|g| g.clone()).filter(|sn| sn.uuid == v.uuid && sn.tasks == tasks)
 }
 
 pub struct Backup {
@@ -247,8 +261,9 @@ pub fn compare_all(j: &Janitor, s: &Settings) {
     }
     let snap = drive_of(j, s).map(|v| {
         let stop = AtomicBool::new(false);
-        let diffs = s.tasks.iter().map(|t| (t.id, compare_task(j, &v, t, &stop).map(|(d, _)| d))).collect();
-        Snapshot { uuid: v.uuid.clone(), at: unix_now(), tasks: serde_json::to_string(&s.tasks).unwrap_or_default(), diffs }
+        let diffs: HashMap<i64, Result<Diff, String>> = s.tasks.iter().map(|t| (t.id, compare_task(j, &v, t, &stop).map(|(d, _)| d))).collect();
+        let hints = hints::work_out(j, &v.path, s, &diffs, &stop).ok();
+        Snapshot { uuid: v.uuid.clone(), at: unix_now(), tasks: serde_json::to_string(&s.tasks).unwrap_or_default(), diffs, hints }
     });
     if let Ok(mut g) = j.backup.snapshot.lock() {
         *g = snap;
@@ -388,6 +403,8 @@ pub struct Overview {
     pub compared_at: Option<i64>,
     pub run: RunView,
     pub runs: Vec<RunRow>,
+    /// 柚子's last look (look.rs).
+    pub look: Option<look::LookView>,
 }
 
 fn top_folders(v: &Volume) -> Vec<String> {
@@ -459,6 +476,7 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
         compared_at: fresh.map(|sn| sn.at),
         run: run_view(j),
         runs,
+        look: None,
     }
 }
 
@@ -716,7 +734,10 @@ fn overview_now(state: &AppState, j: &Janitor) -> Result<Overview, String> {
         }
         runs(c, 30)
     })?;
-    Ok(overview(j, &s, runs))
+    let mut o = overview(j, &s, runs);
+    let now = look::fingerprint_now(j, &s);
+    o.look = state.youzi.with_db(|c| look::view(c, now.as_deref()))?;
+    Ok(o)
 }
 
 #[tauri::command]
@@ -724,17 +745,19 @@ pub async fn janitor_backup_overview(state: State<'_, AppState>, janitor: State<
     overview_now(&state, &janitor)
 }
 
-/// 重新对比: compares again now (waits for it).
+/// 重新对比: compares again now (waits for it), then 柚子 looks if the clues changed.
 #[tauri::command]
-pub async fn janitor_backup_compare(state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Overview, String> {
+pub async fn janitor_backup_compare(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Overview, String> {
     let (s, j) = (load(&state), janitor.inner().clone());
     tauri::async_runtime::spawn_blocking(move || compare_all(&j, &s)).await.map_err(|e| e.to_string())?;
+    let _ = look::maybe(&app, false).await;
     overview_now(&state, &janitor)
 }
 
-/// Picks the drive (a connected one, by its UUID); None forgets it.
+/// Picks the drive (a connected one, by its UUID); None forgets it. A drive picked is as good as plugged in:
+/// compared, then 柚子 looks.
 #[tauri::command]
-pub async fn janitor_backup_drive(state: State<'_, AppState>, janitor: State<'_, Janitor>, uuid: Option<String>) -> Result<Overview, String> {
+pub async fn janitor_backup_drive(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, uuid: Option<String>) -> Result<Overview, String> {
     let mut s = load(&state);
     s.drive = match uuid {
         Some(u) => {
@@ -744,6 +767,13 @@ pub async fn janitor_backup_drive(state: State<'_, AppState>, janitor: State<'_,
         None => None,
     };
     store_settings(&state, &s)?;
+    if s.drive.is_some() {
+        let (j, s) = (janitor.inner().clone(), s.clone());
+        tauri::async_runtime::spawn(async move {
+            let _ = tauri::async_runtime::spawn_blocking(move || compare_all(&j, &s)).await;
+            let _ = look::maybe(&app, false).await;
+        });
+    }
     overview_now(&state, &janitor)
 }
 
@@ -845,7 +875,7 @@ pub async fn janitor_backup_move(state: State<'_, AppState>, janitor: State<'_, 
     Ok(MoveOutcome { done, failed, overview: overview_now(&state, &janitor)? })
 }
 
-/// Watches the drives: when mine appears (or its tasks changed), compares in the background.
+/// Watches the drives: when mine appears (or its tasks changed), compares in the background, then 柚子 looks.
 pub fn watch(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(3));
@@ -860,5 +890,8 @@ pub fn watch(app: tauri::AppHandle) {
             continue;
         }
         compare_all(&j, &s);
+        if drive_of(&j, &s).is_some() {
+            look::maybe_later(&app);
+        }
     });
 }

@@ -3,6 +3,8 @@
 // something to copy are ticked) and shows the progress; each task folds open to what the comparison found
 // (new, changed — the drive's copy goes to 旧版 —, renamed or moved, held, only on the drive). Renames are done
 // on the drive only when picked here. The page asks every few seconds, so plugging the drive in shows up.
+// 柚子 (Phase 2; backup/look.rs): after a drive is plugged in, DevJanitor's Agent looks at what the comparison
+// and the clues say; its reply and cards (JanitorCards.tsx) show here and in Agent. 柚子看一眼 asks again.
 import { useState, type FormEvent } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,21 +15,24 @@ import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
 import { Button, EmptyState, Field, IconButton, ProgressBar, TextInput } from "@/shared/ui";
 import { pad } from "@/shared/dates";
-import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupOverview, type BackupRecord, type BackupTask } from "./janitorApi";
+import { subNav } from "@/app/subpage";
+import { MarkdownView } from "../MarkdownView";
+import { JanitorCards } from "./JanitorCards";
+import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask } from "./janitorApi";
 
 export function useBackup() {
   return useQuery({
     queryKey: BACKUP_KEY,
     queryFn: backupApi.overview,
     refetchOnMount: "always",
-    refetchInterval: (q) => (q.state.data?.run.running ? 700 : q.state.data?.comparing ? 1000 : 4000),
+    refetchInterval: (q) => (q.state.data?.run.running ? 700 : q.state.data?.comparing || q.state.data?.look?.state === "running" ? 1000 : 4000),
   });
 }
 
-/** 「2026-11-25T12:03:00Z」 → 11-25 20:03 (local). */
-function when(stamp: string | null): string {
+/** 「2026-11-25T12:03:00Z」 (or unix seconds) → 11-25 20:03 (local). */
+function when(stamp: string | number | null): string {
   if (!stamp) return "";
-  const d = new Date(stamp);
+  const d = new Date(typeof stamp === "number" ? stamp * 1000 : stamp);
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
@@ -65,6 +70,11 @@ export function BackupBar() {
       {d?.connected && (
         <Button disabled={ov.comparing || ov.run.running} onClick={() => void backupApi.compare().then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"))}>
           {ov.comparing ? "正在对比…" : "重新对比"}
+        </Button>
+      )}
+      {d?.connected && (
+        <Button disabled={ov.comparing || ov.run.running || ov.look?.state === "running"} onClick={() => void backupApi.look().then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"))}>
+          柚子看一眼
         </Button>
       )}
     </div>
@@ -142,6 +152,7 @@ function BackupBody(props: { ov: BackupOverview }) {
         )}
         {!run.running && run.ended && <p className="text-sm text-muted-foreground">{run.ended}</p>}
       </div>
+      {ov.look && <LookCard look={ov.look} />}
       <Section title="任务" actions={<Button disabled={run.running} onClick={() => setEditing("new")}><Plus size={14} />任务</Button>}>
         {ov.tasks.length ? (
           <ul className="divide-y">
@@ -285,6 +296,30 @@ function DiffView(props: { ov: BackupOverview; t: BackupTask; d: BackupDiff }) {
       <Rows title="只在硬盘上" note="留着" count={d.archived.count} size={d.archived.bytes} rows={d.archived.rows.map(row)} />
       {d.denied.length > 0 && <p className="text-xs text-destructive">读不了：{d.denied.join("、")}</p>}
     </div>
+  );
+}
+
+/** 柚子's last look: its reply, then its cards (the same ones as in Agent). */
+function LookCard(props: { look: BackupLook }) {
+  const l = props.look;
+  const running = l.state === "running";
+  // on the paper like a reply in Agent (its cards are cards of their own)
+  return (
+    <section className="mb-6">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1">
+        <h2 className="text-sm text-muted-foreground">柚子看了一眼</h2>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-muted-foreground tabular-nums">{when(l.at)}{l.stale ? " · 之后有变化" : ""}</span>
+          <Button onClick={() => subNav("janitor")?.("agent")}>在 Agent 里接着聊</Button>
+        </div>
+      </div>
+      <div className="selectable max-w-[720px] px-1">
+        {l.text && <MarkdownView source={l.text} streaming={running} />}
+        {running && !l.text && <p className="text-sm text-muted-foreground">正在看…</p>}
+        {l.state === "failed" && <p className="text-sm text-destructive">没看成：{l.error ?? "不知道为什么"}</p>}
+        {l.cards.length > 0 && <JanitorCards cards={l.cards} streaming={running} />}
+      </div>
+    </section>
   );
 }
 

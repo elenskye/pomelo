@@ -1138,7 +1138,7 @@ async fn mock_stream(thinking: bool, messages: &[Msg], opts: &Options, on: &mut 
         let calls = if named.contains(&super::ask::TOOL) && last.contains("问我测试") {
             vec![super::ask::mock_call()]
         } else if named.contains(&super::assistants::janitor::agent::LOOK) {
-            super::assistants::janitor::agent::mock_calls(last)
+            super::assistants::janitor::agent::mock_calls(last, system)
         } else {
             super::data::mock_calls(last, system, &named)
         };

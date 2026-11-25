@@ -30,7 +30,25 @@ export const janitorChat: { id: number | null; choice: JanitorChoice } = { id: n
 export const janitorCards = new Map<number, JanitorCard[]>();
 let nextCard = 1;
 
-const blank = (kind: JanitorCard["kind"], over: Partial<JanitorCard>): JanitorCard => ({ id: nextCard++, runId: 0, kind, state: "pending", title: "", items: [], command: "", what: "", deletes: "", recoverable: "", frees: "", sudo: false, protected: null, rule: null, matches: 0, matchSize: 0, output: "", code: null, error: null, ...over });
+const blank = (kind: JanitorCard["kind"], over: Partial<JanitorCard>): JanitorCard => ({ id: nextCard++, runId: 0, kind, state: "pending", title: "", items: [], command: "", what: "", deletes: "", recoverable: "", frees: "", sudo: false, protected: null, rule: null, matches: 0, matchSize: 0, output: "", code: null, error: null, drive: null, task: null, ...over });
+const item = (path: string, why: string, size: number, kind: string, over: Partial<JanitorCard["items"][number]> = {}) => ({ path, to: null, why, size, protected: null, note: null, kind, done: false, error: null, ...over });
+
+/** 备份 (Rust backup/look.rs `mock_calls`): the fake drive's clues as cards — 作品 never backed up, 照片/其它
+ *  renamed 其他 on the Mac, 回忆_2606 a copy of what's in 回忆. */
+export function backupCards(msgId: number): JanitorCard[] {
+  const drive = "FAKE-0000-0000-0001";
+  const cards = [
+    blank("task", { title: "新任务", drive, task: { id: null, source: "/Users/me/Downloads/作品", target: "作品", why: "（模拟）程序对出来的线索", same: 0, new: 4, changed: 0, moved: 0, archived: 0, was: null } }),
+    blank("move", { title: "改了名的文件夹", drive, items: [item("照片/其它", "（模拟）电脑上改了名", 250_000, "文件夹", { to: "照片/其他" })] }),
+    blank("drive_trash", { title: "硬盘里重复的", drive, items: [item("回忆_2606", "（模拟）别处有一模一样的一份", 2_000_000, "文件夹")] }),
+  ];
+  cards.forEach((c) => (c.runId = msgId));
+  janitorCards.set(msgId, cards);
+  return cards;
+}
+export const BACKUP_TEXT = "这是开发版的**模拟回答**：看了 1 处，放进了 3 张卡片，看过没问题再点。只在硬盘上、像是归档的留着就好。";
+/** backupMock.ts follows a backup card that was done. */
+export const backupCardHooks: { done?: (c: JanitorCard) => void } = {};
 
 /** agent.rs `mock_calls` / `mock_answer`: what the mock Agent looks at and proposes, by the question. */
 export function janitorReply(prompt: string, msgId: number) {
@@ -39,12 +57,16 @@ export function janitorReply(prompt: string, msgId: number) {
   if (prompt.includes("看看") || prompt.includes("文件夹")) queries.push(q("DevJanitor · 看 /Users/me/Downloads"));
   if (prompt.includes("只读") || prompt.includes("du")) queries.push({ ...q("DevJanitor · 跑了 du -sh ~/Library/Caches"), result: "$ du -sh ~/Library/Caches\n（假 Mac：开发版和测试不真跑命令，这是编的结果）\n12M\t/Users/me/Library/Caches/com.example.tool" });
   if (prompt.includes("清单")) queries.push(q("DevJanitor · 清理页的清单"));
+  if (prompt.includes("备份") || prompt.includes("硬盘")) {
+    backupCards(msgId);
+    return { queries: [q("备份 · 总的情况")], text: BACKUP_TEXT };
+  }
   const cards: JanitorCard[] = [];
   if (prompt.includes("删") || prompt.includes("废纸篓"))
     cards.push(blank("trash", { title: "用不上的东西", items: [
-      { path: "/Users/me/.mystery-tool", why: "（模拟）认不出来，90 天没动", size: 310e6, protected: null, kind: "文件夹", done: false, error: null },
-      { path: "/Users/me/Downloads/旧版微信.dmg", why: "（模拟）装过了的安装包", size: 300e6, protected: null, kind: "文件", done: false, error: null },
-      { path: "/Users/me/Documents/LLM/models/embedding.gguf", why: "（模拟）受保护的例子", size: 600e6, protected: "本地模型", kind: "文件", done: false, error: null },
+      item("/Users/me/.mystery-tool", "（模拟）认不出来，90 天没动", 310e6, "文件夹"),
+      item("/Users/me/Downloads/旧版微信.dmg", "（模拟）装过了的安装包", 300e6, "文件"),
+      item("/Users/me/Documents/LLM/models/embedding.gguf", "（模拟）受保护的例子", 600e6, "文件", { protected: "本地模型" }),
     ], protected: "本地模型" }));
   if (prompt.includes("命令") || prompt.includes("conda")) cards.push(blank("command", { title: "清 Conda", command: "conda clean --all --yes", what: "（模拟）清掉 Conda 没在用的包和下载的压缩包", deletes: "pkgs 里没被任何环境用到的包", recoverable: "以后装包时会重新下载", frees: "约 3 GB" }));
   if (prompt.includes("sudo") || prompt.includes("JDK")) cards.push(blank("command", { title: "删 JDK 8", command: "sudo rm -rf /Library/Java/JavaVirtualMachines/jdk-1.8.jdk", what: "（模拟）删掉 JDK 8", deletes: "JDK 8 整个文件夹", recoverable: "要用时重新装", frees: "约 210 MB", sudo: true }));
@@ -213,6 +235,15 @@ export const janitorHandlers: Record<string, (a: Args) => unknown> = {
     rules.push(r);
     c.rule = r;
     c.state = "done";
+    return structuredClone(c);
+  },
+  janitor_card_backup: (a) => {
+    const c = pendingCard(a.id as number);
+    const picked = a.picked as number[];
+    if (c.kind !== "task" && !picked.length) throw new Error("至少勾上一项");
+    c.items.forEach((it, i) => Object.assign(it, { done: picked.includes(i), error: null }));
+    c.state = "done";
+    backupCardHooks.done?.(c);
     return structuredClone(c);
   },
   janitor_card_cancel: (a) => {

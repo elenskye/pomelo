@@ -1,7 +1,8 @@
 // DevJanitor's Agent cards under a reply (Rust janitor/agent.rs): 移到废纸篓 (tick the items; a protected
 // one asks again), 跑命令 (执行 runs it in the background — output shown live, 停下; one with sudo only gives
-// the command to copy), 加进一键清理 (one undo step, then a rescan). 不要 closes a card. Nothing can be done
-// while the reply is still being written.
+// the command to copy), 加进一键清理 (one undo step, then a rescan). 备份 (backup/cards.rs): 在硬盘上跟着改 and
+// 移到硬盘的废纸篓 (tick the items, like the Trash), 新任务 / 改任务 (with what its folders compare to now).
+// 不要 closes a card. Nothing can be done while the reply is still being written.
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Copy } from "@/shared/icons";
@@ -46,14 +47,23 @@ function Shell(props: { title: string; card: JanitorCard; children: React.ReactN
   );
 }
 
-function TrashCard(props: { card: JanitorCard; streaming: boolean }) {
+/** The cards that list paths to tick: the Trash, the drive's Trash, moves on the drive. */
+const PATHS = {
+  trash: { title: "移到废纸篓", button: "移到废纸篓", done: "移到废纸篓了", not: "没移" },
+  drive_trash: { title: "移到硬盘的废纸篓", button: "移到硬盘的废纸篓", done: "移到硬盘的废纸篓了", not: "没移" },
+  move: { title: "在硬盘上跟着改", button: "在硬盘上改", done: "改好了", not: "没改" },
+} as const;
+
+function PathsCard(props: { card: JanitorCard; streaming: boolean }) {
   const c = props.card;
+  const words = PATHS[c.kind as keyof typeof PATHS];
   const { busy, act, cancel } = useCardActions(c);
   const [confirm, dialog] = useConfirm();
   const [picked, setPicked] = useState<number[]>(() => c.items.map((_, i) => i).filter((i) => !c.items[i].protected));
   const pending = c.state === "pending";
   const size = picked.reduce((s, i) => s + (c.items[i]?.size ?? 0), 0);
   const go = async () => {
+    if (c.kind !== "trash") return act(() => janitorApi.cardBackup(c.id, picked));
     const guarded = picked.filter((i) => c.items[i].protected);
     let ok = false;
     if (guarded.length) {
@@ -63,10 +73,10 @@ function TrashCard(props: { card: JanitorCard; streaming: boolean }) {
     await act(() => janitorApi.cardTrash(c.id, ok ? picked : picked.filter((i) => !c.items[i].protected), ok));
   };
   return (
-    <Shell title={c.title || "移到废纸篓"} card={c} footer={pending && <>
+    <Shell title={c.title || words.title} card={c} footer={pending && <>
       <span className="text-xs text-muted-foreground tabular-nums">选了 {picked.length} 项 · {bytes(size)}</span>
       <Button className="ml-auto" disabled={busy} onClick={() => void cancel()}>不要</Button>
-      <Button variant="primary" disabled={busy || props.streaming || !picked.length} onClick={() => void go()}>移到废纸篓</Button>
+      <Button variant="primary" disabled={busy || props.streaming || !picked.length} onClick={() => void go()}>{words.button}</Button>
     </>}>
       {dialog}
       <ul className="divide-y">
@@ -75,11 +85,12 @@ function TrashCard(props: { card: JanitorCard; streaming: boolean }) {
             {pending && <input type="checkbox" checked={picked.includes(i)} onChange={() => setPicked((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]))} aria-label={it.path} className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]" />}
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-                <span className="min-w-0 truncate font-mono text-xs">{it.path}</span>
+                <span className="min-w-0 truncate font-mono text-xs">{it.to ? <><span className="text-muted-foreground">{it.path}</span> → {it.to}</> : it.path}</span>
                 {it.protected && <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-primary">受保护 · {it.protected}</span>}
               </div>
               {it.why && <div className="text-xs text-muted-foreground">{it.why}</div>}
-              {!pending && <div className={`text-xs ${it.done ? "text-[var(--status-done-fg)]" : "text-muted-foreground"}`}>{it.done ? "移到废纸篓了" : it.error ? `没移：${it.error}` : "没移"}</div>}
+              {it.note && <div className="text-xs text-muted-foreground">{it.note}</div>}
+              {!pending && <div className={`text-xs ${it.done ? "text-[var(--status-done-fg)]" : "text-muted-foreground"}`}>{it.done ? words.done : it.error ? `${words.not}：${it.error}` : words.not}</div>}
             </div>
             <span className="shrink-0 tabular-nums">{bytes(it.size)}</span>
           </li>
@@ -160,10 +171,36 @@ function RuleCard(props: { card: JanitorCard; streaming: boolean }) {
   );
 }
 
+function TaskCard(props: { card: JanitorCard; streaming: boolean }) {
+  const c = props.card;
+  const { busy, act, cancel } = useCardActions(c);
+  const t = c.task;
+  if (!t) return null;
+  const now = t.same == null ? null : [[`一样 ${t.same}`, t.same], [`新加 ${t.new}`, t.new], [`改过 ${t.changed}`, t.changed], [`改名或挪了 ${t.moved}`, t.moved], [`只在硬盘上 ${t.archived}`, t.archived]].filter(([, n]) => n).map(([s]) => s).join(" · ") || "两边都是空的";
+  const lines: [string, string, boolean][] = [
+    ["电脑上", t.source, true],
+    ["硬盘上", t.target, true],
+    ...(t.was ? [["原来", `${t.was[0]} → ${t.was[1]}`, true] as [string, string, boolean]] : []),
+    ["为什么", t.why, false],
+    ...(now ? [["现在对比", now, false] as [string, string, boolean]] : []),
+  ].filter(([, v]) => !!v) as [string, string, boolean][];
+  return (
+    <Shell title={c.title} card={c} footer={c.state === "pending" ? <>
+      <Button className="ml-auto" disabled={busy} onClick={() => void cancel()}>不要</Button>
+      <Button variant="primary" disabled={busy || props.streaming} onClick={() => void act(() => janitorApi.cardBackup(c.id, []))}>{t.id == null ? "建任务" : "改任务"}</Button>
+    </> : undefined}>
+      <dl className="grid grid-cols-[5rem_1fr] gap-x-2 gap-y-1 px-4 py-3 text-sm">
+        {lines.map(([k, v, mono]) => <div key={k} className="contents"><dt className="text-muted-foreground">{k}</dt><dd className={`min-w-0 ${mono ? "font-mono text-xs" : ""}`}>{v}</dd></div>)}
+      </dl>
+      {c.error && <p className="px-4 pb-3 text-xs text-destructive">{c.error}</p>}
+    </Shell>
+  );
+}
+
 export function JanitorCards(props: { cards: JanitorCard[]; streaming: boolean }) {
   return (
     <div className="selectable contents">
-      {props.cards.map((c) => (c.kind === "trash" ? <TrashCard key={c.id} card={c} streaming={props.streaming} /> : c.kind === "command" ? <CommandCard key={c.id} card={c} streaming={props.streaming} /> : <RuleCard key={c.id} card={c} streaming={props.streaming} />))}
+      {props.cards.map((c) => (c.kind in PATHS ? <PathsCard key={c.id} card={c} streaming={props.streaming} /> : c.kind === "command" ? <CommandCard key={c.id} card={c} streaming={props.streaming} /> : c.kind === "task" ? <TaskCard key={c.id} card={c} streaming={props.streaming} /> : <RuleCard key={c.id} card={c} streaming={props.streaming} />))}
     </div>
   );
 }

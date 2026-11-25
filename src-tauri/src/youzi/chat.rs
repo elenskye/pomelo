@@ -1043,14 +1043,14 @@ pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: St
 
 /// DevJanitor's conversation: its tools (look, the three proposals), 联网搜索 on its own judgment (on and
 /// with its Key) and 问我 for a cloud model; no Pomelo data.
-async fn janitor_plan(app: &AppHandle, access: data::Access, today: String, counter: &Counter, cloud: bool) -> Option<Lookup> {
+async fn janitor_plan(app: &AppHandle, access: data::Access, today: String, counter: &Counter, asks: bool) -> Option<Lookup> {
     let st = app.state::<AppState>();
     let ctx = skills::Ctx { files: false, kb: false, text: false, scheduled: true };
     let mut web = st.youzi.with_db(|c| Ok(skills::offered(c, &st.youzi, &[], ctx))).unwrap_or_default();
     web.retain(|s| s.key == skills::WEB);
     let mut tools = janitor::tools();
     tools.extend(skills::tools(&web));
-    if cloud {
+    if asks {
         tools.push(ask::tool());
     }
     let skilled = skills::instructions(&web, &[]);
@@ -1402,6 +1402,10 @@ impl Host for AppHost<'_> {
                 let (app, args) = (self.app.clone(), call.arguments.clone());
                 tauri::async_runtime::spawn_blocking(move || janitor::look(&app, &args, budget)).await.unwrap_or_else(|e| data::Answer { module: None, label: "DevJanitor · 没看成".into(), state: "failed", text: e.to_string(), records: vec![] })
             }
+            name if name == super::assistants::janitor::backup::look::BACKUP => {
+                let (app, args) = (self.app.clone(), call.arguments.clone());
+                tauri::async_runtime::spawn_blocking(move || super::assistants::janitor::backup::look::tool(&app, &args, budget)).await.unwrap_or_else(|e| data::Answer { module: None, label: "备份 · 没看成".into(), state: "failed", text: e.to_string(), records: vec![] })
+            }
             janitor::RUN => {
                 let (app, args) = (self.app.clone(), call.arguments.clone());
                 tauri::async_runtime::spawn_blocking(move || janitor::run_readonly(&app, &args, budget)).await.unwrap_or_else(|e| data::Answer { module: None, label: "DevJanitor · 没跑成".into(), state: "failed", text: e.to_string(), records: vec![] })
@@ -1635,7 +1639,9 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
     let mut lookup = match access_for(&app, &route) {
         Some((access, today)) if jan => {
             request.with_page(|_| false);
-            janitor_plan(&app, access, today, &counter, route.model.starts_with("cloud:")).await
+            // 问我 only for a cloud model, and not in 备份's automatic look (nobody may be there to answer)
+            let asks = route.model.starts_with("cloud:") && !request.prompt.starts_with(super::assistants::janitor::backup::look::MARK);
+            janitor_plan(&app, access, today, &counter, asks).await
         }
         Some((access, today)) => {
             request.with_lookups(|q| access.may_send(q));
