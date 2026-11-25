@@ -2,7 +2,7 @@
 
 每轮开发收尾时更新（规则见 `CLAUDE.md`「工作方式」）。不是日志，也不是计划：只写接手的人要知道的现状、没做完的、等站主做的、要留意的。做完的删掉，做过什么看 `docs/roadmap.md`「已完成的版本」和 Git。
 
-## 现在（2026-11-24）
+## 现在（2026-11-25）
 
 - **正式版 1.0.6**（11-24 装）。库和格式的版本从 1.0.0 起没变：`pomelo.db` 43、`youzi.db` 43、`search.db` 3、`janitor.db` 1、数据文件格式 43。
 - **视觉方案** Pomelo `1.0.0`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画），Design System「Pomelo 柚儿园」按 1.0.0 发在现用账号。
@@ -14,11 +14,13 @@
    - CSS 搬进 `schemes/pomelo/motion/fold/`（照别的零件：`motion.json`、`fold.css`、演示片段），登记进 `motion/README.md` 的零件表；
    - 方案发 1.0.1（`scheme.json`、`CHANGELOG.md`），Design System 重建、重发；只提交 pomelo 的部分（英文提交信息），打 tag `pomelo-v1.0.1`，核对 tag；
    - 同步进 `src/vendor/pomelo/`，删掉 `src/shared/fold.css` 和 `src/index.css` 里引它的那一行。
-2. **1.1.0 的问卷**：源在 visual-atelier 的 `canvases/pomelo-v1-1-questionnaire/`（已提交），发在云端（slug 和读法见它的 `README.md`）。站主填完：`db_get` 读 `survey/answers`，存一份回本地；结论写进 `requirements.md`（文件备份模块一节）和 `roadmap.md`（1.1.0 分 Phase）；模块名字、要不要加 rclone、数据怎么存都在问卷里问了，照答案定；然后问站主删不删问卷目录。
+2. **1.1.0 文件备份**：需求定了（`requirements.md`「DevJanitor › 备份」，站主 11-25 在对话里定的；之前那份问卷作废），Phase 计划在 `roadmap.md`。等站主说开工 Phase 1（开工时三处版本号改 1.1.0）。11-25 只读元信息摸过一次真实情况：
+   - 电脑上要备份的在「下载」下几个文件夹，约 20 GB、4,500 个文件；移动硬盘（Mac OS 扩展，2 TB，用了约 810 GB）是全部，大部分只在硬盘上。两边的元信息各走一遍都不到 1 秒，所以不用为扫描做优化，慢的只是复制。
+   - 真实情况里正好有 Phase 2 要认的几种：电脑上一个文件夹在硬盘上换了名字放着；一个子文件夹改了名；硬盘里一大块重复；电脑上一个文件夹从没备过。真名只在对话里，文档、测试、提交里用编的。
 
 ## 等你做的
 
-1. **填 [Pomelo 1.1 问卷](https://claude.ai/artifact/FFKndGb8zxLCwXoK3TFQF4)**：1.1.0 做什么、文件备份模块怎么做（6 页，每页能一键按建议填）。
+1. **确认 PikPak 的剩余空间**：整个硬盘（VAULT 除外）约 760 GB，去掉重复约 690 GB，Phase 3 前要够。
 2. **批 [Pomelo Fold](https://claude.ai/artifact/U7ieNnEjrX3dEdF2427atr)**（侧栏展开的动效），方便时说一声同步。
 3. **在正式版里看 v1.0 的新东西**：
    - 见字如面：用输入法新写一篇（在标签下）、段落后回车接着写；翻几篇搬过来的（有图、公式和代码、折着的标题）；双指左滑一下只收一栏；正文右键看分层的菜单，选一段点「柚子链接…」；格式条「更多格式」里的「提示框」；提示框开头的图标和字在一条线上；窗口拉宽指一下「引用」「柚子链接」，落签贴着图标；导出 PDF 两种样式、Word、Markdown 各一次。
