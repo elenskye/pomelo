@@ -558,16 +558,30 @@ pub struct Prompt {
 }
 
 pub fn prompt(state: &AppState, j: &Janitor) -> Prompt {
-    let (s, rs, (skill, custom)) = state.youzi.with_db(|c| Ok((super::settings(c), rules(c)?, skill(c)))).unwrap_or_else(|_| (Default::default(), vec![], (SKILL.to_string(), false)));
+    let (s, rs, (skill, custom), bs) = state.youzi.with_db(|c| Ok((super::settings(c), rules(c)?, skill(c), super::backup::settings(c)))).unwrap_or_else(|_| (Default::default(), vec![], (SKILL.to_string(), false), Default::default()));
+    prompt_with(j, &s, &rs, skill, custom, &bs)
+}
+
+/// `prompt` from what's been read (the real-model test builds it without the App).
+pub fn prompt_with(j: &Janitor, s: &super::Settings, rs: &[Rule], skill: String, custom: bool, bs: &super::backup::Settings) -> Prompt {
     let added = if rs.is_empty() { String::new() } else { format!("\n已经加进一键清理的规则：{}\n", rs.iter().map(|r| format!("{}（{}）", r.name, r.pattern)).collect::<Vec<_>>().join("、")) };
     let head = format!("{MARK}，柚儿园里帮用户管这台 Mac 磁盘和备份的助手（柚子的一个助手）。程序已经扫过一遍磁盘（粗的一层：各处多大、大文件、明显能清的）；细的——一个文件夹里哪些留哪些删——是你的事。备份由程序复制，你帮着对上文件夹、认出改名和重复。个人文件夹是 {}。", j.home);
-    let backup = super::backup::look::situation(j, &state.youzi.with_db(|c| Ok(super::backup::settings(c))).unwrap_or_default());
-    Prompt { skill, custom, head, situation: format!("{}{added}\n### 备份\n{backup}", situation(j, &s, &rs, false)) }
+    let backup = super::backup::look::situation(j, bs);
+    Prompt { skill, custom, head, situation: format!("{}{added}\n### 备份\n{backup}", situation(j, s, rs, false)) }
+}
+
+/// The built-in SKILL.
+#[cfg(test)]
+pub fn builtin_skill() -> String {
+    SKILL.to_string()
 }
 
 /// The system message's part for DevJanitor's conversation: the SKILL and the situation now.
 pub fn system(state: &AppState, j: &Janitor) -> String {
-    let p = prompt(state, j);
+    system_of(&prompt(state, j))
+}
+
+pub fn system_of(p: &Prompt) -> String {
     format!("{}\n\n{}\n\n## 现在的情况\n{}", p.head, p.skill.trim(), p.situation)
 }
 

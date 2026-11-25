@@ -140,7 +140,7 @@ impl Backup {
 }
 
 /// Makes the fake Mac and the fake drive when they're missing or old (sandbox only).
-fn ensure_fake(j: &Janitor) -> Result<(), String> {
+pub(crate) fn ensure_fake(j: &Janitor) -> Result<(), String> {
     if j.mode == Mode::Sandbox {
         super::ensure_sandbox(&j.root)?;
         super::fake::ensure_volumes(&j.backup.volumes.dir)?;

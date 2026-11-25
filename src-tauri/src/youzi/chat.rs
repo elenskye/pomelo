@@ -3446,4 +3446,124 @@ pub(crate) mod tests {
         begin_run(&c, Some(b.session_id), None, "另一个问题", "local:x", "X").unwrap();
         assert_eq!(listed_titles(&c)[0], "我的");
     }
+/// DevJanitor's Agent on 备份 with a real model, against the fake Mac and drive in a temp folder (nothing real
+    /// is read): the automatic look's question, what it looked at, its cards (each checked the way the App does), and
+    /// which of the clues it acted on. Opt-in:
+    ///   POMELO_CLOUD_KEY_FILE=… [POMELO_CLOUD_MODEL=…] (cloud) or POMELO_REAL_LLM=1 [POMELO_MODEL=…] (local)  [POMELO_THINK=1]
+    ///   cargo test real_backup_look -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_backup_look() {
+        use crate::youzi::assistants::janitor::{self as jn, agent as ja, backup};
+        let (target, window) = if let Some(t) = cloud_target() {
+            t
+        } else if std::env::var("POMELO_REAL_LLM").as_deref() == Ok("1") {
+            let model = std::env::var("POMELO_MODEL").unwrap_or_else(|_| "qwen3.5-9b".into());
+            (Target::Local { model }, tauri::async_runtime::block_on(provider::local_window()).unwrap_or(16384))
+        } else {
+            return eprintln!("needs POMELO_REAL_LLM=1 or POMELO_CLOUD_KEY_FILE");
+        };
+        struct JanitorHost {
+            target: Target,
+            j: jn::Janitor,
+            bs: backup::Settings,
+            cards: Vec<ja::Card>,
+            calls: std::cell::RefCell<Vec<(usize, String, String, String)>>,
+            content: String,
+            reasoning: String,
+        }
+        const SITE: &str = "/Users/me/Documents/GitHub/personal-website";
+        impl Host for JanitorHost {
+            async fn stream(&mut self, messages: Vec<Msg>, opts: Options) -> (Result<(), String>, Round) {
+                let mut r = Round::default();
+                let res = provider::stream(self.target.clone(), messages, opts, |e| match e {
+                    Event::Content(t) => r.content.push_str(&t),
+                    Event::Reasoning(t) => r.reasoning.push_str(&t),
+                    Event::ToolCalls(c) => r.calls = c,
+                    _ => {}
+                })
+                .await;
+                self.content.push_str(&r.content);
+                self.reasoning.push_str(&r.reasoning);
+                (res, r)
+            }
+            async fn lookup(&mut self, call: &ToolCall, budget: i64) -> data::Answer {
+                let failed = |label: &str, e: String| data::Answer { module: None, label: label.into(), state: "failed", text: format!("没提议成：{e}"), records: vec![] };
+                match call.name.as_str() {
+                    ja::LOOK => ja::look_with(&self.j, &Default::default(), &[], SITE, &call.arguments, budget),
+                    ja::RUN => ja::run_readonly_with(&self.j, &call.arguments, budget),
+                    backup::look::BACKUP => backup::look::tool_with(&self.j, &self.bs, &call.arguments, budget),
+                    n if backup::cards::is_tool(n) => match backup::cards::build(&self.j, &self.bs, n, &call.arguments) {
+                        Ok(c) => {
+                            let a = ja::proposed(&c);
+                            self.cards.push(c);
+                            a
+                        }
+                        Err(e) => failed("DevJanitor · 没提议成", e),
+                    },
+                    n if ja::is_proposal(n) => match ja::build_card(&self.j, SITE, n, &call.arguments) {
+                        Ok(c) => {
+                            let a = ja::proposed(&c);
+                            self.cards.push(c);
+                            a
+                        }
+                        Err(e) => failed("DevJanitor · 没提议成", e),
+                    },
+                    other => data::Answer { module: None, label: "没有这个工具".into(), state: "failed", text: format!("没有 {other}"), records: vec![] },
+                }
+            }
+            fn record(&self, _position: usize, round: usize, call: &ToolCall, q: Query) {
+                self.calls.borrow_mut().push((round, call.name.clone(), call.arguments.clone(), format!("{} ({})", q.label, q.state)));
+            }
+            fn fold_usage(&self) {}
+            fn take_images(&mut self) -> Vec<Image> {
+                vec![]
+            }
+        }
+        // the fake Mac and drive: two tasks, so all four cases show (小柚 elsewhere, 作品 never, 照片/其它 renamed, 回忆_2606 a copy)
+        let dir = crate::db::tests::temp_dir("real-backup-look");
+        let j = jn::Janitor::new(jn::Mode::Sandbox, std::path::Path::new("/Users/nobody"), &dir);
+        backup::ensure_fake(&j).unwrap();
+        let task = |id: i64, s: &str| backup::Task { id, source: format!("/Users/me/Downloads/{s}"), target: s.into(), excludes: vec![] };
+        let bs = backup::Settings { drive: Some(backup::DriveId { uuid: jn::fake::DRIVE_UUID.into(), name: jn::fake::DRIVE.into() }), tasks: vec![task(1, "资料"), task(2, "照片")], next_id: 2, ..Default::default() };
+        backup::compare_all(&j, &bs);
+        let p = ja::prompt_with(&j, &Default::default(), &[], ja::builtin_skill(), false, &bs);
+        let thinking = std::env::var("POMELO_THINK").as_deref() == Ok("1");
+        let q = backup::look::question(jn::fake::DRIVE);
+        let request = Request { system: ja::system_of(&p), prompt: q.clone(), rounds: Some(ja::ROUNDS), thinking, ..Request::default() };
+        let tools = ja::tools();
+        let messages = request.messages_with(0, &q);
+        let cost = context::estimate(&serde_json::to_string(&tools).unwrap()) + TOOLS_OVERHEAD;
+        let used = context::PROMPT_OVERHEAD + messages.iter().map(|m| context::estimate(&m.content) + context::PER_MESSAGE).sum::<i64>();
+        let mut h = JanitorHost { target, j: j.clone(), bs: bs.clone(), cards: vec![], calls: Default::default(), content: String::new(), reasoning: String::new() };
+        let counter = Counter::for_target(&h.target);
+        let t = std::time::Instant::now();
+        let r = tauri::async_runtime::block_on(answer_with_lookups(&mut h, &tools, &[], &q, cost, &counter, &request, messages, window, used));
+        println!("\n==================== 自动看一眼（{:.1}s, {r:?}）", t.elapsed().as_secs_f64());
+        for (round, name, args, a) in h.calls.borrow().iter() {
+            println!("  [{round}] {name} {} → {a}", args.chars().take(160).collect::<String>());
+        }
+        println!("--- answer ({} chars reasoning)\n{}", h.reasoning.chars().count(), h.content.trim());
+        println!("--- cards");
+        let mut done: Vec<String> = Vec::new();
+        for c in &h.cards {
+            let what = match c.kind.as_str() {
+                "task" => c.task.as_ref().map(|t| format!("{} {} → {}（{}）", c.title, t.source, t.target, t.why)).unwrap_or_default(),
+                "move" | "drive_trash" => c.items.iter().map(|i| format!("{}{}（{}）", i.path, i.to.as_ref().map(|t| format!(" → {t}")).unwrap_or_default(), i.why)).collect::<Vec<_>>().join("；"),
+                _ => c.title.clone(),
+            };
+            println!("  {} · {what}", c.kind);
+            match c.kind.as_str() {
+                "task" => done.extend(c.task.iter().map(|t| format!("task:{}", t.source.rsplit('/').next().unwrap_or_default()))),
+                "move" => done.extend(c.items.iter().map(|i| format!("move:{}", i.path))),
+                "drive_trash" => done.extend(c.items.iter().map(|i| format!("trash:{}", i.path))),
+                _ => {}
+            }
+        }
+        let want = ["task:作品", "task:小柚", "move:照片/其它", "trash:回忆_2606"];
+        let hit: Vec<&&str> = want.iter().filter(|w| done.iter().any(|d| d == **w)).collect();
+        println!("--- 四种情况里提议了 {} 种：{hit:?}；多出来的：{:?}", hit.len(), done.iter().filter(|d| !want.contains(&d.as_str())).collect::<Vec<_>>());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!h.content.to_lowercase().contains("vault") && h.cards.iter().all(|c| !serde_json::to_string(c).unwrap().to_lowercase().contains("vault")));
+    }
 }
