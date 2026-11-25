@@ -4,7 +4,8 @@
 
 ## 现在（2026-11-25）
 
-- **正式版 1.0.6**（11-24 装）。库和格式的版本从 1.0.0 起没变：`pomelo.db` 43、`youzi.db` 43、`search.db` 3、`janitor.db` 1、数据文件格式 43。
+- **正式版 1.0.6**（11-24 装）。库和格式的版本：`pomelo.db` 43、`youzi.db` 43、`search.db` 3、`janitor.db` 1、数据文件格式 43。
+- **开发中 1.1.0 文件备份**：Phase 1（移动硬盘）做完，没装正式版；代码里 `youzi.db` 44（`backup_runs`）、`janitor.db` 2（`backup_seen`，旧的扫描结果会删了重扫）。
 - **视觉方案** Pomelo `1.0.0`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画），Design System「Pomelo 柚儿园」按 1.0.0 发在现用账号。
 - **两个会话**：Pomelo 一个；visual-atelier 一个，照它的 `ROADMAP.md` 做（这边能动那边哪些文件见 `CLAUDE.md`）。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
 
@@ -14,9 +15,10 @@
    - CSS 搬进 `schemes/pomelo/motion/fold/`（照别的零件：`motion.json`、`fold.css`、演示片段），登记进 `motion/README.md` 的零件表；
    - 方案发 1.0.1（`scheme.json`、`CHANGELOG.md`），Design System 重建、重发；只提交 pomelo 的部分（英文提交信息），打 tag `pomelo-v1.0.1`，核对 tag；
    - 同步进 `src/vendor/pomelo/`，删掉 `src/shared/fold.css` 和 `src/index.css` 里引它的那一行。
-2. **1.1.0 文件备份**：需求定了（`requirements.md`「DevJanitor › 备份」，站主 11-25 在对话里定的；之前那份问卷作废），Phase 计划在 `roadmap.md`。等站主说开工 Phase 1（开工时三处版本号改 1.1.0）。11-25 只读元信息摸过一次真实情况：
-   - 电脑上要备份的在「下载」下几个文件夹，约 20 GB、4,500 个文件；移动硬盘（Mac OS 扩展，2 TB，用了约 810 GB）是全部，大部分只在硬盘上。两边的元信息各走一遍都不到 1 秒，所以不用为扫描做优化，慢的只是复制。
-   - 真实情况里正好有 Phase 2 要认的几种：电脑上一个文件夹在硬盘上换了名字放着；一个子文件夹改了名；硬盘里一大块重复；电脑上一个文件夹从没备过。真名只在对话里，文档、测试、提交里用编的。
+2. **1.1.0 文件备份**（需求 `requirements.md`「DevJanitor › 备份」，Phase 计划和验收在 `roadmap.md`）：Phase 1 做完，下一步 Phase 2（柚子参与）。
+   - 还没做的验收：打包版里点一次（正式版在跑，没做：同名两个窗口点不准），以及正式版里用真硬盘点一次「开始备份」。装 Phase 1 要站主说。
+   - 真实情况（11-25 只读元信息摸过）：电脑上要备份的在「下载」下几个文件夹，约 20 GB、4,500 个文件；移动硬盘（Mac OS 扩展，2 TB，用了约 810 GB）是全部，大部分只在硬盘上。第一次问 `diskutil` 和冷读硬盘各要约 4 秒，之后很快。
+   - Phase 2 要认的几种在真实情况里都有：电脑上一个文件夹在硬盘上换了名字放着（里面还有 100 多个挪了位置的）；一个子文件夹改了名；硬盘里一大块重复；电脑上一个文件夹从没备过。真名只在对话里，文档、测试、提交里用编的（假 Mac 和假硬盘里有同样几种）。
 
 ## 等你做的
 

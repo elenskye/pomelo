@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 50 张表、版本 43；柚子的 `youzi.db` 55 张表、版本 43；搜索索引 `search.db` 版本 3；DevJanitor 的 `janitor.db` 版本 1；数据文件格式 43。这里只写有哪些表、存什么、怎么关联，需求里没写的计算规则、数据文件格式和版本记录；功能和看得到的规则见 `requirements.md`，存放、备份、撤销、加密的做法见 `architecture.md`，细则在各 Rust 文件开头（模块的在 `modules/<模块>.rs`）。
+`pomelo.db` 50 张表、版本 43；柚子的 `youzi.db` 56 张表、版本 44；搜索索引 `search.db` 版本 3；DevJanitor 的 `janitor.db` 版本 2；数据文件格式 43。这里只写有哪些表、存什么、怎么关联，需求里没写的计算规则、数据文件格式和版本记录；功能和看得到的规则见 `requirements.md`，存放、备份、撤销、加密的做法见 `architecture.md`，细则在各 Rust 文件开头（模块的在 `modules/<模块>.rs`）。
 
 ## 通用约定
 
@@ -265,12 +265,14 @@ DevJanitor 的偏好见「DevJanitor 的扫描结果」。
 - **nodes**：文件夹树，只存够大能画的（`scan::KEEP`；`path` 是 `/` 的是整块磁盘，`kind` `system` = 系统和其他），带大小、文件数、最新修改时间、几处没权限。
 - **items**：`listed` 0 一键清理的条目（`kind` 是类别）/ 1 只列出来的（`kind` 是哪一组）；`paths` 要动的路径、`size` 能腾出多少（硬链接只算一次）、`project_newest` 项目里可重建目录以外最新的文件、`extra` 其余的。
 - **meta**：`summary` 扫描摘要（时间、磁盘、废纸篓、Docker、权限）；`envs` 开发环境（`janitor/env.rs` 的 `Env`）。
+- **backup_seen**（备份）：每个备份任务上次备好时电脑上那个文件夹里有什么（相对路径、大小、修改时间），用来分「电脑上刚删的」和「早就只在硬盘上的」。扫描不碰它；丢了只是少了这个对照。
 
 DevJanitor 在 `youzi.db` 里的：
 
 - 偏好（不进撤销）：`assistant.janitor`（不进一键清理的类别、很久没动的天数（默认 30）、Agent 的模型和思考 `agent`、给自带类别起的名字 `names`：类别编号 → 名字）；`janitor.skill` 改过的 SKILL（空 = 自带的）；`janitor.chat` Agent 的对话（`sessions` 里私密的一行）。
 - **janitor_rules**：我加进一键清理的 Agent 规则：`name`、`pattern` 路径（`*` 是一个文件夹名里的任意字）、`recognize` 怎么认、`rebuild` 怎么重建、`checked` 默认勾不勾。
 - **janitor_cards**（一条回复里的卡片，跟着 `runs` 删）：`kind`（`trash` / `command` / `rule`）+ `body` 卡片上写的（`janitor/agent.rs` 开头）；`state`（`pending` / `running` / `done` / `failed` / `stopped` / `cancelled`）；`result`（每项移没移、命令最后一段输出和退出码、加的规则编号）。执行不进撤销，加规则进。
+- 备份（不进撤销）：偏好 `assistant.janitor.backup`（用哪块移动硬盘：卷的 UUID 和名字；任务：`id`、`source` 电脑上的文件夹、`target` 硬盘上的文件夹（相对硬盘根目录）、`excludes` 另外不备份的名字）；**backup_runs** 每次备份一行：`drive` 硬盘名、`status`（`running` / `done` / `stopped` / `failed`；App 关掉时还在跑的下次打开记成 `stopped`）、`tasks`（每个任务复制了几个、多大、更新了几个、备完没有）、`files`、`bytes`、`errors`（没成的文件和原因，最多 200 条）、`note`、开始和结束时间。
 
 ## 数据文件（导出 / 导入）
 
@@ -322,5 +324,6 @@ JSON，格式版本 43（`transfer.rs` 的 `FORMAT_VERSION`）。旧格式都能
 | 41 | `year_atlas.design` |
 | 42 | 每月回顾的内置提示词加「通关的游戏」（只改没改过的） |
 | 43 | `schedules.keep_chat` |
+| 44 | `backup_runs` |
 
-**search.db**：1 搜索索引；2 知识库 `kb_docs`、`kb_chunks`；3 柚子的记录改记 `youzi`。**janitor.db**：1 扫描结果。**数据文件**（各版本见 `transfer.rs` 开头）：40 分组和目标带 `icon`；41 `articles`；42 `games`；43 定时任务带 `keepChat`。
+**search.db**：1 搜索索引；2 知识库 `kb_docs`、`kb_chunks`；3 柚子的记录改记 `youzi`。**janitor.db**：1 扫描结果；2 `backup_seen`。**数据文件**（各版本见 `transfer.rs` 开头）：40 分组和目标带 `icon`；41 `articles`；42 `games`；43 定时任务带 `keepChat`。

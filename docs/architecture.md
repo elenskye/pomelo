@@ -39,7 +39,7 @@
 | 同上的 `youzi-files/` | 柚子的附件和项目资料（另存一份，不和上一行共用） | 不用 |
 | 同上的 `search.db`、`janitor.db` | 搜索索引、DevJanitor 上次扫描的结果 | 不备份、不导出，删了重建 |
 | 同上的 `icons/` | 一网打尽的网站图标（一个网站一个文件） | 不备份、不导出，删了重新取 |
-| `~/Library/Application Support/Pomelo OS Dev/` | 开发用的测试数据；`janitor-sandbox/` 是 DevJanitor 的「假 Mac」 | 不用 |
+| `~/Library/Application Support/Pomelo OS Dev/` | 开发用的测试数据；`janitor-sandbox/` 是 DevJanitor 的「假 Mac」，`janitor-volumes/` 是备份用的假移动硬盘 | 不用 |
 | macOS 钥匙串 | 「Pomelo OS Agent」（云端、插件库、Pub2MD 的 Key 合成一项）、「Pomelo OS 芝麻开门」（Touch ID 用的钥匙） | 不进备份 |
 | `~/Documents/LLM` | 本地模型、模型清单、启停脚本 | 由 Claude 维护；Pomelo 只读清单、调脚本 |
 | `~/Documents/GitHub/personal-website` | 个人网站（呦呦漫游编辑、发布它） | 独立项目，自己的 git 和 GitHub 仓库 |
@@ -207,6 +207,8 @@ App 本体约 25 MB，运行时约 130 MB 内存；`pomelo.db` 很小（十年�
   - **扫描**（`scan.rs`）：8 个线程走一遍，只看名字、大小、时间；真磁盘约 135 万个文件、17 秒。结果一次整个换进 `janitor.db`。问系统（`system.rs`）只用系统自带的命令，不加依赖；完全磁盘访问权限看 TCC.db 能不能打开（不弹框）。
   - **Agent**（`agent.rs`）：借柚子的对话和生成的路，换成 DevJanitor 的模型、SKILL 和工具（不给柚儿园的数据）；只读命令过了 `readonly.rs` 的清单才跑。卡片在锁外查好再存进 `janitor_cards`。
   - **受保护**（`rules.rs` 的 `Protected`）：页面只传条目编号，路径从 `janitor.db` 取。柚子查它用只读工具 `pomelo_janitor_info`，和 Agent 看的同一份文字。
+  - **VAULT**（`rules.rs` 的 `sealed`）：名字去掉扩展名是 vault（不分大小写）的，扫描不进、不算，Agent 查文件夹和找文件时不列，只读命令的参数碰到就不跑、输出里提到的行删掉，卡片不提议，备份不碰。
+  - **备份**（`backup/`，细则在 `backup/mod.rs` 开头）：每 3 秒看一眼 `/Volumes`，按卷的 UUID 认我的移动硬盘（`diskutil` 每块盘只问一次），插上就把每个任务两边对一遍放在内存里；页面每几秒来取。对比只读名字和元信息，名字按 NFC 对（Mac OS 扩展存成另一种写法），时间按秒比。复制按 1 MB 一块写到旁边的 `.pomelo-part-…`（能在两块之间停下），再用 `fcopyfile` 带上标签等扩展属性、补上时间，最后改名放到位，硬盘上不会有半个文件；被覆盖的先在硬盘里挪进「旧版」（同一块盘，只是改名）。一次只跑一个，复制前先算够不够地方。实测：真硬盘约 11,000 个文件，冷读一遍约 4 秒，之后不到 0.3 秒。
 - **体检**（`health.rs`）：只读、现算，结果用全局搜索的 `Hit`，页面照 ⌘K 打开。**空间管理**（`storage.rs`）：删副本只删文件、留记录（「文件已删除」）。
 - **云端 Key**（`cloud.rs`）：界面只显示「已保存」；App 打开时读一次钥匙串那一项、放在内存，查「有没有存」从不弹框。
 - **开机自动启动**（`autostart.rs`）：Tauri 的 autostart 插件写一个带 `--hidden` 的 LaunchAgent（不用 AppleScript），这样打开时窗口第一次画出来前就藏起来；每次打开让登录项跟着设置里的开关。

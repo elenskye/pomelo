@@ -101,6 +101,8 @@
   - `?mock#/janitor/disk`：数据是 Rust 扫假 Mac 的结果（`src/dev/janitorMock.json`；改了扫描或假 Mac 用 `POMELO_JANITOR_MOCK=<文件> cargo test janitor_mock_json -- --ignored` 重新生成），「重新扫描」跑两秒。
   - `?mock&youzi=ready#/janitor/agent`：问题里有「删」「废纸篓」→ 移到废纸篓的卡片（含一项受保护的）；「命令」「conda」→ conda clean；「sudo」「JDK」→ 要管理员密码的命令；「规则」「一键清理」→ 加规则的卡片；「看看」「文件夹」多看一次下载，「只读」「du」多一行「跑了 du」，「清单」多一行看清单；执行的命令一秒半后「做完了」。
   - 看真磁盘上的速度和准确性先问我：`cargo test --release --manifest-path src-tauri/Cargo.toml real_janitor_scan -- --ignored --nocapture`（只读，跳过 Pomelo 的数据目录、Seeker 文件夹和没权限的地方；`POMELO_JANITOR_SHOW=1` 列出开发目录、App 残留和开发环境，不列个人文件名）。真删、真跑命令、完全磁盘访问权限只在正式版里由我验收。
+  - **备份**：Rust：`backup`（假 Mac 的「下载」对假移动硬盘 `janitor-volumes/小柚的硬盘`：对比的分类、复制带时间和标签、旧版、停下不留半个文件、跟着改名、VAULT 两边都不出现、Agent 也看不到 VAULT）。`?mock#/janitor/backup`：三个任务，「开始备份」跑三秒，「在硬盘上跟着改」把改名的拿掉，「重新对比」一秒；`&backup=none` 还没选硬盘。
+  - 备份的真机只读检查（不写任何东西，只打印数量；碰真硬盘先问我）：`real_backup_volumes`（认出插着的移动硬盘）；`POMELO_BACKUP_PAIRS="<电脑上的文件夹>=><硬盘上的文件夹>;…" cargo test real_backup_compare -- --ignored --nocapture`（对比每一对，看分类和用时，断言没有 VAULT）。真复制只在正式版里由我点「开始备份」验收。
 - **Pub2MD**：`?mock`：「选择文件…」依次拿到一篇论文、「失败测试」（第 3 块出错一次，能「继续」或「删除」）、两张照片、「读书笔记.md」（只翻译），选了先列在「待发送」，点「发送」才开始。真测见「真模型和真接口」。
 
 ## 柚子
