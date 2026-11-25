@@ -271,8 +271,8 @@ DevJanitor 在 `youzi.db` 里的：
 
 - 偏好（不进撤销）：`assistant.janitor`（不进一键清理的类别、很久没动的天数（默认 30）、Agent 的模型和思考 `agent`、给自带类别起的名字 `names`：类别编号 → 名字）；`janitor.skill` 改过的 SKILL（空 = 自带的）；`janitor.chat` Agent 的对话（`sessions` 里私密的一行）。
 - **janitor_rules**：我加进一键清理的 Agent 规则：`name`、`pattern` 路径（`*` 是一个文件夹名里的任意字）、`recognize` 怎么认、`rebuild` 怎么重建、`checked` 默认勾不勾。
-- **janitor_cards**（一条回复里的卡片，跟着 `runs` 删）：`kind`（`trash` / `command` / `rule`）+ `body` 卡片上写的（`janitor/agent.rs` 开头）；`state`（`pending` / `running` / `done` / `failed` / `stopped` / `cancelled`）；`result`（每项移没移、命令最后一段输出和退出码、加的规则编号）。执行不进撤销，加规则进。
-- 备份（不进撤销）：偏好 `assistant.janitor.backup`（用哪块移动硬盘：卷的 UUID 和名字；任务：`id`、`source` 电脑上的文件夹、`target` 硬盘上的文件夹（相对硬盘根目录）、`excludes` 另外不备份的名字）；**backup_runs** 每次备份一行：`drive` 硬盘名、`status`（`running` / `done` / `stopped` / `failed`；App 关掉时还在跑的下次打开记成 `stopped`）、`tasks`（每个任务复制了几个、多大、更新了几个、备完没有）、`files`、`bytes`、`errors`（没成的文件和原因，最多 200 条）、`note`、开始和结束时间。
+- **janitor_cards**（一条回复里的卡片，跟着 `runs` 删）：`kind`（`trash` / `command` / `rule`；备份的 `move` / `drive_trash` / `task`，见 `backup/cards.rs` 开头）+ `body` 卡片上写的（`janitor/agent.rs` 开头；备份的带 `drive` 硬盘的 UUID）；`state`（`pending` / `running` / `done` / `failed` / `stopped` / `cancelled`）；`result`（每项移没移、命令最后一段输出和退出码、加的规则编号）。执行不进撤销，加规则进。
+- 备份（不进撤销）：偏好 `assistant.janitor.backup`（用哪块移动硬盘：卷的 UUID 和名字；任务：`id`、`source` 电脑上的文件夹、`target` 硬盘上的文件夹（相对硬盘根目录）、`excludes` 另外不备份的名字）；**backup_runs** 每次备份一行：`drive` 硬盘名、`status`（`running` / `done` / `stopped` / `failed`；App 关掉时还在跑的下次打开记成 `stopped`）、`tasks`（每个任务复制了几个、多大、更新了几个、备完没有）、`files`、`bytes`、`errors`（没成的文件和原因，最多 200 条）、`note`、开始和结束时间。偏好 `assistant.janitor.backup.look`：柚子上次自动看一眼（线索的指纹、那条回答的编号、时间、没看成的原因）。
 
 ## 数据文件（导出 / 导入）
 
