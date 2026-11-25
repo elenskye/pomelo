@@ -39,7 +39,8 @@
 | 同上的 `youzi-files/` | 柚子的附件和项目资料（另存一份，不和上一行共用） | 不用 |
 | 同上的 `search.db`、`janitor.db` | 搜索索引、DevJanitor 上次扫描的结果 | 不备份、不导出，删了重建 |
 | 同上的 `icons/` | 一网打尽的网站图标（一个网站一个文件） | 不备份、不导出，删了重新取 |
-| `~/Library/Application Support/Pomelo OS Dev/` | 开发用的测试数据；`janitor-sandbox/` 是 DevJanitor 的「假 Mac」，`janitor-volumes/` 是备份用的假移动硬盘 | 不用 |
+| 数据目录的 `rclone/` | 备份用的 rclone 配置（PikPak 的登录），rclone 自己加密，密码只在钥匙串 | 不备份，丢了重新登录 |
+| `~/Library/Application Support/Pomelo OS Dev/` | 开发用的测试数据；`janitor-sandbox/` 是 DevJanitor 的「假 Mac」，`janitor-volumes/` 是备份用的假移动硬盘，`janitor-cloud/` 是假的 PikPak 和它的回收站 | 不用 |
 | macOS 钥匙串 | 「Pomelo OS Agent」（云端、插件库、Pub2MD 的 Key 合成一项）、「Pomelo OS 芝麻开门」（Touch ID 用的钥匙） | 不进备份 |
 | `~/Documents/LLM` | 本地模型、模型清单、启停脚本 | 由 Claude 维护；Pomelo 只读清单、调脚本 |
 | `~/Documents/GitHub/personal-website` | 个人网站（呦呦漫游编辑、发布它） | 独立项目，自己的 git 和 GitHub 仓库 |
@@ -209,6 +210,7 @@ App 本体约 25 MB，运行时约 130 MB 内存；`pomelo.db` 很小（十年�
   - **受保护**（`rules.rs` 的 `Protected`）：页面只传条目编号，路径从 `janitor.db` 取。柚子查它用只读工具 `pomelo_janitor_info`，和 Agent 看的同一份文字。
   - **VAULT**（`rules.rs` 的 `sealed`）：名字去掉扩展名是 vault（不分大小写）的，扫描不进、不算，Agent 查文件夹和找文件时不列，只读命令的参数碰到就不跑、输出里提到的行删掉，卡片不提议，备份不碰。
   - **备份**（`backup/`，细则在 `backup/mod.rs` 开头）：每 3 秒看一眼 `/Volumes`，按卷的 UUID 认我的移动硬盘（`diskutil` 每块盘只问一次），插上就把每个任务两边对一遍放在内存里；页面每几秒来取。对比只读名字和元信息，名字按 NFC 对（Mac OS 扩展存成另一种写法），时间按秒比。复制按 1 MB 一块写到旁边的 `.pomelo-part-…`（能在两块之间停下），再用 `fcopyfile` 带上标签等扩展属性、补上时间，最后改名放到位，硬盘上不会有半个文件；被覆盖的先在硬盘里挪进「旧版」（同一块盘，只是改名）。一次只跑一个，复制前先算够不够地方。实测：真硬盘约 11,000 个文件，冷读一遍约 4 秒，之后不到 0.3 秒。
+  - **PikPak**（`backup/rclone.rs`、`pikpak.rs`）：用 Homebrew 的 rclone（找 `/opt/homebrew/bin`、`/usr/local/bin`）。配置单放在数据目录的 `rclone/`，由 rclone 加密（`config encryption set`），密码随机生成、只存在钥匙串（「Pomelo OS Agent」那一项），每次只通过环境变量交给 rclone，不上命令行、不落盘；PikPak 的账号、密码和 rclone 会刷新的 token 都只在这份加密配置里，所以「授权只在钥匙串」。同步是 `rclone sync 硬盘 → pikpak:文件夹`：过滤掉 VAULT（不分大小写、任何一层）和 `diff.rs` 的那些系统小文件；改名按大小、修改时间、文件名认（`--track-renames-strategy modtime,leaf`，不算校验码），在 PikPak 上直接挪；删除进 PikPak 回收站（`--pikpak-use-trash`），而且 rclone 只要有一个文件没成就不删；超过 100 个删除就停（`--max-delete`），我点了才放开一次；名字传成 NFC；进度读 rclone 每秒一行的 JSON。一次只跑一个，App 退出时停掉 rclone，下次再跑只传还没传的。开发版、测试和临时数据目录：「PikPak」是数据目录里的一个本地文件夹，回收站用 `--backup-dir` 模拟，配置用固定密码（不碰钥匙串），上传走 rclone 普通的复制，限速和进度和真的一样。
   - **柚子的线索**（`backup/hints.rs`）：每次对比顺带把整块硬盘（「旧版」除外）和「下载」里的文件夹各读一遍名字和元信息，同名、同大小、修改时间差 1 秒内的算一样：电脑上的文件夹按相对位置给硬盘上的文件夹「投票」，过半的就是它在硬盘上的地方；任务里改名的按文件夹归在一起；重复的找「每个文件在外面都有一样的」最大的那层文件夹。线索和对比一起放在内存里，写进 Agent 的「现在的情况」，提议的做法写成「可以：…」一行（模拟模型照这些行出卡片）。卡片（`cards.rs`）提议时查一遍、点了再查一遍，只认提议时那块硬盘。自动看一眼（`look.rs`）按线索的指纹去重，问题写进 Agent 的对话，由它的模型照常回答；上次看的指纹和回答编号存在偏好里，「备份」页从那条回答读字和卡片。
 - **体检**（`health.rs`）：只读、现算，结果用全局搜索的 `Hit`，页面照 ⌘K 打开。**空间管理**（`storage.rs`）：删副本只删文件、留记录（「文件已删除」）。
 - **云端 Key**（`cloud.rs`）：界面只显示「已保存」；App 打开时读一次钥匙串那一项、放在内存，查「有没有存」从不弹框。
