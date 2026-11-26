@@ -4,7 +4,6 @@
    hand-drawn controls' look (pm-btn, pm-field, pm-check…) and every motion part (果冻弹、小签晃两下、柚子的表情…). In the
    components layer, so a Tailwind utility on the same element still wins. Painted by shared/hand.ts (data-hand). */
 @import "./vendor/pomelo/ds.css" layer(components);
-@import "./shared/fold.css" layer(components);
 
 /* 手札体: both of its faces say weight 400 in the font file, so asking the family for bold gets the
    regular face drawn thicker by WebKit (smeared). Name the faces explicitly so bold is the real W7. */

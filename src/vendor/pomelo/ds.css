@@ -1209,6 +1209,24 @@
   .pm-field:focus-within .pm-field-icon, .pm-field.is-focus .pm-field-icon { animation: none; }
 }
 
+/* ---------- 动效 · 侧栏展开 · 一行接一行滑下来（fold，calm） ---------- */
+/* 侧栏展开：子项一行接一行从上一行底下滑出来，落到位弹一下、歪一点再摆正（每行 0.32 秒，间隔 28 毫秒，最多晚 0.25 秒）；
+   整块的高度跟着长（0.3 秒，带一点弹），下面的行顺着让开。收起倒着一行行收回去（每行 0.16 秒，间隔 16 毫秒），高度跟着缩。
+   箭头 .pm-fold-chev 弹着转过去（0.3 秒）。
+   用法：子项包在 .pm-fold 里，每个子项写 --pm-i（从上往下第几个）、--pm-r（从下往上第几个）；用户点开的那一刻加 .is-open、
+   收起加 .is-closing，放完拿掉（页面刚打开时展开着的不放）；高度由界面量了写在 style 上（展开 0 → scrollHeight，收起反过来）。
+   动的时候用 clip-path 只裁上下（不用 overflow：外边距照样合并、歪着的纸条和焦点框不被左右裁掉）。 */
+.pm-fold { transition: height .3s cubic-bezier(.3,1.25,.5,1); }
+.pm-fold.is-open, .pm-fold.is-closing { clip-path: inset(0 -100vw); }
+.pm-fold.is-open > * { animation: pm-fold-in .32s cubic-bezier(.3,1.6,.5,1) both; animation-delay: calc(min(var(--pm-i, 0), 9) * 28ms); }
+.pm-fold.is-closing > * { animation: pm-fold-out .16s ease-in both; animation-delay: calc(min(var(--pm-r, 0), 9) * 16ms); }
+.pm-fold-chev { transition: transform .3s cubic-bezier(.3,1.6,.5,1), rotate .3s cubic-bezier(.3,1.6,.5,1); }
+@keyframes pm-fold-in { 0% { opacity: 0; transform: translateY(-80%) rotate(-1.5deg); } 50% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+@keyframes pm-fold-out { 100% { opacity: 0; transform: translateY(-50%) scale(.96); } }
+@media (prefers-reduced-motion: reduce) {
+  .pm-fold, .pm-fold.is-open > *, .pm-fold.is-closing > *, .pm-fold-chev { transition: none !important; animation: none !important; }
+}
+
 /* ---------- 动效 · 打开 App 的问候（greeting，expressive） ---------- */
 /* 打开 App 的问候：桌上的便签一张张落下来（每张晚 0.09 秒），「下午好呀」一笔一笔写出来（1 秒），荧光笔从底下划过（0.5 秒），
    小字淡入；最后柚子眨一下眼（柚子的表情 pomelo-wink：界面把柚子的 data-face 换成 wink）。
