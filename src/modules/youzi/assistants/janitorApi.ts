@@ -67,7 +67,7 @@ export type JanitorRule = { id: number; name: string; pattern: string; recognize
 type JanitorTrashItem = { path: string; to: string | null; why: string; size: number; protected: string | null; note: string | null; kind: string; done: boolean; error: string | null };
 /** A task card's task (Rust backup/cards.rs `TaskPlan`): what its folders compare to when proposed (`same` null: the drive wasn't in). */
 type JanitorTaskPlan = { id: number | null; source: string; target: string; why: string; same: number | null; new: number; changed: number; moved: number; archived: number; was: [string, string] | null };
-/** One of the Agent's cards (janitor/agent.rs `Card`): trash | command | rule; 备份 (backup/cards.rs): move | drive_trash | task. */
+/** One of the Agent's cards (janitor/agent.rs `Card`): trash | command | rule; 备份 (backup/cards.rs): move | drive_trash | task (until 1.1.1). */
 export type JanitorCard = {
   id: number;
   runId: number;
@@ -158,9 +158,11 @@ type BackupHeld = { path: string; size: number; why: string };
 /** A group of a comparison: how many, how big, the first 300. */
 type BackupGroup<T> = { count: number; bytes: number; rows: T[] };
 export type BackupDiff = { new: BackupGroup<BackupRow>; changed: BackupGroup<BackupRow>; moved: BackupGroup<BackupMove>; held: BackupGroup<BackupHeld>; recent: BackupGroup<BackupRow>; archived: BackupGroup<BackupRow>; same: number; sameBytes: number; denied: string[] };
-/** `source`: a path on this Mac (virtual in the sandbox); `target`: relative to the drive's root. */
+/** One folder backed up (the 清单 makes them): `source` in ~/Downloads (virtual in the sandbox), `target` the drive folder of its name. */
 export type BackupTask = { id: number; source: string; target: string; excludes: string[]; last: string | null; diff: BackupDiff | null; problem: string | null };
-type BackupDrive = { uuid: string; name: string; connected: boolean; fs: string | null; total: number; free: number; path: string | null; folders: string[] };
+type BackupDrive = { uuid: string; name: string; connected: boolean; fs: string | null; total: number; free: number; path: string | null };
+/** A top folder in the 清单 (on the drive and/or in ~/Downloads); `files` / `bytes` once compared. */
+export type BackupListRow = { name: string; onDrive: boolean; onMac: boolean; picked: boolean; files: number | null; bytes: number | null };
 type BackupVolume = { name: string; uuid: string; fs: string; total: number; free: number };
 type BackupRun = { running: boolean; filesTotal: number; filesDone: number; bytesTotal: number; bytesDone: number; task: string; current: string; ended: string | null };
 type BackupRunTask = { id: number; source: string; target: string; files: number; bytes: number; updated: number; done: boolean };
@@ -169,8 +171,7 @@ export type BackupRecord = { id: number; dest: "drive" | "pikpak"; drive: string
 export type BackupLook = { at: number; state: "running" | "done" | "failed"; text: string; error: string | null; cards: JanitorCard[]; stale: boolean };
 /** PikPak (Rust backup/pikpak.rs): the account, where the drive goes, the limit (MB/s, 0: none), a sync's progress; `waiting`: why none runs. */
 export type PikPakView = { installed: boolean; account: string | null; folder: string; limit: number; running: boolean; checking: boolean; bytes: number; totalBytes: number; files: number; totalFiles: number; deletes: number; speed: number; eta: number; current: string[]; ended: string | null; waiting: string | null; held: boolean; used: number | null; total: number | null };
-export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null; pikpak: PikPakView; skipped: string[] };
-export type BackupTaskInput = { id: number | null; source: string; target: string; excludes: string[] };
+export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null; pikpak: PikPakView; list: BackupListRow[] };
 
 export const BACKUP_KEY = [...JANITOR_KEY, "backup"];
 
@@ -179,10 +180,10 @@ export const backupApi = {
   compare: () => invoke<BackupOverview>("janitor_backup_compare"),
   /** null: forget the drive. */
   drive: (uuid: string | null) => invoke<BackupOverview>("janitor_backup_drive", { uuid }),
-  taskSave: (task: BackupTaskInput) => invoke<BackupOverview>("janitor_backup_task_save", { task }),
-  taskDelete: (id: number) => invoke<BackupOverview>("janitor_backup_task_delete", { id }),
-  /** 不备份: a drive folder (relative) kept out of the backup, or back in. */
-  skip: (folder: string, on: boolean) => invoke<BackupOverview>("janitor_backup_skip", { folder, on }),
+  /** 清单: a top folder ticked (backed up) or not. */
+  pick: (name: string, on: boolean) => invoke<BackupOverview>("janitor_backup_pick", { name, on }),
+  /** A folder's own names left out of its backup. */
+  excludes: (id: number, excludes: string[]) => invoke<BackupOverview>("janitor_backup_excludes", { id, excludes }),
   start: (ids: number[]) => invoke<BackupOverview>("janitor_backup_start", { ids }),
   stop: () => invoke<void>("janitor_backup_stop"),
   /** Renames on the drive the moves picked (by their path on the Mac). */

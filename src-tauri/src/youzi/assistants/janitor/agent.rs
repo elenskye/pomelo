@@ -526,7 +526,7 @@ const SKILL: &str = "## 工作方式（DevJanitor 的 SKILL）
 6. 文稿、下载、桌面、图片这些是用户自己的东西：用户没问就只说、不提议删。已经在一键清理里的东西，叫用户去「清理」页点，不用再提议。
 7. 邮件（Mail）：~/Library/Mail 是 Mail 存在这台 Mac 上的邮件，~/Library/Containers/com.apple.mail 里有打开过的附件和缓存（清理页「只列出来」里的「邮件（Mail）的数据」）。用户不用 Mail 时：先请用户在「系统设置 → 互联网账户」里把每个账户的「邮件」关掉（不然打开 Mail 会重新下载）、退出 Mail，再提议移到废纸篓；「我的 Mac 上」的邮箱只存在本机，删之前问清楚。
 8. 备份（「现在的情况」的「备份」，细节用 pomelo_janitor_backup）：程序只按名字、大小、修改时间对，不看内容。
-   - 电脑上的文件夹在硬盘上换了名字或位置放着、或者从没备过：pomelo_janitor_backup_task 提议新建或改任务（硬盘那边照已经有的放，没有就用电脑上的名字）。
+   - 备份哪些由用户在「备份」的清单里勾：「下载」里勾上的文件夹备份到硬盘最上一层同名的文件夹。「下载」里的文件夹没勾：说一句，要备份叫用户去清单里勾，不出卡片。勾了的文件夹在硬盘上换了名字或位置放着（硬盘上还没有同名的）：pomelo_janitor_backup_move 提议在硬盘上把它挪成和「下载」里一样的名字和位置。
    - 任务里整个文件夹改了名：pomelo_janitor_backup_move 提议在硬盘上把那个文件夹改过去（一个文件夹一项）；零散挪了位置的文件叫用户在「备份」页点「在硬盘上跟着改」。
    - 硬盘里重复的：确认一样的那份还在（任务用着的那份留着），再用 pomelo_janitor_backup_trash 提议把多的那份移到硬盘的废纸篓。
    - 只在硬盘上的分清楚：电脑上别处有一样的，是改名或挪走留下的旧名字（跟着改或去重）；哪儿都没有的是归档，留着，不提议删。
@@ -559,7 +559,7 @@ pub struct Prompt {
 
 pub fn prompt(state: &AppState, j: &Janitor) -> Prompt {
     let (s, rs, (skill, custom), bs) = state.youzi.with_db(|c| Ok((super::settings(c), rules(c)?, skill(c), super::backup::settings(c)))).unwrap_or_else(|_| (Default::default(), vec![], (SKILL.to_string(), false), Default::default()));
-    prompt_with(j, &s, &rs, skill, custom, &bs)
+    prompt_with(j, &s, &rs, skill, custom, &super::backup::settled(j, &bs))
 }
 
 /// `prompt` from what's been read (the real-model test builds it without the App).
@@ -869,7 +869,7 @@ pub fn propose(app: &AppHandle, run: i64, name: &str, args: &str) -> Answer {
     let st = app.state::<AppState>();
     // the card is checked off the youzi.db lock (sizes come from janitor.db and the disk), then saved
     let built = if super::backup::cards::is_tool(name) {
-        super::backup::cards::build(&j, &st.youzi.with_db(|c| Ok(super::backup::settings(c))).unwrap_or_default(), name, args)
+        super::backup::cards::build(&j, &super::backup::load_now(&st, &j), name, args)
     } else {
         build_card(&j, &site_folder(&st, &j), name, args)
     };

@@ -36,6 +36,7 @@ const EXTRA = [
   ['/days', 'day panel', async (p) => p.locator('.pm-sheet [data-auto-card] button').first().click({ timeout: 2000 })],
   ['/seeker/resume', 'drawer assistant', async (p) => p.getByRole('button', { name: /岗位与建议|建议/ }).first().click({ timeout: 2000 })],
   ['/seeker/resume', 'drawer materials', async (p) => p.getByRole('button', { name: /选材/ }).first().click({ timeout: 2000 })],
+  ['/janitor/backup', 'list', async (p) => p.getByRole('radio', { name: '清单' }).click({ timeout: 2000 })],
 ];
 
 const lint = () => {

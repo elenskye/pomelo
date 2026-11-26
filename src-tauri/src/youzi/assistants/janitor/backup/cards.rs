@@ -4,14 +4,14 @@
 //!   a task whose drive folder moves follows it; folders a move empties go (a lone .DS_Store counts as empty).
 //! - `drive_trash` (`TRASH`): to the drive's own Trash (sandbox: the fake drive's `.Trashes/501`); never a
 //!   task's drive folder or one holding it.
-//! - `task` (`TASK`): a new task or a changed one, checked like the page's (`save_task`), with what the two
-//!   folders compare to now.
+//! - `task` (`TASK`, until 1.1.1): a new or changed task. The 清单 (1.1.2) makes the tasks now: no new ones,
+//!   an old one only says so when clicked.
 //! Rust checks a proposal before it's a card (paths there, VAULT and 旧版 refused) and again when I click.
 //! None of it is undone (requirements: 跟着改名、任务的设置、去重都不进撤销).
 
 use super::super::agent::{self, Card, TrashItem};
 use super::super::{rules, Janitor, Mode};
-use super::{compare_task, copy, diff, drive_of, prune_empty, save_task, Settings, TaskInput};
+use super::{copy, diff, drive_of, prune_empty, Settings};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -85,10 +85,10 @@ fn drive_rel(drive: Option<&super::Volume>, p: &str) -> Result<String, String> {
     Ok(rel)
 }
 
-/// A path in a folder I keep out of the backup isn't the Agent's to touch.
+/// A path in a top folder not picked in the 清单 isn't the Agent's to touch.
 fn kept_out(s: &Settings, rel: &str) -> Result<(), String> {
-    match super::skipped_at(s, rel) {
-        Some(k) => Err(format!("硬盘上的「{k}」用户定了不备份，不提议动它")),
+    match super::kept_out_at(s, rel) {
+        Some(k) => Err(format!("硬盘上的「{k}」清单里没勾（不备份），不提议动它，也不往里挪")),
         None => Ok(()),
     }
 }
@@ -130,36 +130,7 @@ pub fn build(j: &Janitor, s: &Settings, name: &str, args: &str) -> Result<Card, 
         return Err("还没选移动硬盘（用户在「备份」页选）".into());
     }
     match name {
-        TASK => {
-            let id = v["id"].as_i64();
-            let was = match id {
-                Some(i) => Some(s.tasks.iter().find(|t| t.id == i).ok_or(format!("没有任务 #{i}"))?.clone()),
-                None => None,
-            };
-            let source = agent::virt_of(&j.home, v["source"].as_str().unwrap_or(""))?;
-            let input = TaskInput { id, source, target: text(&v, "target", 300), excludes: was.as_ref().map(|t| t.excludes.clone()).unwrap_or_default() };
-            let after = save_task(j, s.clone(), input)?;
-            let t = match id {
-                Some(i) => after.tasks.iter().find(|t| t.id == i),
-                None => after.tasks.last(),
-            }
-            .cloned()
-            .ok_or("任务没存成")?;
-            if was.as_ref().is_some_and(|w| w.source == t.source && w.target == t.target) {
-                return Err(format!("任务 #{} 已经是这样了", t.id));
-            }
-            let mut plan = TaskPlan { id, source: t.source.clone(), target: t.target.clone(), why: text(&v, "why", 300), was: was.map(|w| (w.source, w.target)), ..Default::default() };
-            if let Some(dv) = &drive {
-                let (d, _) = compare_task(j, dv, &t, &AtomicBool::new(false))?;
-                plan.same = Some(d.same);
-                (plan.new, plan.changed, plan.moved, plan.archived) = (d.new.len() as u64, d.changed.len() as u64, d.moved.len() as u64, (d.archived.len() + d.recent.len()) as u64);
-            }
-            let title = match id {
-                Some(i) => format!("改任务 #{i}"),
-                None => "新任务".into(),
-            };
-            Ok(Card { kind: "task".into(), title, task: Some(plan), drive: uuid, ..Default::default() })
-        }
+        TASK => Err("任务改成了「备份」的清单：要备份「下载」里的文件夹，叫用户去清单里勾上，不出卡片".into()),
         MOVE | TRASH => {
             let dv = drive.ok_or("移动硬盘没插上：插上了再提议")?;
             let mut items: Vec<TrashItem> = Vec::new();
@@ -236,12 +207,7 @@ pub fn run(j: &Janitor, s: &Settings, c: &Card, picked: &[usize]) -> Result<(&'s
     }
     let dv = drive_of(j, s).ok_or("移动硬盘没插上")?;
     if c.kind == "task" {
-        let p = c.task.as_ref().ok_or("卡片里没有任务")?;
-        let excludes = p.id.and_then(|i| s.tasks.iter().find(|t| t.id == i)).map(|t| t.excludes.clone()).unwrap_or_default();
-        return Ok(match save_task(j, s.clone(), TaskInput { id: p.id, source: p.source.clone(), target: p.target.clone(), excludes }) {
-            Ok(after) => ("done", json!({}), Some(after)),
-            Err(e) => ("failed", json!({ "error": e }), None),
-        });
+        return Ok(("failed", json!({ "error": "任务改成了清单：在「备份」的清单里勾" }), None));
     }
     if picked.is_empty() {
         return Err("至少勾上一项".into());
@@ -302,14 +268,14 @@ pub async fn janitor_card_backup(app: tauri::AppHandle, state: State<'_, AppStat
     super::ensure_fake(&janitor)?;
     let card = state.youzi.with_db(|c| agent::card(c, id))?;
     let card_kind = card.kind.clone();
-    let s = super::load(&state);
+    let s = super::load_now(&state, &janitor);
     let j = janitor.inner().clone();
     let (st, result, after) = tauri::async_runtime::spawn_blocking(move || run(&j, &s, &card, &picked)).await.map_err(|e| e.to_string())??;
     if let Some(after) = &after {
         super::store_settings(&state, after)?;
     }
     state.youzi.with_db(|c| agent::set_state(c, id, st, Some(&result)))?;
-    super::compare_in_background(&janitor, super::load(&state));
+    super::compare_in_background(&janitor, super::load_now(&state, &janitor));
     // the drive changed: PikPak follows
     if st == "done" && card_kind_moves(&card_kind) {
         super::pikpak::kick(&app);

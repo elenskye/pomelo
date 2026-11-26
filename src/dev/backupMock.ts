@@ -1,11 +1,13 @@
-// DevJanitor 备份 in the browser mock (`?mock#/janitor/backup`): the fake drive and three tasks shaped like the
-// fake Mac's (Rust janitor/fake.rs). 开始备份 runs for three seconds, then the copied groups empty and a record
-// is added; 在硬盘上跟着改 takes the moves off; 重新对比 says 正在对比 for a second. `&backup=none`: no drive picked.
-// 柚子 has looked already (three cards: a new task, a renamed folder, a dup; janitorMock.ts `backupCards`);
-// 柚子看一眼 looks again for a second and a half. A done task card adds the task, a done move takes the moves off.
+// DevJanitor 备份 in the browser mock (`?mock#/janitor/backup`): the fake drive and ~/Downloads shaped like the fake
+// Mac's (Rust janitor/fake.rs). The 清单 ticks 资料, 照片, 小柚, 回忆 and 影音 (回忆_2606 and 作品 not): the three in
+// ~/Downloads are tasks to the drive folder of their name; ticking 作品 adds one, unticking drops it.
+// 开始备份 runs for three seconds, then the copied groups empty and a record is added; 在硬盘上跟着改 takes the moves
+// off; 重新对比 says 正在对比 for a second. `&backup=none`: no drive picked.
+// 柚子 has looked already (two cards: renamed folders, a dup; janitorMock.ts `backupCards`); 柚子看一眼 looks again
+// for a second and a half. A done move card puts 小柚 where its task looks and takes the moves off.
 // PikPak: logged in and in step (`&pikpak=none`: not logged in; `&pikpak=held`: stopped at too many deletions); a sync
 // (接着传, a backup ending, logging in) runs five seconds; 停下 stops it.
-import type { BackupDiff, BackupLook, BackupOverview, BackupRecord, BackupTask, BackupTaskInput, PikPakView } from "@/modules/youzi/assistants/janitorApi";
+import type { BackupDiff, BackupListRow, BackupLook, BackupOverview, BackupRecord, BackupTask, PikPakView } from "@/modules/youzi/assistants/janitorApi";
 import { BACKUP_TEXT, backupCardHooks, backupCards, janitorCards } from "./janitorMock";
 
 type Args = Record<string, unknown>;
@@ -27,7 +29,11 @@ const diff = (p: Partial<Record<"new" | "changed" | "recent" | "archived", { pat
 
 const on = () => new URLSearchParams(location.search).get("backup") !== "none";
 let picked = on();
-let skipped: string[] = [];
+/** The 清单: the drive's top folders and ~/Downloads' (files, bytes as compared). */
+const DRIVE_TOPS: Record<string, [number, number]> = { 影音: [1, 5_000_000], 照片: [7, 1_120_000], 回忆: [3, 2_320_000], 回忆_2606: [1, 2_000_000], 资料: [6, 1_306_000] };
+const MAC_TOPS: Record<string, [number, number]> = { 作品: [4, 1_023_000], 小柚: [4, 2_480_000], 照片: [7, 871_000], 资料: [5, 125_000] };
+let ticked = new Set(["资料", "照片", "小柚", "回忆", "影音"]);
+const WORKS = diff({ new: [row("设计/海报.psd", 1_000_000), row("笔记/读书.md", 8_000), row("lab/train.ipynb", 12_000), row("web/index.html", 3_000)] });
 let tasks: BackupTask[] = [
   { id: 1, source: "/Users/me/Downloads/资料", target: "资料", excludes: [], last: "2026-09-27T09:00:00.000Z", problem: null, diff: diff({ new: [row("2609 实习/合同.pdf", 50_000)], changed: [row("2609 实习/日程.xlsx", 15_000)], archived: [row("2302 证书.zip", 300_000), row("2507 课程/大作业.zip", 900_000)], same: 3 }) },
   {
@@ -39,7 +45,7 @@ let tasks: BackupTask[] = [
     problem: null,
     diff: diff({ new: [row("截图/截屏 1.png", 60_000), row("截图/截屏 2.png", 61_000)], moved: [{ from: "其它/IMG_0101.jpg", to: "其他/IMG_0101.jpg", size: 120_000 }, { from: "其它/IMG_0102.jpg", to: "其他/IMG_0102.jpg", size: 130_000 }], archived: [row("素材/纹理.zip", 400_000)], same: 3 }),
   },
-  { id: 3, source: "/Users/me/Downloads/小柚", target: "回忆/小柚", excludes: [], last: null, problem: null, diff: diff({ new: [row("2026/c.jpg", 160_000)], held: [{ path: "2026/d.jpg", size: 170_000, why: "硬盘上的更新" }], same: 2 }) },
+  { id: 3, source: "/Users/me/Downloads/小柚", target: "小柚", excludes: [], last: null, problem: null, diff: diff({ new: [row("2024/a.mov", 2_000_000), row("2024/b.jpg", 150_000), row("2026/c.jpg", 160_000), row("2026/d.jpg", 170_000)] }) },
 ];
 let nextId = 4;
 let runs: BackupRecord[] = [];
@@ -107,11 +113,22 @@ function lookView(): BackupLook | null {
 }
 
 backupCardHooks.done = (c) => {
-  if (c.kind === "task" && c.task) {
-    tasks = [...tasks, { id: nextId++, source: c.task.source, target: c.task.target, excludes: [], last: null, problem: null, diff: diff({ new: [row("设计/海报.psd", 1_000_000), row("笔记/读书.md", 8_000), row("lab/train.ipynb", 12_000), row("web/index.html", 3_000)] }) }];
+  if (c.kind !== "move") return;
+  tasks = tasks.map((t) => (t.diff && t.diff.moved.count ? { ...t, diff: { ...t.diff, moved: group([]), same: t.diff.same + t.diff.moved.count } } : t));
+  if (c.items.some((i) => i.done && i.to === "小柚")) {
+    tasks = tasks.map((t) => (t.target === "小柚" ? { ...t, diff: diff({ new: [row("2026/c.jpg", 160_000)], held: [{ path: "2026/d.jpg", size: 170_000, why: "硬盘上的更新" }], same: 2 }) } : t));
+    delete DRIVE_TOPS["回忆"];
+    DRIVE_TOPS["小柚"] = [3, 2_320_000];
   }
-  if (c.kind === "move") tasks = tasks.map((t) => (t.diff && t.diff.moved.count ? { ...t, diff: { ...t.diff, moved: group([]), same: t.diff.same + t.diff.moved.count } } : t));
 };
+
+function list(): BackupListRow[] {
+  const names = [...new Set([...Object.keys(DRIVE_TOPS), ...Object.keys(MAC_TOPS)])].sort();
+  return names.map((name) => {
+    const size = DRIVE_TOPS[name] ?? MAC_TOPS[name];
+    return { name, onDrive: name in DRIVE_TOPS, onMac: name in MAC_TOPS, picked: ticked.has(name), files: size[0], bytes: size[1] };
+  });
+}
 
 /** A finished run: what it copied leaves the comparison. */
 function settle() {
@@ -132,7 +149,7 @@ function view(): BackupOverview {
   return {
     mode: "sandbox",
     home: "/Users/me",
-    drive: picked ? { uuid: DRIVE.uuid, name: DRIVE.name, connected: true, fs: DRIVE.fs, total: DRIVE.total, free: DRIVE.free, path: "/Volumes/小柚的硬盘", folders: ["影音", "照片", "回忆", "回忆_2606", "资料"] } : null,
+    drive: picked ? { uuid: DRIVE.uuid, name: DRIVE.name, connected: true, fs: DRIVE.fs, total: DRIVE.total, free: DRIVE.free, path: "/Volumes/小柚的硬盘" } : null,
     volumes: [{ uuid: DRIVE.uuid, name: DRIVE.name, fs: DRIVE.fs, total: DRIVE.total, free: DRIVE.free }],
     tasks: picked ? tasks : [],
     comparing: now < comparingUntil,
@@ -141,7 +158,7 @@ function view(): BackupOverview {
     runs,
     look: lookView(),
     pikpak: pikView(),
-    skipped,
+    list: picked ? list() : [],
   };
 }
 
@@ -188,26 +205,23 @@ export const backupHandlers: Record<string, (a: Args) => unknown> = {
     picked = a.uuid != null;
     return view();
   },
-  janitor_backup_task_save: (a) => {
-    const t = a.task as BackupTaskInput;
-    if (!t.source.trim() || !t.target.trim()) throw "要选电脑上的文件夹和移动硬盘上的文件夹";
-    if (t.target.split("/")[0] === "旧版") throw "「旧版」是放旧版的地方";
-    if (/(^|\/)vault(\.|\/|$)/i.test(t.source) || /(^|\/)vault(\.|\/|$)/i.test(t.target)) throw "这个地方不能备份";
-    const source = t.source.replace(/^\/Users\/[^/]+\/Library\/Application Support\/Pomelo OS Dev\/janitor-sandbox/, "");
-    if (t.id != null) tasks = tasks.map((x) => (x.id === t.id ? { ...x, source, target: t.target.trim(), excludes: t.excludes } : x));
-    else tasks = [...tasks, { id: nextId++, source, target: t.target.trim(), excludes: t.excludes, last: null, problem: null, diff: diff({ new: [row("设计/海报.psd", 1_000_000), row("笔记/读书.md", 8_000)] }) }];
-    return view();
-  },
-  janitor_backup_skip: (a) => {
-    const f = String(a.folder).trim().replace(/^\/+|\/+$/g, "");
+  janitor_backup_pick: (a) => {
+    const name = String(a.name);
+    if (!(name in DRIVE_TOPS) && !(name in MAC_TOPS)) throw "硬盘上和「下载」里都没有这个文件夹";
     if (a.on) {
-      if (tasks.some((t) => t.target === f || t.target.startsWith(`${f}/`) || f.startsWith(`${t.target}/`))) throw "任务在用这个文件夹（或它的上一层、下一层）";
-      if (!skipped.includes(f)) skipped = [...skipped, f].sort();
-    } else skipped = skipped.filter((x) => x !== f);
+      ticked.add(name);
+      if (name in MAC_TOPS && !tasks.some((t) => t.target === name)) tasks = [...tasks, { id: nextId++, source: `/Users/me/Downloads/${name}`, target: name, excludes: [], last: null, problem: null, diff: name === "作品" ? WORKS : diff({ same: MAC_TOPS[name][0] }) }];
+    } else {
+      ticked.delete(name);
+      tasks = tasks.filter((t) => t.target !== name);
+    }
+    ticked = new Set(ticked);
+    comparingUntil = Date.now() + 800;
     return view();
   },
-  janitor_backup_task_delete: (a) => {
-    tasks = tasks.filter((t) => t.id !== a.id);
+  janitor_backup_excludes: (a) => {
+    const ex = (a.excludes as string[]).map((e) => e.trim()).filter(Boolean);
+    tasks = tasks.map((t) => (t.id === a.id ? { ...t, excludes: ex } : t));
     return view();
   },
   janitor_backup_start: (a) => {

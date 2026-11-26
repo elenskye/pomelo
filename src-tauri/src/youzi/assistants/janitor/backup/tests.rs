@@ -150,34 +150,64 @@ fn stopping_leaves_no_half_file_and_a_full_drive_refuses() {
     assert!(o.failed.as_deref().is_some_and(|f| f.contains("空间不够")) && o.files == 0, "{o:?}");
 }
 
+fn listed(j: &Janitor, picked: &[&str]) -> Settings {
+    let s = Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), picked: Some(picked.iter().map(|p| p.to_string()).collect()), ..Default::default() };
+    settled(j, &s)
+}
+
+fn targets(s: &Settings) -> Vec<(i64, String, String)> {
+    s.tasks.iter().map(|t| (t.id, t.source.trim_start_matches("/Users/me/Downloads/").to_string(), t.target.clone())).collect()
+}
+
 #[test]
-fn tasks_are_checked() {
-    let (_d, j, _v) = sandbox("tasks");
-    let s = Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), ..Default::default() };
-    let input = |source: &str, target: &str| TaskInput { id: None, source: source.into(), target: target.into(), excludes: vec![" *.tmp ".into(), "".into()] };
-    let s = save_task(&j, s, input("/Users/me/Downloads/照片", "照片")).unwrap();
-    assert_eq!((s.tasks[0].id, s.tasks[0].excludes.clone()), (1, vec!["*.tmp".to_string()]));
-    // a real path from the folder dialog (inside the fake Mac, inside the drive) works too
-    let real_src = j.real_of("/Users/me/Downloads/资料").to_string_lossy().into_owned();
-    let real_dst = j.backup.volumes.dir.join(fake::DRIVE).join("资料").to_string_lossy().into_owned();
-    let s = save_task(&j, s, input(&real_src, &real_dst)).unwrap();
-    assert_eq!((s.tasks[1].source.as_str(), s.tasks[1].target.as_str()), ("/Users/me/Downloads/资料", "资料"));
-    for (src, dst, why) in [
-        ("/Users/me", "x", "个人文件夹里的一个"),
-        ("/opt/homebrew", "x", "个人文件夹里的一个"),
-        ("/Users/me/Downloads/VAULT.sparsebundle", "x", "不能备份"),
-        ("/Users/me/Documents/LLM", "x", "受保护"),
-        ("/Users/me/Downloads/没有", "x", "没有这个文件夹"),
-        ("/Users/me/Downloads/作品", "旧版", "放旧版"),
-        ("/Users/me/Downloads/作品", "VAULT", "不能备份"),
-        ("/Users/me/Downloads/作品", "../x", "名字不对"),
-        ("/Users/me/Downloads/作品", "/", "移动硬盘里的文件夹"),
-        ("/Users/me/Downloads/作品", " ", "整块硬盘"),
-        ("/Users/me/Downloads/作品", "照片/作品", "别的任务"),
-    ] {
-        let e = save_task(&j, s.clone(), input(src, dst)).unwrap_err();
-        assert!(e.contains(why), "{src} → {dst}: {e}");
+fn the_list_makes_the_tasks() {
+    let (_d, j, v) = sandbox("list");
+    let drive = Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), ..Default::default() };
+    // a fresh start ticks nothing
+    let s = settled(&j, &drive);
+    assert_eq!((s.picked.clone(), s.tasks.len()), (Some(vec![]), 0));
+    // the list: the drive's top folders and Downloads' (VAULT, 旧版 and hidden ones never)
+    std::fs::create_dir_all(v.path.join(copy::OLD)).unwrap();
+    let rows = overview(&j, &s, Vec::new()).list;
+    let row = |n: &str| rows.iter().find(|r| r.name == n).map(|r| (r.on_drive, r.on_mac, r.picked));
+    assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["作品", "回忆", "回忆_2606", "小柚", "影音", "照片", "资料"]);
+    assert!(rows.iter().all(|r| !r.name.to_lowercase().contains("vault") && r.name != copy::OLD));
+    assert_eq!((row("资料"), row("回忆"), row("作品")), (Some((true, true, false)), Some((true, false, false)), Some((false, true, false))));
+    // ticking: Downloads' folders become tasks to the drive folder of the same name; the drive's own just stay in
+    let (s, gone) = set_picked(&j, &s, "资料", true).unwrap();
+    let (s, _) = set_picked(&j, &s, "回忆", true).unwrap();
+    let (s, _) = set_picked(&j, &s, "作品", true).unwrap();
+    assert!(gone.is_empty());
+    assert_eq!(s.picked.clone().unwrap(), ["作品", "回忆", "资料"]);
+    assert_eq!(targets(&s), [(2, "作品".to_string(), "作品".to_string()), (1, "资料".into(), "资料".into())]);
+    for (name, why) in [("VAULT", "都没有"), (copy::OLD, "都没有"), ("没有", "都没有")] {
+        assert!(set_picked(&j, &s, name, true).unwrap_err().contains(why), "{name}");
     }
+    assert!(set_picked(&j, &Settings { drive: None, ..s.clone() }, "资料", true).unwrap_err().contains("插上移动硬盘"));
+    // a task keeps its id and own excludes; unticked it goes (and is said, to forget what it held)
+    let id = s.tasks.iter().find(|t| t.target == "资料").unwrap().id;
+    let s = set_excludes(s, id, &[" *.tmp ".into(), "".into()]).unwrap();
+    let (s2, _) = set_picked(&j, &s, "回忆", false).unwrap();
+    assert_eq!(s2.tasks.iter().find(|t| t.id == id).unwrap().excludes, ["*.tmp"]);
+    let (s3, gone) = set_picked(&j, &s2, "资料", false).unwrap();
+    assert_eq!((gone, s3.tasks.len(), s3.picked.clone().unwrap()), (vec![id], 1, vec!["作品".to_string()]));
+    // the overview says what's ticked
+    let rows = overview(&j, &s2, Vec::new()).list;
+    assert_eq!(rows.iter().filter(|r| r.picked).map(|r| r.name.as_str()).collect::<Vec<_>>(), ["作品", "资料"]);
+    // old settings (tasks, folders kept out) become a list once the drive is in: all but those kept out, and
+    // the tasks' folders; a task whose drive folder had another name now goes to the one of its own name
+    let old = Settings { tasks: vec![task(1, "小柚", "回忆/小柚"), task(2, "照片", "照片")], next_id: 2, skipped: vec!["回忆_2606".into()], ..drive.clone() };
+    let (none, _) = settle(&j, &old, None, &mac_folders(&j));
+    assert_eq!(none, old, "the drive out: as it was");
+    let s = settled(&j, &old);
+    assert_eq!(s.picked.clone().unwrap(), ["回忆", "小柚", "影音", "照片", "资料"]);
+    assert!(s.skipped.is_empty());
+    assert_eq!(targets(&s), [(1, "小柚".to_string(), "小柚".to_string()), (2, "照片".into(), "照片".into()), (3, "资料".into(), "资料".into())]);
+    assert_eq!(settled(&j, &s), s, "settled stays");
+    // a picked name gone from both sides goes from the list
+    std::fs::rename(j.real_of("/Users/me/Downloads/小柚"), j.real_of("/Users/me/Downloads/小柚 2")).unwrap();
+    let s = settled(&j, &s);
+    assert!(!s.picked.clone().unwrap().contains(&"小柚".to_string()) && !s.tasks.iter().any(|t| t.id == 1));
 }
 
 #[test]
@@ -186,8 +216,10 @@ fn the_page_gets_counts_and_the_first_rows() {
     let s = Settings { drive: Some(DriveId { uuid: fake::DRIVE_UUID.into(), name: fake::DRIVE.into() }), tasks: vec![task(1, "资料", "资料")], next_id: 1, ..Default::default() };
     compare_all(&j, &s);
     let o = overview(&j, &s, Vec::new());
-    let d = o.drive.as_ref().unwrap();
-    assert!(d.connected && d.folders.contains(&"资料".to_string()) && !d.folders.iter().any(|f| f.contains("VAULT")));
+    assert!(o.drive.as_ref().unwrap().connected);
+    let row = o.list.iter().find(|r| r.name == "资料").unwrap();
+    assert_eq!((row.on_drive, row.on_mac, row.picked, row.files), (true, true, true, Some(6)), "old settings: all in");
+    assert!(!o.list.iter().any(|r| r.name.to_lowercase().contains("vault")));
     let t = &o.tasks[0];
     let diff = t.diff.as_ref().expect("compared");
     assert_eq!((diff.new.count, diff.changed.count, diff.archived.count, diff.same), (1, 1, 2, 3));
@@ -283,72 +315,69 @@ fn clues(j: &Janitor, s: &Settings) -> hints::Hints {
     fresh_snapshot(j, s).and_then(|sn| sn.hints).expect("clues")
 }
 
-fn lines(j: &Janitor, h: &hints::Hints) -> Vec<String> {
-    let mut v: Vec<String> = h.suggestions().iter().map(|s| s.line(&j.home)).collect();
+fn lines(h: &hints::Hints) -> Vec<String> {
+    let mut v: Vec<String> = h.suggestions().iter().map(|s| s.line()).collect();
     v.sort();
     v
 }
 
 #[test]
 fn clues_match_folders_renames_dups_and_archives() {
-    let (_d, j, _v) = sandbox("clues");
-    // no tasks yet: every Downloads folder gets one — where the drive has it (小柚 sits in 回忆/小柚), or its own name
-    let h = clues(&j, &with_tasks(vec![]));
-    assert_eq!(lines(&j, &h), ["新任务 ~/Downloads/作品 → 作品", "新任务 ~/Downloads/小柚 → 回忆/小柚", "新任务 ~/Downloads/照片 → 照片", "新任务 ~/Downloads/资料 → 资料", "移到硬盘的废纸篓 回忆_2606"]);
+    let (_d, j, v) = sandbox("clues");
+    let all = ["资料", "照片", "回忆", "回忆_2606", "影音"];
+    // the drive's folders ticked, none of Downloads' but 资料 and 照片 (both sides): the others are only said
+    let s = listed(&j, &all);
+    let h = clues(&j, &s);
+    assert_eq!(lines(&h), ["在硬盘上改名 照片/其它 → 照片/其他", "移到硬盘的废纸篓 回忆_2606"]);
     let small = h.folders.iter().find(|f| f.mac.ends_with("小柚")).unwrap();
     assert_eq!(small.found.iter().map(|f| (f.drive.as_str(), f.files)).collect::<Vec<_>>(), [("回忆/小柚", 2), ("回忆_2606/小柚", 1)]);
+    assert_eq!((small.task, small.note.as_deref()), (None, Some("清单里没勾（不备份）；硬盘上在 回忆/小柚")));
+    assert_eq!(h.folders.iter().find(|f| f.mac.ends_with("作品")).unwrap().note.as_deref(), Some("清单里没勾（不备份）"));
     assert!(h.folders.iter().all(|f| !f.mac.to_lowercase().contains("vault")));
+    assert_eq!((h.renames[0].task, h.renames[0].files), (s.tasks.iter().find(|t| t.target == "照片").unwrap().id, 2));
     // 回忆_2606's one file is in 回忆; 影音 is only on the drive; 旧版 and VAULT are never there
     assert_eq!(h.dups.iter().map(|d| (d.path.as_str(), d.twin.as_deref(), d.suggest)).collect::<Vec<_>>(), [("回忆_2606", Some("回忆"), true)]);
     assert_eq!(h.archives.iter().map(|a| a.path.as_str()).collect::<Vec<_>>(), ["影音"]);
-    // the tasks as on the mock page: 作品 never backed up, 照片/其它 renamed 其他 on the Mac, the dup stays
-    let s = with_tasks(vec![task(1, "资料", "资料"), task(2, "照片", "照片"), task(3, "小柚", "回忆/小柚")]);
-    let h = clues(&j, &s);
-    assert_eq!(lines(&j, &h), ["在硬盘上改名 照片/其它 → 照片/其他", "新任务 ~/Downloads/作品 → 作品", "移到硬盘的废纸篓 回忆_2606"]);
-    assert_eq!((h.renames[0].task, h.renames[0].files), (2, 2));
     let text = h.text(&j.home, gb);
-    assert!(text.contains("影音（1 个") && text.contains("像是归档") && !text.to_lowercase().contains("vault") && !text.contains(copy::OLD), "{text}");
-    // a task whose Mac folder was renamed: the folder holding its files gets it; a task pointed at an empty drive folder moves to where they are
-    let s = with_tasks(vec![Task { id: 7, source: "/Users/me/Downloads/资料（旧）".into(), target: "资料".into(), excludes: vec![] }, task(8, "小柚", "小柚")]);
+    assert!(text.contains("影音（1 个") && text.contains("像是归档") && text.contains("清单里没勾") && !text.to_lowercase().contains("vault") && !text.contains(copy::OLD), "{text}");
+    // 小柚 ticked: the drive has it under 回忆, not under its own name → rename it there (the dup still goes)
+    let s = listed(&j, &[&all[..], &["小柚"]].concat());
+    assert!(s.tasks.iter().any(|t| t.target == "小柚"));
     let h = clues(&j, &s);
-    let l = lines(&j, &h);
-    assert!(l.contains(&"改任务 #7 ~/Downloads/资料 → 资料".to_string()) && l.contains(&"改任务 #8 ~/Downloads/小柚 → 回忆/小柚".to_string()), "{l:?}");
+    assert_eq!(lines(&h), ["在硬盘上改名 回忆/小柚 → 小柚", "在硬盘上改名 照片/其它 → 照片/其他", "移到硬盘的废纸篓 回忆_2606"]);
+    // the drive folder of its name is there but holds none of it: only said
+    std::fs::create_dir_all(v.path.join("小柚")).unwrap();
+    std::fs::write(v.path.join("小柚/别的.txt"), "x").unwrap();
+    let h = clues(&j, &listed(&j, &[&all[..], &["小柚"]].concat()));
+    let small = h.folders.iter().find(|f| f.mac.ends_with("小柚")).unwrap();
+    assert!(small.suggest.is_none() && small.note.as_deref() == Some("硬盘上的 小柚 里一个都没有，它们在 回忆/小柚"), "{small:?}");
 }
 
 #[test]
 fn a_folder_kept_out_is_left_alone() {
     use serde_json::json;
     let (_d, j, v) = sandbox("skipped");
-    let s = with_tasks(vec![task(1, "资料", "资料"), task(3, "小柚", "回忆/小柚")]);
-    // a task's folder (or one around it) can't be kept out; names are checked like a task's
-    for (f, why) in [("资料", "任务 #1"), ("回忆", "任务 #3"), ("VAULT", "不能备份"), ("../x", "名字不对"), ("旧版", "旧版")] {
-        let e = set_skipped(&j, s.clone(), f, true).unwrap_err();
-        assert!(e.contains(why), "{f}: {e}");
-    }
-    let s = set_skipped(&j, s, "回忆_2606/", true).unwrap();
-    assert_eq!(s.skipped, ["回忆_2606"]);
-    assert_eq!(set_skipped(&j, s.clone(), "回忆_2606/小柚", true).unwrap().skipped, ["回忆_2606"], "already out");
-    assert!(set_skipped(&j, s.clone(), "回忆_2606", false).unwrap().skipped.is_empty());
-    // no task in it, no card about it
-    let e = save_task(&j, s.clone(), TaskInput { id: None, source: "/Users/me/Downloads/作品".into(), target: "回忆_2606/作品".into(), excludes: vec![] }).unwrap_err();
-    assert!(e.contains("不备份"), "{e}");
+    // 回忆_2606 not ticked
+    let s = listed(&j, &["资料", "回忆", "影音"]);
     for (name, args) in [
         (cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })),
-        (cards::MOVE, json!({ "items": [{ "from": "回忆_2606/小柚", "to": "小柚_旧", "why": "x" }] })),
+        (cards::MOVE, json!({ "items": [{ "from": "回忆_2606/小柚", "to": "回忆/小柚_旧", "why": "x" }] })),
         (cards::MOVE, json!({ "items": [{ "from": "影音", "to": "回忆_2606/影音", "why": "x" }] })),
+        (cards::MOVE, json!({ "items": [{ "from": "回忆/小柚", "to": "小柚", "why": "x" }] })),
     ] {
         let e = build(&j, &s, name, args.clone()).unwrap_err();
         assert!(e.contains("不备份"), "{args}: {e}");
     }
-    let tr = build(&j, &with_tasks(s.tasks.clone()), cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })).unwrap();
+    let tr = build(&j, &listed(&j, &["资料", "回忆", "影音", "回忆_2606"]), cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })).unwrap();
     assert!(cards::run(&j, &s, &tr, &[0]).unwrap().1["items"][0]["error"].as_str().unwrap_or("").contains("不备份"), "kept out after the card was made");
     assert!(v.path.join("回忆_2606").exists());
     // the clues leave it out: no dup, no archive, only a line saying it's out
     let h = clues(&j, &s);
     assert!(h.dups.is_empty() && h.archives.iter().all(|a| a.path != "回忆_2606"), "{:?}", h.dups);
     assert!(h.folders.iter().all(|f| f.found.iter().all(|x| !x.drive.starts_with("回忆_2606"))));
+    assert!(h.skipped.contains(&"回忆_2606".to_string()) && h.skipped.contains(&"照片".to_string()));
     let text = h.text(&j.home, gb);
-    assert!(text.contains("不备份的硬盘文件夹") && text.contains("回忆_2606") && !text.contains("移到硬盘的废纸篓 回忆_2606"), "{text}");
+    assert!(text.contains("清单里没勾的文件夹") && text.contains("回忆_2606") && !text.contains("移到硬盘的废纸篓 回忆_2606"), "{text}");
     // the cloud leaves it alone, both ways
     let f = rclone::kept_out(&["回忆_2606".into(), "a*[b]".into()]);
     assert_eq!(f, ["--filter", "- /回忆_2606/**", "--filter", "- /回忆_2606", "--filter", "- /a\\*\\[b\\]/**", "--filter", "- /a\\*\\[b\\]"]);
@@ -359,24 +388,20 @@ fn a_folder_kept_out_is_left_alone() {
     let cloud = rclone::fake_root(&j).join(fake::DRIVE);
     std::fs::create_dir_all(cloud.join("回忆_2606/早先传的")).unwrap();
     std::fs::write(cloud.join("回忆_2606/早先传的/a.txt"), "x").unwrap();
-    let ps = Settings { skipped: s.skipped.clone(), ..with_pikpak(0) };
+    let ps = Settings { picked: s.picked.clone(), ..with_pikpak(0) };
     let (_, d) = pikpak::sync_for_test(&j, &ps, false);
     assert!(d.ok, "{d:?}");
     let up = cloud_files(&j, fake::DRIVE);
     assert!(up.contains(&"回忆_2606/早先传的/a.txt".to_string()) && !up.contains(&"回忆_2606/小柚/2024/a.mov".to_string()) && up.contains(&"回忆/小柚/2024/a.mov".to_string()), "{up:?}");
+    assert!(!up.iter().any(|k| k.starts_with("照片/")), "not ticked: not up there: {up:?}");
 }
 
 #[test]
 fn suggestion_lines_read_back() {
     let home = "/Users/me";
-    for s in [
-        hints::Suggest::Task { id: None, source: "~/Downloads/作品".into(), target: "作品".into() },
-        hints::Suggest::Task { id: Some(3), source: "~/Downloads/小柚".into(), target: "回忆/小柚".into() },
-        hints::Suggest::Rename { from: "照片/其它".into(), to: "照片/其他".into() },
-        hints::Suggest::Trash { path: "回忆_2606".into() },
-    ] {
-        assert_eq!(hints::Suggest::parse(&s.line(home)), Some(s.clone()));
-        assert_eq!(hints::Suggest::all_in(&format!("- x（1 个）；{}{}\n- y", hints::CAN, s.line(home))), vec![s]);
+    for s in [hints::Suggest::Rename { from: "照片/其它".into(), to: "照片/其他".into() }, hints::Suggest::Trash { path: "回忆_2606".into() }] {
+        assert_eq!(hints::Suggest::parse(&s.line()), Some(s.clone()));
+        assert_eq!(hints::Suggest::all_in(&format!("- x（1 个）；{}{}\n- y", hints::CAN, s.line())), vec![s]);
     }
     assert_eq!(hints::tilde(home, "/Users/me/Downloads/a"), "~/Downloads/a");
     assert_eq!(hints::tilde(home, "/Users/meow/a"), "/Users/meow/a");
@@ -401,9 +426,7 @@ fn backup_cards_are_checked_then_done_on_the_drive() {
         (cards::TRASH, json!({ "items": [{ "path": "回忆/小柚", "why": "x" }] }), "任务 #3"),
         (cards::TRASH, json!({ "items": [{ "path": "回忆", "why": "x" }] }), "任务 #3"),
         (cards::TRASH, json!({ "items": [{ "path": "../x", "why": "x" }] }), "不是硬盘上的路径"),
-        (cards::TASK, json!({ "source": "~/Downloads/作品", "target": "旧版", "why": "x" }), "放旧版"),
-        (cards::TASK, json!({ "source": "~/Downloads/作品", "target": "回忆", "why": "x" }), "别的任务"),
-        (cards::TASK, json!({ "id": 2, "source": "~/Downloads/照片", "target": "照片", "why": "x" }), "已经是这样"),
+        (cards::TASK, json!({ "source": "~/Downloads/作品", "target": "作品", "why": "x" }), "清单"),
     ] {
         let e = build(&j, &s, name, args.clone()).unwrap_err();
         assert!(e.contains(why), "{args}: {e}");
@@ -422,13 +445,11 @@ fn backup_cards_are_checked_then_done_on_the_drive() {
     let (st, res, _) = cards::run(&j, &s, &tr, &[0]).unwrap();
     assert_eq!((st, res["items"][0]["done"].as_bool()), ("done", Some(true)));
     assert!(!v.path.join("回忆_2606").exists() && v.path.join(".Trashes/501/回忆_2606/小柚/2024/a.mov").exists());
-    // a new task, with what its folders compare to now
-    let tk = build(&j, &s, cards::TASK, json!({ "source": "~/Downloads/作品", "target": "作品", "why": "从没备过" })).unwrap();
-    let plan = tk.task.clone().unwrap();
-    assert_eq!((tk.title.as_str(), plan.source.as_str(), plan.target.as_str(), plan.same, plan.new), ("新任务", "/Users/me/Downloads/作品", "作品", Some(0), 4));
-    let (st, _, after) = cards::run(&j, &s, &tk, &[]).unwrap();
-    let after = after.unwrap();
-    assert_eq!((st, after.tasks.len(), after.tasks[2].target.as_str()), ("done", 3, "作品"));
+    // a task card from before the 清单 only says where to go now
+    let old = agent::Card { kind: "task".into(), state: "pending".into(), drive: Some(fake::DRIVE_UUID.into()), task: Some(cards::TaskPlan { source: "/Users/me/Downloads/作品".into(), target: "作品".into(), ..Default::default() }), ..Default::default() };
+    let (st, res, after) = cards::run(&j, &s, &old, &[]).unwrap();
+    assert!(st == "failed" && res["error"].as_str().unwrap().contains("清单") && after.is_none());
+    let after = s.clone();
     // moving a task's drive folder takes the task along
     let mv = build(&j, &after, cards::MOVE, json!({ "items": [{ "from": "回忆/小柚", "to": "小柚", "why": "和电脑上同名" }] })).unwrap();
     assert_eq!(mv.items[0].note.as_deref(), Some("任务 #3 的硬盘文件夹会跟着改"));
@@ -445,11 +466,13 @@ fn backup_cards_are_checked_then_done_on_the_drive() {
 #[test]
 fn the_agent_looks_at_the_backup_and_the_mock_proposes_what_the_clues_say() {
     let (_d, j, _v) = sandbox("look");
-    let s = with_tasks(vec![task(1, "资料", "资料"), task(2, "照片", "照片"), task(3, "小柚", "回忆/小柚")]);
+    let s = settled(&j, &with_tasks(vec![task(1, "资料", "资料"), task(2, "照片", "照片"), task(3, "小柚", "回忆/小柚")]));
+    assert_eq!(targets(&s), [(3, "小柚".to_string(), "小柚".to_string()), (2, "照片".into(), "照片".into()), (1, "资料".into(), "资料".into())]);
     compare_all(&j, &s);
     let look = |args: &str| look::tool_with(&j, &s, args, 8000);
     let a = look(r#"{"view":"overview"}"#);
-    assert!(a.text.contains("#2 ~/Downloads/照片 → 照片：一样 3 · 新加 2 · 改名或挪了 2") && a.text.contains("可以：新任务 ~/Downloads/作品 → 作品"), "{}", a.text);
+    assert!(a.text.contains("#2 ~/Downloads/照片 → 照片：一样 3 · 新加 2 · 改名或挪了 2") && a.text.contains("可以：在硬盘上改名 回忆/小柚 → 小柚") && a.text.contains("没勾的（不备份）：作品"), "{}", a.text);
+    assert!(a.text.contains("勾了、只在硬盘上的：回忆、回忆_2606、影音"), "{}", a.text);
     let a = look(r#"{"view":"diff","task":2,"group":"moved"}"#);
     assert!(a.text.contains("其它/IMG_0101.jpg → 其他/IMG_0101.jpg"), "{}", a.text);
     let a = look(r#"{"view":"drive","path":""}"#);
@@ -461,23 +484,21 @@ fn the_agent_looks_at_the_backup_and_the_mock_proposes_what_the_clues_say() {
     // the mock Agent on the automatic look: what the clues say, each a card that checks out
     let system = look::situation(&j, &s);
     let calls = agent::mock_calls(&look::question(fake::DRIVE), &system);
-    assert_eq!(calls.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), [look::BACKUP, cards::TASK, cards::MOVE, cards::TRASH]);
+    assert_eq!(calls.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), [look::BACKUP, cards::MOVE, cards::TRASH]);
     for c in &calls[1..] {
         let card = cards::build(&j, &s, &c.name, &c.arguments).unwrap_or_else(|e| panic!("{}: {e}", c.arguments));
-        assert!(!card.items.is_empty() || card.task.is_some());
+        assert!(!card.items.is_empty());
     }
     // what a look is about: the same clues the same, none nothing
     let sn = fresh_snapshot(&j, &s).unwrap();
-    let fp = sn.hints.as_ref().unwrap().fingerprint(&j.home, &[(3, 1)]);
-    assert!(!fp.is_empty() && fp == sn.hints.as_ref().unwrap().fingerprint(&j.home, &[(3, 1)]) && fp != sn.hints.as_ref().unwrap().fingerprint(&j.home, &[]));
-    assert!(hints::Hints::default().fingerprint(&j.home, &[]).is_empty());
+    let fp = sn.hints.as_ref().unwrap().fingerprint(&[(3, 1)]);
+    assert!(!fp.is_empty() && fp == sn.hints.as_ref().unwrap().fingerprint(&[(3, 1)]) && fp != sn.hints.as_ref().unwrap().fingerprint(&[]));
+    assert!(hints::Hints::default().fingerprint(&[]).is_empty());
     // the cards' results go back to the model
     let mut done = cards::build(&j, &s, cards::MOVE, &serde_json::json!({ "items": [{ "from": "照片/其它", "to": "照片/其他", "why": "x" }] }).to_string()).unwrap();
     done.state = "done".into();
     done.items[0].done = true;
-    let mut task_card = cards::build(&j, &s, cards::TASK, &serde_json::json!({ "source": "~/Downloads/作品", "target": "作品", "why": "x" }).to_string()).unwrap();
-    task_card.state = "failed".into();
-    task_card.error = Some("电脑上没有这个文件夹了".into());
+    let task_card = agent::Card { kind: "task".into(), title: "新任务".into(), state: "failed".into(), error: Some("电脑上没有这个文件夹了".into()), task: Some(cards::TaskPlan { source: "/Users/me/Downloads/作品".into(), target: "作品".into(), ..Default::default() }), ..Default::default() };
     let h = agent::in_history(&[done, task_card]);
     assert!(h.contains("在硬盘上改名或挪「在硬盘上跟着改」：改了 1 项") && h.contains("新任务 /Users/me/Downloads/作品 → 作品：电脑上没有这个文件夹了"), "{h}");
 }

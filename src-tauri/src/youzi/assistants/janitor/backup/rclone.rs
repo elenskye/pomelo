@@ -207,7 +207,7 @@ impl Rclone {
         }
     }
 
-    /// Mirrors `source` into the cloud folder (the drive folders in `skipped` left out); `p` follows along and can stop it.
+    /// Mirrors `source` into the cloud folder (the top folders in `skipped`, not picked in the 清单, left out); `p` follows along and can stop it.
     pub fn sync(&self, source: &Path, folder: &str, skipped: &[String], limit_mb: u32, force: bool, day: &str, p: &Progress) -> Done {
         let mut done = Done::default();
         let mut c = self.cmd();

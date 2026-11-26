@@ -1,7 +1,8 @@
 //! DevJanitor 备份 (1.1.0 Phase 1; requirements「DevJanitor › 备份」): a Mac folder → a folder on the external
 //! drive, only what changed. Names and metadata only (diff.rs); the bytes are read only to copy them (copy.rs).
-//! - Settings (youzi.db preference `assistant.janitor.backup`, not undone): the drive (its volume UUID) and the
-//!   tasks (source: a virtual path under home; target: relative to the drive's root). Runs: youzi.db
+//! - Settings (youzi.db preference `assistant.janitor.backup`, not undone): the drive (its volume UUID), the 清单
+//!   (`picked`: the top folders of the drive and of ~/Downloads in the backup) and the tasks it makes (`settle`:
+//!   each picked folder ~/Downloads has → the drive folder of that name; ids and excludes kept). Runs: youzi.db
 //!   `backup_runs` (not undone). What each task's Mac folder held at its last backup: janitor.db `backup_seen`.
 //! - The watcher (`watch`) looks at the drives every few seconds; when mine appears it compares every task and
 //!   keeps the result for the page. Nothing is copied until I pick tasks and press 开始.
@@ -54,9 +55,11 @@ pub struct Settings {
     pub tasks: Vec<Task>,
     pub next_id: i64,
     pub pikpak: pikpak::PikPak,
-    /// Drive folders kept out of the backup (relative to its root; 不备份的): no clues or cards about them, no
-    /// task in them, not synced to the cloud.
+    /// Before the 清单 (1.1.1): drive folders kept out. Read once to work `picked` out.
     pub skipped: Vec<String>,
+    /// 清单 (1.1.2): the top folders (on the drive or in ~/Downloads) in the backup; the rest of the drive gets no
+    /// clues or cards and isn't synced to the cloud. None: old settings, until the drive is in.
+    pub picked: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -104,11 +107,13 @@ pub struct Snapshot {
     diffs: HashMap<i64, Result<Diff, String>>,
     /// 柚子's clues (None: they couldn't be worked out).
     hints: Option<hints::Hints>,
+    /// Files and bytes in each of the drive's top folders (NFC names).
+    tops: HashMap<String, (u64, u64)>,
 }
 
-/// What a comparison is of besides the drive: the tasks and the folders kept out.
+/// What a comparison is of besides the drive: the tasks and the 清单.
 fn snap_key(s: &Settings) -> String {
-    serde_json::to_string(&(&s.tasks, &s.skipped)).unwrap_or_default()
+    serde_json::to_string(&(&s.tasks, &s.picked, &s.skipped)).unwrap_or_default()
 }
 
 /// The last comparison, when it's of the drive connected now and the settings as they are.
@@ -160,18 +165,7 @@ fn drive_of(j: &Janitor, s: &Settings) -> Option<Volume> {
     s.drive.as_ref().and_then(|d| j.backup.volumes.find(&d.uuid))
 }
 
-// ---- checking a task ----
-
-/// A real path (from a folder dialog) or a virtual one → virtual (the sandbox: a path inside the fake Mac's
-/// folder loses that prefix; anything else is taken as virtual already).
-fn virt_of_real(j: &Janitor, p: &str) -> String {
-    let p = p.trim().trim_end_matches('/');
-    let root = j.root.to_string_lossy().into_owned();
-    match p.strip_prefix(&root) {
-        Some(r) if j.mode == Mode::Sandbox && r.starts_with('/') => r.to_string(),
-        _ => p.to_string(),
-    }
-}
+// ---- the 清单 ----
 
 /// Why a Mac folder can't be a task's source (None: it can).
 fn source_problem(j: &Janitor, virt: &str) -> Option<String> {
@@ -192,96 +186,136 @@ fn source_problem(j: &Janitor, virt: &str) -> Option<String> {
     None
 }
 
-/// A drive folder (relative, or a real path inside the drive) → relative, checked.
-fn target_of(drive: Option<&Volume>, t: &str) -> Result<String, String> {
-    let t = t.trim();
-    let rel = match drive {
-        Some(v) if t.starts_with('/') => {
-            let root = v.path.to_string_lossy().into_owned();
-            t.strip_prefix(&root).filter(|r| r.is_empty() || r.starts_with('/')).ok_or("要选移动硬盘里的文件夹")?.to_string()
-        }
-        _ if t.starts_with('/') => return Err("移动硬盘没插上：写硬盘里的文件夹名".into()),
-        _ => t.to_string(),
-    };
-    let rel = rel.trim_matches('/').to_string();
-    if rel.is_empty() {
-        return Err("要选移动硬盘里的一个文件夹，不能是整块硬盘".into());
-    }
-    for part in rel.split('/') {
-        if part.is_empty() || part == ".." || part.starts_with('.') {
-            return Err("文件夹的名字不对".into());
-        }
-        if rules::sealed_name(part) {
-            return Err("这个地方不能备份".into());
-        }
-    }
-    if rel.split('/').next() == Some(copy::OLD) {
-        return Err(format!("「{}」是放旧版的地方", copy::OLD));
-    }
-    Ok(rel)
+/// ~/Downloads (virtual): the Mac side of every task.
+pub fn downloads(j: &Janitor) -> String {
+    format!("{}/Downloads", j.home)
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskInput {
-    pub id: Option<i64>,
-    pub source: String,
-    pub target: String,
-    #[serde(default)]
-    pub excludes: Vec<String>,
+/// A name a top folder can have in the 清单 (not hidden, VAULT or 旧版).
+fn listable(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !rules::sealed_name(name) && name != copy::OLD && !name.contains('/')
 }
 
-/// Adds or changes a task (checked); the settings with it.
-pub fn save_task(j: &Janitor, mut s: Settings, t: TaskInput) -> Result<Settings, String> {
-    let source = virt_of_real(j, &t.source);
-    if let Some(p) = source_problem(j, &source) {
-        return Err(p);
+fn dirs_in(dir: &Path) -> Vec<String> {
+    let mut f: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir()))
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter(|n| listable(n))
+        .collect();
+    f.sort();
+    f
+}
+
+/// ~/Downloads' top folders (VAULT and hidden ones left out).
+pub fn mac_folders(j: &Janitor) -> Vec<String> {
+    dirs_in(&j.real_of(&downloads(j)))
+}
+
+fn same(a: &str, b: &str) -> bool {
+    diff::nfc(a) == diff::nfc(b)
+}
+
+/// Is the top folder `top` (of the drive or ~/Downloads) ticked in the 清单?
+pub fn is_picked(s: &Settings, top: &str) -> bool {
+    match &s.picked {
+        Some(p) => p.iter().any(|x| same(x, top)),
+        None => !s.skipped.iter().any(|k| same(k, top)),
     }
-    let drive = drive_of(j, &s);
-    let target = target_of(drive.as_ref(), &t.target)?;
-    if s.tasks.iter().filter(|o| Some(o.id) != t.id).any(|o| rules::within(&o.target, &target) || rules::within(&target, &o.target)) {
-        return Err("别的任务已经用了这个文件夹（或它的上一层、下一层）".into());
-    }
-    if let Some(k) = skipped_at(&s, &target) {
-        return Err(format!("硬盘上的「{k}」定了不备份"));
-    }
-    let excludes: Vec<String> = t.excludes.iter().map(|e| e.trim().chars().take(60).collect::<String>()).filter(|e| !e.is_empty()).take(30).collect();
-    match t.id {
-        Some(id) => {
-            let task = s.tasks.iter_mut().find(|o| o.id == id).ok_or("没有这个任务")?;
-            *task = Task { id, source, target, excludes };
+}
+
+/// The top folder not in the backup that the drive path `rel` is in (None: it's in the backup, or in 旧版).
+pub fn kept_out_at(s: &Settings, rel: &str) -> Option<String> {
+    let top = rel.trim_matches('/').split('/').next().filter(|t| !t.is_empty())?;
+    (top != copy::OLD && !is_picked(s, top)).then(|| top.to_string())
+}
+
+/// Those of the drive's top folders `tops` not in the backup.
+pub fn kept_out(s: &Settings, tops: &[String]) -> Vec<String> {
+    tops.iter().filter(|t| !is_picked(s, t)).cloned().collect()
+}
+
+/// The settings in line with the 清单 (`drive_tops`: the drive's top folders when it's in; `mac`: ~/Downloads'),
+/// and the tasks that went. Old settings get `picked` once the drive is in: what wasn't kept out, and the tasks'
+/// folders (a fresh start ticks nothing). Picked names neither side has any more go (the drive in). Each picked
+/// folder ~/Downloads has is a task to the drive folder of the same name (an old task of that folder, or with
+/// that drive folder, keeps its id and excludes); other tasks go.
+pub fn settle(j: &Janitor, s: &Settings, drive_tops: Option<&[String]>, mac: &[String]) -> (Settings, Vec<i64>) {
+    let mut n = s.clone();
+    let dl = downloads(j);
+    if n.picked.is_none() {
+        if n.tasks.is_empty() && n.skipped.is_empty() {
+            n.picked = Some(Vec::new());
+        } else if let Some(tops) = drive_tops {
+            let mut p: Vec<String> = tops.iter().filter(|t| !n.skipped.iter().any(|k| same(k, t))).cloned().collect();
+            p.extend(n.tasks.iter().filter_map(|t| t.source.strip_prefix(&format!("{dl}/")).filter(|r| !r.contains('/')).map(str::to_string)));
+            n.picked = Some(p);
+            n.skipped.clear();
+        } else {
+            return (n, Vec::new());
         }
-        None => {
-            s.next_id = s.next_id.max(s.tasks.iter().map(|o| o.id).max().unwrap_or(0)) + 1;
-            s.tasks.push(Task { id: s.next_id, source, target, excludes });
-        }
     }
-    Ok(s)
+    let p = n.picked.get_or_insert_with(Vec::new);
+    if let Some(tops) = drive_tops {
+        p.retain(|x| tops.iter().chain(mac).any(|t| same(t, x)));
+    }
+    let mut seen_names: Vec<String> = Vec::new();
+    p.retain(|x| {
+        let k = diff::nfc(x);
+        let fresh = listable(x) && !seen_names.contains(&k);
+        seen_names.push(k);
+        fresh
+    });
+    p.sort();
+    let picked = p.clone();
+    let mut next = n.next_id.max(n.tasks.iter().map(|t| t.id).max().unwrap_or(0));
+    let mut tasks: Vec<Task> = Vec::new();
+    for name in mac.iter().filter(|m| picked.iter().any(|x| same(x, m))) {
+        let source = format!("{dl}/{name}");
+        let was = n.tasks.iter().find(|t| same(&t.source, &source)).or_else(|| n.tasks.iter().find(|t| same(&t.target, name))).filter(|t| !tasks.iter().any(|x| x.id == t.id));
+        let (id, excludes) = match was {
+            Some(t) => (t.id, t.excludes.clone()),
+            None => {
+                next += 1;
+                (next, Vec::new())
+            }
+        };
+        tasks.push(Task { id, source, target: name.clone(), excludes });
+    }
+    let gone: Vec<i64> = n.tasks.iter().filter(|t| !tasks.iter().any(|x| x.id == t.id)).map(|t| t.id).collect();
+    n.tasks = tasks;
+    n.next_id = next;
+    (n, gone)
 }
 
-/// The folder kept out of the backup that `rel` (relative to the drive) is in or holds.
-pub fn skipped_at(s: &Settings, rel: &str) -> Option<String> {
-    let rel = diff::nfc(rel);
-    s.skipped.iter().find(|k| {
-        let k = diff::nfc(k);
-        rules::within(&rel, &k) || rules::within(&k, &rel)
-    }).cloned()
+/// The settings in line with the 清单 now (what's on the drive and in ~/Downloads); not stored.
+pub fn settled(j: &Janitor, s: &Settings) -> Settings {
+    let tops = drive_of(j, s).map(|v| top_folders(&v));
+    settle(j, s, tops.as_deref(), &mac_folders(j)).0
 }
 
-/// Keeps a drive folder out of the backup (`on`) or takes it back in; the settings with it.
-pub fn set_skipped(j: &Janitor, mut s: Settings, folder: &str, on: bool) -> Result<Settings, String> {
-    let rel = target_of(drive_of(j, &s).as_ref(), folder)?;
+/// Ticks a top folder in the 清单 (`on`) or takes it out; the settings with it (settled) and the tasks that went.
+pub fn set_picked(j: &Janitor, s: &Settings, name: &str, on: bool) -> Result<(Settings, Vec<i64>), String> {
+    let v = drive_of(j, s).ok_or("插上移动硬盘才能改清单")?;
+    let (tops, mac) = (top_folders(&v), mac_folders(j));
+    let (mut n, _) = settle(j, s, Some(&tops), &mac);
+    let name = tops.iter().chain(&mac).find(|t| same(t, name)).cloned().ok_or("硬盘上和「下载」里都没有这个文件夹")?;
+    let p = n.picked.get_or_insert_with(Vec::new);
+    p.retain(|x| !same(x, &name));
     if on {
-        if let Some(t) = s.tasks.iter().find(|t| rules::within(&t.target, &rel) || rules::within(&rel, &t.target)) {
-            return Err(format!("任务 #{} 在用这个文件夹（或它的上一层、下一层）", t.id));
-        }
-        if skipped_at(&s, &rel).is_none() {
-            s.skipped.push(rel);
-            s.skipped.sort();
-        }
-    } else {
-        s.skipped.retain(|k| diff::nfc(k) != diff::nfc(&rel));
+        p.push(name);
     }
+    let (n, _) = settle(j, &n, Some(&tops), &mac);
+    let gone = s.tasks.iter().filter(|t| !n.tasks.iter().any(|x| x.id == t.id)).map(|t| t.id).collect();
+    Ok((n, gone))
+}
+
+/// A task's own names left out (`*` any characters); the settings with it.
+pub fn set_excludes(mut s: Settings, id: i64, excludes: &[String]) -> Result<Settings, String> {
+    let t = s.tasks.iter_mut().find(|t| t.id == id).ok_or("没有这个文件夹的备份")?;
+    t.excludes = excludes.iter().map(|e| e.trim().chars().take(60).collect::<String>()).filter(|e| !e.is_empty()).take(30).collect();
     Ok(s)
 }
 
@@ -307,8 +341,11 @@ pub fn compare_all(j: &Janitor, s: &Settings) {
     let snap = drive_of(j, s).map(|v| {
         let stop = AtomicBool::new(false);
         let diffs: HashMap<i64, Result<Diff, String>> = s.tasks.iter().map(|t| (t.id, compare_task(j, &v, t, &stop).map(|(d, _)| d))).collect();
-        let hints = hints::work_out(j, &v.path, s, &diffs, &stop).ok();
-        Snapshot { uuid: v.uuid.clone(), at: unix_now(), tasks: snap_key(s), diffs, hints }
+        let (hints, tops) = match hints::work_out(j, &v.path, s, &diffs, &stop) {
+            Ok((h, t)) => (Some(h), t),
+            Err(_) => (None, HashMap::new()),
+        };
+        Snapshot { uuid: v.uuid.clone(), at: unix_now(), tasks: snap_key(s), diffs, hints, tops }
     });
     if let Ok(mut g) = j.backup.snapshot.lock() {
         *g = snap;
@@ -388,10 +425,8 @@ pub struct DriveView {
     pub fs: Option<String>,
     pub total: u64,
     pub free: u64,
-    /// The real path (for the folder dialog) when connected.
+    /// The real path when connected.
     pub path: Option<String>,
-    /// Its top-level folders (VAULT, 旧版 and hidden ones left out).
-    pub folders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -453,20 +488,48 @@ pub struct Overview {
     /// 柚子's last look (look.rs).
     pub look: Option<look::LookView>,
     pub pikpak: pikpak::PikPakView,
-    pub skipped: Vec<String>,
+    /// 清单 (the drive in; empty otherwise).
+    pub list: Vec<ListRow>,
 }
 
-fn top_folders(v: &Volume) -> Vec<String> {
-    let mut f: Vec<String> = std::fs::read_dir(&v.path)
+/// A top folder in the 清单.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRow {
+    pub name: String,
+    pub on_drive: bool,
+    pub on_mac: bool,
+    pub picked: bool,
+    /// Files and bytes (the drive's copy when it has one), when compared.
+    pub files: Option<u64>,
+    pub bytes: Option<u64>,
+}
+
+/// The drive's top folders (VAULT, 旧版 and hidden ones left out).
+pub fn top_folders(v: &Volume) -> Vec<String> {
+    dirs_in(&v.path)
+}
+
+fn list_rows(j: &Janitor, s: &Settings, v: &Volume, snap: Option<&Snapshot>) -> Vec<ListRow> {
+    let (tops, mac) = (top_folders(v), mac_folders(j));
+    let mut names: Vec<String> = tops.clone();
+    names.extend(mac.iter().filter(|m| !tops.iter().any(|t| same(t, m))).cloned());
+    names.sort_by_key(|n| n.to_lowercase());
+    let dl = downloads(j);
+    names
         .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir()))
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
-        .filter(|n| !n.starts_with('.') && !rules::sealed_name(n) && n != copy::OLD)
-        .collect();
-    f.sort();
-    f
+        .map(|name| {
+            let (on_drive, on_mac) = (tops.iter().any(|t| same(t, &name)), mac.iter().any(|m| same(m, &name)));
+            let size = snap.and_then(|sn| {
+                if on_drive {
+                    sn.tops.get(&diff::nfc(&name)).copied()
+                } else {
+                    sn.hints.as_ref()?.folders.iter().find(|f| same(&f.mac, &format!("{dl}/{name}"))).map(|f| (f.files, f.bytes))
+                }
+            });
+            ListRow { picked: is_picked(s, &name), name, on_drive, on_mac, files: size.map(|x| x.0), bytes: size.map(|x| x.1) }
+        })
+        .collect()
 }
 
 pub fn run_view(j: &Janitor) -> RunView {
@@ -488,8 +551,8 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
     let vols = j.backup.volumes.list();
     let mine = s.drive.as_ref().and_then(|d| vols.iter().find(|v| v.uuid == d.uuid).cloned());
     let drive = s.drive.as_ref().map(|d| match &mine {
-        Some(v) => DriveView { uuid: v.uuid.clone(), name: v.name.clone(), connected: true, fs: Some(v.fs.clone()), total: v.total, free: v.free, path: Some(v.path.to_string_lossy().into_owned()), folders: top_folders(v) },
-        None => DriveView { uuid: d.uuid.clone(), name: d.name.clone(), connected: false, fs: None, total: 0, free: 0, path: None, folders: Vec::new() },
+        Some(v) => DriveView { uuid: v.uuid.clone(), name: v.name.clone(), connected: true, fs: Some(v.fs.clone()), total: v.total, free: v.free, path: Some(v.path.to_string_lossy().into_owned()) },
+        None => DriveView { uuid: d.uuid.clone(), name: d.name.clone(), connected: false, fs: None, total: 0, free: 0, path: None },
     });
     let snap = j.backup.snapshot.lock().ok().and_then(|g| g.clone());
     let tasks_json = snap_key(s);
@@ -527,7 +590,7 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
         runs,
         look: None,
         pikpak: pikpak::view(j, s),
-        skipped: s.skipped.clone(),
+        list: mine.as_ref().map(|v| list_rows(j, s, v, fresh)).unwrap_or_default(),
     }
 }
 
@@ -777,9 +840,26 @@ fn store_settings(state: &AppState, s: &Settings) -> Result<(), String> {
     state.youzi.with_db(|c| pref_set(c, KEY, s))
 }
 
+/// The settings settled with the 清单, stored when that changed them (not while backing up): what the commands
+/// and the watcher go by. The tasks that went forget what their folders held.
+pub fn load_now(state: &AppState, j: &Janitor) -> Settings {
+    let s = load(state);
+    if j.backup.running() {
+        return s;
+    }
+    let tops = drive_of(j, &s).map(|v| top_folders(&v));
+    let (n, gone) = settle(j, &s, tops.as_deref(), &mac_folders(j));
+    if n != s && store_settings(state, &n).is_ok() {
+        for id in gone {
+            let _ = j.with_db(|c| store::set_seen(c, id, None));
+        }
+    }
+    n
+}
+
 fn overview_now(state: &AppState, j: &Janitor) -> Result<Overview, String> {
     ensure_fake(j)?;
-    let s = load(state);
+    let s = load_now(state, j);
     let runs = state.youzi.with_db(|c| {
         if !j.backup.running() {
             settle_stale(c, "drive")?;
@@ -803,7 +883,7 @@ pub async fn janitor_backup_overview(state: State<'_, AppState>, janitor: State<
 /// 重新对比: compares again now (waits for it), then 柚子 looks if the clues changed.
 #[tauri::command]
 pub async fn janitor_backup_compare(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Overview, String> {
-    let (s, j) = (load(&state), janitor.inner().clone());
+    let (s, j) = (load_now(&state, &janitor), janitor.inner().clone());
     tauri::async_runtime::spawn_blocking(move || compare_all(&j, &s)).await.map_err(|e| e.to_string())?;
     let _ = look::maybe(&app, false).await;
     overview_now(&state, &janitor)
@@ -833,36 +913,28 @@ pub async fn janitor_backup_drive(app: tauri::AppHandle, state: State<'_, AppSta
     overview_now(&state, &janitor)
 }
 
+/// 清单: ticks a top folder (`on`) or takes it out of the backup.
 #[tauri::command]
-pub async fn janitor_backup_task_save(state: State<'_, AppState>, janitor: State<'_, Janitor>, task: TaskInput) -> Result<Overview, String> {
+pub async fn janitor_backup_pick(state: State<'_, AppState>, janitor: State<'_, Janitor>, name: String, on: bool) -> Result<Overview, String> {
     if janitor.backup.running() {
         return Err("正在备份，等它做完或先停下".into());
     }
     ensure_fake(&janitor)?;
-    let s = save_task(&janitor, load(&state), task)?;
+    let (s, gone) = set_picked(&janitor, &load_now(&state, &janitor), &name, on)?;
     store_settings(&state, &s)?;
+    for id in gone {
+        janitor.with_db(|c| store::set_seen(c, id, None))?;
+    }
     overview_now(&state, &janitor)
 }
 
+/// A folder's own names left out of its backup.
 #[tauri::command]
-pub async fn janitor_backup_task_delete(state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64) -> Result<Overview, String> {
+pub async fn janitor_backup_excludes(state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, excludes: Vec<String>) -> Result<Overview, String> {
     if janitor.backup.running() {
         return Err("正在备份，等它做完或先停下".into());
     }
-    let mut s = load(&state);
-    s.tasks.retain(|t| t.id != id);
-    store_settings(&state, &s)?;
-    janitor.with_db(|c| store::set_seen(c, id, None))?;
-    overview_now(&state, &janitor)
-}
-
-/// 不备份: keeps a drive folder out of the backup, or takes it back in.
-#[tauri::command]
-pub async fn janitor_backup_skip(state: State<'_, AppState>, janitor: State<'_, Janitor>, folder: String, on: bool) -> Result<Overview, String> {
-    if janitor.backup.running() {
-        return Err("正在备份，等它做完或先停下".into());
-    }
-    let s = set_skipped(&janitor, load(&state), &folder, on)?;
+    let s = set_excludes(load_now(&state, &janitor), id, &excludes)?;
     store_settings(&state, &s)?;
     overview_now(&state, &janitor)
 }
@@ -870,10 +942,10 @@ pub async fn janitor_backup_skip(state: State<'_, AppState>, janitor: State<'_, 
 /// 开始: backs up the picked tasks in the background.
 #[tauri::command]
 pub async fn janitor_backup_start(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, ids: Vec<i64>) -> Result<Overview, String> {
-    let s = load(&state);
+    let s = load_now(&state, &janitor);
     let tasks: Vec<Task> = s.tasks.iter().filter(|t| ids.contains(&t.id)).cloned().collect();
     if tasks.is_empty() {
-        return Err("先选要备份的任务".into());
+        return Err("先勾要备份的文件夹".into());
     }
     let drive = drive_of(&janitor, &s).ok_or("移动硬盘没插上")?;
     if janitor.backup.running.swap(true, Ordering::SeqCst) {
@@ -904,7 +976,7 @@ pub async fn janitor_backup_start(app: tauri::AppHandle, state: State<'_, AppSta
             *g = Some(ended_text(&o));
         }
         j.backup.running.store(false, Ordering::SeqCst);
-        compare_all(&j, &load(&st));
+        compare_all(&j, &load_now(&st, &j));
         pikpak::after_backup(&app);
     });
     overview_now(&state, &janitor)
@@ -931,8 +1003,8 @@ pub async fn janitor_backup_move(state: State<'_, AppState>, janitor: State<'_, 
     if janitor.backup.running() {
         return Err("正在备份，等它做完或先停下".into());
     }
-    let s = load(&state);
-    let t = s.tasks.iter().find(|t| t.id == id).ok_or("没有这个任务")?.clone();
+    let s = load_now(&state, &janitor);
+    let t = s.tasks.iter().find(|t| t.id == id).ok_or("没有这个文件夹的备份")?.clone();
     let drive = drive_of(&janitor, &s).ok_or("移动硬盘没插上")?;
     let j = janitor.inner().clone();
     let (done, failed) = tauri::async_runtime::spawn_blocking(move || {
@@ -955,8 +1027,11 @@ pub fn watch(app: tauri::AppHandle) {
         if !changed || j.backup.running() {
             continue;
         }
-        let s = load(&app.state::<AppState>());
-        if s.drive.is_none() || (j.mode == Mode::Sandbox && ensure_fake(&j).is_err()) {
+        if j.mode == Mode::Sandbox && ensure_fake(&j).is_err() {
+            continue;
+        }
+        let s = load_now(&app.state::<AppState>(), &j);
+        if s.drive.is_none() {
             continue;
         }
         compare_all(&j, &s);

@@ -33,20 +33,19 @@ let nextCard = 1;
 const blank = (kind: JanitorCard["kind"], over: Partial<JanitorCard>): JanitorCard => ({ id: nextCard++, runId: 0, kind, state: "pending", title: "", items: [], command: "", what: "", deletes: "", recoverable: "", frees: "", sudo: false, protected: null, rule: null, matches: 0, matchSize: 0, output: "", code: null, error: null, drive: null, task: null, ...over });
 const item = (path: string, why: string, size: number, kind: string, over: Partial<JanitorCard["items"][number]> = {}) => ({ path, to: null, why, size, protected: null, note: null, kind, done: false, error: null, ...over });
 
-/** 备份 (Rust backup/look.rs `mock_calls`): the fake drive's clues as cards — 作品 never backed up, 照片/其它
- *  renamed 其他 on the Mac, 回忆_2606 a copy of what's in 回忆. */
+/** 备份 (Rust backup/look.rs `mock_calls`): the fake drive's clues as cards — 小柚 sits in 回忆/小柚 on the drive,
+ *  照片/其它 renamed 其他 on the Mac, 回忆_2606 a copy of what's in 回忆. */
 export function backupCards(msgId: number): JanitorCard[] {
   const drive = "FAKE-0000-0000-0001";
   const cards = [
-    blank("task", { title: "新任务", drive, task: { id: null, source: "/Users/me/Downloads/作品", target: "作品", why: "（模拟）程序对出来的线索", same: 0, new: 4, changed: 0, moved: 0, archived: 0, was: null } }),
-    blank("move", { title: "改了名的文件夹", drive, items: [item("照片/其它", "（模拟）电脑上改了名", 250_000, "文件夹", { to: "照片/其他" })] }),
+    blank("move", { title: "改了名的文件夹", drive, items: [item("回忆/小柚", "（模拟）和「下载」里同名", 2_320_000, "文件夹", { to: "小柚", note: "任务 #3 的硬盘文件夹会跟着改" }), item("照片/其它", "（模拟）电脑上改了名", 250_000, "文件夹", { to: "照片/其他" })] }),
     blank("drive_trash", { title: "硬盘里重复的", drive, items: [item("回忆_2606", "（模拟）别处有一模一样的一份", 2_000_000, "文件夹")] }),
   ];
   cards.forEach((c) => (c.runId = msgId));
   janitorCards.set(msgId, cards);
   return cards;
 }
-export const BACKUP_TEXT = "这是开发版的**模拟回答**：看了 1 处，放进了 3 张卡片，看过没问题再点。只在硬盘上、像是归档的留着就好。";
+export const BACKUP_TEXT = "这是开发版的**模拟回答**：看了 1 处，放进了 2 张卡片，看过没问题再点。「下载」里的作品清单里没勾，要备份就去清单里勾上；只在硬盘上、像是归档的留着就好。";
 /** backupMock.ts follows a backup card that was done. */
 export const backupCardHooks: { done?: (c: JanitorCard) => void } = {};
 

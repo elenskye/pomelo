@@ -29,7 +29,7 @@ import { LevelPicker, fromLevel, levelOf } from "../Thinking";
 import { Transcript, type TranscriptHandle } from "../Transcript";
 import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "../useChat";
 import { JanitorCards } from "./JanitorCards";
-import { BackupBar, BackupTab } from "./JanitorBackup";
+import { BackupBar, BackupTab, type BackupView } from "./JanitorBackup";
 import { JANITOR_KEY, ago, bytes, dayOf, janitorApi, type JanitorEnvItem, type JanitorGroup, type JanitorItem, type JanitorOutcome, type JanitorOverview, type JanitorRing } from "./janitorApi";
 import { MdField } from "@/shared/editor/MdField";
 import { showDialog } from "@/shared/dialog";
@@ -50,6 +50,7 @@ function useOverview() {
 export function JanitorPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useSubPage<Tab>("janitor");
+  const [backupView, setBackupView] = useState<BackupView>("run");
   useSubNav("janitor", (p) => setTab(p as Tab));
   const ov = useOverview();
   useEffect(() => {
@@ -60,13 +61,13 @@ export function JanitorPage() {
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col px-6 pb-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-3">
-        {tab === "backup" ? <BackupBar /> : <ScanBar ov={ov.data} />}
+        {tab === "backup" ? <BackupBar view={backupView} setView={setBackupView} /> : <ScanBar ov={ov.data} />}
       </div>
       {tab === "agent" ? (
         <div className="flex min-h-0 flex-1 flex-col pt-2"><AgentTab /></div>
       ) : (
         <div className="selectable -m-1 min-h-0 flex-1 overflow-y-auto p-1 pt-4">
-          {tab === "disk" ? <DiskTab ov={ov.data} /> : tab === "clean" ? <CleanTab ov={ov.data} /> : tab === "backup" ? <BackupTab /> : tab === "env" ? <EnvTab ov={ov.data} /> : <SettingsTab />}
+          {tab === "disk" ? <DiskTab ov={ov.data} /> : tab === "clean" ? <CleanTab ov={ov.data} /> : tab === "backup" ? <BackupTab view={backupView} /> : tab === "env" ? <EnvTab ov={ov.data} /> : <SettingsTab />}
         </div>
       )}
     </div>

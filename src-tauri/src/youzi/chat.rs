@@ -3520,12 +3520,12 @@ pub(crate) mod tests {
                 vec![]
             }
         }
-        // the fake Mac and drive: two tasks, so all four cases show (小柚 elsewhere, 作品 never, 照片/其它 renamed, 回忆_2606 a copy)
+        // the fake Mac and drive, the 清单 ticking all but 作品: four cases (小柚 under another name, 作品 not ticked, 照片/其它 renamed, 回忆_2606 a copy)
         let dir = crate::db::tests::temp_dir("real-backup-look");
         let j = jn::Janitor::new(jn::Mode::Sandbox, std::path::Path::new("/Users/nobody"), &dir);
         backup::ensure_fake(&j).unwrap();
-        let task = |id: i64, s: &str| backup::Task { id, source: format!("/Users/me/Downloads/{s}"), target: s.into(), excludes: vec![] };
-        let bs = backup::Settings { drive: Some(backup::DriveId { uuid: jn::fake::DRIVE_UUID.into(), name: jn::fake::DRIVE.into() }), tasks: vec![task(1, "资料"), task(2, "照片")], next_id: 2, ..Default::default() };
+        let picked = ["资料", "照片", "小柚", "回忆", "回忆_2606", "影音"].map(String::from).to_vec();
+        let bs = backup::settled(&j, &backup::Settings { drive: Some(backup::DriveId { uuid: jn::fake::DRIVE_UUID.into(), name: jn::fake::DRIVE.into() }), picked: Some(picked), ..Default::default() });
         backup::compare_all(&j, &bs);
         let p = ja::prompt_with(&j, &Default::default(), &[], ja::builtin_skill(), false, &bs);
         let thinking = std::env::var("POMELO_THINK").as_deref() == Ok("1");
@@ -3560,9 +3560,9 @@ pub(crate) mod tests {
                 _ => {}
             }
         }
-        let want = ["task:作品", "task:小柚", "move:照片/其它", "trash:回忆_2606"];
+        let want = ["move:回忆/小柚", "move:照片/其它", "trash:回忆_2606"];
         let hit: Vec<&&str> = want.iter().filter(|w| done.iter().any(|d| d == **w)).collect();
-        println!("--- 四种情况里提议了 {} 种：{hit:?}；多出来的：{:?}", hit.len(), done.iter().filter(|d| !want.contains(&d.as_str())).collect::<Vec<_>>());
+        println!("--- 三张该出的卡片出了 {} 张：{hit:?}；多出来的：{:?}；说到没勾的作品：{}", hit.len(), done.iter().filter(|d| !want.contains(&d.as_str())).collect::<Vec<_>>(), h.content.contains("作品"));
         assert!(r.is_ok(), "{r:?}");
         assert!(!h.content.to_lowercase().contains("vault") && h.cards.iter().all(|c| !serde_json::to_string(c).unwrap().to_lowercase().contains("vault")));
     }

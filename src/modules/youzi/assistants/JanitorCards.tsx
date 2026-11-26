@@ -3,7 +3,7 @@
 // the command to copy), 加进一键清理 (one undo step, then a rescan). 备份 (backup/cards.rs): 在硬盘上跟着改 and
 // 移到硬盘的废纸篓 (tick the items, like the Trash), 新任务 / 改任务 (with what its folders compare to now).
 // 不要 closes a card. Nothing can be done while the reply is still being written.
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Copy } from "@/shared/icons";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
@@ -31,10 +31,14 @@ function useCardActions(card: JanitorCard) {
   return { busy, act, cancel: () => act(() => janitorApi.cardCancel(card.id)) };
 }
 
+/** The cards fill their place (备份's grid) instead of a reply's width. */
+const Fill = createContext(false);
+
 function Shell(props: { title: string; card: JanitorCard; children: React.ReactNode; footer?: React.ReactNode }) {
   const c = props.card;
+  const fill = useContext(Fill);
   return (
-    <div className="mt-3 max-w-[672px] rounded-card border bg-card text-sm">
+    <div className={`mt-3 rounded-card border bg-card text-sm ${fill ? "min-w-0" : "max-w-[672px]"}`}>
       <div className="flex flex-wrap items-baseline gap-x-2 border-b px-4 py-2">
         <span className="font-bold">{props.title}</span>
         {c.protected && <span className="rounded-full bg-accent px-1.5 text-xs text-primary">受保护 · {c.protected}</span>}
@@ -197,10 +201,12 @@ function TaskCard(props: { card: JanitorCard; streaming: boolean }) {
   );
 }
 
-export function JanitorCards(props: { cards: JanitorCard[]; streaming: boolean }) {
+export function JanitorCards(props: { cards: JanitorCard[]; streaming: boolean; fill?: boolean }) {
   return (
+    <Fill.Provider value={!!props.fill}>
     <div className="selectable contents">
       {props.cards.map((c) => (c.kind in PATHS ? <PathsCard key={c.id} card={c} streaming={props.streaming} /> : c.kind === "command" ? <CommandCard key={c.id} card={c} streaming={props.streaming} /> : c.kind === "task" ? <TaskCard key={c.id} card={c} streaming={props.streaming} /> : <RuleCard key={c.id} card={c} streaming={props.streaming} />))}
     </div>
+    </Fill.Provider>
   );
 }

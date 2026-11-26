@@ -1,27 +1,30 @@
 // DevJanitor 备份 (1.1.0 Phase 1; Rust janitor/backup/): a Mac folder → a folder on the external drive, only what
-// changed. The bar says which drive and whether it's in; the run bar picks the tasks to back up (those with
-// something to copy are ticked) and shows the progress; each task folds open to what the comparison found
-// (new, changed — the drive's copy goes to 旧版 —, renamed or moved, held, only on the drive). Renames are done
-// on the drive only when picked here. The page asks every few seconds, so plugging the drive in shows up.
+// changed. The bar switches 备份 / 清单 and says which drive and whether it's in. 清单 (1.1.2): the drive's top
+// folders and ~/Downloads', ticked ones backed up (a folder ~/Downloads has goes to the drive folder of its name).
+// 备份: the run bar picks the folders to copy (those with something to copy are ticked) and shows the progress;
+// each folds open to what the comparison found (new, changed — the drive's copy goes to 旧版 —, renamed or moved,
+// held, only on the drive). Renames are done on the drive only when picked here. The page asks every few seconds,
+// so plugging the drive in shows up.
 // 柚子 (Phase 2; backup/look.rs): after a drive is plugged in, DevJanitor's Agent looks at what the comparison
 // and the clues say; its reply and cards (JanitorCards.tsx) show here and in Agent. 柚子看一眼 asks again.
 // PikPak (Phase 3; backup/pikpak.rs): the whole drive mirrored there in the background while it's in; its card
 // says how far, stops and carries on; logging in and the folder / limit are dialogs.
-// 不备份: drive folders kept out (no clues or cards about them, not synced to PikPak), picked from the drive's top folders.
 import { useState, type FormEvent } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, HardDrive, Pencil, Plus, Settings2, Trash2 } from "@/shared/icons";
+import { ChevronRight, HardDrive, Pencil, Settings2 } from "@/shared/icons";
 import { Section } from "@/settings/layout";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
 import { Modal } from "@/shared/Modal";
-import { Button, EmptyState, Field, IconButton, ProgressBar, TextInput } from "@/shared/ui";
+import { Button, EmptyState, Field, IconButton, ProgressBar, Segmented, TextInput } from "@/shared/ui";
 import { pad } from "@/shared/dates";
 import { subNav } from "@/app/subpage";
 import { MarkdownView } from "../MarkdownView";
 import { JanitorCards } from "./JanitorCards";
-import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask, type PikPakView } from "./janitorApi";
+import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupListRow, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask, type PikPakView } from "./janitorApi";
+
+/** 备份 (copying, 柚子, records) or 清单 (what's backed up). */
+export type BackupView = "run" | "list";
 
 export function useBackup() {
   return useQuery({
@@ -39,11 +42,10 @@ function when(stamp: string | number | null): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const home = (ov: BackupOverview, p: string) => (p.startsWith(ov.home + "/") ? "~" + p.slice(ov.home.length) : p);
 const toCopy = (d: BackupDiff | null) => (d ? { files: d.new.count + d.changed.count, bytes: d.new.bytes + d.changed.bytes } : { files: 0, bytes: 0 });
 
-/** The top bar on 备份: the drive, and comparing again. */
-export function BackupBar() {
+/** The top bar on 备份: 备份 / 清单, the drive, and comparing again. */
+export function BackupBar(props: { view: BackupView; setView: (v: BackupView) => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useBackup();
@@ -52,6 +54,8 @@ export function BackupBar() {
   const d = ov.drive;
   const pick = (uuid: string | null) => backupApi.drive(uuid).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"));
   return (
+    <>
+    {d && <Segmented<BackupView> ariaLabel="备份或清单" value={props.view} options={[{ value: "run", label: "备份" }, { value: "list", label: "清单" }]} onChange={props.setView} />}
     <div className="ml-auto flex min-w-0 items-center gap-3 text-sm">
       {ov.mode === "sandbox" && <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">假 Mac</span>}
       {d && (
@@ -81,16 +85,17 @@ export function BackupBar() {
         </Button>
       )}
     </div>
+    </>
   );
 }
 
-export function BackupTab() {
+export function BackupTab(props: { view: BackupView }) {
   const q = useBackup();
   if (q.isError) return <EmptyState title="备份暂时打不开" hint={errorText(q.error)} action={<Button onClick={() => void q.refetch()}>重试</Button>} />;
   if (!q.data) return <EmptyState title="正在读取…" />;
   const ov = q.data;
   if (!ov.drive) return <PickDrive ov={ov} />;
-  return <BackupBody ov={ov} />;
+  return props.view === "list" ? <ListBody ov={ov} /> : <BackupBody ov={ov} />;
 }
 
 function PickDrive(props: { ov: BackupOverview }) {
@@ -119,7 +124,7 @@ function BackupBody(props: { ov: BackupOverview }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [over, setOver] = useState<Map<number, boolean>>(new Map());
-  const [editing, setEditing] = useState<BackupTask | "new" | null>(null);
+  const [editing, setEditing] = useState<BackupTask | null>(null);
   const set = (o: BackupOverview) => qc.setQueryData(BACKUP_KEY, o);
   const on = (t: BackupTask) => over.get(t.id) ?? toCopy(t.diff).files > 0;
   const picked = ov.tasks.filter((t) => on(t) && !t.problem && t.diff);
@@ -138,7 +143,7 @@ function BackupBody(props: { ov: BackupOverview }) {
             </span>
           ) : (
             <span className="text-sm text-muted-foreground tabular-nums">
-              {ov.tasks.some((t) => toCopy(t.diff).files > 0) ? `选了 ${picked.length} 个任务 · 要复制 ${total.files} 个文件、${bytes(total.bytes)}` : ov.comparing ? "正在对比…" : ov.tasks.length && ov.drive?.connected ? "都和硬盘上一样" : ""}
+              {ov.tasks.some((t) => toCopy(t.diff).files > 0) ? `选了 ${picked.length} 个文件夹 · 要复制 ${total.files} 个文件、${bytes(total.bytes)}` : ov.comparing ? "正在对比…" : ov.tasks.length && ov.drive?.connected ? "都和硬盘上一样" : ""}
             </span>
           )}
           {run.running ? (
@@ -156,8 +161,7 @@ function BackupBody(props: { ov: BackupOverview }) {
         {!run.running && run.ended && <p className="text-sm text-muted-foreground">{run.ended}</p>}
       </div>
       <PikPakCard ov={ov} />
-      {ov.look && <LookCard look={ov.look} />}
-      <Section title="任务" actions={<Button disabled={run.running} onClick={() => setEditing("new")}><Plus size={14} />任务</Button>}>
+      <Section title="「下载」里的">
         {ov.tasks.length ? (
           <ul className="divide-y">
             {ov.tasks.map((t) => (
@@ -165,65 +169,71 @@ function BackupBody(props: { ov: BackupOverview }) {
             ))}
           </ul>
         ) : (
-          <p className="px-4 py-3 text-sm text-muted-foreground">还没有任务</p>
+          <p className="px-4 py-3 text-sm text-muted-foreground">清单里没勾「下载」里的文件夹</p>
         )}
       </Section>
-      {ov.drive && <Skipped ov={ov} />}
+      {ov.look && <LookCard look={ov.look} />}
       {ov.runs.length > 0 && (
         <Section title="记录">
           <ul className="divide-y">{ov.runs.map((r) => <RecordRow key={r.id} r={r} />)}</ul>
         </Section>
       )}
-      {editing && <TaskDialog ov={ov} task={editing === "new" ? null : editing} close={() => setEditing(null)} />}
+      {editing && <ExcludesDialog task={editing} close={() => setEditing(null)} />}
     </div>
   );
 }
 
-function Skipped(props: { ov: BackupOverview }) {
+/** 清单: the drive's top folders and ~/Downloads', a tick each (ticked: backed up). */
+function ListBody(props: { ov: BackupOverview }) {
   const { ov } = props;
   const qc = useQueryClient();
   const toast = useToast();
-  const [adding, setAdding] = useState(false);
-  const busy = ov.run.running;
-  const taken = (f: string) => ov.skipped.includes(f) || ov.tasks.some((t) => t.target === f || t.target.startsWith(`${f}/`));
-  const free = (ov.drive?.folders ?? []).filter((f) => !taken(f));
-  const out = (f: string) => backupApi.skip(f, false).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"));
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!ov.drive?.connected) return <EmptyState title={`${ov.drive?.name ?? "移动硬盘"} 没插上`} />;
+  const pick = (r: BackupListRow) => {
+    setBusy(r.name);
+    backupApi.pick(r.name, !r.picked).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error")).finally(() => setBusy(null));
+  };
+  const where = (r: BackupListRow) => (r.onDrive && r.onMac ? "硬盘和「下载」" : r.onDrive ? "只在硬盘上" : "只在「下载」里");
+  const ticked = ov.list.filter((r) => r.picked);
   return (
-    <Section title="不备份" actions={<Button disabled={busy || !free.length} onClick={() => setAdding(true)}><Plus size={14} />文件夹</Button>}>
-      {ov.skipped.length ? (
-        <ul className="divide-y">
-          {ov.skipped.map((f) => (
-            <li key={f} className="flex items-center gap-2 px-4 py-2">
-              <span className="selectable min-w-0 flex-1 truncate font-mono text-sm">{f}</span>
-              <IconButton label={`备份 ${f}`} tip="移出" disabled={busy} onClick={() => void out(f)}><Trash2 size={14} /></IconButton>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="px-4 py-3 text-sm text-muted-foreground">没有</p>
-      )}
-      {adding && <SkipDialog folders={free} close={() => setAdding(false)} />}
-    </Section>
+    <div>
+      <p className="mb-2 px-1 text-sm text-muted-foreground tabular-nums">
+        勾了 {ticked.length} / {ov.list.length} 个{ticked.some((r) => r.bytes != null) ? ` · ${bytes(ticked.reduce((a, r) => a + (r.bytes ?? 0), 0))}` : ""}
+      </p>
+      <ul className="divide-y rounded-card border bg-card">
+        {ov.list.map((r) => (
+          <li key={r.name}>
+            <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm">
+              <input type="checkbox" checked={r.picked} disabled={ov.run.running || busy != null} onChange={() => pick(r)} aria-label={r.name} className="size-3.5 shrink-0 accent-[var(--primary)]" />
+              <span className={`min-w-0 truncate ${r.picked ? "" : "text-muted-foreground"}`}>{r.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{where(r)}</span>
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">{r.files != null && r.bytes != null ? `${r.files} 个 · ${bytes(r.bytes)}` : ""}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
-function SkipDialog(props: { folders: string[]; close: () => void }) {
+function ExcludesDialog(props: { task: BackupTask; close: () => void }) {
   const qc = useQueryClient();
-  const [folder, setFolder] = useState(props.folders[0] ?? "");
+  const [text, setText] = useState(props.task.excludes.join("、"));
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      qc.setQueryData(BACKUP_KEY, await backupApi.skip(folder, true));
+      qc.setQueryData(BACKUP_KEY, await backupApi.excludes(props.task.id, text.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean)));
       props.close();
     } catch (err) {
       setError(errorText(err));
     }
   };
   return (
-    <Modal title="不备份" error={error} onClose={props.close} onSubmit={submit} submitLabel="不备份" submitDisabled={!folder}>
-      <Field label="移动硬盘上的文件夹">
-        <Dropdown<string> block ariaLabel="移动硬盘上的文件夹" value={folder} options={props.folders.map((f) => ({ value: f, label: f }))} onChange={setFolder} />
+    <Modal title={props.task.target} error={error} onClose={props.close} onSubmit={submit} submitLabel="保存">
+      <Field label="另外不备份的名字">
+        <TextInput aria-label="另外不备份的名字" value={text} maxLength={600} onChange={(e) => setText(e.target.value)} />
       </Field>
     </Modal>
   );
@@ -231,16 +241,9 @@ function SkipDialog(props: { folders: string[]; close: () => void }) {
 
 function TaskRow(props: { ov: BackupOverview; t: BackupTask; on: boolean; toggle: () => void; edit: () => void }) {
   const { ov, t } = props;
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [confirm, confirmDialog] = useConfirm();
   const [open, setOpen] = useState(false);
   const d = t.diff;
   const c = toCopy(d);
-  const del = async () => {
-    if (!(await confirm({ title: "删掉这个任务？", message: "只删任务，电脑上和移动硬盘上的文件都不动。", confirmLabel: "删除", danger: true }))) return;
-    backupApi.taskDelete(t.id).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"));
-  };
   const counts = d
     ? [
         [`新加 ${d.new.count}`, d.new.count],
@@ -253,18 +256,14 @@ function TaskRow(props: { ov: BackupOverview; t: BackupTask; on: boolean; toggle
     : [];
   return (
     <li className="px-4 py-2.5 text-sm">
-      {confirmDialog}
       <div className="flex items-start gap-2.5">
         <input type="checkbox" checked={props.on && !t.problem && !!d} disabled={!!t.problem || !d || ov.run.running} onChange={props.toggle} aria-label={t.target} className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]" />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-            <span className="min-w-0 truncate font-mono text-xs">{home(ov, t.source)}</span>
-            <span className="text-muted-foreground">→</span>
-            <span className="min-w-0 truncate">{t.target}</span>
-          </div>
+          <p className="min-w-0 truncate">{t.target}</p>
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
             {t.problem ? <span className="text-destructive">{t.problem}</span> : d ? <span>{counts.length ? counts.join(" · ") : "和硬盘上一样"}</span> : <span>{ov.drive?.connected ? "正在对比…" : "插上移动硬盘才能对比"}</span>}
             {t.last && <span>· 上次 {when(t.last)}</span>}
+            {t.excludes.length > 0 && <span className="min-w-0 truncate">· 另外不备份 {t.excludes.join("、")}</span>}
           </div>
           {d && counts.length > 0 && (
             <button type="button" onClick={() => setOpen((o) => !o)} className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
@@ -274,8 +273,7 @@ function TaskRow(props: { ov: BackupOverview; t: BackupTask; on: boolean; toggle
           )}
         </div>
         {c.files > 0 && <span className="shrink-0 pt-px tabular-nums">{bytes(c.bytes)}</span>}
-        <IconButton label={`编辑 ${t.target}`} tip="编辑" disabled={ov.run.running} onClick={props.edit}><Pencil size={14} /></IconButton>
-        <IconButton label={`删除 ${t.target}`} tip="删除" disabled={ov.run.running} onClick={() => void del()}><Trash2 size={14} /></IconButton>
+        <IconButton label={`${t.target} 另外不备份的名字`} tip="不备份的名字" disabled={ov.run.running} onClick={props.edit}><Pencil size={14} /></IconButton>
       </div>
       {open && d && <DiffView ov={ov} t={t} d={d} />}
     </li>
@@ -368,11 +366,15 @@ function LookCard(props: { look: BackupLook }) {
           <Button onClick={() => subNav("janitor")?.("agent")}>在 Agent 里接着聊</Button>
         </div>
       </div>
-      <div className="selectable max-w-[720px] px-1">
+      <div className="selectable px-1">
         {l.text && <MarkdownView source={l.text} streaming={running} />}
         {running && !l.text && <p className="text-sm text-muted-foreground">正在看…</p>}
         {l.state === "failed" && <p className="text-sm text-destructive">没看成：{l.error ?? "不知道为什么"}</p>}
-        {l.cards.length > 0 && <JanitorCards cards={l.cards} streaming={running} />}
+        {l.cards.length > 0 && (
+          <div className="grid items-start gap-x-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr))]">
+            <JanitorCards cards={l.cards} streaming={running} fill />
+          </div>
+        )}
       </div>
     </section>
   );
@@ -525,61 +527,5 @@ function RecordRow(props: { r: BackupRecord }) {
         </ul>
       )}
     </li>
-  );
-}
-
-function TaskDialog(props: { ov: BackupOverview; task: BackupTask | null; close: () => void }) {
-  const { ov, task } = props;
-  const qc = useQueryClient();
-  const drive = ov.drive;
-  const [source, setSource] = useState(task?.source ?? "");
-  const [target, setTarget] = useState(task?.target ?? "");
-  const [excludes, setExcludes] = useState((task?.excludes ?? []).join("、"));
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const pickSource = async () => {
-    const p = await openDialog({ directory: true, multiple: false, title: "电脑上的文件夹" });
-    if (typeof p !== "string") return;
-    setSource(p);
-    const name = p.split("/").pop() ?? "";
-    if (!target && name) setTarget(name);
-  };
-  const pickTarget = async () => {
-    const p = await openDialog({ directory: true, multiple: false, title: "移动硬盘上的文件夹", defaultPath: drive?.path ?? undefined });
-    if (typeof p !== "string") return;
-    setTarget(drive?.path && p.startsWith(drive.path + "/") ? p.slice(drive.path.length + 1) : p);
-  };
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const o = await backupApi.taskSave({ id: task?.id ?? null, source, target, excludes: excludes.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean) });
-      qc.setQueryData(BACKUP_KEY, o);
-      props.close();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal wide title={task ? "编辑任务" : "新任务"} error={error} onClose={props.close} onSubmit={submit} submitLabel="保存" submitDisabled={busy || !source || !target.trim()}>
-      <Field label="电脑上的文件夹">
-        <div className="flex items-center gap-2">
-          <p className="selectable min-w-0 flex-1 truncate font-mono text-xs" title={source}>{source ? home(ov, source) : "—"}</p>
-          <Button onClick={() => void pickSource()}>选择…</Button>
-        </div>
-      </Field>
-      <Field label="移动硬盘上的文件夹">
-        <div className="flex items-center gap-2">
-          <TextInput aria-label="移动硬盘上的文件夹" value={target} maxLength={200} onChange={(e) => setTarget(e.target.value)} />
-          {drive?.connected && <Button onClick={() => void pickTarget()}>选择…</Button>}
-        </div>
-      </Field>
-      <Field label="另外不备份的名字">
-        <TextInput aria-label="另外不备份的名字" value={excludes} maxLength={600} onChange={(e) => setExcludes(e.target.value)} />
-      </Field>
-    </Modal>
   );
 }

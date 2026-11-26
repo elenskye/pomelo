@@ -4,14 +4,14 @@
 //! - Twins: files with the same name (NFC), size and mtime (±1 s); empty files never count. No checksums.
 //! - Mac folders: the subfolders of ~/Downloads and of each task folder's parent, and the task folders. Each
 //!   votes for the drive folders holding its files' twins at the same relative path; one holding half its
-//!   files (or bytes) is where the drive has it. Not in a task → 新任务 there (or under its own name when the
-//!   drive has none of it); its task's drive folder has none of it but another has → 改任务.
+//!   files (or bytes) is where the drive has it. A task (picked in the 清单) whose drive folder isn't there yet
+//!   while another holds its files → rename that one to the task's name; a folder not picked is only said.
 //! - Renames: a task's moves taking every file of one drive folder to one new folder → rename the folder.
 //! - Dups: the biggest drive folders (≥ 1 MB) whose every file has a twin outside them (旧版 left out); the
 //!   copy no task uses (and no suggested task) is the one to trash.
 //! - Elsewhere: a task's drive-only files the Mac has in another folder (an old name, not an archive).
 //! - Archives: top drive folders nothing on the Mac and no task matches.
-//! - The folders I keep out of the backup (`Settings::skipped`) aren't looked at; the Agent is only told they're out.
+//! - The drive's top folders not picked in the 清单 aren't looked at; the Agent is only told they're out.
 //! Suggestions are said as `可以：…` lines (`Suggest::line`), which the mock model reads back (`Suggest::parse`).
 
 use super::super::{rules, Janitor};
@@ -27,8 +27,6 @@ const SHOWN: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Suggest {
-    /// A task: new (`id` None) or changed. `source` virtual (or with ~), `target` relative to the drive.
-    Task { id: Option<i64>, source: String, target: String },
     /// Rename or move on the drive (relative to its root).
     Rename { from: String, to: String },
     /// To the drive's Trash (relative to its root).
@@ -43,10 +41,8 @@ pub fn tilde(home: &str, p: &str) -> String {
 }
 
 impl Suggest {
-    pub fn line(&self, home: &str) -> String {
+    pub fn line(&self) -> String {
         match self {
-            Suggest::Task { id: None, source, target } => format!("新任务 {} → {target}", tilde(home, source)),
-            Suggest::Task { id: Some(i), source, target } => format!("改任务 #{i} {} → {target}", tilde(home, source)),
             Suggest::Rename { from, to } => format!("在硬盘上改名 {from} → {to}"),
             Suggest::Trash { path } => format!("移到硬盘的废纸篓 {path}"),
         }
@@ -55,15 +51,6 @@ impl Suggest {
     /// A `line` back (the Mac folder keeps its ~).
     pub fn parse(line: &str) -> Option<Suggest> {
         let pair = |s: &str| s.split_once(" → ").map(|(a, b)| (a.trim().to_string(), b.trim().to_string()));
-        if let Some(r) = line.strip_prefix("新任务 ") {
-            let (source, target) = pair(r)?;
-            return Some(Suggest::Task { id: None, source, target });
-        }
-        if let Some(r) = line.strip_prefix("改任务 #") {
-            let (id, r) = r.split_once(' ')?;
-            let (source, target) = pair(r)?;
-            return Some(Suggest::Task { id: Some(id.parse().ok()?), source, target });
-        }
         if let Some(r) = line.strip_prefix("在硬盘上改名 ") {
             let (from, to) = pair(r)?;
             return Some(Suggest::Rename { from, to });
@@ -144,6 +131,7 @@ pub struct Hints {
     pub dups: Vec<DupHint>,
     pub elsewhere: Vec<ElsewhereHint>,
     pub archives: Vec<Spot>,
+    /// The drive's top folders not picked in the 清单.
     pub skipped: Vec<String>,
 }
 
@@ -207,11 +195,21 @@ pub fn candidates(j: &Janitor, s: &Settings) -> Vec<String> {
     out
 }
 
-/// Lists the candidates and the drive (旧版 left out), then works the clues out.
-pub fn work_out(j: &Janitor, drive: &std::path::Path, s: &Settings, diffs: &HashMap<i64, Result<Diff, String>>, stop: &AtomicBool) -> Result<Hints, String> {
+/// Lists the candidates and the drive (旧版 and the folders not picked left out), then works the clues out; with
+/// the files and bytes in each of the drive's top folders.
+pub fn work_out(j: &Janitor, drive: &std::path::Path, s: &Settings, diffs: &HashMap<i64, Result<Diff, String>>, stop: &AtomicBool) -> Result<(Hints, HashMap<String, (u64, u64)>), String> {
     let mut on_drive = diff::list(drive, &Skip::default(), stop)?;
     drop_old(&mut on_drive);
-    drop_skipped(&mut on_drive, &s.skipped);
+    let mut tops: HashMap<String, (u64, u64)> = HashMap::new();
+    for (k, (_, x)) in &on_drive.files {
+        if let Some((top, _)) = k.split_once('/') {
+            let e = tops.entry(top.to_string()).or_default();
+            (e.0, e.1) = (e.0 + 1, e.1 + x.size);
+        }
+    }
+    let names: Vec<String> = on_drive.dirs.keys().filter(|k| !k.contains('/')).cloned().collect();
+    let out = super::kept_out(s, &names);
+    drop_skipped(&mut on_drive, &out);
     let mut mac = Vec::new();
     for m in candidates(j, s) {
         let skip = Skip { extra: s.tasks.iter().find(|t| t.source == m).map(|t| t.excludes.clone()).unwrap_or_default() };
@@ -219,8 +217,9 @@ pub fn work_out(j: &Janitor, drive: &std::path::Path, s: &Settings, diffs: &Hash
             mac.push((m, l));
         }
     }
-    let gone: Vec<i64> = s.tasks.iter().filter(|t| !j.real_of(&t.source).is_dir()).map(|t| t.id).collect();
-    Ok(from_listings(s, &mac, &on_drive, diffs, &gone))
+    let mut h = from_listings(s, &mac, &on_drive, diffs);
+    h.skipped = out;
+    Ok((h, tops))
 }
 
 /// The drive's 旧版 isn't backup content.
@@ -231,7 +230,7 @@ pub fn drop_old(l: &mut Listing) {
     l.links.retain(|k, _| !old(k));
 }
 
-/// The folders kept out of the backup aren't backup content either.
+/// The folders not picked in the 清单 aren't backup content either.
 pub fn drop_skipped(l: &mut Listing, skipped: &[String]) {
     let out = |k: &String| skipped.iter().any(|s| rules::within(&diff::nfc(k), &diff::nfc(s)));
     l.files.retain(|k, _| !out(k));
@@ -239,8 +238,8 @@ pub fn drop_skipped(l: &mut Listing, skipped: &[String]) {
     l.links.retain(|k, _| !out(k));
 }
 
-/// The clues from the listings (`mac`: virtual folder → its files; `gone`: tasks whose Mac folder is missing).
-pub fn from_listings(s: &Settings, mac: &[(String, Listing)], drive: &Listing, diffs: &HashMap<i64, Result<Diff, String>>, gone: &[i64]) -> Hints {
+/// The clues from the listings (`mac`: virtual folder → its files; `drive`: without the folders not picked).
+pub fn from_listings(s: &Settings, mac: &[(String, Listing)], drive: &Listing, diffs: &HashMap<i64, Result<Diff, String>>) -> Hints {
     let ix = index(&drive.files);
     let targets: Vec<(i64, String)> = s.tasks.iter().map(|t| (t.id, diff::nfc(&t.target))).collect();
     let overlaps = |d: &str, except: Option<i64>| targets.iter().filter(|(i, _)| Some(*i) != except).any(|(_, t)| rules::within(t, d) || rules::within(d, t));
@@ -277,33 +276,19 @@ pub fn from_listings(s: &Settings, mac: &[(String, Listing)], drive: &Listing, d
         let (mut note, mut suggest) = (None, None);
         match (task, &best) {
             (Some(t), Some(b)) if *b != diff::nfc(&t.target) && !votes.contains_key(&diff::nfc(&t.target)) => {
-                if overlaps(b, Some(t.id)) {
-                    note = Some(format!("任务的硬盘文件夹 {} 里一个都没有，它们在别的任务的文件夹里", t.target));
+                let tt = diff::nfc(&t.target);
+                if drive.dirs.contains_key(&tt) || drive.files.contains_key(&tt) || drive.links.contains_key(&tt) {
+                    note = Some(format!("硬盘上的 {} 里一个都没有，它们在 {b}", t.target));
+                } else if overlaps(b, Some(t.id)) {
+                    note = Some(format!("硬盘上还没有 {}，它们在别的文件夹的备份里（{b}）", t.target));
                 } else {
-                    note = Some(format!("任务的硬盘文件夹 {} 里一个都没有", t.target));
-                    suggest = Some(Suggest::Task { id: Some(t.id), source: m.clone(), target: b.clone() });
+                    note = Some(format!("硬盘上还没有 {}，它们在 {b}", t.target));
+                    suggest = Some(Suggest::Rename { from: b.clone(), to: tt });
                 }
             }
             (Some(_), _) => {}
-            (None, Some(b)) => match s.tasks.iter().find(|t| diff::nfc(&t.target) == *b) {
-                Some(t) if gone.contains(&t.id) => {
-                    note = Some(format!("任务 #{} 电脑上的文件夹不在了，像是改了名", t.id));
-                    suggest = Some(Suggest::Task { id: Some(t.id), source: m.clone(), target: b.clone() });
-                }
-                Some(t) => note = Some(format!("硬盘上这个文件夹是任务 #{} 的", t.id)),
-                None if overlaps(b, None) => note = Some("在别的任务的硬盘文件夹里（或包着它）".into()),
-                None => suggest = Some(Suggest::Task { id: None, source: m.clone(), target: b.clone() }),
-            },
-            (None, None) => {
-                let name = diff::nfc(name_of(m));
-                if drive.dirs.contains_key(&name) {
-                    note = Some(format!("硬盘上同名的 {name} 里对不上"));
-                } else if overlaps(&name, None) {
-                    note = Some("同名的文件夹是别的任务的".into());
-                } else {
-                    suggest = Some(Suggest::Task { id: None, source: m.clone(), target: name });
-                }
-            }
+            (None, Some(b)) if *b != diff::nfc(name_of(m)) => note = Some(format!("清单里没勾（不备份）；硬盘上在 {b}")),
+            (None, _) => note = Some("清单里没勾（不备份）".into()),
         }
         h.folders.push(FolderHint { mac: m.clone(), files, bytes, task: task.map(|t| t.id), found, best, note, suggest });
     }
@@ -357,7 +342,8 @@ pub fn from_listings(s: &Settings, mac: &[(String, Listing)], drive: &Listing, d
     }
     let depth = |d: &str| d.split('/').count();
     let qualifies = |d: &str| agg.get(d).is_some_and(|(cut, _, _)| *cut < depth(d));
-    let suggested: Vec<String> = h.folders.iter().filter_map(|f| match &f.suggest { Some(Suggest::Task { target, .. }) => Some(target.clone()), _ => None }).collect();
+    // a folder to be renamed to a task's name is that task's from then on
+    let suggested: Vec<String> = h.folders.iter().filter_map(|f| match &f.suggest { Some(Suggest::Rename { from, .. }) => Some(from.clone()), _ => None }).collect();
     let mut dups: Vec<DupHint> = Vec::new();
     for (d, (_, files, bytes)) in &agg {
         if !qualifies(d) || *bytes < MIN_DUP || d.rsplit_once('/').is_some_and(|(p, _)| qualifies(p)) {
@@ -421,7 +407,6 @@ pub fn from_listings(s: &Settings, mac: &[(String, Listing)], drive: &Listing, d
     archives.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.path.cmp(&b.path)));
     archives.truncate(SHOWN);
     h.archives = archives;
-    h.skipped = s.skipped.clone();
     h
 }
 
@@ -437,9 +422,9 @@ impl Hints {
     /// The clues as the Agent reads them (empty: nothing to say).
     pub fn text(&self, home: &str, gb: impl Fn(u64) -> String) -> String {
         let mut out = String::new();
-        let can = |s: &Option<Suggest>| s.as_ref().map(|s| format!("；{CAN}{}", s.line(home))).unwrap_or_default();
+        let can = |s: &Option<Suggest>| s.as_ref().map(|s| format!("；{CAN}{}", s.line())).unwrap_or_default();
         if !self.folders.is_empty() {
-            out.push_str("- 电脑上的文件夹（硬盘上哪里有一样的文件：同样的名字、大小、修改时间，在同样的相对位置）：\n");
+            out.push_str("- 「下载」里的文件夹（清单里勾上的备份到硬盘上同名的文件夹，是一个任务；硬盘上哪里有一样的文件：同样的名字、大小、修改时间，在同样的相对位置）：\n");
             for f in &self.folders {
                 let task = f.task.map_or("没有任务".to_string(), |i| format!("任务 #{i}"));
                 let found = if f.found.is_empty() { "硬盘上哪儿都没有一样的".to_string() } else { format!("硬盘上 {}", f.found.iter().map(|x| format!("{} 里对得上 {} 个（{}）", x.drive, x.files, gb(x.bytes))).collect::<Vec<_>>().join("，")) };
@@ -469,17 +454,17 @@ impl Hints {
             }
         }
         if !self.archives.is_empty() {
-            out.push_str(&format!("- 只在硬盘上、电脑上和任务里都没有的文件夹（像是归档，留着）：{}\n", self.archives.iter().map(|a| format!("{}（{} 个，{}）", a.path, a.files, gb(a.bytes))).collect::<Vec<_>>().join("、")));
+            out.push_str(&format!("- 只在硬盘上、「下载」里和任务里都没有的文件夹（勾了的，像是归档，留着）：{}\n", self.archives.iter().map(|a| format!("{}（{} 个，{}）", a.path, a.files, gb(a.bytes))).collect::<Vec<_>>().join("、")));
         }
         if !self.skipped.is_empty() {
-            out.push_str(&format!("- 用户定了不备份的硬盘文件夹（不对比、不进 PikPak，什么卡片都不提，留着）：{}\n", self.skipped.join("、")));
+            out.push_str(&format!("- 硬盘上清单里没勾的文件夹（不备份：不对比、不进 PikPak，什么卡片都不提，留着）：{}\n", self.skipped.join("、")));
         }
         out
     }
 
     /// What a look is about: the suggestions and what's held (a new one means look again).
-    pub fn fingerprint(&self, home: &str, held: &[(i64, usize)]) -> String {
-        let mut parts: Vec<String> = self.suggestions().iter().map(|s| s.line(home)).collect();
+    pub fn fingerprint(&self, held: &[(i64, usize)]) -> String {
+        let mut parts: Vec<String> = self.suggestions().iter().map(|s| s.line()).collect();
         parts.extend(held.iter().filter(|(_, n)| *n > 0).map(|(t, n)| format!("held #{t} {n}")));
         if parts.is_empty() {
             return String::new();

@@ -12,7 +12,7 @@
 
 use super::super::{Janitor, Mode};
 use super::rclone::{self, Done, Progress, Rclone};
-use super::{drive_of, load, store_settings, Settings};
+use super::{drive_of, kept_out, load, load_now, store_settings, top_folders, Settings};
 use crate::AppState;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -197,7 +197,7 @@ fn start(app: &AppHandle, force: bool) {
         let mut force = force;
         loop {
             let st = app.state::<AppState>();
-            let s = load(&st);
+            let s = load_now(&st, &j);
             if blocked(&j, &s).is_some() {
                 break;
             }
@@ -233,7 +233,7 @@ fn once(st: &AppState, j: &Janitor, s: &Settings, force: bool) {
         }
     };
     let id = st.youzi.with_db(|c| record_start(c, &drive.name)).ok();
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &s.skipped, s.pikpak.limit, force, &local_day(st), &p);
+    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &kept_out(s, &top_folders(&drive)), s.pikpak.limit, force, &local_day(st), &p);
     if let Some(id) = id {
         let _ = st.youzi.with_db(|c| record_end(c, id, &p, &d));
     }
@@ -327,7 +327,7 @@ pub fn situation(j: &Janitor, s: &Settings) -> String {
     } else {
         v.ended.clone().or(v.waiting.clone()).unwrap_or_else(|| "还没同步过".into())
     };
-    format!("PikPak：整块硬盘（VAULT 除外）同步到 PikPak 的「{}」，程序自己传，硬盘上删了的进 PikPak 回收站；现在：{now}。\n", v.folder)
+    format!("PikPak：硬盘上清单里勾了的（VAULT 除外）同步到 PikPak 的「{}」，程序自己传，硬盘上删了的进 PikPak 回收站；现在：{now}。\n", v.folder)
 }
 
 // ---- commands ----
@@ -433,6 +433,6 @@ pub(super) fn sync_for_test(j: &Janitor, s: &Settings, force: bool) -> (Arc<Prog
     let drive = drive_of(j, s).expect("the fake drive");
     let p = Arc::new(Progress::new());
     let rc = Rclone::new(j, None).expect("rclone");
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &s.skipped, s.pikpak.limit, force, "2026-11-25", &p);
+    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &kept_out(s, &top_folders(&drive)), s.pikpak.limit, force, "2026-11-25", &p);
     (p, d)
 }
