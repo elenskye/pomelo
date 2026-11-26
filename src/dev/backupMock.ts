@@ -27,6 +27,7 @@ const diff = (p: Partial<Record<"new" | "changed" | "recent" | "archived", { pat
 
 const on = () => new URLSearchParams(location.search).get("backup") !== "none";
 let picked = on();
+let skipped: string[] = [];
 let tasks: BackupTask[] = [
   { id: 1, source: "/Users/me/Downloads/资料", target: "资料", excludes: [], last: "2026-09-27T09:00:00.000Z", problem: null, diff: diff({ new: [row("2609 实习/合同.pdf", 50_000)], changed: [row("2609 实习/日程.xlsx", 15_000)], archived: [row("2302 证书.zip", 300_000), row("2507 课程/大作业.zip", 900_000)], same: 3 }) },
   {
@@ -140,6 +141,7 @@ function view(): BackupOverview {
     runs,
     look: lookView(),
     pikpak: pikView(),
+    skipped,
   };
 }
 
@@ -194,6 +196,14 @@ export const backupHandlers: Record<string, (a: Args) => unknown> = {
     const source = t.source.replace(/^\/Users\/[^/]+\/Library\/Application Support\/Pomelo OS Dev\/janitor-sandbox/, "");
     if (t.id != null) tasks = tasks.map((x) => (x.id === t.id ? { ...x, source, target: t.target.trim(), excludes: t.excludes } : x));
     else tasks = [...tasks, { id: nextId++, source, target: t.target.trim(), excludes: t.excludes, last: null, problem: null, diff: diff({ new: [row("设计/海报.psd", 1_000_000), row("笔记/读书.md", 8_000)] }) }];
+    return view();
+  },
+  janitor_backup_skip: (a) => {
+    const f = String(a.folder).trim().replace(/^\/+|\/+$/g, "");
+    if (a.on) {
+      if (tasks.some((t) => t.target === f || t.target.startsWith(`${f}/`) || f.startsWith(`${t.target}/`))) throw "任务在用这个文件夹（或它的上一层、下一层）";
+      if (!skipped.includes(f)) skipped = [...skipped, f].sort();
+    } else skipped = skipped.filter((x) => x !== f);
     return view();
   },
   janitor_backup_task_delete: (a) => {

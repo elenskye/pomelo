@@ -11,6 +11,7 @@
 //!   copy no task uses (and no suggested task) is the one to trash.
 //! - Elsewhere: a task's drive-only files the Mac has in another folder (an old name, not an archive).
 //! - Archives: top drive folders nothing on the Mac and no task matches.
+//! - The folders I keep out of the backup (`Settings::skipped`) aren't looked at; the Agent is only told they're out.
 //! Suggestions are said as `可以：…` lines (`Suggest::line`), which the mock model reads back (`Suggest::parse`).
 
 use super::super::{rules, Janitor};
@@ -143,6 +144,7 @@ pub struct Hints {
     pub dups: Vec<DupHint>,
     pub elsewhere: Vec<ElsewhereHint>,
     pub archives: Vec<Spot>,
+    pub skipped: Vec<String>,
 }
 
 fn name_of(k: &str) -> &str {
@@ -209,6 +211,7 @@ pub fn candidates(j: &Janitor, s: &Settings) -> Vec<String> {
 pub fn work_out(j: &Janitor, drive: &std::path::Path, s: &Settings, diffs: &HashMap<i64, Result<Diff, String>>, stop: &AtomicBool) -> Result<Hints, String> {
     let mut on_drive = diff::list(drive, &Skip::default(), stop)?;
     drop_old(&mut on_drive);
+    drop_skipped(&mut on_drive, &s.skipped);
     let mut mac = Vec::new();
     for m in candidates(j, s) {
         let skip = Skip { extra: s.tasks.iter().find(|t| t.source == m).map(|t| t.excludes.clone()).unwrap_or_default() };
@@ -226,6 +229,14 @@ pub fn drop_old(l: &mut Listing) {
     l.files.retain(|k, _| !old(k));
     l.dirs.retain(|k, _| !old(k));
     l.links.retain(|k, _| !old(k));
+}
+
+/// The folders kept out of the backup aren't backup content either.
+pub fn drop_skipped(l: &mut Listing, skipped: &[String]) {
+    let out = |k: &String| skipped.iter().any(|s| rules::within(&diff::nfc(k), &diff::nfc(s)));
+    l.files.retain(|k, _| !out(k));
+    l.dirs.retain(|k, _| !out(k));
+    l.links.retain(|k, _| !out(k));
 }
 
 /// The clues from the listings (`mac`: virtual folder → its files; `gone`: tasks whose Mac folder is missing).
@@ -410,6 +421,7 @@ pub fn from_listings(s: &Settings, mac: &[(String, Listing)], drive: &Listing, d
     archives.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.path.cmp(&b.path)));
     archives.truncate(SHOWN);
     h.archives = archives;
+    h.skipped = s.skipped.clone();
     h
 }
 
@@ -458,6 +470,9 @@ impl Hints {
         }
         if !self.archives.is_empty() {
             out.push_str(&format!("- 只在硬盘上、电脑上和任务里都没有的文件夹（像是归档，留着）：{}\n", self.archives.iter().map(|a| format!("{}（{} 个，{}）", a.path, a.files, gb(a.bytes))).collect::<Vec<_>>().join("、")));
+        }
+        if !self.skipped.is_empty() {
+            out.push_str(&format!("- 用户定了不备份的硬盘文件夹（不对比、不进 PikPak，什么卡片都不提，留着）：{}\n", self.skipped.join("、")));
         }
         out
     }

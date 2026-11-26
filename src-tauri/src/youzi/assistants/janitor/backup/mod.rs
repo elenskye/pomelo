@@ -54,6 +54,9 @@ pub struct Settings {
     pub tasks: Vec<Task>,
     pub next_id: i64,
     pub pikpak: pikpak::PikPak,
+    /// Drive folders kept out of the backup (relative to its root; 不备份的): no clues or cards about them, no
+    /// task in them, not synced to the cloud.
+    pub skipped: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -103,11 +106,16 @@ pub struct Snapshot {
     hints: Option<hints::Hints>,
 }
 
-/// The last comparison, when it's of the drive connected now and the tasks as they are.
+/// What a comparison is of besides the drive: the tasks and the folders kept out.
+fn snap_key(s: &Settings) -> String {
+    serde_json::to_string(&(&s.tasks, &s.skipped)).unwrap_or_default()
+}
+
+/// The last comparison, when it's of the drive connected now and the settings as they are.
 fn fresh_snapshot(j: &Janitor, s: &Settings) -> Option<Snapshot> {
     let v = drive_of(j, s)?;
-    let tasks = serde_json::to_string(&s.tasks).unwrap_or_default();
-    j.backup.snapshot.lock().ok().and_then(|g| g.clone()).filter(|sn| sn.uuid == v.uuid && sn.tasks == tasks)
+    let key = snap_key(s);
+    j.backup.snapshot.lock().ok().and_then(|g| g.clone()).filter(|sn| sn.uuid == v.uuid && sn.tasks == key)
 }
 
 pub struct Backup {
@@ -234,6 +242,9 @@ pub fn save_task(j: &Janitor, mut s: Settings, t: TaskInput) -> Result<Settings,
     if s.tasks.iter().filter(|o| Some(o.id) != t.id).any(|o| rules::within(&o.target, &target) || rules::within(&target, &o.target)) {
         return Err("别的任务已经用了这个文件夹（或它的上一层、下一层）".into());
     }
+    if let Some(k) = skipped_at(&s, &target) {
+        return Err(format!("硬盘上的「{k}」定了不备份"));
+    }
     let excludes: Vec<String> = t.excludes.iter().map(|e| e.trim().chars().take(60).collect::<String>()).filter(|e| !e.is_empty()).take(30).collect();
     match t.id {
         Some(id) => {
@@ -244,6 +255,32 @@ pub fn save_task(j: &Janitor, mut s: Settings, t: TaskInput) -> Result<Settings,
             s.next_id = s.next_id.max(s.tasks.iter().map(|o| o.id).max().unwrap_or(0)) + 1;
             s.tasks.push(Task { id: s.next_id, source, target, excludes });
         }
+    }
+    Ok(s)
+}
+
+/// The folder kept out of the backup that `rel` (relative to the drive) is in or holds.
+pub fn skipped_at(s: &Settings, rel: &str) -> Option<String> {
+    let rel = diff::nfc(rel);
+    s.skipped.iter().find(|k| {
+        let k = diff::nfc(k);
+        rules::within(&rel, &k) || rules::within(&k, &rel)
+    }).cloned()
+}
+
+/// Keeps a drive folder out of the backup (`on`) or takes it back in; the settings with it.
+pub fn set_skipped(j: &Janitor, mut s: Settings, folder: &str, on: bool) -> Result<Settings, String> {
+    let rel = target_of(drive_of(j, &s).as_ref(), folder)?;
+    if on {
+        if let Some(t) = s.tasks.iter().find(|t| rules::within(&t.target, &rel) || rules::within(&rel, &t.target)) {
+            return Err(format!("任务 #{} 在用这个文件夹（或它的上一层、下一层）", t.id));
+        }
+        if skipped_at(&s, &rel).is_none() {
+            s.skipped.push(rel);
+            s.skipped.sort();
+        }
+    } else {
+        s.skipped.retain(|k| diff::nfc(k) != diff::nfc(&rel));
     }
     Ok(s)
 }
@@ -271,7 +308,7 @@ pub fn compare_all(j: &Janitor, s: &Settings) {
         let stop = AtomicBool::new(false);
         let diffs: HashMap<i64, Result<Diff, String>> = s.tasks.iter().map(|t| (t.id, compare_task(j, &v, t, &stop).map(|(d, _)| d))).collect();
         let hints = hints::work_out(j, &v.path, s, &diffs, &stop).ok();
-        Snapshot { uuid: v.uuid.clone(), at: unix_now(), tasks: serde_json::to_string(&s.tasks).unwrap_or_default(), diffs, hints }
+        Snapshot { uuid: v.uuid.clone(), at: unix_now(), tasks: snap_key(s), diffs, hints }
     });
     if let Ok(mut g) = j.backup.snapshot.lock() {
         *g = snap;
@@ -416,6 +453,7 @@ pub struct Overview {
     /// 柚子's last look (look.rs).
     pub look: Option<look::LookView>,
     pub pikpak: pikpak::PikPakView,
+    pub skipped: Vec<String>,
 }
 
 fn top_folders(v: &Volume) -> Vec<String> {
@@ -454,7 +492,7 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
         None => DriveView { uuid: d.uuid.clone(), name: d.name.clone(), connected: false, fs: None, total: 0, free: 0, path: None, folders: Vec::new() },
     });
     let snap = j.backup.snapshot.lock().ok().and_then(|g| g.clone());
-    let tasks_json = serde_json::to_string(&s.tasks).unwrap_or_default();
+    let tasks_json = snap_key(s);
     let fresh = snap.as_ref().filter(|sn| mine.as_ref().is_some_and(|v| v.uuid == sn.uuid) && sn.tasks == tasks_json);
     // a drive just connected, or tasks changed: compare (the page shows 正在对 meanwhile)
     if mine.is_some() && fresh.is_none() && !j.backup.running() {
@@ -489,6 +527,7 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
         runs,
         look: None,
         pikpak: pikpak::view(j, s),
+        skipped: s.skipped.clone(),
     }
 }
 
@@ -814,6 +853,17 @@ pub async fn janitor_backup_task_delete(state: State<'_, AppState>, janitor: Sta
     s.tasks.retain(|t| t.id != id);
     store_settings(&state, &s)?;
     janitor.with_db(|c| store::set_seen(c, id, None))?;
+    overview_now(&state, &janitor)
+}
+
+/// 不备份: keeps a drive folder out of the backup, or takes it back in.
+#[tauri::command]
+pub async fn janitor_backup_skip(state: State<'_, AppState>, janitor: State<'_, Janitor>, folder: String, on: bool) -> Result<Overview, String> {
+    if janitor.backup.running() {
+        return Err("正在备份，等它做完或先停下".into());
+    }
+    let s = set_skipped(&janitor, load(&state), &folder, on)?;
+    store_settings(&state, &s)?;
     overview_now(&state, &janitor)
 }
 

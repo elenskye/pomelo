@@ -85,6 +85,14 @@ fn drive_rel(drive: Option<&super::Volume>, p: &str) -> Result<String, String> {
     Ok(rel)
 }
 
+/// A path in a folder I keep out of the backup isn't the Agent's to touch.
+fn kept_out(s: &Settings, rel: &str) -> Result<(), String> {
+    match super::skipped_at(s, rel) {
+        Some(k) => Err(format!("硬盘上的「{k}」用户定了不备份，不提议动它")),
+        None => Ok(()),
+    }
+}
+
 /// Bytes under a drive path (a file: its size).
 fn size_at(real: &Path) -> u64 {
     match std::fs::symlink_metadata(real) {
@@ -157,6 +165,7 @@ pub fn build(j: &Janitor, s: &Settings, name: &str, args: &str) -> Result<Card, 
             let mut items: Vec<TrashItem> = Vec::new();
             for it in v["items"].as_array().cloned().unwrap_or_default().iter().take(ITEMS_MAX) {
                 let path = drive_rel(Some(&dv), it[if name == MOVE { "from" } else { "path" }].as_str().unwrap_or(""))?;
+                kept_out(s, &path)?;
                 let real = dv.path.join(&path);
                 let Ok(m) = std::fs::symlink_metadata(&real) else { return Err(format!("硬盘上没有 {path}（先用 pomelo_janitor_backup 的 drive 看清楚路径）")) };
                 if items.iter().any(|x| x.path == path) {
@@ -165,6 +174,7 @@ pub fn build(j: &Janitor, s: &Settings, name: &str, args: &str) -> Result<Card, 
                 let mut item = TrashItem { size: size_at(&real), kind: if m.is_dir() { "文件夹".into() } else { "文件".into() }, why: text(it, "why", 200), ..Default::default() };
                 if name == MOVE {
                     let to = drive_rel(Some(&dv), it["to"].as_str().unwrap_or(""))?;
+                    kept_out(s, &to)?;
                     if diff::nfc(&to) == diff::nfc(&path) || rules::within(&diff::nfc(&to), &diff::nfc(&path)) {
                         return Err(format!("{path} → {to}：不能挪进它自己里面"));
                     }
@@ -245,12 +255,14 @@ pub fn run(j: &Janitor, s: &Settings, c: &Card, picked: &[usize]) -> Result<(&'s
         } else {
             (|| {
                 let path = drive_rel(Some(&dv), &it.path)?;
+                kept_out(s, &path)?;
                 let real = dv.path.join(&path);
                 if std::fs::symlink_metadata(&real).is_err() {
                     return Err("硬盘上已经没有了".into());
                 }
                 if c.kind == "move" {
                     let to = drive_rel(Some(&dv), it.to.as_deref().unwrap_or(""))?;
+                    kept_out(s, &to)?;
                     let dest = dv.path.join(&to);
                     if std::fs::symlink_metadata(&dest).is_ok() {
                         return Err("新位置上已经有东西".into());

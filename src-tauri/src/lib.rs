@@ -742,6 +742,7 @@ pub fn run() {
             youzi::assistants::janitor::backup::janitor_backup_drive,
             youzi::assistants::janitor::backup::janitor_backup_task_save,
             youzi::assistants::janitor::backup::janitor_backup_task_delete,
+            youzi::assistants::janitor::backup::janitor_backup_skip,
             youzi::assistants::janitor::backup::janitor_backup_start,
             youzi::assistants::janitor::backup::janitor_backup_stop,
             youzi::assistants::janitor::backup::janitor_backup_move,

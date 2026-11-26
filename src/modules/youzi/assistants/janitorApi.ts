@@ -169,7 +169,7 @@ export type BackupRecord = { id: number; dest: "drive" | "pikpak"; drive: string
 export type BackupLook = { at: number; state: "running" | "done" | "failed"; text: string; error: string | null; cards: JanitorCard[]; stale: boolean };
 /** PikPak (Rust backup/pikpak.rs): the account, where the drive goes, the limit (MB/s, 0: none), a sync's progress; `waiting`: why none runs. */
 export type PikPakView = { installed: boolean; account: string | null; folder: string; limit: number; running: boolean; checking: boolean; bytes: number; totalBytes: number; files: number; totalFiles: number; deletes: number; speed: number; eta: number; current: string[]; ended: string | null; waiting: string | null; held: boolean; used: number | null; total: number | null };
-export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null; pikpak: PikPakView };
+export type BackupOverview = { mode: "real" | "sandbox"; home: string; drive: BackupDrive | null; volumes: BackupVolume[]; tasks: BackupTask[]; comparing: boolean; comparedAt: number | null; run: BackupRun; runs: BackupRecord[]; look: BackupLook | null; pikpak: PikPakView; skipped: string[] };
 export type BackupTaskInput = { id: number | null; source: string; target: string; excludes: string[] };
 
 export const BACKUP_KEY = [...JANITOR_KEY, "backup"];
@@ -181,6 +181,8 @@ export const backupApi = {
   drive: (uuid: string | null) => invoke<BackupOverview>("janitor_backup_drive", { uuid }),
   taskSave: (task: BackupTaskInput) => invoke<BackupOverview>("janitor_backup_task_save", { task }),
   taskDelete: (id: number) => invoke<BackupOverview>("janitor_backup_task_delete", { id }),
+  /** 不备份: a drive folder (relative) kept out of the backup, or back in. */
+  skip: (folder: string, on: boolean) => invoke<BackupOverview>("janitor_backup_skip", { folder, on }),
   start: (ids: number[]) => invoke<BackupOverview>("janitor_backup_start", { ids }),
   stop: () => invoke<void>("janitor_backup_stop"),
   /** Renames on the drive the moves picked (by their path on the Mac). */

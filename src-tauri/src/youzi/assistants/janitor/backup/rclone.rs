@@ -68,6 +68,12 @@ pub fn filters() -> Vec<String> {
     f.into_iter().flat_map(|r| if r.starts_with("--") { vec![r] } else { vec!["--filter".to_string(), r] }).collect()
 }
 
+/// The drive folders kept out of the backup, left out of a sync (on both sides: what the cloud has there stays).
+pub fn kept_out(skipped: &[String]) -> Vec<String> {
+    let glob = |p: &str| p.chars().flat_map(|c| if "*?[]{}\\".contains(c) { vec!['\\', c] } else { vec![c] }).collect::<String>();
+    skipped.iter().flat_map(|k| { let g = glob(&diff::nfc(k)); ["--filter".to_string(), format!("- /{g}/**"), "--filter".to_string(), format!("- /{g}")] }).collect()
+}
+
 /// A cloud folder's name, checked (no `..`, no hidden part, no VAULT, not the root).
 pub fn folder_of(f: &str) -> Result<String, String> {
     let f = f.trim().trim_matches('/').to_string();
@@ -201,13 +207,14 @@ impl Rclone {
         }
     }
 
-    /// Mirrors `source` into the cloud folder; `p` follows along and can stop it.
-    pub fn sync(&self, source: &Path, folder: &str, limit_mb: u32, force: bool, day: &str, p: &Progress) -> Done {
+    /// Mirrors `source` into the cloud folder (the drive folders in `skipped` left out); `p` follows along and can stop it.
+    pub fn sync(&self, source: &Path, folder: &str, skipped: &[String], limit_mb: u32, force: bool, day: &str, p: &Progress) -> Done {
         let mut done = Done::default();
         let mut c = self.cmd();
         c.arg("sync").arg(source).arg(self.dest(folder));
         c.args(["--use-json-log", "--stats", "1s", "--stats-log-level", "NOTICE", "--check-first", "--track-renames", "--track-renames-strategy", "modtime,leaf", "--local-unicode-normalization", "--retries", "3"]);
         c.args(filters());
+        c.args(kept_out(skipped));
         if limit_mb > 0 {
             c.args(["--bwlimit", &format!("{limit_mb}M")]);
         }

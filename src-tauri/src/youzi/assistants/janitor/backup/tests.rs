@@ -316,6 +316,57 @@ fn clues_match_folders_renames_dups_and_archives() {
 }
 
 #[test]
+fn a_folder_kept_out_is_left_alone() {
+    use serde_json::json;
+    let (_d, j, v) = sandbox("skipped");
+    let s = with_tasks(vec![task(1, "资料", "资料"), task(3, "小柚", "回忆/小柚")]);
+    // a task's folder (or one around it) can't be kept out; names are checked like a task's
+    for (f, why) in [("资料", "任务 #1"), ("回忆", "任务 #3"), ("VAULT", "不能备份"), ("../x", "名字不对"), ("旧版", "旧版")] {
+        let e = set_skipped(&j, s.clone(), f, true).unwrap_err();
+        assert!(e.contains(why), "{f}: {e}");
+    }
+    let s = set_skipped(&j, s, "回忆_2606/", true).unwrap();
+    assert_eq!(s.skipped, ["回忆_2606"]);
+    assert_eq!(set_skipped(&j, s.clone(), "回忆_2606/小柚", true).unwrap().skipped, ["回忆_2606"], "already out");
+    assert!(set_skipped(&j, s.clone(), "回忆_2606", false).unwrap().skipped.is_empty());
+    // no task in it, no card about it
+    let e = save_task(&j, s.clone(), TaskInput { id: None, source: "/Users/me/Downloads/作品".into(), target: "回忆_2606/作品".into(), excludes: vec![] }).unwrap_err();
+    assert!(e.contains("不备份"), "{e}");
+    for (name, args) in [
+        (cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })),
+        (cards::MOVE, json!({ "items": [{ "from": "回忆_2606/小柚", "to": "小柚_旧", "why": "x" }] })),
+        (cards::MOVE, json!({ "items": [{ "from": "影音", "to": "回忆_2606/影音", "why": "x" }] })),
+    ] {
+        let e = build(&j, &s, name, args.clone()).unwrap_err();
+        assert!(e.contains("不备份"), "{args}: {e}");
+    }
+    let tr = build(&j, &with_tasks(s.tasks.clone()), cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })).unwrap();
+    assert!(cards::run(&j, &s, &tr, &[0]).unwrap().1["items"][0]["error"].as_str().unwrap_or("").contains("不备份"), "kept out after the card was made");
+    assert!(v.path.join("回忆_2606").exists());
+    // the clues leave it out: no dup, no archive, only a line saying it's out
+    let h = clues(&j, &s);
+    assert!(h.dups.is_empty() && h.archives.iter().all(|a| a.path != "回忆_2606"), "{:?}", h.dups);
+    assert!(h.folders.iter().all(|f| f.found.iter().all(|x| !x.drive.starts_with("回忆_2606"))));
+    let text = h.text(&j.home, gb);
+    assert!(text.contains("不备份的硬盘文件夹") && text.contains("回忆_2606") && !text.contains("移到硬盘的废纸篓 回忆_2606"), "{text}");
+    // the cloud leaves it alone, both ways
+    let f = rclone::kept_out(&["回忆_2606".into(), "a*[b]".into()]);
+    assert_eq!(f, ["--filter", "- /回忆_2606/**", "--filter", "- /回忆_2606", "--filter", "- /a\\*\\[b\\]/**", "--filter", "- /a\\*\\[b\\]"]);
+    if !has_rclone() {
+        return;
+    }
+    rclone::Rclone::new(&j, None).unwrap().login("xiaoyou@example.com", "x").unwrap();
+    let cloud = rclone::fake_root(&j).join(fake::DRIVE);
+    std::fs::create_dir_all(cloud.join("回忆_2606/早先传的")).unwrap();
+    std::fs::write(cloud.join("回忆_2606/早先传的/a.txt"), "x").unwrap();
+    let ps = Settings { skipped: s.skipped.clone(), ..with_pikpak(0) };
+    let (_, d) = pikpak::sync_for_test(&j, &ps, false);
+    assert!(d.ok, "{d:?}");
+    let up = cloud_files(&j, fake::DRIVE);
+    assert!(up.contains(&"回忆_2606/早先传的/a.txt".to_string()) && !up.contains(&"回忆_2606/小柚/2024/a.mov".to_string()) && up.contains(&"回忆/小柚/2024/a.mov".to_string()), "{up:?}");
+}
+
+#[test]
 fn suggestion_lines_read_back() {
     let home = "/Users/me";
     for s in [
@@ -592,7 +643,7 @@ fn pikpak_holds_back_many_deletions_and_stops_without_half_files() {
             p.kill();
         })
     };
-    let d = rclone::Rclone::new(&j, None).unwrap().sync(&drive.path, fake::DRIVE, 1, false, "2026-11-25", &p);
+    let d = rclone::Rclone::new(&j, None).unwrap().sync(&drive.path, fake::DRIVE, &[], 1, false, "2026-11-25", &p);
     stopper.join().unwrap();
     assert!(d.stopped && !d.ok, "{d:?}");
     let up = cloud_files(&j, fake::DRIVE);

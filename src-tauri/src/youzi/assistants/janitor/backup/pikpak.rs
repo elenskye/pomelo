@@ -233,7 +233,7 @@ fn once(st: &AppState, j: &Janitor, s: &Settings, force: bool) {
         }
     };
     let id = st.youzi.with_db(|c| record_start(c, &drive.name)).ok();
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), s.pikpak.limit, force, &local_day(st), &p);
+    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &s.skipped, s.pikpak.limit, force, &local_day(st), &p);
     if let Some(id) = id {
         let _ = st.youzi.with_db(|c| record_end(c, id, &p, &d));
     }
@@ -433,6 +433,6 @@ pub(super) fn sync_for_test(j: &Janitor, s: &Settings, force: bool) -> (Arc<Prog
     let drive = drive_of(j, s).expect("the fake drive");
     let p = Arc::new(Progress::new());
     let rc = Rclone::new(j, None).expect("rclone");
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), s.pikpak.limit, force, "2026-11-25", &p);
+    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &s.skipped, s.pikpak.limit, force, "2026-11-25", &p);
     (p, d)
 }

@@ -7,6 +7,7 @@
 // and the clues say; its reply and cards (JanitorCards.tsx) show here and in Agent. 柚子看一眼 asks again.
 // PikPak (Phase 3; backup/pikpak.rs): the whole drive mirrored there in the background while it's in; its card
 // says how far, stops and carries on; logging in and the folder / limit are dialogs.
+// 不备份: drive folders kept out (no clues or cards about them, not synced to PikPak), picked from the drive's top folders.
 import { useState, type FormEvent } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -167,6 +168,7 @@ function BackupBody(props: { ov: BackupOverview }) {
           <p className="px-4 py-3 text-sm text-muted-foreground">还没有任务</p>
         )}
       </Section>
+      {ov.drive && <Skipped ov={ov} />}
       {ov.runs.length > 0 && (
         <Section title="记录">
           <ul className="divide-y">{ov.runs.map((r) => <RecordRow key={r.id} r={r} />)}</ul>
@@ -174,6 +176,56 @@ function BackupBody(props: { ov: BackupOverview }) {
       )}
       {editing && <TaskDialog ov={ov} task={editing === "new" ? null : editing} close={() => setEditing(null)} />}
     </div>
+  );
+}
+
+function Skipped(props: { ov: BackupOverview }) {
+  const { ov } = props;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const busy = ov.run.running;
+  const taken = (f: string) => ov.skipped.includes(f) || ov.tasks.some((t) => t.target === f || t.target.startsWith(`${f}/`));
+  const free = (ov.drive?.folders ?? []).filter((f) => !taken(f));
+  const out = (f: string) => backupApi.skip(f, false).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"));
+  return (
+    <Section title="不备份" actions={<Button disabled={busy || !free.length} onClick={() => setAdding(true)}><Plus size={14} />文件夹</Button>}>
+      {ov.skipped.length ? (
+        <ul className="divide-y">
+          {ov.skipped.map((f) => (
+            <li key={f} className="flex items-center gap-2 px-4 py-2">
+              <span className="selectable min-w-0 flex-1 truncate font-mono text-sm">{f}</span>
+              <IconButton label={`备份 ${f}`} tip="移出" disabled={busy} onClick={() => void out(f)}><Trash2 size={14} /></IconButton>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-sm text-muted-foreground">没有</p>
+      )}
+      {adding && <SkipDialog folders={free} close={() => setAdding(false)} />}
+    </Section>
+  );
+}
+
+function SkipDialog(props: { folders: string[]; close: () => void }) {
+  const qc = useQueryClient();
+  const [folder, setFolder] = useState(props.folders[0] ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      qc.setQueryData(BACKUP_KEY, await backupApi.skip(folder, true));
+      props.close();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  return (
+    <Modal title="不备份" error={error} onClose={props.close} onSubmit={submit} submitLabel="不备份" submitDisabled={!folder}>
+      <Field label="移动硬盘上的文件夹">
+        <Dropdown<string> block ariaLabel="移动硬盘上的文件夹" value={folder} options={props.folders.map((f) => ({ value: f, label: f }))} onChange={setFolder} />
+      </Field>
+    </Modal>
   );
 }
 
