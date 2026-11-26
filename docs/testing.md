@@ -103,7 +103,7 @@
   - 看真磁盘上的速度和准确性先问我：`cargo test --release --manifest-path src-tauri/Cargo.toml real_janitor_scan -- --ignored --nocapture`（只读，跳过 Pomelo 的数据目录、Seeker 文件夹和没权限的地方；`POMELO_JANITOR_SHOW=1` 列出开发目录、App 残留和开发环境，不列个人文件名）。真删、真跑命令、完全磁盘访问权限只在正式版里由我验收。
   - **备份**：Rust：`backup`（假 Mac 的「下载」对假移动硬盘 `janitor-volumes/小柚的硬盘`：对比的分类、复制带时间和标签、旧版、停下不留半个文件、跟着改名、VAULT 两边都不出现、Agent 也看不到 VAULT；柚子的线索认出四种情况——`小柚` 在硬盘的 `回忆/小柚`、`照片/其它` 在电脑上改叫 `其他`、`回忆_2606` 重复、`作品` 从没备过——和 `影音` 是归档，三种卡片提议时、点了时的检查和结果，模拟模型照线索出的卡片都过得了检查）。`?mock#/janitor/backup`：三个任务，柚子已经看过一眼（新任务、改名、重复三张卡片：建任务多一个任务，改名把挪了的拿掉），「柚子看一眼」一秒半，「开始备份」跑三秒，「在硬盘上跟着改」把改名的拿掉，「重新对比」一秒；`&backup=none` 还没选硬盘。`?mock&youzi=ready#/janitor/agent`：问题里有「备份」「硬盘」→ 同样三张卡片。
   - **PikPak**：Rust：`backup` 里的 `pikpak_`、`rclone_`（要装 rclone，没装就跳过并打一行字）：rclone 把假硬盘同步进 `janitor-cloud/PikPak`（一个本地文件夹当 PikPak）：和硬盘一样、没有 VAULT 和系统小文件、名字是 NFC、再同步什么都不传、硬盘上改了名的文件夹在云上是挪、删了的进假回收站、删得太多停下、「照样同步」放开、限速 1 MB/s 时中途停下云上没有半个文件、下次接着传；登录时配置是加密的、退出就删掉；记录按硬盘和 PikPak 分开收尾。`?mock#/janitor/backup`：PikPak 已登录、和硬盘一样，「开始备份」备完后 PikPak 自己传五秒，能停下、接着传；`&pikpak=none` 没登录（密码写 `wrong` 登不上），`&pikpak=held` 删得太多停着、等「照样同步」。真 PikPak 只在正式版里由我登录、验收。
-  - **柚子看一眼的真模型**（先问我）：`POMELO_REAL_LLM=1 [POMELO_MODEL=…] [POMELO_THINK=1]` 或 `POMELO_CLOUD_KEY_FILE=…`，`cargo test real_backup_look -- --ignored --nocapture`：临时目录里的假 Mac 和假硬盘（两个任务，四种情况都在），用自动看一眼的问题跑真的 Agent 循环和工具，打出它查了什么、回答、每张卡片（照 App 的检查建），最后数四种情况提议了几种；不读任何真数据。本地模型要先 `~/Documents/LLM/scripts/llmctl.sh start qwen359b`，测完 `stop`。
+  - **柚子看一眼的真模型**（先问我）：`POMELO_CLOUD_KEY_FILE=… [POMELO_CLOUD_SERVICE=… POMELO_CLOUD_MODEL=…] [POMELO_THINK=1] cargo test real_backup_look -- --ignored --nocapture`：临时目录里的假 Mac 和假硬盘（两个任务，四种情况都在），用自动看一眼的问题跑真的 Agent 循环和工具，打出它查了什么、回答、每张卡片（照 App 的检查建），最后数四种情况提议了几种；不读任何真数据。
   - 备份的真机只读检查（不写任何东西，只打印数量；碰真硬盘先问我）：`real_backup_volumes`（认出插着的移动硬盘）；`POMELO_BACKUP_PAIRS="<电脑上的文件夹>=><硬盘上的文件夹>;…" cargo test real_backup_compare -- --ignored --nocapture`（对比每一对，看分类和用时，断言没有 VAULT）。真复制只在正式版里由我点「开始备份」验收。
 - **Pub2MD**：`?mock`：「选择文件…」依次拿到一篇论文、「失败测试」（第 3 块出错一次，能「继续」或「删除」）、两张照片、「读书笔记.md」（只翻译），选了先列在「待发送」，点「发送」才开始。真测见「真模型和真接口」。
 
@@ -123,8 +123,8 @@
 
 各测试的开关写在它开头的注释里，下面只写常用的。
 
-- **本地模型**：`~/Documents/LLM/scripts/llmctl.sh start qwen359b`，等 `curl -sf 127.0.0.1:8080/health` 通了再跑，用完马上 `llmctl.sh stop`。一次跑一个问题、给个时限：Qwen3.5 9B 偶尔会想很久停不下来。
-- **云端**：把 `POMELO_REAL_LLM=1` 换成 `POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`，默认 DeepSeek；`POMELO_CLOUD_SERVICE`（deepseek、openrouter、openai、anthropic、google、aliyun）和 `POMELO_CLOUD_MODEL=<模型>` 换服务和模型。思考关不掉的模型（OpenRouter 的 GLM 5.3）加 `POMELO_CLOUD_THINK=always`，强度用 `POMELO_CLOUD_EFFORTS=low,high,max`。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。只用编的数据。
+- **云端**（一律用它）：`POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`（`~/Downloads/ELEN/Pomelo/key/` 里每家一个），下面写 `POMELO_REAL_LLM=1` 的都换成它；默认 DeepSeek Flash；`POMELO_CLOUD_SERVICE`（deepseek、openrouter、openai、anthropic、google、aliyun）和 `POMELO_CLOUD_MODEL=<模型>` 换服务和模型。思考关不掉的模型（OpenRouter 的 GLM 5.3）加 `POMELO_CLOUD_THINK=always`，强度用 `POMELO_CLOUD_EFFORTS=low,high,max`。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。只用编的数据。
+- **本地模型**（只在我特别要求时）：`~/Documents/LLM/scripts/llmctl.sh start qwen359b`，等 `curl -sf 127.0.0.1:8080/health` 通了再跑，用完马上 `llmctl.sh stop`，测试里写 `POMELO_REAL_LLM=1`。一次跑一个问题、给个时限：Qwen3.5 9B 偶尔会想很久停不下来。
 - **柚子**：`POMELO_REAL_LLM=1 POMELO_ASK='问题1|问题2>>追问' cargo test --manifest-path src-tauri/Cargo.toml real_local_model -- --ignored --nocapture`（导入文件加编的数据，在内存里；`POMELO_SHOW=1` 显示查到的原文，`POMELO_AS_CLOUD=1` 按云端的规则，`POMELO_SCHEDULED=1` 按定时任务只读）。
   - 润色补全、一句话填好：`real_assist`、`real_quick`（一句话改好、柚子转为待办只用模拟模型，在 `assist` 里）。
   - 今日简报：`real_brief`（`POMELO_TODAY` 换日期）。
