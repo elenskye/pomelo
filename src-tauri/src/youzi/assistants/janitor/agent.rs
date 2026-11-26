@@ -1134,7 +1134,7 @@ fn shell(command: &str, home: &Path, cmd: &Cmd) -> (&'static str, Option<i32>, O
     use std::io::Read;
     use std::os::unix::process::CommandExt;
     let child = std::process::Command::new("/bin/zsh")
-        .args(["-lic", command])
+        .args(["-lic", &super::readonly::marked(command)])
         .current_dir(home)
         .env("TERM", "dumb")
         .stdin(std::process::Stdio::null())
@@ -1153,13 +1153,14 @@ fn shell(command: &str, home: &Path, cmd: &Cmd) -> (&'static str, Option<i32>, O
     for mut pipe in [child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)].into_iter().flatten() {
         let out = cmd.output.clone();
         readers.push(std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            let (mut buf, mut startup) = ([0u8; 4096], super::readonly::Startup::default());
             while let Ok(n) = pipe.read(&mut buf) {
                 if n == 0 {
                     break;
                 }
-                push_output(&out, &String::from_utf8_lossy(&buf[..n]));
+                push_output(&out, &String::from_utf8_lossy(&startup.feed(&buf[..n])));
             }
+            push_output(&out, &String::from_utf8_lossy(&startup.finish()));
         }));
     }
     let status = child.wait();

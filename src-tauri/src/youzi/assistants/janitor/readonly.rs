@@ -2,7 +2,8 @@
 //! fixed list of programs and, for the ones that can also change things, only the subcommands and flags that
 //! look. One plain command: no pipes, redirects, `;` `&`, `$`, backticks, parentheses, braces, `!` or `\`
 //! (zsh runs it as written, so nothing else can sneak in). Anything else is a 跑命令 card for me to click.
-//! Real Mac: my login shell from home (60 s, then stopped; output capped); the fake Mac doesn't run it.
+//! Real Mac: my login shell from home (60 s, then stopped; output capped); the fake Mac doesn't run it. What
+//! my startup files print (`.zshrc` running `java -version`…) is dropped: `marked` + `Startup`.
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -125,10 +126,43 @@ pub fn check(cmd: &str) -> Result<Vec<String>, String> {
     }
 }
 
+const MARK: &[u8] = b"\x1e\x1e";
+
+/// What zsh runs for `cmd`: a mark on both streams first, so the startup files' output can be told apart.
+pub fn marked(cmd: &str) -> String {
+    format!("printf '\\036\\036'; printf '\\036\\036' >&2; {cmd}")
+}
+
+/// One output stream of a `marked` command without what came before the mark; a stream that ends without one
+/// (the shell gave up before the command) passes whole.
+#[derive(Default)]
+pub struct Startup {
+    seen: bool,
+    held: Vec<u8>,
+}
+
+impl Startup {
+    pub fn feed(&mut self, chunk: &[u8]) -> Vec<u8> {
+        if self.seen {
+            return chunk.to_vec();
+        }
+        self.held.extend_from_slice(chunk);
+        let Some(i) = self.held.windows(MARK.len()).position(|w| w == MARK) else { return Vec::new() };
+        self.seen = true;
+        let rest = self.held.split_off(i + MARK.len());
+        self.held.clear();
+        rest
+    }
+
+    pub fn finish(self) -> Vec<u8> {
+        if self.seen { Vec::new() } else { self.held }
+    }
+}
+
 /// Runs a checked command in my login shell from `home`: its output (stdout and stderr, capped) and how it ended.
 pub fn run(cmd: &str, home: &Path) -> String {
     let child = Command::new("/bin/zsh")
-        .args(["-lic", cmd])
+        .args(["-lic", &marked(cmd)])
         .current_dir(home)
         .env("TERM", "dumb")
         .env("NO_COLOR", "1")
@@ -148,17 +182,21 @@ pub fn run(cmd: &str, home: &Path) -> String {
     for mut pipe in [child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)].into_iter().flatten() {
         let out = out.clone();
         readers.push(std::thread::spawn(move || {
-            let mut buf = [0u8; 8192];
+            let (mut buf, mut startup) = ([0u8; 8192], Startup::default());
+            let keep = |b: &[u8]| {
+                if let Ok(mut o) = out.lock() {
+                    if o.len() < MAX_OUT * 4 {
+                        o.extend_from_slice(b);
+                    }
+                }
+            };
             while let Ok(n) = pipe.read(&mut buf) {
                 if n == 0 {
                     break;
                 }
-                if let Ok(mut o) = out.lock() {
-                    if o.len() < MAX_OUT * 4 {
-                        o.extend_from_slice(&buf[..n]);
-                    }
-                }
+                keep(&startup.feed(&buf[..n]));
             }
+            keep(&startup.finish());
         }));
     }
     let start = Instant::now();
@@ -203,6 +241,23 @@ mod tests {
         for bad in ["du -sh ~ | sort", "ls; rm -rf ~", "ls && rm x", "ls > out", "echo $HOME", "ls `rm x`", "ls $(rm x)", "ls *(e:rm:)", "ls {a,b}", "ls !!", "ls a\\ b", "ls\nrm x"] {
             assert!(words(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_startup_files_output_is_dropped() {
+        let mut s = Startup::default();
+        assert!(s.feed(b"java version \"21\"\n\x1e").is_empty());
+        assert_eq!(s.feed(b"\x1eDocuments\n"), b"Documents\n");
+        assert_eq!(s.feed(b"Downloads\n"), b"Downloads\n");
+        assert!(s.finish().is_empty());
+        let mut s = Startup::default();
+        assert!(s.feed(b"zsh: no such file").is_empty());
+        assert_eq!(s.finish(), b"zsh: no such file");
+        // as a shell runs it: noise on both streams before the command
+        let out = Command::new("/bin/sh").args(["-c", &format!("echo noise; echo noise >&2; {}", marked("echo hi; echo oops >&2"))]).output().unwrap();
+        let (mut a, mut b) = (Startup::default(), Startup::default());
+        let (o, e) = ([a.feed(&out.stdout), a.finish()].concat(), [b.feed(&out.stderr), b.finish()].concat());
+        assert_eq!((o.as_slice(), e.as_slice()), (&b"hi\n"[..], &b"oops\n"[..]));
     }
 
     #[test]
