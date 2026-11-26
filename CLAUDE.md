@@ -33,7 +33,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 ## visual-atelier（视觉）
 
 - 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。那边另有一个会话，照它的 `ROADMAP.md` 做；在那边做事照它的 `CLAUDE.md`（「几个会话怎么分」）。
-- **这边的会话在那边能动的**：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`，`CHANGELOG.md` 里自己的条目，`ROADMAP.md`「现在」里 Pomelo 那一行。别的（`bench/`、别的 `tooling/`、`package.json`……）要改先问我。几个项目共用一个仓库：只提交、只打自己做的那部分，提交信息同样全英文，写 `pomelo 1.0.0: …`、tag `pomelo-v1.0.0`（这是视觉方案的版本，和 App 的版本号无关）。
+- **这边的会话在那边能动的**（直接编辑、更新、发版、同步、提交、打 tag，不用问）：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`，`CHANGELOG.md` 里自己的条目，`ROADMAP.md` 里 Pomelo 那一行。Atelier 本体（`bench/`、别的 `tooling/`、`skills/`、`docs/`、`package.json`……）和它本身的功能归那边的会话，要改先问我。几个项目共用一个仓库：只提交、只打自己做的那部分，提交信息同样全英文，写 `pomelo 1.0.0: …`、tag `pomelo-v1.0.0`（这是视觉方案的版本，和 App 的版本号无关）。
 - **新设计**：先在现用账号的云端画布上出样子，我在那里批；批了源进 `canvases/pomelo-<名字>/`、资产进 `schemes/pomelo/`，再发版、提交、打 tag、核对 tag、同步。方案发版、Design System「Pomelo 柚儿园」的发布、同步进来都由这边的会话做。
 - **同步来的资产**在 `src/vendor/pomelo/`（单向，核对 tag 后 `sync`，不手改，要改回那边改）：`pomelo.css`、`ds.css`、`tokens.ts`、手画零件 `handmade.js`、`marks/`（柚子的表情、模块贴纸、界面小图标、空状态插图、菜单栏和 App 图标……）、Atlas 的设计快照、`VERSION`、`SHA256SUMS`。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
 - **图标**：界面小图标从 `@/shared/icons` 取（名字沿用 Lucide 的 `Plus`、`Trash2`…；没有也不装 lucide-react）。新图标回那边 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行；贴纸、空状态插图同理（那边的 `marks/`）。柚子的表情、模块贴纸用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark`（每次换一套 id，同一张能放很多次）。
