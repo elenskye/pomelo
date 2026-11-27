@@ -39,6 +39,11 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 - **图标**：界面小图标从 `@/shared/icons` 取（名字沿用 Lucide 的 `Plus`、`Trash2`…；没有也不装 lucide-react）。新图标回那边 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行；贴纸、空状态插图同理（那边的 `marks/`）。柚子的表情、模块贴纸用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark`（每次换一套 id，同一张能放很多次）。
 - **Atlas 的设计是冻结的快照**（`src/vendor/pomelo/atlas/<名字>-<版本>/`），不改。只升最后一位的小修替掉同一条线里旧的那份（照旧的做的改照新的画）；升了前两位的两份都留（旧的几份照旧的画）。新设计：那边定稿（名字和版本号我定）、冻结、同步，再改 `youzi/atlas.rs` 的 `DESIGN`。「呈现结果」只能加，旧的行和快照都要读得了。年度小报只有我能删（没有删它的 AI 工具，后台任务也不删）。
 
+## 引擎
+
+- Pomelo 用到的引擎（`src-tauri/Cargo.toml` 里依赖它，或当期版本正在接它；隔几层的也算，如 engine-pdf 用的 engine-core）在 `~/Documents/GitHub/personal-engine-studio/engine-*`。这边的会话可以直接改它们、照那边的规矩提交和打 tag，不用问、不用另开会话；动之前读它的 `CLAUDE.md`、`HANDOFF.md`、`ROADMAP.md`。
+- 细则（改已有接口先问我、版本号、开发时怎么指本机路径、push 先后）见引擎 `CLAUDE.md`「二」末尾「改用到的引擎」（总仓库 `docs/decisions/0009`）。没用到的引擎只读。
+
 ## 数据规则
 
 - 只有 Rust 读写 SQLite；界面和柚子只调用 Rust 命令，业务规则只写在 Rust 里。
