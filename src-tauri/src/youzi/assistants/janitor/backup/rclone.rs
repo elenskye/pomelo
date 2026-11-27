@@ -10,7 +10,9 @@
 //!   What the cloud had that the drive hasn't, and a changed file's old copy, go into the cloud folder's
 //!   `ARCHIVE/<date>` (`--backup-dir`), never deleted, and only after every upload went through (rclone moves
 //!   nothing when anything failed); more of those than compared (pikpak.rs) stop it. Names go up in NFC (rclone
-//!   matches NFC and NFD as one). Progress: rclone's JSON stats, once a second.
+//!   matches NFC and NFD as one). Names on PikPak are read and written as they are (`PIKPAK_ENCODING`): rclone's
+//!   default takes full-width ： ？ ＊ … for stand-ins of : ? * …, but the PikPak App stores them as typed, so
+//!   files it uploaded wouldn't match. Progress: rclone's JSON stats, once a second.
 //! - `list`: what the cloud folder holds in those folders (names and sizes), to compare before a sync.
 //! - Sandbox (dev, tests, a scratch data dir): the 「PikPak」 is a local folder (`<data>/janitor-cloud/PikPak`),
 //!   reached through the same encrypted config; uploads go through rclone's ordinary copy, so the limit and the
@@ -36,6 +38,9 @@ pub const MAX_DELETE: u32 = 100;
 /// The fake cloud, beside the fake Mac.
 pub const FAKE_CLOUD: &str = "janitor-cloud";
 const SANDBOX_PASS: &str = "pomelo-sandbox-rclone";
+/// PikPak's name encoding: rclone's default without the Windows characters (: ? * | < > " \ and their full-width
+/// forms go up and come back as they are).
+pub const PIKPAK_ENCODING: &str = "Slash,Ctl,LeftSpace,RightSpace,RightPeriod,InvalidUtf8,Dot";
 /// The fake PikPak's size.
 const FAKE_TOTAL: u64 = 6_000 * rules::GB;
 const ERRORS_MAX: usize = 200;
@@ -132,7 +137,7 @@ impl Rclone {
 
     fn cmd(&self) -> Command {
         let mut c = Command::new(&self.bin);
-        c.arg("--config").arg(&self.conf).arg("--ask-password=false").env("RCLONE_CONFIG_PASS", &self.pass).env_remove("RCLONE_PASSWORD_COMMAND").stdin(Stdio::null());
+        c.arg("--config").arg(&self.conf).arg("--ask-password=false").env("RCLONE_CONFIG_PASS", &self.pass).env("RCLONE_PIKPAK_ENCODING", PIKPAK_ENCODING).env_remove("RCLONE_PASSWORD_COMMAND").stdin(Stdio::null());
         c
     }
 

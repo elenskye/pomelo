@@ -735,4 +735,8 @@ fn rclone_lines_are_read_into_progress() {
         assert!(f.iter().any(|x| x == rule), "{rule}: {f:?}");
     }
     assert!(f.contains(&"--ignore-case".to_string()));
+    // PikPak names as typed: no full-width stand-ins for : ? * …
+    for flag in ["Colon", "Question", "Asterisk", "Pipe", "LtGt", "DoubleQuote", "BackSlash"] {
+        assert!(!rclone::PIKPAK_ENCODING.contains(flag), "{flag}");
+    }
 }
