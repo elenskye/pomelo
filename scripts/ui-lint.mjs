@@ -37,6 +37,7 @@ const EXTRA = [
   ['/seeker/resume', 'drawer assistant', async (p) => p.getByRole('button', { name: /岗位与建议|建议/ }).first().click({ timeout: 2000 })],
   ['/seeker/resume', 'drawer materials', async (p) => p.getByRole('button', { name: /选材/ }).first().click({ timeout: 2000 })],
   ['/janitor/backup', 'list', async (p) => p.getByRole('radio', { name: '清单' }).click({ timeout: 2000 })],
+  ['/janitor/backup', 'unfolded', async (p) => { const more = p.getByRole('button', { name: '看看有什么' }); for (let i = 0; i < 20 && (await more.count()); i++) await more.first().click({ timeout: 2000 }); }],
 ];
 
 const lint = () => {

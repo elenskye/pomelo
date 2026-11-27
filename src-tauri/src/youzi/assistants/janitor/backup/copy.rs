@@ -2,7 +2,8 @@
 //! run can stop between two), then gets the original's extended attributes (Finder tags…), flags and times
 //! (`fcopyfile`, then the times again explicitly), then is renamed into place — the drive never shows half
 //! a file. Reading the bytes to copy them is the backup itself; nothing else looks inside.
-//! An overwritten file first moves to `<drive>/旧版/<date>/<task folder>/<path>` (same volume: a rename).
+//! An overwritten file first moves to `<drive>/ARCHIVE/<date>/<task folder>/<path>` (same volume: a rename). ARCHIVE is
+//! also where I keep archives: never in the 清单, never a card's.
 
 use super::diff::PART;
 use std::ffi::c_void;
@@ -13,8 +14,8 @@ use std::os::macos::fs::FileTimesExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// Where overwritten files go, at the drive's root.
-pub const OLD: &str = "旧版";
+/// Where overwritten files go, at the drive's root (and on PikPak, in its folder): my archive folder too.
+pub const OLD: &str = "ARCHIVE";
 
 const CHUNK: usize = 1 << 20;
 const COPYFILE_STAT: u32 = 1 << 1;
@@ -41,7 +42,7 @@ fn why(e: std::io::Error) -> Fail {
 }
 
 /// Copies `src` to `dst` (its folder must exist); `done` counts the bytes written. `ready` runs once the copy
-/// is whole, right before it takes `dst`'s place (moving the old one into 旧版).
+/// is whole, right before it takes `dst`'s place (moving the old one into ARCHIVE).
 pub fn copy_file(src: &Path, dst: &Path, stop: &AtomicBool, done: &AtomicU64, ready: impl FnOnce() -> Result<(), String>) -> Result<(), Fail> {
     let name = dst.file_name().ok_or_else(|| Fail::Error("没有名字".into()))?.to_string_lossy();
     let part = dst.with_file_name(format!("{PART}{name}"));
@@ -97,12 +98,12 @@ fn free_path(p: PathBuf) -> PathBuf {
         .expect("a free name")
 }
 
-/// Moves the drive's `<target>/<rel>` into 旧版 (`day`: YYYY-MM-DD) before it's overwritten.
+/// Moves the drive's `<target>/<rel>` into ARCHIVE (`day`: YYYY-MM-DD) before it's overwritten.
 pub fn keep_old(drive: &Path, target: &str, rel: &str, day: &str) -> Result<PathBuf, String> {
     let from = drive.join(target).join(rel);
     let to = free_path(drive.join(OLD).join(day).join(target).join(rel));
     std::fs::create_dir_all(to.parent().ok_or("没有上一层")?).map_err(|e| e.to_string())?;
-    std::fs::rename(&from, &to).map_err(|e| format!("挪不进旧版：{e}"))?;
+    std::fs::rename(&from, &to).map_err(|e| format!("挪不进 ARCHIVE：{e}"))?;
     Ok(to)
 }
 

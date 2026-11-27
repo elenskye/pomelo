@@ -3,18 +3,23 @@
 //! keychain (the 「Pomelo OS Agent」 item, account `rclone`; the sandbox: a fixed one) and reaches rclone in its
 //! environment (`RCLONE_CONFIG_PASS`), never on a command line or on disk. The cloud login (PikPak: account,
 //! password, the token rclone refreshes) is in that config only; what `config create` prints is dropped.
-//! - A sync mirrors the drive into the cloud folder: VAULT and the system's junk left out (`filters`); a rename on
-//!   the drive is a move there (size, mtime and name; no checksums: `--track-renames-strategy modtime,leaf`);
-//!   deletions go to the cloud's trash (PikPak's own; the fake cloud: `--backup-dir`) and only after every upload
-//!   went through (rclone deletes nothing when anything failed); more than `MAX_DELETE` of them stop it until I
-//!   say so. Names go up in NFC. Progress: rclone's JSON stats, once a second.
+//! - A sync mirrors the drive's folders I ticked into the cloud folder (`only`; root files, ARCHIVE and the rest
+//!   left alone on both sides), VAULT and the system's junk left out (`filters`). Same path and size is the same
+//!   file (`--size-only`: PikPak's times are the upload's, and files the PikPak App uploaded have no MD5); a
+//!   file the drive has elsewhere under the same name and size is moved there (`--track-renames-strategy leaf`).
+//!   What the cloud had that the drive hasn't, and a changed file's old copy, go into the cloud folder's
+//!   `ARCHIVE/<date>` (`--backup-dir`), never deleted, and only after every upload went through (rclone moves
+//!   nothing when anything failed); more of those than compared (pikpak.rs) stop it. Names go up in NFC (rclone
+//!   matches NFC and NFD as one). Progress: rclone's JSON stats, once a second.
+//! - `list`: what the cloud folder holds in those folders (names and sizes), to compare before a sync.
 //! - Sandbox (dev, tests, a scratch data dir): the 「PikPak」 is a local folder (`<data>/janitor-cloud/PikPak`),
 //!   reached through the same encrypted config; uploads go through rclone's ordinary copy, so the limit and the
 //!   progress behave like a real upload.
 
 use super::super::{rules, Janitor, Mode};
-use super::diff;
+use super::{copy, diff};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -26,7 +31,7 @@ use std::sync::Mutex;
 pub const REMOTE: &str = "pikpak";
 /// The keychain account of the config's password.
 pub const KEY: &str = "rclone";
-/// More deletions than this in one sync stop it (a drive that suddenly looks empty) until I say so.
+/// Moves into ARCHIVE beyond what was compared that stop a sync (a drive that suddenly looks empty).
 pub const MAX_DELETE: u32 = 100;
 /// The fake cloud, beside the fake Mac.
 pub const FAKE_CLOUD: &str = "janitor-cloud";
@@ -43,12 +48,6 @@ pub fn binary() -> Option<PathBuf> {
 /// The fake cloud's PikPak (sandbox).
 pub fn fake_root(j: &Janitor) -> PathBuf {
     j.backup.data.join(FAKE_CLOUD).join("PikPak")
-}
-
-/// The fake PikPak's trash (sandbox).
-#[cfg(test)]
-pub fn fake_trash(j: &Janitor) -> PathBuf {
-    fake_trash_of(&fake_root(j))
 }
 
 /// rclone's filters: VAULT (any case, any depth) and the system's junk, as diff.rs leaves them out.
@@ -68,10 +67,12 @@ pub fn filters() -> Vec<String> {
     f.into_iter().flat_map(|r| if r.starts_with("--") { vec![r] } else { vec!["--filter".to_string(), r] }).collect()
 }
 
-/// The drive folders kept out of the backup, left out of a sync (on both sides: what the cloud has there stays).
-pub fn kept_out(skipped: &[String]) -> Vec<String> {
+/// Only these top folders, on both sides (what the cloud has elsewhere stays, unread).
+pub fn only(tops: &[String]) -> Vec<String> {
     let glob = |p: &str| p.chars().flat_map(|c| if "*?[]{}\\".contains(c) { vec!['\\', c] } else { vec![c] }).collect::<String>();
-    skipped.iter().flat_map(|k| { let g = glob(&diff::nfc(k)); ["--filter".to_string(), format!("- /{g}/**"), "--filter".to_string(), format!("- /{g}")] }).collect()
+    let mut f: Vec<String> = tops.iter().flat_map(|t| ["--filter".to_string(), format!("+ /{}/**", glob(&diff::nfc(t)))]).collect();
+    f.extend(["--filter".to_string(), "- **".to_string()]);
+    f
 }
 
 /// A cloud folder's name, checked (no `..`, no hidden part, no VAULT, not the root).
@@ -207,29 +208,49 @@ impl Rclone {
         }
     }
 
-    /// Mirrors `source` into the cloud folder (the top folders in `skipped`, not picked in the 清单, left out); `p` follows along and can stop it.
-    pub fn sync(&self, source: &Path, folder: &str, skipped: &[String], limit_mb: u32, force: bool, day: &str, p: &Progress) -> Done {
+    /// What the cloud folder holds in the top folders `tops` (VAULT and the junk left out): NFC path → size. None:
+    /// there's no such folder yet.
+    pub fn list(&self, folder: &str, tops: &[String]) -> Result<Option<BTreeMap<String, u64>>, String> {
+        if tops.is_empty() {
+            return Ok(Some(BTreeMap::new()));
+        }
+        let mut c = self.cmd();
+        c.args(["lsjson", "-R", "--files-only", "--no-mimetype", "--no-modtime"]).arg(self.dest(folder));
+        c.args(filters());
+        c.args(only(tops));
+        let out = c.output().map_err(|e| format!("rclone 没跑起来：{e}"))?;
+        if !out.status.success() {
+            let why = last_words(&out.stderr);
+            if why.contains("directory not found") {
+                return Ok(None);
+            }
+            return Err(format!("PikPak 没对成：{why}"));
+        }
+        let v: Vec<Value> = serde_json::from_slice(&out.stdout).map_err(|_| "PikPak 列出来的看不懂".to_string())?;
+        Ok(Some(v.iter().filter_map(|f| Some((diff::nfc(f["Path"].as_str()?), f["Size"].as_i64().unwrap_or(0).max(0) as u64))).filter(|(k, _)| !rules::sealed(k)).collect()))
+    }
+
+    /// Mirrors the top folders `tops` of `source` into the cloud folder (the rest left alone); what goes into
+    /// ARCHIVE beyond `max_delete` stops it. `p` follows along and can stop it.
+    pub fn sync(&self, source: &Path, folder: &str, tops: &[String], limit_mb: u32, max_delete: u64, day: &str, p: &Progress) -> Done {
         let mut done = Done::default();
+        if tops.is_empty() {
+            done.fatal = Some("没选文件夹".into());
+            return done;
+        }
         let mut c = self.cmd();
         c.arg("sync").arg(source).arg(self.dest(folder));
-        c.args(["--use-json-log", "--stats", "1s", "--stats-log-level", "NOTICE", "--check-first", "--track-renames", "--track-renames-strategy", "modtime,leaf", "--local-unicode-normalization", "--retries", "3"]);
+        c.args(["--use-json-log", "-v", "--stats", "1s", "--stats-log-level", "NOTICE", "--check-first", "--size-only", "--track-renames", "--track-renames-strategy", "leaf", "--local-unicode-normalization", "--retries", "3"]);
         c.args(filters());
-        c.args(kept_out(skipped));
+        c.args(only(tops));
         if limit_mb > 0 {
             c.args(["--bwlimit", &format!("{limit_mb}M")]);
         }
-        if !force {
-            c.args(["--max-delete", &MAX_DELETE.to_string()]);
-        }
-        match self.mode {
-            Mode::Real => {
-                c.arg("--pikpak-use-trash=true");
-            }
-            Mode::Sandbox => {
-                p.trash_is_move.store(true, Ordering::Relaxed);
-                let trash = fake_trash_of(&self.fake).join(day);
-                c.args(["--disable", "Copy", "--backup-dir", &format!("{REMOTE}:{}", trash.to_string_lossy())]);
-            }
+        c.args(["--max-delete", &max_delete.to_string()]);
+        c.arg("--backup-dir").arg(format!("{}/{}/{day}", self.dest(folder), copy::OLD));
+        if self.mode == Mode::Sandbox {
+            // uploads, not the local backend's server-side copies
+            c.args(["--disable", "Copy"]);
         }
         c.stdout(Stdio::null()).stderr(Stdio::piped()).process_group(0);
         let mut child = match c.spawn() {
@@ -264,10 +285,6 @@ impl Rclone {
     }
 }
 
-fn fake_trash_of(fake: &Path) -> PathBuf {
-    fake.with_file_name("PikPak 回收站")
-}
-
 /// A sync as it goes (from rclone's stats), and how to stop it.
 #[derive(Debug, Default)]
 pub struct Progress {
@@ -276,6 +293,8 @@ pub struct Progress {
     pub files: AtomicU64,
     pub total_files: AtomicU64,
     pub deletes: AtomicU64,
+    /// Moved on the cloud to where the drive has them (rclone's `Renamed from` lines: its stats count every
+    /// move into ARCHIVE as a rename too).
     pub renames: AtomicU64,
     /// Bytes a second.
     pub speed: AtomicU64,
@@ -283,8 +302,6 @@ pub struct Progress {
     pub eta: AtomicU64,
     /// Still comparing the two sides (before the uploads).
     pub checking: AtomicBool,
-    /// The trash is a folder (`--backup-dir`): rclone counts each deletion as a rename too.
-    pub trash_is_move: AtomicBool,
     pub current: Mutex<Vec<String>>,
     pub stop: AtomicBool,
     pid: Mutex<Option<u32>>,
@@ -295,7 +312,7 @@ pub struct Progress {
 pub struct Done {
     pub ok: bool,
     pub stopped: bool,
-    /// More deletions than `MAX_DELETE`.
+    /// More moves into ARCHIVE than allowed.
     pub too_many_deletes: bool,
     pub errors: Vec<(String, String)>,
     /// Why it couldn't run.
@@ -329,8 +346,6 @@ impl Progress {
             self.files.store(n("transfers"), Ordering::Relaxed);
             self.total_files.store(n("totalTransfers"), Ordering::Relaxed);
             self.deletes.store(n("deletes"), Ordering::Relaxed);
-            let trash_moves = if self.trash_is_move.load(Ordering::Relaxed) { n("deletes") } else { 0 };
-            self.renames.store(n("renames").saturating_sub(trash_moves), Ordering::Relaxed);
             self.speed.store(s["speed"].as_f64().unwrap_or(0.0) as u64, Ordering::Relaxed);
             self.eta.store(s["eta"].as_u64().unwrap_or(0), Ordering::Relaxed);
             let names: Vec<String> = s["transferring"].as_array().into_iter().flatten().filter_map(|t| t["name"].as_str().map(str::to_string)).collect();
@@ -341,6 +356,9 @@ impl Progress {
             if let Ok(mut g) = self.current.lock() {
                 *g = names;
             }
+        }
+        if msg.starts_with("Renamed from") {
+            self.renames.fetch_add(1, Ordering::Relaxed);
         }
         if !matches!(v["level"].as_str(), Some("error" | "critical")) {
             return;

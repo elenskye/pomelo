@@ -2,17 +2,18 @@
 //! drive, only what changed. Names and metadata only (diff.rs); the bytes are read only to copy them (copy.rs).
 //! - Settings (youzi.db preference `assistant.janitor.backup`, not undone): the drive (its volume UUID), the 清单
 //!   (`picked`: the top folders of the drive and of ~/Downloads in the backup) and the tasks it makes (`settle`:
-//!   each picked folder ~/Downloads has → the drive folder of that name; ids and excludes kept). Runs: youzi.db
+//!   each picked folder ~/Downloads has → the drive folder of that name; ids kept). Runs: youzi.db
 //!   `backup_runs` (not undone). What each task's Mac folder held at its last backup: janitor.db `backup_seen`.
 //! - The watcher (`watch`) looks at the drives every few seconds; when mine appears it compares every task and
 //!   keeps the result for the page. Nothing is copied until I pick tasks and press 开始.
-//! - 只加不删: a run never deletes on the drive. A changed file's old copy moves to 旧版 first (copy.rs);
+//! - 只加不删: a run never deletes on the drive. A changed file's old copy moves to ARCHIVE first (copy.rs);
 //!   one newer on the drive is held. A rename or move is done on the drive only when I say so (`apply_moves`).
-//! - VAULT (rules::sealed) and the drive's 旧版 are never a task's source or target, never listed.
+//! - VAULT (rules::sealed) and the drive's ARCHIVE are never a task's source or target, never listed.
 //! - Sandbox (dev, tests, a scratch data dir): the fake Mac's folders and fake drives in `<data>/janitor-volumes`.
 //! - 柚子 (Phase 2): each comparison also works out clues (hints.rs); the Agent reads them and proposes cards
 //!   (cards.rs); a drive plugged in gets an automatic look (look.rs).
-//! - PikPak (Phase 3): the whole drive mirrored by rclone in the background while it's in (pikpak.rs, rclone.rs).
+//! - PikPak (Phase 3; 1.1.3): the picked drive folders compared with PikPak, mirrored there when I say so (pikpak.rs,
+//!   rclone.rs).
 
 pub mod cards;
 pub mod copy;
@@ -77,8 +78,6 @@ pub struct Task {
     pub source: String,
     /// The drive folder, relative to its root.
     pub target: String,
-    /// Name patterns left out (`*` any characters).
-    pub excludes: Vec<String>,
 }
 
 pub fn settings(c: &Connection) -> Settings {
@@ -131,6 +130,8 @@ pub struct Backup {
     run: Mutex<Arc<Run>>,
     /// The last run's end (error or how it ended), for the page.
     ended: Mutex<Option<String>>,
+    /// Runs ended (this session): the page pops `ended` once per run.
+    ends: AtomicU64,
     last_names: Mutex<Vec<String>>,
     /// Pomelo's data dir (rclone's config, the fake cloud).
     pub data: PathBuf,
@@ -144,7 +145,7 @@ impl Backup {
             Mode::Real => Volumes::new(PathBuf::from("/Volumes"), false),
             Mode::Sandbox => Volumes::new(data.join(FAKE_VOLUMES), true),
         };
-        Self { volumes, snapshot: Mutex::new(None), comparing: AtomicBool::new(false), running: AtomicBool::new(false), run: Mutex::new(Arc::default()), ended: Mutex::new(None), last_names: Mutex::new(Vec::new()), data: data.to_path_buf(), cloud: pikpak::Cloud::default() }
+        Self { volumes, snapshot: Mutex::new(None), comparing: AtomicBool::new(false), running: AtomicBool::new(false), run: Mutex::new(Arc::default()), ended: Mutex::new(None), ends: AtomicU64::new(0), last_names: Mutex::new(Vec::new()), data: data.to_path_buf(), cloud: pikpak::Cloud::default() }
     }
 
     pub fn running(&self) -> bool {
@@ -191,7 +192,7 @@ pub fn downloads(j: &Janitor) -> String {
     format!("{}/Downloads", j.home)
 }
 
-/// A name a top folder can have in the 清单 (not hidden, VAULT or 旧版).
+/// A name a top folder can have in the 清单 (not hidden, VAULT or ARCHIVE).
 fn listable(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('.') && !rules::sealed_name(name) && name != copy::OLD && !name.contains('/')
 }
@@ -226,10 +227,10 @@ pub fn is_picked(s: &Settings, top: &str) -> bool {
     }
 }
 
-/// The top folder not in the backup that the drive path `rel` is in (None: it's in the backup, or in 旧版).
+/// The top folder not in the backup that the drive path `rel` is in (ARCHIVE too; None: it's in the backup).
 pub fn kept_out_at(s: &Settings, rel: &str) -> Option<String> {
     let top = rel.trim_matches('/').split('/').next().filter(|t| !t.is_empty())?;
-    (top != copy::OLD && !is_picked(s, top)).then(|| top.to_string())
+    (top == copy::OLD || !is_picked(s, top)).then(|| top.to_string())
 }
 
 /// Those of the drive's top folders `tops` not in the backup.
@@ -241,7 +242,7 @@ pub fn kept_out(s: &Settings, tops: &[String]) -> Vec<String> {
 /// and the tasks that went. Old settings get `picked` once the drive is in: what wasn't kept out, and the tasks'
 /// folders (a fresh start ticks nothing). Picked names neither side has any more go (the drive in). Each picked
 /// folder ~/Downloads has is a task to the drive folder of the same name (an old task of that folder, or with
-/// that drive folder, keeps its id and excludes); other tasks go.
+/// that drive folder, keeps its id); other tasks go.
 pub fn settle(j: &Janitor, s: &Settings, drive_tops: Option<&[String]>, mac: &[String]) -> (Settings, Vec<i64>) {
     let mut n = s.clone();
     let dl = downloads(j);
@@ -275,14 +276,14 @@ pub fn settle(j: &Janitor, s: &Settings, drive_tops: Option<&[String]>, mac: &[S
     for name in mac.iter().filter(|m| picked.iter().any(|x| same(x, m))) {
         let source = format!("{dl}/{name}");
         let was = n.tasks.iter().find(|t| same(&t.source, &source)).or_else(|| n.tasks.iter().find(|t| same(&t.target, name))).filter(|t| !tasks.iter().any(|x| x.id == t.id));
-        let (id, excludes) = match was {
-            Some(t) => (t.id, t.excludes.clone()),
+        let id = match was {
+            Some(t) => t.id,
             None => {
                 next += 1;
-                (next, Vec::new())
+                next
             }
         };
-        tasks.push(Task { id, source, target: name.clone(), excludes });
+        tasks.push(Task { id, source, target: name.clone() });
     }
     let gone: Vec<i64> = n.tasks.iter().filter(|t| !tasks.iter().any(|x| x.id == t.id)).map(|t| t.id).collect();
     n.tasks = tasks;
@@ -301,7 +302,7 @@ pub fn set_picked(j: &Janitor, s: &Settings, name: &str, on: bool) -> Result<(Se
     let v = drive_of(j, s).ok_or("插上移动硬盘才能改清单")?;
     let (tops, mac) = (top_folders(&v), mac_folders(j));
     let (mut n, _) = settle(j, s, Some(&tops), &mac);
-    let name = tops.iter().chain(&mac).find(|t| same(t, name)).cloned().ok_or("硬盘上和「下载」里都没有这个文件夹")?;
+    let name = tops.iter().chain(&mac).find(|t| same(t, name)).cloned().ok_or("硬盘上和 Downloads 里都没有这个文件夹")?;
     let p = n.picked.get_or_insert_with(Vec::new);
     p.retain(|x| !same(x, &name));
     if on {
@@ -312,13 +313,6 @@ pub fn set_picked(j: &Janitor, s: &Settings, name: &str, on: bool) -> Result<(Se
     Ok((n, gone))
 }
 
-/// A task's own names left out (`*` any characters); the settings with it.
-pub fn set_excludes(mut s: Settings, id: i64, excludes: &[String]) -> Result<Settings, String> {
-    let t = s.tasks.iter_mut().find(|t| t.id == id).ok_or("没有这个文件夹的备份")?;
-    t.excludes = excludes.iter().map(|e| e.trim().chars().take(60).collect::<String>()).filter(|e| !e.is_empty()).take(30).collect();
-    Ok(s)
-}
-
 // ---- comparing ----
 
 /// One task compared (the Mac's listing too, for `backup_seen`).
@@ -326,8 +320,7 @@ pub fn compare_task(j: &Janitor, drive: &Volume, t: &Task, stop: &AtomicBool) ->
     if let Some(p) = source_problem(j, &t.source) {
         return Err(p);
     }
-    let skip = Skip { extra: t.excludes.clone() };
-    let mac = diff::list(&j.real_of(&t.source), &skip, stop)?;
+    let mac = diff::list(&j.real_of(&t.source), &Skip::default(), stop)?;
     let on_drive = diff::list(&drive.path.join(&t.target), &Skip::default(), stop)?;
     let seen = j.with_db(|c| store::seen(c, t.id))?;
     Ok((diff::compare(&mac, &on_drive, &seen), mac))
@@ -409,7 +402,6 @@ pub struct TaskView {
     pub id: i64,
     pub source: String,
     pub target: String,
-    pub excludes: Vec<String>,
     /// When it was last backed up whole.
     pub last: Option<String>,
     pub diff: Option<DiffView>,
@@ -441,6 +433,8 @@ pub struct RunView {
     pub current: String,
     /// How the last run ended (this session).
     pub ended: Option<String>,
+    /// Runs ended this session (a new one: pop `ended`).
+    pub ends: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -544,6 +538,7 @@ pub fn run_view(j: &Janitor) -> RunView {
         task: text(&r.task),
         current: text(&r.current),
         ended: j.backup.ended.lock().ok().and_then(|g| g.clone()),
+        ends: j.backup.ends.load(Ordering::SeqCst),
     }
 }
 
@@ -571,13 +566,13 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
                 id: t.id,
                 source: t.source.clone(),
                 target: t.target.clone(),
-                excludes: t.excludes.clone(),
                 last: last_done(t.id),
                 diff: got.and_then(|r| r.as_ref().ok()).map(DiffView::from),
                 problem: got.and_then(|r| r.as_ref().err().cloned()).or_else(|| source_problem(j, &t.source)),
             }
         })
         .collect();
+    let pikpak = pikpak::view(j, s, &runs);
     Overview {
         mode: j.mode,
         home: j.home.clone(),
@@ -589,7 +584,7 @@ pub fn overview(j: &Janitor, s: &Settings, runs: Vec<RunRow>) -> Overview {
         run: run_view(j),
         runs,
         look: None,
-        pikpak: pikpak::view(j, s),
+        pikpak,
         list: mine.as_ref().map(|v| list_rows(j, s, v, fresh)).unwrap_or_default(),
     }
 }
@@ -613,7 +608,7 @@ fn err_push(errors: &mut Vec<(String, String)>, path: String, why: String) {
     }
 }
 
-/// Copies what changed in `tasks` onto `drive` (`day`: 旧版's folder). Never deletes on the drive.
+/// Copies what changed in `tasks` onto `drive` (`day`: the folder in ARCHIVE). Never deletes on the drive.
 pub fn run_tasks(j: &Janitor, drive: &Volume, tasks: &[Task], run: &Run, day: &str) -> Outcome {
     let mut out = Outcome::default();
     // the plan first: totals for the progress, and room on the drive
@@ -875,16 +870,20 @@ fn overview_now(state: &AppState, j: &Janitor) -> Result<Overview, String> {
     Ok(o)
 }
 
+/// The page's poll; PikPak is compared when that's due.
 #[tauri::command]
-pub async fn janitor_backup_overview(state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Overview, String> {
-    overview_now(&state, &janitor)
+pub async fn janitor_backup_overview(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Overview, String> {
+    let o = overview_now(&state, &janitor)?;
+    pikpak::compare_when_due(&app);
+    Ok(o)
 }
 
-/// 重新对比: compares again now (waits for it), then 柚子 looks if the clues changed.
+/// 重新对比: compares again now (waits for it; PikPak after it, in the background), then 柚子 looks if the clues changed.
 #[tauri::command]
 pub async fn janitor_backup_compare(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<Overview, String> {
     let (s, j) = (load_now(&state, &janitor), janitor.inner().clone());
     tauri::async_runtime::spawn_blocking(move || compare_all(&j, &s)).await.map_err(|e| e.to_string())?;
+    pikpak::compare_later(&app);
     let _ = look::maybe(&app, false).await;
     overview_now(&state, &janitor)
 }
@@ -915,8 +914,8 @@ pub async fn janitor_backup_drive(app: tauri::AppHandle, state: State<'_, AppSta
 
 /// 清单: ticks a top folder (`on`) or takes it out of the backup.
 #[tauri::command]
-pub async fn janitor_backup_pick(state: State<'_, AppState>, janitor: State<'_, Janitor>, name: String, on: bool) -> Result<Overview, String> {
-    if janitor.backup.running() {
+pub async fn janitor_backup_pick(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, name: String, on: bool) -> Result<Overview, String> {
+    if janitor.backup.running() || janitor.backup.cloud.running() {
         return Err("正在备份，等它做完或先停下".into());
     }
     ensure_fake(&janitor)?;
@@ -925,18 +924,9 @@ pub async fn janitor_backup_pick(state: State<'_, AppState>, janitor: State<'_, 
     for id in gone {
         janitor.with_db(|c| store::set_seen(c, id, None))?;
     }
-    overview_now(&state, &janitor)
-}
-
-/// A folder's own names left out of its backup.
-#[tauri::command]
-pub async fn janitor_backup_excludes(state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, excludes: Vec<String>) -> Result<Overview, String> {
-    if janitor.backup.running() {
-        return Err("正在备份，等它做完或先停下".into());
-    }
-    let s = set_excludes(load_now(&state, &janitor), id, &excludes)?;
-    store_settings(&state, &s)?;
-    overview_now(&state, &janitor)
+    let o = overview_now(&state, &janitor)?;
+    pikpak::compare_when_due(&app);
+    Ok(o)
 }
 
 /// 开始: backs up the picked tasks in the background.
@@ -975,6 +965,7 @@ pub async fn janitor_backup_start(app: tauri::AppHandle, state: State<'_, AppSta
         if let Ok(mut g) = j.backup.ended.lock() {
             *g = Some(ended_text(&o));
         }
+        j.backup.ends.fetch_add(1, Ordering::SeqCst);
         j.backup.running.store(false, Ordering::SeqCst);
         compare_all(&j, &load_now(&st, &j));
         pikpak::after_backup(&app);
@@ -999,7 +990,7 @@ pub struct MoveOutcome {
 
 /// 在硬盘上跟着改: renames on the drive the moves picked (by their Mac path).
 #[tauri::command]
-pub async fn janitor_backup_move(state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, paths: Vec<String>) -> Result<MoveOutcome, String> {
+pub async fn janitor_backup_move(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, paths: Vec<String>) -> Result<MoveOutcome, String> {
     if janitor.backup.running() {
         return Err("正在备份，等它做完或先停下".into());
     }
@@ -1014,6 +1005,9 @@ pub async fn janitor_backup_move(state: State<'_, AppState>, janitor: State<'_, 
     })
     .await
     .map_err(|e| e.to_string())??;
+    if done > 0 {
+        pikpak::compare_later(&app);
+    }
     Ok(MoveOutcome { done, failed, overview: overview_now(&state, &janitor)? })
 }
 

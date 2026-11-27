@@ -226,13 +226,13 @@ function Notes(props: { notes: Note[] }) {
   );
 }
 
-/** Above a reply: what it looked up (one line), unfolding to what came back. */
+/** Above a reply: what it looked up (one line, cut short when long), unfolding to each and what came back. */
 function Queries(props: { queries: Query[] }) {
   return (
     <details className="youzi-think group/query mb-2" data-find-skip>
       <summary className="flex max-w-full cursor-default list-none items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRight size={12} className="shrink-0 transition-transform duration-150 group-open/query:rotate-90" />
-        <span className="truncate">查了：{props.queries.map((q) => q.label).join("；")}</span>
+        <span className="min-w-0 truncate">查了{props.queries.length > 1 ? ` ${props.queries.length} 处` : ""}：{props.queries.map((q) => q.label).join("；")}</span>
       </summary>
       <div className="mt-1 space-y-2 border-l-2 pl-3">
         {props.queries.map((q, i) => (
@@ -264,7 +264,7 @@ function SourceList(props: { sources: Source[]; onOpen: (s: Source) => void }) {
             className="flex max-w-full items-baseline gap-1.5 rounded-control text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="shrink-0 rounded-full bg-muted px-1.5 tabular-nums">{s.n}</span>
-            <span className="truncate">
+            <span className="min-w-0 truncate">
               {s.detail && <span>{s.detail}：</span>}
               {s.title}
             </span>
@@ -438,7 +438,7 @@ function PageChip(props: { page: Query }) {
     <details className="youzi-think group/page mb-1 flex max-w-[85%] flex-col items-end" data-find-skip>
       <summary className="flex max-w-full cursor-default list-none items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <MapPin size={12} className="shrink-0" />
-        <span className="truncate">带着：{props.page.label}</span>
+        <span className="min-w-0 truncate">带着：{props.page.label}</span>
       </summary>
       {props.page.result && <p className="selectable mt-1 border-r-2 pr-3 text-right font-reading text-[12.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">{props.page.result}</p>}
     </details>

@@ -1,17 +1,18 @@
-// DevJanitor 备份 (1.1.0 Phase 1; Rust janitor/backup/): a Mac folder → a folder on the external drive, only what
-// changed. The bar switches 备份 / 清单 and says which drive and whether it's in. 清单 (1.1.2): the drive's top
-// folders and ~/Downloads', ticked ones backed up (a folder ~/Downloads has goes to the drive folder of its name).
-// 备份: the run bar picks the folders to copy (those with something to copy are ticked) and shows the progress;
-// each folds open to what the comparison found (new, changed — the drive's copy goes to 旧版 —, renamed or moved,
-// held, only on the drive). Renames are done on the drive only when picked here. The page asks every few seconds,
-// so plugging the drive in shows up.
+// DevJanitor 备份 (1.1.0 Phase 1; Rust janitor/backup/): ~/Downloads' folders → the external drive, only what
+// changed; the drive's folders → PikPak. The bar switches 备份 / 清单 and says which drive and whether it's in.
+// 清单 (1.1.2): the drive's top folders and ~/Downloads', ticked ones backed up (a folder ~/Downloads has goes to the
+// drive folder of its name). 备份 (1.1.3): two lists side by side, each card titled inside its frame. Downloads: the
+// ticked folders against the drive (those with something to copy are ticked to copy; each folds open to what the
+// comparison found — new, changed (the drive's copy goes to ARCHIVE), renamed or moved, held, only on the drive);
+// renames are done on the drive only when picked here. PikPak (backup/pikpak.rs): the ticked drive folders against
+// PikPak (to upload, moved up there, into ARCHIVE), synced only when I press 开始同步; logging in sits at its top
+// right. How a run or a sync ended pops up as a note, once. The page asks every few seconds, so plugging the drive
+// in shows up.
 // 柚子 (Phase 2; backup/look.rs): after a drive is plugged in, DevJanitor's Agent looks at what the comparison
 // and the clues say; its reply and cards (JanitorCards.tsx) show here and in Agent. 柚子看一眼 asks again.
-// PikPak (Phase 3; backup/pikpak.rs): the whole drive mirrored there in the background while it's in; its card
-// says how far, stops and carries on; logging in and the folder / limit are dialogs.
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, HardDrive, Pencil, Settings2 } from "@/shared/icons";
+import { ChevronRight, HardDrive, Settings2 } from "@/shared/icons";
 import { Section } from "@/settings/layout";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
@@ -21,7 +22,7 @@ import { pad } from "@/shared/dates";
 import { subNav } from "@/app/subpage";
 import { MarkdownView } from "../MarkdownView";
 import { JanitorCards } from "./JanitorCards";
-import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupListRow, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask, type PikPakView } from "./janitorApi";
+import { BACKUP_KEY, backupApi, bytes, type BackupDiff, type BackupListRow, type BackupLook, type BackupOverview, type BackupRecord, type BackupTask, type CloudDiff, type CloudFolder, type PikPakView } from "./janitorApi";
 
 /** 备份 (copying, 柚子, records) or 清单 (what's backed up). */
 export type BackupView = "run" | "list";
@@ -31,7 +32,10 @@ export function useBackup() {
     queryKey: BACKUP_KEY,
     queryFn: backupApi.overview,
     refetchOnMount: "always",
-    refetchInterval: (q) => (q.state.data?.run.running ? 700 : q.state.data?.comparing || q.state.data?.look?.state === "running" || q.state.data?.pikpak.running ? 1000 : 4000),
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      return d?.run.running ? 700 : d?.comparing || d?.look?.state === "running" || d?.pikpak.running || d?.pikpak.comparing ? 1000 : 4000;
+    },
   });
 }
 
@@ -43,6 +47,7 @@ function when(stamp: string | number | null): string {
 }
 
 const toCopy = (d: BackupDiff | null) => (d ? { files: d.new.count + d.changed.count, bytes: d.new.bytes + d.changed.bytes } : { files: 0, bytes: 0 });
+const toSync = (d: CloudDiff | null) => (d ? { files: d.new.count + d.changed.count, bytes: d.new.bytes + d.changed.bytes, other: d.moved.count + d.extra.count } : { files: 0, bytes: 0, other: 0 });
 
 /** The top bar on 备份: 备份 / 清单, the drive, and comparing again. */
 export function BackupBar(props: { view: BackupView; setView: (v: BackupView) => void }) {
@@ -75,7 +80,7 @@ export function BackupBar(props: { view: BackupView; setView: (v: BackupView) =>
         />
       )}
       {d?.connected && (
-        <Button disabled={ov.comparing || ov.run.running} onClick={() => void backupApi.compare().then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"))}>
+        <Button disabled={ov.comparing || ov.run.running || ov.pikpak.running} onClick={() => void backupApi.compare().then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"))}>
           {ov.comparing ? "正在对比…" : "重新对比"}
         </Button>
       )}
@@ -91,11 +96,33 @@ export function BackupBar(props: { view: BackupView; setView: (v: BackupView) =>
 
 export function BackupTab(props: { view: BackupView }) {
   const q = useBackup();
+  useEndNotes(q.data);
   if (q.isError) return <EmptyState title="备份暂时打不开" hint={errorText(q.error)} action={<Button onClick={() => void q.refetch()}>重试</Button>} />;
   if (!q.data) return <EmptyState title="正在读取…" />;
   const ov = q.data;
   if (!ov.drive) return <PickDrive ov={ov} />;
   return props.view === "list" ? <ListBody ov={ov} /> : <BackupBody ov={ov} />;
+}
+
+/** Runs and syncs seen ended (-1: not yet looked; those before the page first opened aren't popped). */
+const seenEnds = { drive: -1, pikpak: -1 };
+const fine = (t: string, ok: string[]) => ok.some((w) => t.startsWith(w)) && !t.includes("没成");
+
+/** How a run or a sync ended, popped as a note once. */
+function useEndNotes(ov: BackupOverview | undefined) {
+  const toast = useToast();
+  const [drive, cloud] = [ov?.run.ends, ov?.pikpak.ends];
+  useEffect(() => {
+    if (!ov) return;
+    const ends: ["drive" | "pikpak", number, string | null, boolean][] = [
+      ["drive", ov.run.ends, ov.run.ended, fine(ov.run.ended ?? "", ["备份好了", "停下了"])],
+      ["pikpak", ov.pikpak.ends, ov.pikpak.ended && `PikPak ${ov.pikpak.ended}`, fine(ov.pikpak.ended ?? "", ["同步好了", "和硬盘上一样", "停下了"])],
+    ];
+    for (const [k, n, text, ok] of ends) {
+      if (seenEnds[k] >= 0 && n > seenEnds[k] && text) toast(text, ok ? "info" : "error");
+      seenEnds[k] = n;
+    }
+  }, [drive, cloud]);
 }
 
 function PickDrive(props: { ov: BackupOverview }) {
@@ -119,67 +146,77 @@ function PickDrive(props: { ov: BackupOverview }) {
   );
 }
 
+/** A list's head inside its card: the title, where it stands, its buttons at the right. */
+function CardHead(props: { title: string; status: ReactNode; danger?: boolean; children?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+      <h2 className="text-lg font-bold text-foreground">{props.title}</h2>
+      <span className={`min-w-0 flex-1 truncate text-sm tabular-nums ${props.danger ? "text-destructive" : "text-muted-foreground"}`}>{props.status}</span>
+      {props.children && <div className="ml-auto flex shrink-0 items-center gap-1.5">{props.children}</div>}
+    </div>
+  );
+}
+
 function BackupBody(props: { ov: BackupOverview }) {
   const { ov } = props;
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [over, setOver] = useState<Map<number, boolean>>(new Map());
-  const [editing, setEditing] = useState<BackupTask | null>(null);
-  const set = (o: BackupOverview) => qc.setQueryData(BACKUP_KEY, o);
-  const on = (t: BackupTask) => over.get(t.id) ?? toCopy(t.diff).files > 0;
-  const picked = ov.tasks.filter((t) => on(t) && !t.problem && t.diff);
-  const total = picked.reduce((a, t) => ({ files: a.files + toCopy(t.diff).files, bytes: a.bytes + toCopy(t.diff).bytes }), { files: 0, bytes: 0 });
-  const run = ov.run;
-  const ready = !!ov.drive?.connected && !ov.comparing && !run.running;
-  const start = () => backupApi.start(picked.map((t) => t.id)).then((o) => { set(o); setOver(new Map()); }, (e) => toast(errorText(e), "error"));
   return (
     <div>
-      <div className="mb-4 space-y-2 rounded-card border bg-card px-4 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-base font-bold">备份</span>
-          {run.running ? (
-            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground tabular-nums">
-              {run.filesDone} / {run.filesTotal} 个 · {bytes(run.bytesDone)} / {bytes(run.bytesTotal)} · {run.task}
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground tabular-nums">
-              {ov.tasks.some((t) => toCopy(t.diff).files > 0) ? `选了 ${picked.length} 个文件夹 · 要复制 ${total.files} 个文件、${bytes(total.bytes)}` : ov.comparing ? "正在对比…" : ov.tasks.length && ov.drive?.connected ? "都和硬盘上一样" : ""}
-            </span>
-          )}
-          {run.running ? (
-            <Button className="ml-auto" onClick={() => void backupApi.stop()}>停下</Button>
-          ) : (
-            <Button variant="primary" className="ml-auto" disabled={!ready || !picked.length} onClick={() => void start()}>开始备份</Button>
-          )}
-        </div>
-        {run.running && (
-          <>
-            <ProgressBar done={run.bytesDone} total={Math.max(run.bytesTotal, 1)} />
-            {run.current && <p className="truncate text-xs text-muted-foreground">{run.current}</p>}
-          </>
-        )}
-        {!run.running && run.ended && <p className="text-sm text-muted-foreground">{run.ended}</p>}
+      <div className="mb-6 grid items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))]">
+        <DownloadsCard ov={ov} />
+        <PikPakCard ov={ov} />
       </div>
-      <PikPakCard ov={ov} />
-      <Section title="「下载」里的">
-        {ov.tasks.length ? (
-          <ul className="divide-y">
-            {ov.tasks.map((t) => (
-              <TaskRow key={t.id} ov={ov} t={t} on={on(t)} toggle={() => setOver((m) => new Map(m).set(t.id, !on(t)))} edit={() => setEditing(t)} />
-            ))}
-          </ul>
-        ) : (
-          <p className="px-4 py-3 text-sm text-muted-foreground">清单里没勾「下载」里的文件夹</p>
-        )}
-      </Section>
       {ov.look && <LookCard look={ov.look} />}
       {ov.runs.length > 0 && (
         <Section title="记录">
           <ul className="divide-y">{ov.runs.map((r) => <RecordRow key={r.id} r={r} />)}</ul>
         </Section>
       )}
-      {editing && <ExcludesDialog task={editing} close={() => setEditing(null)} />}
     </div>
+  );
+}
+
+/** Downloads → the drive: the ticked folders, what each would copy, 开始备份. */
+function DownloadsCard(props: { ov: BackupOverview }) {
+  const { ov } = props;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [over, setOver] = useState<Map<number, boolean>>(new Map());
+  const on = (t: BackupTask) => over.get(t.id) ?? toCopy(t.diff).files > 0;
+  const picked = ov.tasks.filter((t) => on(t) && !t.problem && t.diff);
+  const total = picked.reduce((a, t) => ({ files: a.files + toCopy(t.diff).files, bytes: a.bytes + toCopy(t.diff).bytes }), { files: 0, bytes: 0 });
+  const run = ov.run;
+  const ready = !!ov.drive?.connected && !ov.comparing && !run.running;
+  const start = () => backupApi.start(picked.map((t) => t.id)).then((o) => { qc.setQueryData(BACKUP_KEY, o); setOver(new Map()); }, (e) => toast(errorText(e), "error"));
+  const status = run.running
+    ? `${run.filesDone} / ${run.filesTotal} 个 · ${bytes(run.bytesDone)} / ${bytes(run.bytesTotal)} · ${run.task}`
+    : ov.tasks.some((t) => toCopy(t.diff).files > 0)
+      ? `选了 ${picked.length} 个文件夹 · 要复制 ${total.files} 个、${bytes(total.bytes)}`
+      : ov.comparing
+        ? "正在对比…"
+        : ov.tasks.length && ov.drive?.connected
+          ? "都和硬盘上一样"
+          : "";
+  return (
+    <section className="rounded-card border bg-card">
+      <CardHead title="Downloads" status={status}>
+        {run.running ? <Button onClick={() => void backupApi.stop()}>停下</Button> : <Button variant="primary" disabled={!ready || !picked.length} onClick={() => void start()}>开始备份</Button>}
+      </CardHead>
+      {run.running && (
+        <div className="space-y-1 px-4 pb-3">
+          <ProgressBar done={run.bytesDone} total={Math.max(run.bytesTotal, 1)} />
+          {run.current && <p className="truncate text-xs text-muted-foreground">{run.current}</p>}
+        </div>
+      )}
+      {ov.tasks.length ? (
+        <ul className="divide-y border-t">
+          {ov.tasks.map((t) => (
+            <TaskRow key={t.id} ov={ov} t={t} on={on(t)} toggle={() => setOver((m) => new Map(m).set(t.id, !on(t)))} />
+          ))}
+        </ul>
+      ) : (
+        <p className="border-t px-4 py-3 text-sm text-muted-foreground">清单里没勾 Downloads 里的文件夹</p>
+      )}
+    </section>
   );
 }
 
@@ -194,18 +231,16 @@ function ListBody(props: { ov: BackupOverview }) {
     setBusy(r.name);
     backupApi.pick(r.name, !r.picked).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error")).finally(() => setBusy(null));
   };
-  const where = (r: BackupListRow) => (r.onDrive && r.onMac ? "硬盘和「下载」" : r.onDrive ? "只在硬盘上" : "只在「下载」里");
+  const where = (r: BackupListRow) => (r.onDrive && r.onMac ? "硬盘和 Downloads" : r.onDrive ? "只在硬盘上" : "只在 Downloads 里");
   const ticked = ov.list.filter((r) => r.picked);
   return (
-    <div>
-      <p className="mb-2 px-1 text-sm text-muted-foreground tabular-nums">
-        勾了 {ticked.length} / {ov.list.length} 个{ticked.some((r) => r.bytes != null) ? ` · ${bytes(ticked.reduce((a, r) => a + (r.bytes ?? 0), 0))}` : ""}
-      </p>
-      <ul className="divide-y rounded-card border bg-card">
+    <section className="rounded-card border bg-card">
+      <CardHead title="清单" status={`勾了 ${ticked.length} / ${ov.list.length} 个${ticked.some((r) => r.bytes != null) ? ` · ${bytes(ticked.reduce((a, r) => a + (r.bytes ?? 0), 0))}` : ""}`} />
+      <ul className="divide-y border-t">
         {ov.list.map((r) => (
           <li key={r.name}>
             <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm">
-              <input type="checkbox" checked={r.picked} disabled={ov.run.running || busy != null} onChange={() => pick(r)} aria-label={r.name} className="size-3.5 shrink-0 accent-[var(--primary)]" />
+              <input type="checkbox" checked={r.picked} disabled={ov.run.running || ov.pikpak.running || busy != null} onChange={() => pick(r)} aria-label={r.name} className="size-3.5 shrink-0 accent-[var(--primary)]" />
               <span className={`min-w-0 truncate ${r.picked ? "" : "text-muted-foreground"}`}>{r.name}</span>
               <span className="shrink-0 text-xs text-muted-foreground">{where(r)}</span>
               <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">{r.files != null && r.bytes != null ? `${r.files} 个 · ${bytes(r.bytes)}` : ""}</span>
@@ -213,33 +248,11 @@ function ListBody(props: { ov: BackupOverview }) {
           </li>
         ))}
       </ul>
-    </div>
+    </section>
   );
 }
 
-function ExcludesDialog(props: { task: BackupTask; close: () => void }) {
-  const qc = useQueryClient();
-  const [text, setText] = useState(props.task.excludes.join("、"));
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      qc.setQueryData(BACKUP_KEY, await backupApi.excludes(props.task.id, text.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean)));
-      props.close();
-    } catch (err) {
-      setError(errorText(err));
-    }
-  };
-  return (
-    <Modal title={props.task.target} error={error} onClose={props.close} onSubmit={submit} submitLabel="保存">
-      <Field label="另外不备份的名字">
-        <TextInput aria-label="另外不备份的名字" value={text} maxLength={600} onChange={(e) => setText(e.target.value)} />
-      </Field>
-    </Modal>
-  );
-}
-
-function TaskRow(props: { ov: BackupOverview; t: BackupTask; on: boolean; toggle: () => void; edit: () => void }) {
+function TaskRow(props: { ov: BackupOverview; t: BackupTask; on: boolean; toggle: () => void }) {
   const { ov, t } = props;
   const [open, setOpen] = useState(false);
   const d = t.diff;
@@ -263,20 +276,22 @@ function TaskRow(props: { ov: BackupOverview; t: BackupTask; on: boolean; toggle
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
             {t.problem ? <span className="text-destructive">{t.problem}</span> : d ? <span>{counts.length ? counts.join(" · ") : "和硬盘上一样"}</span> : <span>{ov.drive?.connected ? "正在对比…" : "插上移动硬盘才能对比"}</span>}
             {t.last && <span>· 上次 {when(t.last)}</span>}
-            {t.excludes.length > 0 && <span className="min-w-0 truncate">· 另外不备份 {t.excludes.join("、")}</span>}
           </div>
-          {d && counts.length > 0 && (
-            <button type="button" onClick={() => setOpen((o) => !o)} className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />
-              {open ? "收起" : "看看有什么"}
-            </button>
-          )}
+          {d && counts.length > 0 && <Unfold open={open} toggle={() => setOpen((o) => !o)} />}
         </div>
         {c.files > 0 && <span className="shrink-0 pt-px tabular-nums">{bytes(c.bytes)}</span>}
-        <IconButton label={`${t.target} 另外不备份的名字`} tip="不备份的名字" disabled={ov.run.running} onClick={props.edit}><Pencil size={14} /></IconButton>
       </div>
       {open && d && <DiffView ov={ov} t={t} d={d} />}
     </li>
+  );
+}
+
+function Unfold(props: { open: boolean; toggle: () => void }) {
+  return (
+    <button type="button" onClick={props.toggle} className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+      <ChevronRight size={12} className={`transition-transform ${props.open ? "rotate-90" : ""}`} />
+      {props.open ? "收起" : "看看有什么"}
+    </button>
   );
 }
 
@@ -324,7 +339,7 @@ function DiffView(props: { ov: BackupOverview; t: BackupTask; d: BackupDiff }) {
     <div className="mt-2 ml-6 space-y-3 border-l pl-3">
       {confirmDialog}
       <Rows title="新加的" count={d.new.count} size={d.new.bytes} rows={d.new.rows.map(row)} />
-      <Rows title="改过的" note="硬盘上那份挪进「旧版」" count={d.changed.count} size={d.changed.bytes} rows={d.changed.rows.map(row)} />
+      <Rows title="改过的" note="硬盘上那份挪进 ARCHIVE" count={d.changed.count} size={d.changed.bytes} rows={d.changed.rows.map(row)} />
       {d.moved.count > 0 && (
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -390,15 +405,21 @@ function left(s: number): string {
 const LIMITS = [0, 1, 2, 5, 10, 20, 50];
 const limitText = (n: number) => (n ? `${n} MB/s` : "不限速");
 
-/** PikPak: where the mirror stands, 停下 / 接着传 / 照样同步, the login and its settings. */
+/** PikPak: the ticked drive folders against PikPak, what each would do, 开始同步 / 停下; logging in and its settings at the top right. */
 function PikPakCard(props: { ov: BackupOverview }) {
-  const p = props.ov.pikpak;
+  const { ov } = props;
+  const p = ov.pikpak;
   const qc = useQueryClient();
   const toast = useToast();
   const [dialog, setDialog] = useState<"login" | "settings" | null>(null);
-  const set = (o: BackupOverview) => qc.setQueryData(BACKUP_KEY, o);
+  const [over, setOver] = useState<Map<string, boolean>>(new Map());
+  const busy = (f: CloudFolder) => toSync(f.diff).files + toSync(f.diff).other > 0;
+  const on = (f: CloudFolder) => over.get(f.name) ?? busy(f);
+  const picked = p.folders.filter((f) => on(f) && f.diff);
+  const total = picked.reduce((a, f) => ({ files: a.files + toSync(f.diff).files, bytes: a.bytes + toSync(f.diff).bytes }), { files: 0, bytes: 0 });
+  const ready = !!p.account && !p.waiting && !p.comparing && !p.running && !p.error && !ov.run.running;
   const fail = (e: unknown) => toast(errorText(e), "error");
-  const go = (force: boolean) => void backupApi.pikpakGo(force).then(set, fail);
+  const start = () => backupApi.pikpakStart(picked.map((f) => f.name)).then((o) => { qc.setQueryData(BACKUP_KEY, o); setOver(new Map()); }, fail);
   const stop = () => void backupApi.pikpakStop().then(() => qc.invalidateQueries({ queryKey: BACKUP_KEY }), fail);
   const status = !p.installed
     ? "没装 rclone：在终端里跑 brew install rclone"
@@ -406,34 +427,86 @@ function PikPakCard(props: { ov: BackupOverview }) {
       ? "没登录"
       : p.running
         ? p.checking
-          ? "正在对比…"
+          ? `正在对比 ${p.syncing.join("、")}…`
           : `${p.files} / ${p.totalFiles} 个 · ${bytes(p.bytes)} / ${bytes(p.totalBytes)}${p.speed ? ` · ${bytes(p.speed)}/s` : ""}${p.eta ? ` · 还要 ${left(p.eta)}` : ""}`
-        : (p.ended ?? p.waiting ?? "");
-  const facts = p.account ? [p.account, `PikPak 上的「${p.folder}」`, limitText(p.limit), p.used != null && p.total ? `用了 ${bytes(p.used)} / ${bytes(p.total)}` : ""].filter(Boolean) : [];
+        : p.comparing
+          ? "正在和 PikPak 对比…"
+          : (p.error ?? p.waiting ?? (p.folders.some(busy) ? `选了 ${picked.length} 个文件夹 · 要传 ${total.files} 个、${bytes(total.bytes)}` : p.folders.length && p.comparedAt ? "都和硬盘上一样" : ""));
+  const facts = p.account ? [p.account, `PikPak 上的「${p.folder}」${p.missing ? "（还没有，同步时新建）" : ""}`, limitText(p.limit), p.used != null && p.total ? `用了 ${bytes(p.used)} / ${bytes(p.total)}` : ""].filter(Boolean) : [];
   return (
-    <div className="mb-4 space-y-2 rounded-card border bg-card px-4 py-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-base font-bold">PikPak</span>
-        <span className={`min-w-0 flex-1 truncate text-sm tabular-nums ${p.held ? "text-destructive" : "text-muted-foreground"}`}>{status}</span>
-        {p.installed && !p.account && <Button variant="primary" className="ml-auto" onClick={() => setDialog("login")}>登录</Button>}
-        {p.account && p.running && <Button className="ml-auto" onClick={stop}>停下</Button>}
-        {p.account && !p.running && p.held && <Button variant="primary" className="ml-auto" onClick={() => go(true)}>照样同步</Button>}
-        {p.account && !p.running && !p.held && p.waiting === "停下了" && <Button className="ml-auto" onClick={() => go(false)}>接着传</Button>}
-        {p.account && <IconButton label="PikPak 的设置" tip="设置" onClick={() => setDialog("settings")}><Settings2 size={14} /></IconButton>}
-      </div>
-      {p.running && !p.checking && p.totalBytes > 0 && <ProgressBar done={p.bytes} total={p.totalBytes} />}
-      {p.running && p.current.length > 0 && <p className="truncate text-xs text-muted-foreground">{p.current.join("、")}</p>}
-      {facts.length > 0 && <p className="selectable truncate text-xs text-muted-foreground">{facts.join(" · ")}</p>}
-      {dialog === "login" && <PikPakLogin close={() => setDialog(null)} />}
+    <section className="rounded-card border bg-card">
+      <CardHead title="PikPak" status={status} danger={!!p.error && !p.running && !p.comparing}>
+        {p.installed && !p.account && <Button variant="primary" onClick={() => setDialog("login")}>登录</Button>}
+        {p.account && (p.running ? <Button onClick={stop}>停下</Button> : <Button variant="primary" disabled={!ready || !picked.length} onClick={() => void start()}>开始同步</Button>)}
+        {p.account && <IconButton label="PikPak 的设置" tip="设置" disabled={p.running} onClick={() => setDialog("settings")}><Settings2 size={14} /></IconButton>}
+      </CardHead>
+      {(p.running || facts.length > 0) && (
+        <div className="space-y-1 px-4 pb-3">
+          {p.running && !p.checking && p.totalBytes > 0 && <ProgressBar done={p.bytes} total={p.totalBytes} />}
+          {p.running && p.current.length > 0 && <p className="truncate text-xs text-muted-foreground">{p.current.join("、")}</p>}
+          {facts.length > 0 && <p className="selectable truncate text-xs text-muted-foreground">{facts.join(" · ")}</p>}
+        </div>
+      )}
+      {p.folders.length ? (
+        <ul className="divide-y border-t">
+          {p.folders.map((f) => (
+            <CloudRow key={f.name} p={p} f={f} on={on(f)} locked={!ready} toggle={() => setOver((m) => new Map(m).set(f.name, !on(f)))} />
+          ))}
+        </ul>
+      ) : (
+        <p className="border-t px-4 py-3 text-sm text-muted-foreground">清单里没勾硬盘上的文件夹</p>
+      )}
+      {dialog === "login" && <PikPakLogin p={p} close={() => setDialog(null)} />}
       {dialog === "settings" && <PikPakSettings p={p} close={() => setDialog(null)} />}
-    </div>
+    </section>
   );
 }
 
-function PikPakLogin(props: { close: () => void }) {
+function CloudRow(props: { p: PikPakView; f: CloudFolder; on: boolean; locked: boolean; toggle: () => void }) {
+  const { p, f } = props;
+  const [open, setOpen] = useState(false);
+  const d = f.diff;
+  const t = toSync(d);
+  const counts = d
+    ? [
+        [`要传 ${t.files}`, t.files],
+        [`在 PikPak 上挪 ${d.moved.count}`, d.moved.count],
+        [`挪进 ARCHIVE ${d.extra.count}`, d.extra.count],
+      ].filter(([, n]) => n).map(([s]) => s as string)
+    : [];
+  const syncing = p.running && p.syncing.includes(f.name);
+  const state = syncing ? "正在同步" : d ? (counts.length ? counts.join(" · ") : "和硬盘上一样") : !p.account ? "登录后对比" : p.comparing ? "正在对比…" : "还没对比";
+  return (
+    <li className="px-4 py-2.5 text-sm">
+      <div className="flex items-start gap-2.5">
+        <input type="checkbox" checked={props.on && !!d} disabled={!d || props.locked} onChange={props.toggle} aria-label={f.name} className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]" />
+        <div className="min-w-0 flex-1">
+          <p className="min-w-0 truncate">{f.name}</p>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
+            <span>{state}</span>
+            {f.last && <span>· 上次 {when(f.last)}</span>}
+          </div>
+          {d && counts.length > 0 && <Unfold open={open} toggle={() => setOpen((o) => !o)} />}
+        </div>
+        {t.files > 0 && <span className="shrink-0 pt-px tabular-nums">{bytes(t.bytes)}</span>}
+      </div>
+      {open && d && (
+        <div className="mt-2 ml-6 space-y-3 border-l pl-3">
+          <Rows title="新加的" count={d.new.count} size={d.new.bytes} rows={d.new.rows.map((r) => ({ key: r.path, left: r.path, right: bytes(r.size) }))} />
+          <Rows title="大小不一样的" note="PikPak 上那份挪进 ARCHIVE" count={d.changed.count} size={d.changed.bytes} rows={d.changed.rows.map((r) => ({ key: r.path, left: r.path, right: bytes(r.size) }))} />
+          <Rows title="在 PikPak 上挪" note="不重新传" count={d.moved.count} size={d.moved.bytes} rows={d.moved.rows.map((m) => ({ key: m.to, left: `${m.from} → ${m.to}`, right: bytes(m.size) }))} />
+          <Rows title="只在 PikPak 上" note="挪进 ARCHIVE" count={d.extra.count} size={d.extra.bytes} rows={d.extra.rows.map((r) => ({ key: r.path, left: r.path, right: bytes(r.size) }))} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+function PikPakLogin(props: { p: PikPakView; close: () => void }) {
   const qc = useQueryClient();
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
+  const [folder, setFolder] = useState(props.p.folder);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
@@ -441,7 +514,7 @@ function PikPakLogin(props: { close: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      qc.setQueryData(BACKUP_KEY, await backupApi.pikpakLogin(account, password));
+      qc.setQueryData(BACKUP_KEY, await backupApi.pikpakLogin(account, password, folder));
       props.close();
     } catch (err) {
       setError(errorText(err));
@@ -450,12 +523,15 @@ function PikPakLogin(props: { close: () => void }) {
     }
   };
   return (
-    <Modal title="登录 PikPak" error={error} onClose={props.close} onSubmit={submit} submitLabel={busy ? "正在登录…" : "登录"} submitDisabled={busy || !account.trim() || !password}>
+    <Modal title="登录 PikPak" error={error} onClose={props.close} onSubmit={submit} submitLabel={busy ? "正在登录…" : "登录"} submitDisabled={busy || !account.trim() || !password || !folder.trim()}>
       <Field label="账号">
         <TextInput aria-label="PikPak 的账号" value={account} maxLength={200} onChange={(e) => setAccount(e.target.value)} />
       </Field>
       <Field label="密码">
         <TextInput type="password" aria-label="PikPak 的密码" value={password} maxLength={200} onChange={(e) => setPassword(e.target.value)} />
+      </Field>
+      <Field label="PikPak 上的文件夹">
+        <TextInput aria-label="PikPak 上的文件夹" value={folder} maxLength={200} onChange={(e) => setFolder(e.target.value)} />
       </Field>
     </Modal>
   );
@@ -478,7 +554,7 @@ function PikPakSettings(props: { p: PikPakView; close: () => void }) {
     }
   };
   const logout = async () => {
-    if (!(await confirm({ title: "退出 PikPak？", message: "同步停下，PikPak 上的文件都不动。", confirmLabel: "退出", danger: true }))) return;
+    if (!(await confirm({ title: "退出 PikPak？", message: "PikPak 上的文件都不动。", confirmLabel: "退出", danger: true }))) return;
     backupApi.pikpakLogout().then((o) => { qc.setQueryData(BACKUP_KEY, o); props.close(); }, (err) => toast(errorText(err), "error"));
   };
   return (
@@ -510,7 +586,7 @@ function RecordRow(props: { r: BackupRecord }) {
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
         <span className="tabular-nums">{when(r.startedAt)}</span>
         <span className={r.status === "failed" ? "text-destructive" : "text-muted-foreground"}>{(r.dest === "pikpak" ? PIKPAK_STATUS : STATUS)[r.status]}</span>
-        <span className="min-w-0 truncate text-muted-foreground">{r.dest === "pikpak" ? "PikPak" : r.tasks.map((t) => t.target).join("、")}</span>
+        <span className="min-w-0 truncate text-muted-foreground">{r.dest === "pikpak" ? ["PikPak", ...r.tasks.map((t) => t.target)].join(" · ") : r.tasks.map((t) => t.target).join("、")}</span>
         <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">{r.dest === "pikpak" ? "传了" : "复制"} {r.files} 个 · {bytes(r.bytes)}</span>
         {more && (
           <button type="button" onClick={() => setOpen((o) => !o)} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">

@@ -2,15 +2,14 @@
 //! rule ones in `janitor_cards` (agent.rs `Card`), each for the drive it was proposed on (`drive`: its UUID):
 //! - `move` (`MOVE`): renames or moves on the drive (paths relative to its root): never copies, never deletes;
 //!   a task whose drive folder moves follows it; folders a move empties go (a lone .DS_Store counts as empty).
-//! - `drive_trash` (`TRASH`): to the drive's own Trash (sandbox: the fake drive's `.Trashes/501`); never a
-//!   task's drive folder or one holding it.
-//! - `task` (`TASK`, until 1.1.1): a new or changed task. The 清单 (1.1.2) makes the tasks now: no new ones,
-//!   an old one only says so when clicked.
-//! Rust checks a proposal before it's a card (paths there, VAULT and 旧版 refused) and again when I click.
-//! None of it is undone (requirements: 跟着改名、任务的设置、去重都不进撤销).
+//! - `drive_trash` (`TRASH`, until 1.1.2): duplicates to the drive's Trash. Not the backup's business any more
+//!   (DevJanitor finds the Mac's own): none new, an old one only says so when clicked.
+//! - `task` (`TASK`, until 1.1.1): a new or changed task. The 清单 (1.1.2) makes the tasks now: likewise.
+//! Rust checks a proposal before it's a card (paths there, VAULT, ARCHIVE and folders not picked refused) and
+//! again when I click. None of it is undone (requirements: 跟着改名不进撤销).
 
 use super::super::agent::{self, Card, TrashItem};
-use super::super::{rules, Janitor, Mode};
+use super::super::{rules, Janitor};
 use super::{copy, diff, drive_of, prune_empty, Settings};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -26,10 +25,6 @@ const ITEMS_MAX: usize = 100;
 
 pub fn is_tool(name: &str) -> bool {
     [MOVE, TRASH, TASK].contains(&name)
-}
-
-fn card_kind_moves(kind: &str) -> bool {
-    kind == "move" || kind == "drive_trash"
 }
 
 pub fn is_kind(kind: &str) -> bool {
@@ -80,7 +75,7 @@ fn drive_rel(drive: Option<&super::Volume>, p: &str) -> Result<String, String> {
         }
     }
     if rel.split('/').next() == Some(copy::OLD) {
-        return Err(format!("「{}」里是被覆盖的旧版本，由用户自己清，不提议", copy::OLD));
+        return Err(format!("「{}」是用户的归档和被覆盖的旧版本，不在备份里，不提议", copy::OLD));
     }
     Ok(rel)
 }
@@ -102,16 +97,10 @@ fn size_at(real: &Path) -> u64 {
     }
 }
 
-/// The task whose drive folder is `rel` or inside it (moving it carries the task along; trashing it can't be).
+/// The task whose drive folder is `rel` or inside it (moving it carries the task along).
 fn task_at(s: &Settings, rel: &str) -> Option<i64> {
     let rel = diff::nfc(rel);
     s.tasks.iter().find(|t| rules::within(&diff::nfc(&t.target), &rel)).map(|t| t.id)
-}
-
-/// The task whose drive folder holds `rel`.
-fn task_over(s: &Settings, rel: &str) -> Option<i64> {
-    let rel = diff::nfc(rel);
-    s.tasks.iter().find(|t| rules::within(&rel, &diff::nfc(&t.target)) && rel != diff::nfc(&t.target)).map(|t| t.id)
 }
 
 fn text(v: &Value, k: &str, max: usize) -> String {
@@ -130,12 +119,13 @@ pub fn build(j: &Janitor, s: &Settings, name: &str, args: &str) -> Result<Card, 
         return Err("还没选移动硬盘（用户在「备份」页选）".into());
     }
     match name {
-        TASK => Err("任务改成了「备份」的清单：要备份「下载」里的文件夹，叫用户去清单里勾上，不出卡片".into()),
-        MOVE | TRASH => {
+        TASK => Err("任务改成了「备份」的清单：要备份 Downloads 里的文件夹，叫用户去清单里勾上，不出卡片".into()),
+        TRASH => Err("硬盘上的重复不归备份管，不提议".into()),
+        MOVE => {
             let dv = drive.ok_or("移动硬盘没插上：插上了再提议")?;
             let mut items: Vec<TrashItem> = Vec::new();
             for it in v["items"].as_array().cloned().unwrap_or_default().iter().take(ITEMS_MAX) {
-                let path = drive_rel(Some(&dv), it[if name == MOVE { "from" } else { "path" }].as_str().unwrap_or(""))?;
+                let path = drive_rel(Some(&dv), it["from"].as_str().unwrap_or(""))?;
                 kept_out(s, &path)?;
                 let real = dv.path.join(&path);
                 let Ok(m) = std::fs::symlink_metadata(&real) else { return Err(format!("硬盘上没有 {path}（先用 pomelo_janitor_backup 的 drive 看清楚路径）")) };
@@ -143,57 +133,25 @@ pub fn build(j: &Janitor, s: &Settings, name: &str, args: &str) -> Result<Card, 
                     continue;
                 }
                 let mut item = TrashItem { size: size_at(&real), kind: if m.is_dir() { "文件夹".into() } else { "文件".into() }, why: text(it, "why", 200), ..Default::default() };
-                if name == MOVE {
-                    let to = drive_rel(Some(&dv), it["to"].as_str().unwrap_or(""))?;
-                    kept_out(s, &to)?;
-                    if diff::nfc(&to) == diff::nfc(&path) || rules::within(&diff::nfc(&to), &diff::nfc(&path)) {
-                        return Err(format!("{path} → {to}：不能挪进它自己里面"));
-                    }
-                    if std::fs::symlink_metadata(dv.path.join(&to)).is_ok() {
-                        return Err(format!("硬盘上已经有 {to}：换个名字，或者只挪里面的文件"));
-                    }
-                    item.note = task_at(s, &path).map(|i| format!("任务 #{i} 的硬盘文件夹会跟着改"));
-                    item.to = Some(to);
-                } else {
-                    if let Some(i) = task_at(s, &path) {
-                        return Err(format!("{path} 是任务 #{i} 的硬盘文件夹（或包着它），不能移到废纸篓"));
-                    }
-                    item.note = task_over(s, &path).map(|i| format!("在任务 #{i} 的硬盘文件夹里：电脑上还有的话，下次备份会再复制"));
+                let to = drive_rel(Some(&dv), it["to"].as_str().unwrap_or(""))?;
+                kept_out(s, &to)?;
+                if diff::nfc(&to) == diff::nfc(&path) || rules::within(&diff::nfc(&to), &diff::nfc(&path)) {
+                    return Err(format!("{path} → {to}：不能挪进它自己里面"));
                 }
+                if std::fs::symlink_metadata(dv.path.join(&to)).is_ok() {
+                    return Err(format!("硬盘上已经有 {to}：换个名字，或者只挪里面的文件"));
+                }
+                item.note = task_at(s, &path).and_then(|i| s.tasks.iter().find(|t| t.id == i)).map(|t| format!("Downloads 里的 {} 备份到这里，会跟着改", t.source.rsplit('/').next().unwrap_or_default()));
+                item.to = Some(to);
                 item.path = path;
                 items.push(item);
             }
             if items.is_empty() {
                 return Err("items 是空的".into());
             }
-            let (kind, title) = if name == MOVE { ("move", "在硬盘上跟着改") } else { ("drive_trash", "硬盘里重复的") };
-            Ok(Card { kind: kind.into(), title: Some(text(&v, "title", 40)).filter(|t| !t.is_empty()).unwrap_or_else(|| title.into()), items, drive: uuid, ..Default::default() })
+            Ok(Card { kind: "move".into(), title: Some(text(&v, "title", 40)).filter(|t| !t.is_empty()).unwrap_or_else(|| "在硬盘上跟着改".into()), items, drive: uuid, ..Default::default() })
         }
         _ => Err("没有这个工具".into()),
-    }
-}
-
-/// A free name in `dir` for `name` (`name 2`, `name 3`…).
-fn free_in(dir: &Path, name: &str) -> std::path::PathBuf {
-    let mut to = dir.join(name);
-    let mut n = 2;
-    while std::fs::symlink_metadata(&to).is_ok() {
-        to = dir.join(format!("{name} {n}"));
-        n += 1;
-    }
-    to
-}
-
-/// To the drive's own Trash.
-fn to_drive_trash(j: &Janitor, root: &Path, real: &Path) -> Result<(), String> {
-    match j.mode {
-        Mode::Real => crate::youzi::assistants::pub2md::move_to_trash(real),
-        Mode::Sandbox => {
-            let bin = root.join(".Trashes").join("501");
-            std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
-            let name = real.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            std::fs::rename(real, free_in(&bin, &name)).map_err(|e| e.to_string())
-        }
     }
 }
 
@@ -208,6 +166,9 @@ pub fn run(j: &Janitor, s: &Settings, c: &Card, picked: &[usize]) -> Result<(&'s
     let dv = drive_of(j, s).ok_or("移动硬盘没插上")?;
     if c.kind == "task" {
         return Ok(("failed", json!({ "error": "任务改成了清单：在「备份」的清单里勾" }), None));
+    }
+    if c.kind == "drive_trash" {
+        return Ok(("failed", json!({ "error": "硬盘上的重复不归备份管了，这张卡片不再做" }), None));
     }
     if picked.is_empty() {
         return Err("至少勾上一项".into());
@@ -226,31 +187,24 @@ pub fn run(j: &Janitor, s: &Settings, c: &Card, picked: &[usize]) -> Result<(&'s
                 if std::fs::symlink_metadata(&real).is_err() {
                     return Err("硬盘上已经没有了".into());
                 }
-                if c.kind == "move" {
-                    let to = drive_rel(Some(&dv), it.to.as_deref().unwrap_or(""))?;
-                    kept_out(s, &to)?;
-                    let dest = dv.path.join(&to);
-                    if std::fs::symlink_metadata(&dest).is_ok() {
-                        return Err("新位置上已经有东西".into());
-                    }
-                    std::fs::create_dir_all(dest.parent().ok_or("没有上一层")?).map_err(|e| e.to_string())?;
-                    std::fs::rename(&real, &dest).map_err(|e| e.to_string())?;
-                    prune_empty(&dv.path, real.parent());
-                    let (from, to) = (diff::nfc(&path), diff::nfc(&to));
-                    for t in after.tasks.iter_mut() {
-                        let tt = diff::nfc(&t.target);
-                        if rules::within(&tt, &from) {
-                            t.target = format!("{to}{}", &tt[from.len()..]);
-                            moved_task = true;
-                        }
-                    }
-                    Ok(())
-                } else {
-                    if let Some(i) = task_at(&after, &path) {
-                        return Err(format!("是任务 #{i} 的硬盘文件夹"));
-                    }
-                    to_drive_trash(j, &dv.path, &real)
+                let to = drive_rel(Some(&dv), it.to.as_deref().unwrap_or(""))?;
+                kept_out(s, &to)?;
+                let dest = dv.path.join(&to);
+                if std::fs::symlink_metadata(&dest).is_ok() {
+                    return Err("新位置上已经有东西".into());
                 }
+                std::fs::create_dir_all(dest.parent().ok_or("没有上一层")?).map_err(|e| e.to_string())?;
+                std::fs::rename(&real, &dest).map_err(|e| e.to_string())?;
+                prune_empty(&dv.path, real.parent());
+                let (from, to) = (diff::nfc(&path), diff::nfc(&to));
+                for t in after.tasks.iter_mut() {
+                    let tt = diff::nfc(&t.target);
+                    if rules::within(&tt, &from) {
+                        t.target = format!("{to}{}", &tt[from.len()..]);
+                        moved_task = true;
+                    }
+                }
+                Ok(())
             })()
         };
         results.push(json!({ "done": r.is_ok(), "error": r.err().filter(|e| e != "没勾") }));
@@ -259,7 +213,7 @@ pub fn run(j: &Janitor, s: &Settings, c: &Card, picked: &[usize]) -> Result<(&'s
     Ok((if done > 0 { "done" } else { "failed" }, json!({ "items": results }), moved_task.then_some(after)))
 }
 
-/// 在硬盘上改 / 移到硬盘的废纸篓 / 建任务: the picked items of a backup card (a task card: all of it).
+/// 在硬盘上改: the picked items of a backup card (an old dup or task card only says it's gone).
 #[tauri::command]
 pub async fn janitor_card_backup(app: tauri::AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64, picked: Vec<usize>) -> Result<Card, String> {
     if janitor.backup.running() {
@@ -267,7 +221,6 @@ pub async fn janitor_card_backup(app: tauri::AppHandle, state: State<'_, AppStat
     }
     super::ensure_fake(&janitor)?;
     let card = state.youzi.with_db(|c| agent::card(c, id))?;
-    let card_kind = card.kind.clone();
     let s = super::load_now(&state, &janitor);
     let j = janitor.inner().clone();
     let (st, result, after) = tauri::async_runtime::spawn_blocking(move || run(&j, &s, &card, &picked)).await.map_err(|e| e.to_string())??;
@@ -276,9 +229,9 @@ pub async fn janitor_card_backup(app: tauri::AppHandle, state: State<'_, AppStat
     }
     state.youzi.with_db(|c| agent::set_state(c, id, st, Some(&result)))?;
     super::compare_in_background(&janitor, super::load_now(&state, &janitor));
-    // the drive changed: PikPak follows
-    if st == "done" && card_kind_moves(&card_kind) {
-        super::pikpak::kick(&app);
+    // the drive changed: compare PikPak again
+    if st == "done" {
+        super::pikpak::compare_later(&app);
     }
     state.youzi.with_db(|c| agent::card(c, id))
 }

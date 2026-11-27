@@ -1,22 +1,29 @@
-//! PikPak (1.1.0 Phase 3; requirements「DevJanitor › 备份」): the whole external drive (VAULT and the system's
-//! junk left out) mirrored to a PikPak folder with rclone (rclone.rs), in the background while the drive is in.
+//! PikPak (1.1.0 Phase 3, 1.1.3; requirements「DevJanitor › 备份」): the drive's folders ticked in the 清单, mirrored
+//! into a PikPak folder with rclone (rclone.rs), only when I press 开始同步.
 //! - Settings (`Settings::pikpak`, with the backup's; not undone): the account shown (the login itself is in
 //!   rclone's encrypted config), the PikPak folder (default: the drive's name), the upload limit.
-//! - When: the drive appears (the watcher), a backup run ends, a backup card changed the drive, I log in, change a
-//!   setting or press 接着传. Not while a backup run copies (that stops it; it starts again after), nor after I
-//!   pressed 停下 until the drive comes back or I press 接着传. One sync at a time; a change meanwhile means once
-//!   more after it.
-//! - A sync that would delete more than `rclone::MAX_DELETE` stops; the next one waits for 照样同步 (`force`).
-//! - Each sync that moved something (or failed) is a `backup_runs` row with `dest` 'pikpak' (`note`: what went to
-//!   PikPak's trash, why it stopped). The App quitting stops rclone; the next sync carries on.
+//! - Comparing (`compare_with`): the drive's picked folders (names and sizes, as rclone sees them) against what
+//!   the PikPak folder holds there (`Rclone::list`), the way a sync goes (`cloud_diff`): same path and size →
+//!   same; size differs → uploaded, PikPak's old copy into ARCHIVE; a drive file PikPak has elsewhere under the
+//!   same name and size → moved there; the rest uploaded; what only PikPak has → into ARCHIVE. In the background
+//!   when the drive comes, after a backup run, a move on the drive, a sync, logging in, a new folder, 重新对比,
+//!   and when the page finds it due; kept in memory (`CloudSnap`).
+//! - Syncing (`start`): the folders I ticked; one at a time; a backup run starting stops it and it carries on
+//!   after (`resume`); compared again when it ends. More moves into ARCHIVE than compared (plus
+//!   `rclone::MAX_DELETE`) stop it.
+//! - Each sync that moved something (or failed) is a `backup_runs` row with `dest` 'pikpak' (`tasks`: its folders
+//!   by name, id 0; `note`: what went where). The App quitting stops rclone; the next sync carries on.
 
 use super::super::{Janitor, Mode};
+use super::diff::{self, Skip};
 use super::rclone::{self, Done, Progress, Rclone};
-use super::{drive_of, kept_out, load, load_now, store_settings, top_folders, Settings};
+use super::{drive_of, group, is_picked, load, load_now, store_settings, top_folders, Group, RunRow, RunTask, Settings, Volume};
+use crate::modules::common::unix_now;
 use crate::AppState;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
@@ -37,20 +44,55 @@ impl PikPak {
     }
 }
 
+/// A file in a compared folder (relative to it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Item {
+    pub path: String,
+    pub size: u64,
+}
+
+/// One top folder, the drive against PikPak.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudDiff {
+    pub same: u64,
+    pub same_bytes: u64,
+    /// Not on PikPak: uploaded.
+    pub new: Vec<Item>,
+    /// Another size on PikPak: uploaded, PikPak's into ARCHIVE.
+    pub changed: Vec<Item>,
+    /// On PikPak elsewhere (same name and size): moved there. `from`: relative to this folder, or `/<top>/…`.
+    pub moved: Vec<diff::Move>,
+    /// Only on PikPak: into ARCHIVE.
+    pub extra: Vec<Item>,
+}
+
+/// The last comparison.
+#[derive(Debug, Clone, Default)]
+pub struct CloudSnap {
+    /// What it's of: the drive, the PikPak folder, the folders picked (`key_of`).
+    key: String,
+    at: i64,
+    /// The PikPak folder isn't there yet.
+    missing: bool,
+    error: Option<String>,
+    /// NFC top folder → how it compares.
+    per: BTreeMap<String, CloudDiff>,
+}
+
 /// The PikPak side of `Backup` (in memory).
 #[derive(Default)]
 pub struct Cloud {
     running: AtomicBool,
     run: Mutex<Arc<Progress>>,
+    /// The folders the running sync mirrors.
+    tops: Mutex<Vec<String>>,
     ended: Mutex<Option<String>>,
-    /// 停下 pressed: no sync until the drive comes back or 接着传.
-    paused: AtomicBool,
-    /// Something changed during a sync: once more after it.
-    again: AtomicBool,
-    /// The last sync stopped at too many deletions: waiting for 照样同步.
-    held: AtomicBool,
-    /// Stopped for a backup run: starts again after it.
-    yielded: AtomicBool,
+    /// Syncs ended this session (the page pops `ended` once each).
+    ends: AtomicU64,
+    /// Stopped for a backup run: these folders carry on after it.
+    resume: Mutex<Option<Vec<String>>>,
+    comparing: AtomicBool,
+    snap: Mutex<Option<CloudSnap>>,
     quota: Mutex<Option<(u64, u64)>>,
 }
 
@@ -70,15 +112,286 @@ fn local_day(state: &AppState) -> String {
     state.youzi.with_db(|c| Ok(c.query_row("SELECT date('now', 'localtime')", [], |r| r.get::<_, String>(0)).unwrap_or_default())).unwrap_or_default()
 }
 
+/// The drive's top folders picked in the 清单.
+pub fn picked_on(s: &Settings, drive: &Volume) -> Vec<String> {
+    top_folders(drive).into_iter().filter(|t| is_picked(s, t)).collect()
+}
+
+fn key_of(s: &Settings, drive: &Volume, tops: &[String]) -> String {
+    format!("{}\n{}\n{}", drive.uuid, s.pikpak.folder_for(&drive.name), tops.iter().map(|t| diff::nfc(t)).collect::<Vec<_>>().join("\n"))
+}
+
+// ---- comparing ----
+
+fn leaf(k: &str) -> &str {
+    k.rsplit('/').next().unwrap_or(k)
+}
+
+fn split(k: &str) -> (&str, &str) {
+    k.split_once('/').unwrap_or((k, ""))
+}
+
+/// The drive (NFC path from its root → size) against PikPak (the same), by top folder (`tops`), as a sync goes.
+pub fn cloud_diff(drive: &BTreeMap<String, u64>, cloud: &BTreeMap<String, u64>, tops: &[String]) -> BTreeMap<String, CloudDiff> {
+    let mut per: BTreeMap<String, CloudDiff> = tops.iter().map(|t| (diff::nfc(t), CloudDiff::default())).collect();
+    let mut only_drive: Vec<(&str, u64)> = Vec::new();
+    for (k, &size) in drive {
+        let (top, rel) = split(k);
+        let Some(d) = per.get_mut(top) else { continue };
+        match cloud.get(k) {
+            Some(&c) if c == size => {
+                d.same += 1;
+                d.same_bytes += size;
+            }
+            Some(_) => d.changed.push(Item { path: rel.into(), size }),
+            None => only_drive.push((k, size)),
+        }
+    }
+    // rclone's renames: a PikPak-only file with the name and size of a drive-only one
+    let mut left: HashMap<(&str, u64), Vec<&str>> = HashMap::new();
+    for (k, &size) in cloud.iter().rev() {
+        if !drive.contains_key(k) && per.contains_key(split(k).0) {
+            left.entry((leaf(k), size)).or_default().push(k);
+        }
+    }
+    for (k, size) in only_drive {
+        let (top, rel) = split(k);
+        let d = per.get_mut(top).expect("a top");
+        match left.get_mut(&(leaf(k), size)).and_then(|v| v.pop()) {
+            Some(from) => {
+                let (ft, fr) = split(from);
+                d.moved.push(diff::Move { from: if ft == top { fr.into() } else { format!("/{from}") }, to: rel.into(), size });
+            }
+            None => d.new.push(Item { path: rel.into(), size }),
+        }
+    }
+    let mut rest: Vec<&str> = left.into_values().flatten().collect();
+    rest.sort();
+    for k in rest {
+        let (top, rel) = split(k);
+        if let Some(d) = per.get_mut(top) {
+            d.extra.push(Item { path: rel.into(), size: cloud[k] });
+        }
+    }
+    per
+}
+
+/// Compares the drive's picked folders with PikPak now (None: nothing to compare: not logged in, no drive).
+pub fn compare_with(j: &Janitor, s: &Settings, rc: &Rclone) -> Option<CloudSnap> {
+    s.pikpak.account.as_ref()?;
+    let drive = drive_of(j, s)?;
+    let tops = picked_on(s, &drive);
+    let mut sn = CloudSnap { key: key_of(s, &drive, &tops), at: unix_now(), ..Default::default() };
+    let stop = AtomicBool::new(false);
+    let mut on_drive: BTreeMap<String, u64> = BTreeMap::new();
+    for t in &tops {
+        match diff::list(&drive.path.join(t), &Skip { mirror: true }, &stop) {
+            Ok(l) => on_drive.extend(l.files.iter().map(|(k, (_, m))| (format!("{}/{k}", diff::nfc(t)), m.size))),
+            Err(e) => {
+                sn.error = Some(format!("硬盘上的 {t} 没读成：{e}"));
+                return Some(sn);
+            }
+        }
+    }
+    match rc.list(&s.pikpak.folder_for(&drive.name), &tops) {
+        Ok(cloud) => {
+            sn.missing = cloud.is_none();
+            sn.per = cloud_diff(&on_drive, &cloud.unwrap_or_default(), &tops);
+        }
+        Err(e) => sn.error = Some(e),
+    }
+    Some(sn)
+}
+
+/// Why PikPak can't be compared or synced now (None: it can).
+fn blocked(j: &Janitor, s: &Settings) -> Option<&'static str> {
+    if s.pikpak.account.is_none() {
+        Some("没登录")
+    } else if drive_of(j, s).is_none() {
+        Some("没插硬盘")
+    } else if j.backup.running() {
+        Some("正在备份")
+    } else if rclone::binary().is_none() {
+        Some("没装 rclone")
+    } else {
+        None
+    }
+}
+
+fn compare_now(st: &AppState, j: &Janitor) {
+    let c = &j.backup.cloud;
+    if c.running() || c.comparing.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let s = load_now(st, j);
+    if blocked(j, &s).is_none() {
+        let sn = match rclone_of(st, j) {
+            Ok(rc) => compare_with(j, &s, &rc),
+            Err(e) => drive_of(j, &s).map(|d| CloudSnap { key: key_of(&s, &d, &picked_on(&s, &d)), at: unix_now(), error: Some(e), ..Default::default() }),
+        };
+        if let (Some(sn), Ok(mut g)) = (sn, c.snap.lock()) {
+            *g = Some(sn);
+        }
+    }
+    c.comparing.store(false, Ordering::SeqCst);
+}
+
+/// Compares in the background (the drive or PikPak changed).
+pub fn compare_later(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || compare_now(&app.state::<AppState>(), app.state::<Janitor>().inner()));
+}
+
+/// Compares when there's none of the drive, folder and 清单 as they are now.
+pub fn compare_when_due(app: &AppHandle) {
+    let j = app.state::<Janitor>();
+    let c = &j.backup.cloud;
+    if c.running() || c.comparing.load(Ordering::SeqCst) {
+        return;
+    }
+    let s = load(&app.state::<AppState>());
+    if blocked(&j, &s).is_some() {
+        return;
+    }
+    let Some(drive) = drive_of(&j, &s) else { return };
+    let key = key_of(&s, &drive, &picked_on(&s, &drive));
+    if c.snap.lock().ok().and_then(|g| g.as_ref().map(|sn| sn.key != key)).unwrap_or(true) {
+        compare_later(app);
+    }
+}
+
+/// The drive came (or was picked): compare.
+pub fn plugged(app: &AppHandle) {
+    compare_later(app);
+}
+
+/// A backup run starts: a sync stops and carries on after it.
+pub fn yield_to_backup(j: &Janitor) {
+    if j.backup.cloud.running() {
+        let tops = j.backup.cloud.tops.lock().map(|g| g.clone()).unwrap_or_default();
+        if let Ok(mut g) = j.backup.cloud.resume.lock() {
+            *g = Some(tops);
+        }
+        stop_now(j);
+    }
+}
+
+/// A backup run ended: the sync it stopped carries on; otherwise compare (the drive changed).
+pub fn after_backup(app: &AppHandle) {
+    let resume = app.state::<Janitor>().backup.cloud.resume.lock().ok().and_then(|mut g| g.take());
+    match resume {
+        Some(tops) if start(app, &tops).is_ok() => {}
+        _ => compare_later(app),
+    }
+}
+
+fn stop_now(j: &Janitor) {
+    if let Ok(r) = j.backup.cloud.run.lock() {
+        r.kill();
+    }
+}
+
+// ---- syncing ----
+
+/// What a sync of `tops` may move into ARCHIVE: what was compared, and `rclone::MAX_DELETE` more.
+fn max_delete(j: &Janitor, key: &str, tops: &[String]) -> u64 {
+    let compared = j.backup.cloud.snap.lock().ok().and_then(|g| g.as_ref().filter(|sn| sn.key == key).map(|sn| tops.iter().filter_map(|t| sn.per.get(&diff::nfc(t))).map(|d| d.extra.len() as u64).sum::<u64>())).unwrap_or(0);
+    compared + rclone::MAX_DELETE as u64
+}
+
+/// 开始同步: mirrors the picked folders among `tops` in the background, then compares again.
+pub fn start(app: &AppHandle, tops: &[String]) -> Result<(), String> {
+    let j = app.state::<Janitor>().inner().clone();
+    let st = app.state::<AppState>();
+    let s = load_now(&st, &j);
+    if let Some(why) = blocked(&j, &s) {
+        return Err(why.into());
+    }
+    let drive = drive_of(&j, &s).ok_or("没插硬盘")?;
+    let picked = picked_on(&s, &drive);
+    let tops: Vec<String> = picked.iter().filter(|p| tops.iter().any(|t| diff::nfc(t) == diff::nfc(p))).cloned().collect();
+    if tops.is_empty() {
+        return Err("先勾要同步的文件夹".into());
+    }
+    if j.backup.cloud.comparing.load(Ordering::SeqCst) {
+        return Err("正在和 PikPak 对比，等它对完".into());
+    }
+    if j.backup.cloud.running.swap(true, Ordering::SeqCst) {
+        return Err("正在同步".into());
+    }
+    let max = max_delete(&j, &key_of(&s, &drive, &picked), &tops);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let st = app.state::<AppState>();
+        once(&st, &j, &s, &drive, &tops, max);
+        j.backup.cloud.running.store(false, Ordering::SeqCst);
+        // stopped for a backup run: it compares (or carries on) when that ends
+        if j.backup.cloud.resume.lock().map(|g| g.is_none()).unwrap_or(true) {
+            compare_now(&st, &j);
+        }
+    });
+    Ok(())
+}
+
+/// One sync, recorded.
+fn once(st: &AppState, j: &Janitor, s: &Settings, drive: &Volume, tops: &[String], max: u64) {
+    let c = &j.backup.cloud;
+    let p = Arc::new(Progress::new());
+    if let Ok(mut g) = c.run.lock() {
+        *g = p.clone();
+    }
+    if let Ok(mut g) = c.tops.lock() {
+        *g = tops.to_vec();
+    }
+    if let Ok(mut g) = c.ended.lock() {
+        *g = None;
+    }
+    let end = |text: String| {
+        if c.resume.lock().map(|g| g.is_none()).unwrap_or(true) {
+            if let Ok(mut g) = c.ended.lock() {
+                *g = Some(text);
+            }
+            c.ends.fetch_add(1, Ordering::SeqCst);
+        }
+    };
+    let rc = match rclone_of(st, j) {
+        Ok(r) => r,
+        Err(e) => return end(e),
+    };
+    let id = st.youzi.with_db(|c| record_start(c, &drive.name, tops)).ok();
+    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), tops, s.pikpak.limit, max, &local_day(st), &p);
+    if let Some(id) = id {
+        let _ = st.youzi.with_db(|c| record_end(c, id, tops, &p, &d));
+    }
+    if !d.stopped {
+        if let Ok(q) = rc.about() {
+            if let Ok(mut g) = c.quota.lock() {
+                *g = Some(q);
+            }
+        }
+    }
+    end(ended_text(&p, &d));
+}
+
+/// The App quits: rclone goes too (the next sync carries on).
+pub fn on_exit(app: &AppHandle) {
+    stop_now(app.state::<Janitor>().inner());
+}
+
 // ---- runs (youzi.db backup_runs, dest 'pikpak') ----
 
-pub(super) fn record_start(c: &Connection, drive: &str) -> Result<i64, String> {
-    c.execute("INSERT INTO backup_runs (dest, drive) VALUES ('pikpak', ?1)", [drive]).map_err(crate::modules::common::err)?;
+fn run_tasks(tops: &[String], done: bool) -> String {
+    let t: Vec<RunTask> = tops.iter().map(|t| RunTask { id: 0, source: String::new(), target: t.clone(), files: 0, bytes: 0, updated: 0, done }).collect();
+    serde_json::to_string(&t).unwrap_or_else(|_| "[]".into())
+}
+
+pub(super) fn record_start(c: &Connection, drive: &str, tops: &[String]) -> Result<i64, String> {
+    c.execute("INSERT INTO backup_runs (dest, drive, tasks) VALUES ('pikpak', ?1, ?2)", params![drive, run_tasks(tops, false)]).map_err(crate::modules::common::err)?;
     Ok(c.last_insert_rowid())
 }
 
 /// The row as it ended; a sync that changed nothing and went fine leaves none.
-pub(super) fn record_end(c: &Connection, id: i64, p: &Progress, d: &Done) -> Result<(), String> {
+pub(super) fn record_end(c: &Connection, id: i64, tops: &[String], p: &Progress, d: &Done) -> Result<(), String> {
     let (files, bytes, deletes, renames) = (p.files.load(Ordering::Relaxed), p.bytes.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed), p.renames.load(Ordering::Relaxed));
     if d.ok && files == 0 && deletes == 0 && renames == 0 && d.errors.is_empty() {
         c.execute("DELETE FROM backup_runs WHERE id = ?1", [id]).map_err(crate::modules::common::err)?;
@@ -90,18 +403,18 @@ pub(super) fn record_end(c: &Connection, id: i64, p: &Progress, d: &Done) -> Res
         note.push(format!("在 PikPak 上挪了 {renames} 个"));
     }
     if deletes > 0 {
-        note.push(format!("挪进 PikPak 回收站 {deletes} 个"));
+        note.push(format!("挪进 PikPak 的 ARCHIVE {deletes} 个"));
     }
     if d.too_many_deletes {
-        note.push(format!("要挪进回收站的超过 {} 个，没接着同步", rclone::MAX_DELETE));
+        note.push("要挪进 ARCHIVE 的比对出来的多，没接着同步".into());
     }
     if let Some(f) = &d.fatal {
         note.push(f.clone());
     }
     let at: String = c.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |r| r.get(0)).map_err(crate::modules::common::err)?;
     c.execute(
-        "UPDATE backup_runs SET status = ?2, files = ?3, bytes = ?4, errors = ?5, note = ?6, finished_at = ?7 WHERE id = ?1",
-        params![id, status, files as i64, bytes as i64, serde_json::to_string(&d.errors).map_err(|e| e.to_string())?, (!note.is_empty()).then(|| note.join("；")), at],
+        "UPDATE backup_runs SET status = ?2, tasks = ?3, files = ?4, bytes = ?5, errors = ?6, note = ?7, finished_at = ?8 WHERE id = ?1",
+        params![id, status, run_tasks(tops, d.ok), files as i64, bytes as i64, serde_json::to_string(&d.errors).map_err(|e| e.to_string())?, (!note.is_empty()).then(|| note.join("；")), at],
     )
     .map(|_| ())
     .map_err(crate::modules::common::err)
@@ -111,9 +424,8 @@ pub(super) fn record_end(c: &Connection, id: i64, p: &Progress, d: &Done) -> Res
 pub(super) fn ended_text(p: &Progress, d: &Done) -> String {
     let (files, bytes, deletes, renames) = (p.files.load(Ordering::Relaxed), p.bytes.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed), p.renames.load(Ordering::Relaxed));
     let moved = if files > 0 { format!("传了 {files} 个（{}）", super::gb(bytes)) } else { String::new() };
-    let renamed = if renames > 0 { format!("在 PikPak 上挪了 {renames} 个") } else { String::new() };
     let head = if d.too_many_deletes {
-        format!("要挪进 PikPak 回收站的超过 {} 个，先停下了", rclone::MAX_DELETE)
+        "要挪进 ARCHIVE 的比对出来的多，先停下了：点「重新对比」再看看".into()
     } else if let Some(f) = &d.fatal {
         f.clone()
     } else if d.stopped {
@@ -121,141 +433,38 @@ pub(super) fn ended_text(p: &Progress, d: &Done) -> String {
     } else if d.ok && files == 0 && deletes == 0 && renames == 0 {
         "和硬盘上一样".into()
     } else if d.ok {
-        [moved, renamed, if deletes > 0 { format!("挪进回收站 {deletes} 个") } else { String::new() }].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("，")
+        let renamed = if renames > 0 { format!("在 PikPak 上挪了 {renames} 个") } else { String::new() };
+        let archived = if deletes > 0 { format!("挪进 ARCHIVE {deletes} 个") } else { String::new() };
+        format!("同步好了：{}", [moved, renamed, archived].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("，"))
     } else {
         format!("没传完{}", if moved.is_empty() { String::new() } else { format!("：{moved}") })
     };
     if d.errors.is_empty() { head } else { format!("{head}；{} 个没成", d.errors.len()) }
 }
 
-// ---- when ----
-
-/// Starts a sync when it may (or asks for one more after the running one).
-pub fn kick(app: &AppHandle) {
-    let j = app.state::<Janitor>().inner().clone();
-    if j.backup.cloud.running() {
-        j.backup.cloud.again.store(true, Ordering::SeqCst);
-        return;
-    }
-    start(app, false);
-}
-
-/// The drive came back: 停下 no longer holds.
-pub fn plugged(app: &AppHandle) {
-    app.state::<Janitor>().backup.cloud.paused.store(false, Ordering::SeqCst);
-    kick(app);
-}
-
-/// A backup run starts: the sync gives way and starts again after.
-pub fn yield_to_backup(j: &Janitor) {
-    if j.backup.cloud.running() {
-        j.backup.cloud.yielded.store(true, Ordering::SeqCst);
-        stop_now(j);
-    }
-}
-
-/// A backup run ended: carry on.
-pub fn after_backup(app: &AppHandle) {
-    app.state::<Janitor>().backup.cloud.yielded.store(false, Ordering::SeqCst);
-    kick(app);
-}
-
-fn stop_now(j: &Janitor) {
-    if let Ok(r) = j.backup.cloud.run.lock() {
-        r.kill();
-    }
-}
-
-/// Why a sync can't start now (None: it can).
-fn blocked(j: &Janitor, s: &Settings) -> Option<&'static str> {
-    let c = &j.backup.cloud;
-    if s.pikpak.account.is_none() {
-        Some("没登录")
-    } else if drive_of(j, s).is_none() {
-        Some("没插硬盘")
-    } else if j.backup.running() || c.yielded.load(Ordering::SeqCst) {
-        Some("正在备份")
-    } else if c.paused.load(Ordering::SeqCst) {
-        Some("停下了")
-    } else if c.held.load(Ordering::SeqCst) {
-        Some("等你确认")
-    } else if rclone::binary().is_none() {
-        Some("没装 rclone")
-    } else {
-        None
-    }
-}
-
-/// Syncs in the background, again while something changed meanwhile. `force`: past the deletion limit.
-fn start(app: &AppHandle, force: bool) {
-    let j = app.state::<Janitor>().inner().clone();
-    if blocked(&j, &load(&app.state::<AppState>())).is_some() || j.backup.cloud.running.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let mut force = force;
-        loop {
-            let st = app.state::<AppState>();
-            let s = load_now(&st, &j);
-            if blocked(&j, &s).is_some() {
-                break;
-            }
-            j.backup.cloud.again.store(false, Ordering::SeqCst);
-            once(&st, &j, &s, force);
-            force = false;
-            if !j.backup.cloud.again.load(Ordering::SeqCst) {
-                break;
-            }
-        }
-        j.backup.cloud.running.store(false, Ordering::SeqCst);
-        // a backup run that started meanwhile hands back when it ends
-    });
-}
-
-/// One sync, recorded.
-fn once(st: &AppState, j: &Janitor, s: &Settings, force: bool) {
-    let Some(drive) = drive_of(j, s) else { return };
-    let p = Arc::new(Progress::new());
-    if let Ok(mut g) = j.backup.cloud.run.lock() {
-        *g = p.clone();
-    }
-    if let Ok(mut g) = j.backup.cloud.ended.lock() {
-        *g = None;
-    }
-    let rc = match rclone_of(st, j) {
-        Ok(r) => r,
-        Err(e) => {
-            if let Ok(mut g) = j.backup.cloud.ended.lock() {
-                *g = Some(e);
-            }
-            return;
-        }
-    };
-    let id = st.youzi.with_db(|c| record_start(c, &drive.name)).ok();
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &kept_out(s, &top_folders(&drive)), s.pikpak.limit, force, &local_day(st), &p);
-    if let Some(id) = id {
-        let _ = st.youzi.with_db(|c| record_end(c, id, &p, &d));
-    }
-    j.backup.cloud.held.store(d.too_many_deletes, Ordering::SeqCst);
-    if !d.stopped {
-        if let Ok(q) = rc.about() {
-            if let Ok(mut g) = j.backup.cloud.quota.lock() {
-                *g = Some(q);
-            }
-        }
-    }
-    if let Ok(mut g) = j.backup.cloud.ended.lock() {
-        *g = Some(ended_text(&p, &d));
-    }
-}
-
-/// The App quits: rclone goes too (the next sync carries on).
-pub fn on_exit(app: &AppHandle) {
-    stop_now(app.state::<Janitor>().inner());
-}
-
 // ---- what the page gets ----
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudDiffView {
+    pub same: u64,
+    pub same_bytes: u64,
+    pub new: Group<Item>,
+    pub changed: Group<Item>,
+    pub moved: Group<diff::Move>,
+    pub extra: Group<Item>,
+}
+
+/// A picked drive folder on the PikPak side.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudFolder {
+    pub name: String,
+    /// When a sync of it last went through.
+    pub last: Option<String>,
+    /// How it compares (None: not yet).
+    pub diff: Option<CloudDiffView>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -266,7 +475,9 @@ pub struct PikPakView {
     pub folder: String,
     pub limit: u32,
     pub running: bool,
-    /// Comparing the two sides before uploading.
+    /// The running sync's folders.
+    pub syncing: Vec<String>,
+    /// rclone still comparing before it uploads.
     pub checking: bool,
     pub bytes: u64,
     pub total_bytes: u64,
@@ -278,27 +489,59 @@ pub struct PikPakView {
     pub current: Vec<String>,
     /// How the last sync ended (this session).
     pub ended: Option<String>,
-    /// Why none runs now.
+    /// Syncs ended this session (a new one: pop `ended`).
+    pub ends: u64,
+    /// Why none can run now.
     pub waiting: Option<String>,
-    /// Too many deletions: 照样同步 lets it go on.
-    pub held: bool,
     pub used: Option<u64>,
     pub total: Option<u64>,
+    /// Comparing with PikPak now.
+    pub comparing: bool,
+    pub compared_at: Option<i64>,
+    /// The PikPak folder isn't there yet (a sync makes it).
+    pub missing: bool,
+    /// The comparison didn't go through.
+    pub error: Option<String>,
+    /// The picked drive folders (the drive in).
+    pub folders: Vec<CloudFolder>,
 }
 
-pub fn view(j: &Janitor, s: &Settings) -> PikPakView {
+pub fn view(j: &Janitor, s: &Settings, runs: &[RunRow]) -> PikPakView {
     let c = &j.backup.cloud;
     let p = c.run.lock().map(|g| g.clone()).unwrap_or_default();
     let running = c.running();
     let quota = c.quota.lock().ok().and_then(|g| *g);
-    let n = |a: &std::sync::atomic::AtomicU64| a.load(Ordering::Relaxed);
-    let drive = s.drive.as_ref().map(|d| d.name.clone()).unwrap_or_default();
+    let n = |a: &AtomicU64| a.load(Ordering::Relaxed);
+    let drive = drive_of(j, s);
+    let name = s.drive.as_ref().map(|d| d.name.clone()).unwrap_or_default();
+    let tops = drive.as_ref().map(|d| picked_on(s, d)).unwrap_or_default();
+    let snap = drive.as_ref().and_then(|d| {
+        let key = key_of(s, d, &tops);
+        c.snap.lock().ok().and_then(|g| g.clone()).filter(|sn| sn.key == key)
+    });
+    let last = |t: &str| runs.iter().filter(|r| r.dest == "pikpak").find(|r| r.tasks.iter().any(|x| x.done && diff::nfc(&x.target) == diff::nfc(t))).and_then(|r| r.finished_at.clone());
+    let folders = tops
+        .iter()
+        .map(|t| CloudFolder {
+            name: t.clone(),
+            last: last(t),
+            diff: snap.as_ref().filter(|sn| sn.error.is_none()).and_then(|sn| sn.per.get(&diff::nfc(t))).map(|d| CloudDiffView {
+                same: d.same,
+                same_bytes: d.same_bytes,
+                new: group(&d.new, |r| r.size),
+                changed: group(&d.changed, |r| r.size),
+                moved: group(&d.moved, |m| m.size),
+                extra: group(&d.extra, |r| r.size),
+            }),
+        })
+        .collect();
     PikPakView {
         installed: rclone::binary().is_some(),
         account: s.pikpak.account.clone(),
-        folder: s.pikpak.folder_for(&drive),
+        folder: s.pikpak.folder_for(&name),
         limit: s.pikpak.limit,
         running,
+        syncing: if running { c.tops.lock().map(|g| g.clone()).unwrap_or_default() } else { vec![] },
         checking: running && p.checking.load(Ordering::Relaxed),
         bytes: n(&p.bytes),
         total_bytes: n(&p.total_bytes),
@@ -309,25 +552,33 @@ pub fn view(j: &Janitor, s: &Settings) -> PikPakView {
         eta: n(&p.eta),
         current: if running { p.current.lock().map(|g| g.clone()).unwrap_or_default() } else { vec![] },
         ended: c.ended.lock().ok().and_then(|g| g.clone()),
+        ends: c.ends.load(Ordering::SeqCst),
         waiting: if running { None } else { blocked(j, s).map(str::to_string) },
-        held: c.held.load(Ordering::SeqCst),
         used: quota.map(|q| q.0),
         total: quota.map(|q| q.1),
+        comparing: c.comparing.load(Ordering::SeqCst),
+        compared_at: snap.as_ref().map(|sn| sn.at),
+        missing: snap.as_ref().is_some_and(|sn| sn.missing),
+        error: snap.as_ref().and_then(|sn| sn.error.clone()),
+        folders,
     }
 }
 
-/// The page's line about PikPak for the Agent (look.rs).
+/// The page's lines about PikPak for the Agent (look.rs).
 pub fn situation(j: &Janitor, s: &Settings) -> String {
     if s.pikpak.account.is_none() {
         return "PikPak 还没登录。\n".into();
     }
-    let v = view(j, s);
+    let v = view(j, s, &[]);
     let now = if v.running {
-        format!("正在同步（{} / {} 个，{} / {}）", v.files, v.total_files, super::gb(v.bytes), super::gb(v.total_bytes))
+        format!("正在同步 {}（{} / {} 个，{} / {}）", v.syncing.join("、"), v.files, v.total_files, super::gb(v.bytes), super::gb(v.total_bytes))
+    } else if v.comparing {
+        "正在和 PikPak 对比".into()
     } else {
-        v.ended.clone().or(v.waiting.clone()).unwrap_or_else(|| "还没同步过".into())
+        let todo: Vec<String> = v.folders.iter().filter_map(|f| f.diff.as_ref().map(|d| (f, d))).filter(|(_, d)| d.new.count + d.changed.count + d.moved.count + d.extra.count > 0).map(|(f, d)| format!("{} 要传 {} 个、在 PikPak 上挪 {} 个、挪进 ARCHIVE {} 个", f.name, d.new.count + d.changed.count, d.moved.count, d.extra.count)).collect();
+        v.error.clone().or(v.waiting.clone()).unwrap_or_else(|| if todo.is_empty() { "勾了的都和硬盘上一样".into() } else { todo.join("；") })
     };
-    format!("PikPak：硬盘上清单里勾了的（VAULT 除外）同步到 PikPak 的「{}」，程序自己传，硬盘上删了的进 PikPak 回收站；现在：{now}。\n", v.folder)
+    format!("PikPak：硬盘上清单里勾了的文件夹，用户点「开始同步」才同步到 PikPak 的「{}」（和硬盘一样；PikPak 上多的、被换掉的旧的挪进那里的 ARCHIVE，不删）；现在：{now}。\n", v.folder)
 }
 
 // ---- commands ----
@@ -336,14 +587,24 @@ fn overview(state: &AppState, janitor: &Janitor) -> Result<super::Overview, Stri
     super::overview_now(state, janitor)
 }
 
-/// 登录: logs in (rclone checks it at once), remembers the account, syncs.
+/// The PikPak folder as kept (the drive's name: empty).
+fn folder_setting(s: &Settings, folder: &str) -> Result<String, String> {
+    let drive = s.drive.as_ref().map(|d| d.name.clone()).unwrap_or_default();
+    let folder = rclone::folder_of(folder)?;
+    Ok(if folder == drive { String::new() } else { folder })
+}
+
+/// 登录: logs in (rclone checks it at once), remembers the account and the folder, compares.
 #[tauri::command]
-pub async fn janitor_pikpak_login(app: AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, account: String, password: String) -> Result<super::Overview, String> {
+pub async fn janitor_pikpak_login(app: AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, account: String, password: String, folder: String) -> Result<super::Overview, String> {
     let account = account.trim().to_string();
     if account.is_empty() || password.is_empty() {
         return Err("要写 PikPak 的账号和密码".into());
     }
-    stop_now(&janitor);
+    if janitor.backup.cloud.running() {
+        return Err("正在同步，先停下".into());
+    }
+    let folder = folder_setting(&load(&state), &folder)?;
     let j = janitor.inner().clone();
     // the config's password: the keychain's, or a new one kept there first (sandbox: rclone.rs's own)
     let pass = if j.mode == Mode::Real {
@@ -366,16 +627,18 @@ pub async fn janitor_pikpak_login(app: AppHandle, state: State<'_, AppState>, ja
     }
     let mut s = load(&state);
     s.pikpak.account = Some(account);
+    s.pikpak.folder = folder;
     store_settings(&state, &s)?;
-    janitor.backup.cloud.held.store(false, Ordering::SeqCst);
-    kick(&app);
+    compare_later(&app);
     overview(&state, &janitor)
 }
 
-/// 退出登录: the sync stops, rclone's config goes, and its password with it.
+/// 退出登录: rclone's config goes, and its password with it (PikPak's files stay).
 #[tauri::command]
 pub async fn janitor_pikpak_logout(state: State<'_, AppState>, janitor: State<'_, Janitor>) -> Result<super::Overview, String> {
-    stop_now(&janitor);
+    if janitor.backup.cloud.running() {
+        return Err("正在同步，先停下".into());
+    }
     if let Ok(rc) = rclone_of(&state, &janitor) {
         rc.logout();
     }
@@ -388,51 +651,66 @@ pub async fn janitor_pikpak_logout(state: State<'_, AppState>, janitor: State<'_
     if let Ok(mut g) = janitor.backup.cloud.quota.lock() {
         *g = None;
     }
+    if let Ok(mut g) = janitor.backup.cloud.snap.lock() {
+        *g = None;
+    }
     overview(&state, &janitor)
 }
 
-/// The PikPak folder and the upload limit (a running sync starts again with them).
+/// The PikPak folder and the upload limit.
 #[tauri::command]
 pub async fn janitor_pikpak_set(app: AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, folder: String, limit: u32) -> Result<super::Overview, String> {
+    if janitor.backup.cloud.running() {
+        return Err("正在同步，先停下再改".into());
+    }
     let mut s = load(&state);
-    let drive = s.drive.as_ref().map(|d| d.name.clone()).unwrap_or_default();
-    let folder = rclone::folder_of(&folder)?;
-    s.pikpak.folder = if folder == drive { String::new() } else { folder };
+    s.pikpak.folder = folder_setting(&s, &folder)?;
     s.pikpak.limit = limit.min(1000);
     store_settings(&state, &s)?;
-    if janitor.backup.cloud.running() {
-        // the sync's loop goes round again, with these
-        janitor.backup.cloud.again.store(true, Ordering::SeqCst);
-        stop_now(&janitor);
-    }
-    kick(&app);
+    compare_when_due(&app);
     overview(&state, &janitor)
 }
 
-/// 停下: stops the sync; none starts until the drive comes back or 接着传.
+/// 开始同步: the folders I ticked (their names).
+#[tauri::command]
+pub async fn janitor_pikpak_start(app: AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, tops: Vec<String>) -> Result<super::Overview, String> {
+    start(&app, &tops)?;
+    overview(&state, &janitor)
+}
+
+/// 停下: stops the sync (it doesn't carry on by itself).
 #[tauri::command]
 pub fn janitor_pikpak_stop(janitor: State<'_, Janitor>) {
-    janitor.backup.cloud.paused.store(true, Ordering::SeqCst);
-    janitor.backup.cloud.again.store(false, Ordering::SeqCst);
+    if let Ok(mut g) = janitor.backup.cloud.resume.lock() {
+        *g = None;
+    }
     stop_now(&janitor);
 }
 
-/// 接着传 (`force`: 照样同步, past the deletion limit once).
-#[tauri::command]
-pub async fn janitor_pikpak_go(app: AppHandle, state: State<'_, AppState>, janitor: State<'_, Janitor>, force: bool) -> Result<super::Overview, String> {
-    janitor.backup.cloud.paused.store(false, Ordering::SeqCst);
-    if force {
-        janitor.backup.cloud.held.store(false, Ordering::SeqCst);
-    }
-    start(&app, force);
-    overview(&state, &janitor)
-}
-
 #[cfg(test)]
-pub(super) fn sync_for_test(j: &Janitor, s: &Settings, force: bool) -> (Arc<Progress>, Done) {
+pub(super) fn sync_for_test(j: &Janitor, s: &Settings, tops: &[&str], max: u64) -> (Arc<Progress>, Done) {
     let drive = drive_of(j, s).expect("the fake drive");
     let p = Arc::new(Progress::new());
     let rc = Rclone::new(j, None).expect("rclone");
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &kept_out(s, &top_folders(&drive)), s.pikpak.limit, force, "2026-11-25", &p);
+    let tops: Vec<String> = tops.iter().map(|t| t.to_string()).collect();
+    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &tops, s.pikpak.limit, max, "2026-11-25", &p);
     (p, d)
+}
+
+#[cfg(test)]
+pub(super) fn compare_for_test(j: &Janitor, s: &Settings) -> CloudSnap {
+    compare_with(j, s, &Rclone::new(j, None).expect("rclone")).expect("logged in, the drive in")
+}
+
+#[cfg(test)]
+impl CloudSnap {
+    pub fn per(&self) -> &BTreeMap<String, CloudDiff> {
+        &self.per
+    }
+    pub fn missing(&self) -> bool {
+        self.missing
+    }
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }

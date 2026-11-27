@@ -57,8 +57,8 @@ pub fn tools() -> Vec<Value> {
     let items = |props: Value, req: Value| json!({ "type": "array", "items": { "type": "object", "properties": props, "required": req } });
     vec![
         json!({ "type": "function", "function": { "name": BACKUP, "description": "看备份（只读，只看名字、大小、修改时间，看不到文件内容）。硬盘上的路径都相对移动硬盘的根目录写。", "parameters": { "type": "object", "properties": {
-            "view": { "type": "string", "enum": ["overview", "diff", "drive", "compare"], "description": "overview 移动硬盘、清单、每个任务的对比和程序对出来的线索；diff 一个任务对比出来的一组；drive 移动硬盘上一个文件夹里有什么；compare 电脑上一个文件夹和硬盘上一个文件夹比一比（不改任何东西）" },
-            "task": { "type": "integer", "description": "diff：任务的编号" },
+            "view": { "type": "string", "enum": ["overview", "diff", "drive", "compare"], "description": "overview 移动硬盘、清单、每个勾了的 Downloads 文件夹的对比和程序对出来的线索；diff 一个文件夹对比出来的一组；drive 移动硬盘上一个文件夹里有什么；compare 电脑上一个文件夹和硬盘上一个文件夹比一比（不改任何东西）" },
+            "task": { "type": "integer", "description": "diff：文件夹的编号（「现在的情况」里 # 后面的数）" },
             "group": { "type": "string", "enum": ["new", "changed", "moved", "held", "recent", "archived"], "description": "diff：new 新加的、changed 改过的、moved 改名或挪了的、held 不覆盖的、recent 电脑上刚删的、archived 只在硬盘上的" },
             "path": s("drive：硬盘上的文件夹（相对根目录，空是根目录）"),
             "mac": s("compare：电脑上的文件夹（完整路径，可以用 ~）"),
@@ -67,10 +67,6 @@ pub fn tools() -> Vec<Value> {
         json!({ "type": "function", "function": { "name": cards::MOVE, "description": "提议在移动硬盘上改名或挪位置（用户勾了、点了才做；不复制、不删；挪空的旧文件夹会删掉）。整个文件夹改了名就提这个文件夹，不用一个个文件提。", "parameters": { "type": "object", "properties": {
             "title": s("这张卡片说什么，如「照片里改了名的文件夹」"),
             "items": items(json!({ "from": s("硬盘上现在的路径（相对根目录）"), "to": s("改成的路径（相对根目录，照电脑上的名字和位置）"), "why": s("为什么") }), json!(["from", "to", "why"]))
-        }, "required": ["items"] } } }),
-        json!({ "type": "function", "function": { "name": cards::TRASH, "description": "提议把移动硬盘上重复的文件或文件夹移到硬盘的废纸篓（用户勾了、点了才移；清空废纸篓前还能放回去）。只给别处有一模一样一份的；任务的硬盘文件夹本身不行。", "parameters": { "type": "object", "properties": {
-            "title": s("这张卡片说什么，如「重复的旧照片」"),
-            "items": items(json!({ "path": s("硬盘上的路径（相对根目录）"), "why": s("为什么能删：一样的那份在哪") }), json!(["path", "why"]))
         }, "required": ["items"] } } }),
     ]
 }
@@ -97,34 +93,39 @@ fn counts(d: &Diff) -> String {
     if parts.is_empty() { "两边都是空的".into() } else { parts.join(" · ") }
 }
 
+/// The counts the situation gives (what only the drive has is archived: not said).
+fn counts_kept(d: &Diff) -> String {
+    let parts: Vec<String> = [("一样", d.same as usize), ("新加", d.new.len()), ("改过", d.changed.len()), ("改名或挪了", d.moved.len()), ("不覆盖", d.held.len())].iter().filter(|(_, n)| *n > 0).map(|(k, n)| format!("{k} {n}")).collect();
+    if parts.is_empty() { "电脑上是空的".into() } else { parts.join(" · ") }
+}
+
 /// The backup part of the Agent's 现在的情况.
 pub fn situation(j: &Janitor, s: &Settings) -> String {
     let Some(d) = &s.drive else { return "还没选移动硬盘（用户在「备份」页选）。\n".into() };
-    let Some(v) = drive_of(j, s) else { return format!("移动硬盘「{}」没插上。{}\n", d.name, if s.tasks.is_empty() { "清单里还没勾「下载」里的文件夹。".to_string() } else { format!("有 {} 个任务。", s.tasks.len()) }) };
-    let mut out = format!("移动硬盘「{}」插着（{}，共 {}，还剩 {}）。硬盘上的路径都相对它的根目录写；「旧版」是放被覆盖的旧版本的地方，由用户自己清。\n", v.name, v.fs, gb(v.total), gb(v.free));
-    out.push_str("备份清单（硬盘最上一层和「下载」里的文件夹，用户勾上的才备份；只有用户能勾）：「下载」里勾上的文件夹备份到硬盘上同名的文件夹（一个任务）；只在硬盘上、勾上的留在备份里（柚子看、PikPak 传）；没勾的不备份，不对比、不提议。\n");
+    let Some(v) = drive_of(j, s) else { return format!("移动硬盘「{}」没插上。{}\n", d.name, if s.tasks.is_empty() { "清单里还没勾 Downloads 里的文件夹。".to_string() } else { format!("勾了 {} 个 Downloads 里的文件夹。", s.tasks.len()) }) };
+    let mut out = format!("移动硬盘「{}」插着（{}，共 {}，还剩 {}）。硬盘上的路径都相对它的根目录写；「{}」是用户放归档和被覆盖的旧版本的地方，不在备份里，不提议动它。\n", v.name, v.fs, gb(v.total), gb(v.free), super::copy::OLD);
+    out.push_str("备份清单（硬盘最上一层和 Downloads 里的文件夹，用户勾上的才备份；只有用户能勾）：Downloads 里勾上的文件夹备份到硬盘上同名的文件夹；只在硬盘上、勾上的留在备份里（PikPak 传）；没勾的不备份，不对比、不提议。只在硬盘上的（整个文件夹，或勾了的文件夹里只在硬盘上的文件）都是归档：留着，不提议，也不用说。\n");
     let (tops, mac) = (super::top_folders(&v), super::mac_folders(j));
     let only_drive: Vec<&String> = tops.iter().filter(|t| super::is_picked(s, t) && !mac.iter().any(|m| diff::nfc(m) == diff::nfc(t))).collect();
     let not: Vec<String> = tops.iter().chain(mac.iter().filter(|m| !tops.iter().any(|t| diff::nfc(t) == diff::nfc(m)))).filter(|t| !super::is_picked(s, t)).cloned().collect();
     if !only_drive.is_empty() {
-        out.push_str(&format!("勾了、只在硬盘上的：{}\n", only_drive.iter().map(|t| t.as_str()).collect::<Vec<_>>().join("、")));
+        out.push_str(&format!("勾了、只在硬盘上的（归档）：{}\n", only_drive.iter().map(|t| t.as_str()).collect::<Vec<_>>().join("、")));
     }
     if !not.is_empty() {
         out.push_str(&format!("没勾的（不备份）：{}\n", not.join("、")));
     }
     let snap = super::fresh_snapshot(j, s);
     if s.tasks.is_empty() {
-        out.push_str("清单里还没勾「下载」里的文件夹，没有任务。\n");
+        out.push_str("清单里还没勾 Downloads 里的文件夹。\n");
     } else {
-        out.push_str("任务（「下载」里的文件夹 → 硬盘上同名的文件夹）：\n");
+        out.push_str("勾了的 Downloads 文件夹（→ 硬盘上同名的文件夹；只在硬盘上的不算）：\n");
         for t in &s.tasks {
             let state = match snap.as_ref().and_then(|sn| sn.diffs.get(&t.id)) {
-                Some(Ok(d)) => counts(d),
+                Some(Ok(d)) => counts_kept(d),
                 Some(Err(e)) => format!("没对成：{e}"),
                 None => "正在对比".into(),
             };
-            let ex = if t.excludes.is_empty() { String::new() } else { format!("（另外不备份：{}）", t.excludes.join("、")) };
-            out.push_str(&format!("- #{} {} → {}{ex}：{state}\n", t.id, tilde(&j.home, &t.source), t.target));
+            out.push_str(&format!("- #{} {}：{state}\n", t.id, tilde(&j.home, &t.source)));
         }
     }
     match snap.as_ref().and_then(|sn| sn.hints.as_ref()) {
@@ -172,21 +173,21 @@ pub fn tool_with(j: &Janitor, s: &Settings, args: &str, budget: i64) -> Answer {
     let Some(dv) = drive_of(j, s) else { return answer("备份 · 没看成", false, "没看成：移动硬盘没插上") };
     let r: Result<(String, String), String> = (|| match view {
         "diff" => {
-            let id = v["task"].as_i64().ok_or("要写 task（任务的编号）")?;
-            let t = s.tasks.iter().find(|t| t.id == id).ok_or(format!("没有任务 #{id}"))?;
+            let id = v["task"].as_i64().ok_or("要写 task（文件夹的编号）")?;
+            let t = s.tasks.iter().find(|t| t.id == id).ok_or(format!("没有 #{id}"))?;
             let sn = fresh(j, s).ok_or("还没对比完，等一下再看")?;
             let d = sn.diffs.get(&id).ok_or("还没对比完")?.as_ref().map_err(|e| e.clone())?;
             let group = v["group"].as_str().unwrap_or("new");
             let row = |r: &diff::Row| (r.path.clone(), r.size, r.mtime);
             let (name, body) = match group {
-                "changed" => ("改过的（电脑上的更新，硬盘上那份会挪进旧版）", rows_text(&d.changed.iter().map(row).collect::<Vec<_>>(), d.changed.len())),
+                "changed" => ("改过的（电脑上的更新，硬盘上那份会挪进 ARCHIVE）", rows_text(&d.changed.iter().map(row).collect::<Vec<_>>(), d.changed.len())),
                 "moved" => ("改名或挪了的（硬盘上的 → 电脑上的）", d.moved.iter().take(ROWS).map(|m| format!("- {} → {} · {}\n", m.from, m.to, gb(m.size))).collect::<String>() + &if d.moved.len() > ROWS { format!("（还有 {} 个没列）\n", d.moved.len() - ROWS) } else { String::new() }),
                 "held" => ("不覆盖的", d.held.iter().take(ROWS).map(|h| format!("- {} · {} · {}\n", h.path, gb(h.size), h.why)).collect()),
                 "recent" => ("电脑上刚删的（上次备份时电脑上还有）", rows_text(&d.recent.iter().map(row).collect::<Vec<_>>(), d.recent.len())),
-                "archived" => ("只在硬盘上的", rows_text(&d.archived.iter().map(row).collect::<Vec<_>>(), d.archived.len())),
+                "archived" => ("只在硬盘上的（归档）", rows_text(&d.archived.iter().map(row).collect::<Vec<_>>(), d.archived.len())),
                 _ => ("新加的", rows_text(&d.new.iter().map(row).collect::<Vec<_>>(), d.new.len())),
             };
-            Ok((format!("备份 · 任务 #{id} 的{}", name.split('（').next().unwrap_or(name)), format!("任务 #{id} {} → {}：{}\n{name}：\n{body}", tilde(&j.home, &t.source), t.target, counts(d))))
+            Ok((format!("备份 · {} 的{}", t.target, name.split('（').next().unwrap_or(name)), format!("#{id} {} → 硬盘上的 {}：{}\n{name}：\n{body}", tilde(&j.home, &t.source), t.target, counts(d))))
         }
         "drive" => {
             let rel = v["path"].as_str().unwrap_or("").trim().trim_matches('/').to_string();
@@ -215,7 +216,7 @@ pub fn tool_with(j: &Janitor, s: &Settings, args: &str, budget: i64) -> Answer {
             dl.sort_by(|a, b| b.1 .1.cmp(&a.1 .1).then(a.0.cmp(&b.0)));
             for (name, (n, b, t)) in dl.iter().take(ROWS) {
                 let note = if rel.is_empty() && name == super::copy::OLD {
-                    " · 放被覆盖的旧版本（用户自己清，不提议）"
+                    " · 归档和被覆盖的旧版本（不在备份里，不提议）"
                 } else if rel.is_empty() && !super::is_picked(s, name) {
                     " · 清单里没勾（不备份，不提议）"
                 } else {
@@ -236,9 +237,8 @@ pub fn tool_with(j: &Janitor, s: &Settings, args: &str, budget: i64) -> Answer {
             if rel.is_empty() || rel.split('/').any(|p| p == ".." || p.starts_with('.')) {
                 return Err("硬盘上的文件夹不对".into());
             }
-            let skip = Skip { extra: s.tasks.iter().find(|t| t.source == mac).map(|t| t.excludes.clone()).unwrap_or_default() };
             let stop = AtomicBool::new(false);
-            let (m, d) = (diff::list(&j.real_of(&mac), &skip, &stop)?, diff::list(&dv.path.join(&rel), &Skip::default(), &stop)?);
+            let (m, d) = (diff::list(&j.real_of(&mac), &Skip::default(), &stop)?, diff::list(&dv.path.join(&rel), &Skip::default(), &stop)?);
             if m.files.is_empty() && m.dirs.is_empty() {
                 return Err(format!("电脑上的 {} 是空的或者不在", tilde(&j.home, &mac)));
             }
@@ -274,7 +274,7 @@ fn fingerprint(sn: &super::Snapshot) -> String {
 }
 
 pub fn question(drive: &str) -> String {
-    format!("{MARK}移动硬盘「{drive}」插上了，两边对完了一遍。照「现在的情况」里备份的部分看一眼差异：该在硬盘上改名或挪的（包括让硬盘上的名字和「下载」里的一样）、该把重复的移到硬盘的废纸篓的，各提议卡片；「下载」里没在清单里勾的说一句，要备份叫用户去清单里勾；只在硬盘上、像是归档的说一句留着就行，不用提议；拿不准的写出来让用户定。回答简短。")
+    format!("{MARK}移动硬盘「{drive}」插上了，两边对完了一遍。照「现在的情况」里备份的部分看一眼差异：该在硬盘上改名或挪的（包括让硬盘上的名字和 Downloads 里的一样）提议卡片；Downloads 里没在清单里勾的说一句，要备份叫用户去清单里勾；只在硬盘上的都是归档，不用提；拿不准的写出来让用户定。回答简短。")
 }
 
 /// Asks the Agent to look (when the clues changed since the last look, or `force`). Ok(false): nothing asked.
@@ -363,18 +363,9 @@ pub fn mock_calls(system: &str) -> Vec<crate::youzi::provider::ToolCall> {
     use crate::youzi::provider::ToolCall;
     let call = |id: String, name: &str, args: Value| ToolCall { id, name: name.into(), arguments: args.to_string() };
     let mut out = vec![call("b0".into(), BACKUP, json!({ "view": "overview" }))];
-    let (mut moves, mut trash) = (Vec::new(), Vec::new());
-    for s in Suggest::all_in(system) {
-        match s {
-            Suggest::Rename { from, to } => moves.push(json!({ "from": from, "to": to, "why": "（模拟）电脑上改了名" })),
-            Suggest::Trash { path } => trash.push(json!({ "path": path, "why": "（模拟）别处有一模一样的一份" })),
-        }
-    }
+    let moves: Vec<Value> = Suggest::all_in(system).into_iter().map(|Suggest::Rename { from, to }| json!({ "from": from, "to": to, "why": "（模拟）电脑上改了名" })).collect();
     if !moves.is_empty() {
         out.push(call("bm".into(), cards::MOVE, json!({ "title": "改了名的文件夹", "items": moves })));
-    }
-    if !trash.is_empty() {
-        out.push(call("bx".into(), cards::TRASH, json!({ "title": "硬盘里重复的", "items": trash })));
     }
     out
 }

@@ -1,7 +1,7 @@
 //! A backup task's two folders side by side (requirements「DevJanitor › 备份」): names and metadata only
 //! (lstat; never a file's bytes). Keys are relative paths in NFC (Mac OS 扩展 stores names decomposed, APFS as
 //! typed); times compare to the second (HFS+ keeps seconds). VAULT and the junk below are never listed.
-//! - same: size equal, mtime within 1 s. changed: the Mac's is newer → copied, the drive's goes to 旧版.
+//! - same: size equal, mtime within 1 s. changed: the Mac's is newer → copied, the drive's goes to ARCHIVE.
 //!   held: the drive's is newer, or the name is a folder there → never overwritten.
 //! - moved: a Mac-only file with the size and mtime of a drive-only one (same name first) → renamed on the
 //!   drive when I say so; never copied again.
@@ -50,49 +50,30 @@ pub fn nfc(s: &str) -> String {
     objc2_foundation::NSString::from_str(s).precomposedStringWithCanonicalMapping().to_string()
 }
 
-/// `*` matches any run of characters; case doesn't matter.
-pub fn glob(pat: &str, name: &str) -> bool {
-    let (p, n): (Vec<char>, Vec<char>) = (pat.to_lowercase().chars().collect(), name.to_lowercase().chars().collect());
-    let (mut pi, mut ni, mut star, mut mark) = (0, 0, None, 0);
-    while ni < n.len() {
-        if pi < p.len() && p[pi] != '*' && p[pi] == n[ni] {
-            pi += 1;
-            ni += 1;
-        } else if pi < p.len() && p[pi] == '*' {
-            star = Some(pi);
-            mark = ni;
-            pi += 1;
-        } else if let Some(s) = star {
-            pi = s + 1;
-            mark += 1;
-            ni = mark;
-        } else {
-            return false;
-        }
-    }
-    p[pi..].iter().all(|c| *c == '*')
-}
-
-/// What a task leaves out: VAULT, the junk, what rebuilds, and its own name patterns.
+/// What a walk leaves out: VAULT and the junk; a Mac folder (not `mirror`) also what rebuilds and files still
+/// downloading. `mirror`: the drive as PikPak gets it (rclone.rs `filters`: VAULT and the junk only).
 #[derive(Debug, Clone, Default)]
 pub struct Skip {
-    pub extra: Vec<String>,
+    pub mirror: bool,
 }
 
 impl Skip {
     /// `dir`: the real folder the entry is in.
     pub fn skips(&self, dir: &Path, name: &str, is_dir: bool) -> bool {
-        if rules::sealed_name(name) || JUNK.contains(&name) || name.starts_with(PART) || name.starts_with("~$") || name.starts_with("._") {
+        if rules::sealed_name(name) || JUNK.contains(&name) || name.starts_with(PART) || name.starts_with("._") {
+            return true;
+        }
+        if self.mirror {
+            return false;
+        }
+        if name.starts_with("~$") {
             return true;
         }
         let low = name.to_lowercase();
         if PARTIAL.iter().any(|s| low.ends_with(s)) {
             return true;
         }
-        if is_dir && (REBUILT.contains(&name) || (name == "target" && dir.join("Cargo.toml").exists()) || ((name == ".venv" || name == "venv") && dir.join(name).join("pyvenv.cfg").exists())) {
-            return true;
-        }
-        self.extra.iter().any(|p| glob(p, name))
+        is_dir && (REBUILT.contains(&name) || (name == "target" && dir.join("Cargo.toml").exists()) || ((name == ".venv" || name == "venv") && dir.join(name).join("pyvenv.cfg").exists()))
     }
 }
 

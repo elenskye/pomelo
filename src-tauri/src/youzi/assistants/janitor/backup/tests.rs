@@ -13,7 +13,7 @@ fn sandbox(name: &str) -> (TempDir, Janitor, Volume) {
 }
 
 fn task(id: i64, source: &str, target: &str) -> Task {
-    Task { id, source: format!("/Users/me/Downloads/{source}"), target: target.into(), excludes: Vec::new() }
+    Task { id, source: format!("/Users/me/Downloads/{source}"), target: target.into() }
 }
 
 fn paths<T>(v: &[T], f: impl Fn(&T) -> &str) -> Vec<String> {
@@ -40,7 +40,7 @@ fn the_fake_drive_is_found_by_its_uuid() {
 #[test]
 fn comparing_sorts_every_file_and_never_lists_vault() {
     let (_d, j, v) = sandbox("compare");
-    // 资料: one new, one newer on the Mac (the drive's goes to 旧版), two only on the drive; the Office lock file left out
+    // 资料: one new, one newer on the Mac (the drive's goes to ARCHIVE), two only on the drive; the Office lock file left out
     let d = compared(&j, &v, &task(1, "资料", "资料"));
     assert_eq!(paths(&d.new, |r| &r.path), ["2609 实习/合同.pdf"]);
     assert_eq!(paths(&d.changed, |r| &r.path), ["2609 实习/日程.xlsx"]);
@@ -89,8 +89,8 @@ fn a_run_copies_only_what_changed_and_never_deletes() {
     assert_eq!((c.len(), c.mtime()), (m.len(), m.mtime()));
     let tag = std::process::Command::new("/usr/bin/xattr").args(["-p", "com.apple.metadata:_kMDItemUserTags"]).arg(on_drive("资料/2609 实习/合同.pdf")).output().unwrap();
     assert!(String::from_utf8_lossy(&tag.stdout).contains("红色"));
-    // the old 日程 is in 旧版, the new one in its place
-    assert_eq!(std::fs::metadata(on_drive("旧版/2026-11-25/资料/2609 实习/日程.xlsx")).unwrap().len(), 16_000);
+    // the old 日程 is in ARCHIVE, the new one in its place
+    assert_eq!(std::fs::metadata(on_drive(&format!("{}/2026-11-25/资料/2609 实习/日程.xlsx", copy::OLD))).unwrap().len(), 16_000);
     assert_eq!(std::fs::metadata(on_drive("资料/2609 实习/日程.xlsx")).unwrap().len(), 15_000);
     // held, moved, archived and left-out ones untouched; nothing half-written; VAULT neither side
     assert_eq!(std::fs::metadata(on_drive("回忆/小柚/2026/d.jpg")).unwrap().mtime(), (fake_base() as i64));
@@ -166,7 +166,7 @@ fn the_list_makes_the_tasks() {
     // a fresh start ticks nothing
     let s = settled(&j, &drive);
     assert_eq!((s.picked.clone(), s.tasks.len()), (Some(vec![]), 0));
-    // the list: the drive's top folders and Downloads' (VAULT, 旧版 and hidden ones never)
+    // the list: the drive's top folders and Downloads' (VAULT, ARCHIVE and hidden ones never)
     std::fs::create_dir_all(v.path.join(copy::OLD)).unwrap();
     let rows = overview(&j, &s, Vec::new()).list;
     let row = |n: &str| rows.iter().find(|r| r.name == n).map(|r| (r.on_drive, r.on_mac, r.picked));
@@ -184,11 +184,10 @@ fn the_list_makes_the_tasks() {
         assert!(set_picked(&j, &s, name, true).unwrap_err().contains(why), "{name}");
     }
     assert!(set_picked(&j, &Settings { drive: None, ..s.clone() }, "资料", true).unwrap_err().contains("插上移动硬盘"));
-    // a task keeps its id and own excludes; unticked it goes (and is said, to forget what it held)
+    // a task keeps its id; unticked it goes (and is said, to forget what it held)
     let id = s.tasks.iter().find(|t| t.target == "资料").unwrap().id;
-    let s = set_excludes(s, id, &[" *.tmp ".into(), "".into()]).unwrap();
     let (s2, _) = set_picked(&j, &s, "回忆", false).unwrap();
-    assert_eq!(s2.tasks.iter().find(|t| t.id == id).unwrap().excludes, ["*.tmp"]);
+    assert!(s2.tasks.iter().any(|t| t.id == id));
     let (s3, gone) = set_picked(&j, &s2, "资料", false).unwrap();
     assert_eq!((gone, s3.tasks.len(), s3.picked.clone().unwrap()), (vec![id], 1, vec!["作品".to_string()]));
     // the overview says what's ticked
@@ -204,6 +203,10 @@ fn the_list_makes_the_tasks() {
     assert!(s.skipped.is_empty());
     assert_eq!(targets(&s), [(1, "小柚".to_string(), "小柚".to_string()), (2, "照片".into(), "照片".into()), (3, "资料".into(), "资料".into())]);
     assert_eq!(settled(&j, &s), s, "settled stays");
+    // settings from before 1.1.3 (a task's own names left out) still read; the names go
+    let old: Settings = serde_json::from_str(r#"{"tasks":[{"id":4,"source":"/Users/me/Downloads/照片","target":"照片","excludes":["*.tmp"]}],"nextId":4,"picked":["照片"],"pikpak":{"account":null,"folder":"","limit":0}}"#).unwrap();
+    assert_eq!((old.tasks[0].id, old.tasks[0].target.as_str()), (4, "照片"));
+    assert!(!serde_json::to_string(&old).unwrap().contains("excludes"));
     // a picked name gone from both sides goes from the list
     std::fs::rename(j.real_of("/Users/me/Downloads/小柚"), j.real_of("/Users/me/Downloads/小柚 2")).unwrap();
     let s = settled(&j, &s);
@@ -322,29 +325,27 @@ fn lines(h: &hints::Hints) -> Vec<String> {
 }
 
 #[test]
-fn clues_match_folders_renames_dups_and_archives() {
+fn clues_match_folders_and_renames() {
     let (_d, j, v) = sandbox("clues");
     let all = ["资料", "照片", "回忆", "回忆_2606", "影音"];
     // the drive's folders ticked, none of Downloads' but 资料 and 照片 (both sides): the others are only said
     let s = listed(&j, &all);
     let h = clues(&j, &s);
-    assert_eq!(lines(&h), ["在硬盘上改名 照片/其它 → 照片/其他", "移到硬盘的废纸篓 回忆_2606"]);
+    assert_eq!(lines(&h), ["在硬盘上改名 照片/其它 → 照片/其他"]);
     let small = h.folders.iter().find(|f| f.mac.ends_with("小柚")).unwrap();
     assert_eq!(small.found.iter().map(|f| (f.drive.as_str(), f.files)).collect::<Vec<_>>(), [("回忆/小柚", 2), ("回忆_2606/小柚", 1)]);
-    assert_eq!((small.task, small.note.as_deref()), (None, Some("清单里没勾（不备份）；硬盘上在 回忆/小柚")));
-    assert_eq!(h.folders.iter().find(|f| f.mac.ends_with("作品")).unwrap().note.as_deref(), Some("清单里没勾（不备份）"));
+    assert_eq!((small.task, small.note.as_deref()), (None, Some("硬盘上在 回忆/小柚")));
+    assert_eq!(h.folders.iter().find(|f| f.mac.ends_with("作品")).unwrap().note, None);
     assert!(h.folders.iter().all(|f| !f.mac.to_lowercase().contains("vault")));
     assert_eq!((h.renames[0].task, h.renames[0].files), (s.tasks.iter().find(|t| t.target == "照片").unwrap().id, 2));
-    // 回忆_2606's one file is in 回忆; 影音 is only on the drive; 旧版 and VAULT are never there
-    assert_eq!(h.dups.iter().map(|d| (d.path.as_str(), d.twin.as_deref(), d.suggest)).collect::<Vec<_>>(), [("回忆_2606", Some("回忆"), true)]);
-    assert_eq!(h.archives.iter().map(|a| a.path.as_str()).collect::<Vec<_>>(), ["影音"]);
+    // what only the drive has (影音, 回忆_2606) is archived: not said; duplicates aren't the backup's
     let text = h.text(&j.home, gb);
-    assert!(text.contains("影音（1 个") && text.contains("像是归档") && text.contains("清单里没勾") && !text.to_lowercase().contains("vault") && !text.contains(copy::OLD), "{text}");
-    // 小柚 ticked: the drive has it under 回忆, not under its own name → rename it there (the dup still goes)
+    assert!(text.contains("清单里没勾（不备份）") && !text.contains("影音") && !text.contains("回忆_2606 ") && !text.to_lowercase().contains("vault") && !text.contains(copy::OLD), "{text}");
+    // 小柚 ticked: the drive has it under 回忆, not under its own name → rename it there
     let s = listed(&j, &[&all[..], &["小柚"]].concat());
     assert!(s.tasks.iter().any(|t| t.target == "小柚"));
     let h = clues(&j, &s);
-    assert_eq!(lines(&h), ["在硬盘上改名 回忆/小柚 → 小柚", "在硬盘上改名 照片/其它 → 照片/其他", "移到硬盘的废纸篓 回忆_2606"]);
+    assert_eq!(lines(&h), ["在硬盘上改名 回忆/小柚 → 小柚", "在硬盘上改名 照片/其它 → 照片/其他"]);
     // the drive folder of its name is there but holds none of it: only said
     std::fs::create_dir_all(v.path.join("小柚")).unwrap();
     std::fs::write(v.path.join("小柚/别的.txt"), "x").unwrap();
@@ -360,7 +361,6 @@ fn a_folder_kept_out_is_left_alone() {
     // 回忆_2606 not ticked
     let s = listed(&j, &["资料", "回忆", "影音"]);
     for (name, args) in [
-        (cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })),
         (cards::MOVE, json!({ "items": [{ "from": "回忆_2606/小柚", "to": "回忆/小柚_旧", "why": "x" }] })),
         (cards::MOVE, json!({ "items": [{ "from": "影音", "to": "回忆_2606/影音", "why": "x" }] })),
         (cards::MOVE, json!({ "items": [{ "from": "回忆/小柚", "to": "小柚", "why": "x" }] })),
@@ -368,38 +368,40 @@ fn a_folder_kept_out_is_left_alone() {
         let e = build(&j, &s, name, args.clone()).unwrap_err();
         assert!(e.contains("不备份"), "{args}: {e}");
     }
-    let tr = build(&j, &listed(&j, &["资料", "回忆", "影音", "回忆_2606"]), cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] })).unwrap();
-    assert!(cards::run(&j, &s, &tr, &[0]).unwrap().1["items"][0]["error"].as_str().unwrap_or("").contains("不备份"), "kept out after the card was made");
-    assert!(v.path.join("回忆_2606").exists());
-    // the clues leave it out: no dup, no archive, only a line saying it's out
+    let mv = build(&j, &listed(&j, &["资料", "回忆", "影音", "回忆_2606"]), cards::MOVE, json!({ "items": [{ "from": "回忆_2606/小柚", "to": "回忆_2606/小柚_旧", "why": "x" }] })).unwrap();
+    assert!(cards::run(&j, &s, &mv, &[0]).unwrap().1["items"][0]["error"].as_str().unwrap_or("").contains("不备份"), "kept out after the card was made");
+    assert!(v.path.join("回忆_2606/小柚").exists());
+    // the clues leave it out, only a line saying it's out
     let h = clues(&j, &s);
-    assert!(h.dups.is_empty() && h.archives.iter().all(|a| a.path != "回忆_2606"), "{:?}", h.dups);
     assert!(h.folders.iter().all(|f| f.found.iter().all(|x| !x.drive.starts_with("回忆_2606"))));
     assert!(h.skipped.contains(&"回忆_2606".to_string()) && h.skipped.contains(&"照片".to_string()));
     let text = h.text(&j.home, gb);
-    assert!(text.contains("清单里没勾的文件夹") && text.contains("回忆_2606") && !text.contains("移到硬盘的废纸篓 回忆_2606"), "{text}");
-    // the cloud leaves it alone, both ways
-    let f = rclone::kept_out(&["回忆_2606".into(), "a*[b]".into()]);
-    assert_eq!(f, ["--filter", "- /回忆_2606/**", "--filter", "- /回忆_2606", "--filter", "- /a\\*\\[b\\]/**", "--filter", "- /a\\*\\[b\\]"]);
+    assert!(text.contains("清单里没勾的文件夹") && text.contains("回忆_2606"), "{text}");
+    // the cloud: only the ticked folders, both ways
+    let f = rclone::only(&["回忆".into(), "a*[b]".into()]);
+    assert_eq!(f, ["--filter", "+ /回忆/**", "--filter", "+ /a\\*\\[b\\]/**", "--filter", "- **"]);
     if !has_rclone() {
         return;
     }
     rclone::Rclone::new(&j, None).unwrap().login("xiaoyou@example.com", "x").unwrap();
     let cloud = rclone::fake_root(&j).join(fake::DRIVE);
-    std::fs::create_dir_all(cloud.join("回忆_2606/早先传的")).unwrap();
-    std::fs::write(cloud.join("回忆_2606/早先传的/a.txt"), "x").unwrap();
+    for f in ["回忆_2606/早先传的/a.txt", "ARCHIVE/以前的/b.txt"] {
+        std::fs::create_dir_all(cloud.join(f).parent().unwrap()).unwrap();
+        std::fs::write(cloud.join(f), "x").unwrap();
+    }
     let ps = Settings { picked: s.picked.clone(), ..with_pikpak(0) };
-    let (_, d) = pikpak::sync_for_test(&j, &ps, false);
+    assert_eq!(pikpak::picked_on(&ps, &v), ["回忆", "影音", "资料"]);
+    let (_, d) = pikpak::sync_for_test(&j, &ps, &["回忆", "影音", "资料"], 100);
     assert!(d.ok, "{d:?}");
     let up = cloud_files(&j, fake::DRIVE);
-    assert!(up.contains(&"回忆_2606/早先传的/a.txt".to_string()) && !up.contains(&"回忆_2606/小柚/2024/a.mov".to_string()) && up.contains(&"回忆/小柚/2024/a.mov".to_string()), "{up:?}");
+    assert!(up.contains(&"回忆_2606/早先传的/a.txt".to_string()) && up.contains(&"ARCHIVE/以前的/b.txt".to_string()) && !up.contains(&"回忆_2606/小柚/2024/a.mov".to_string()) && up.contains(&"回忆/小柚/2024/a.mov".to_string()), "{up:?}");
     assert!(!up.iter().any(|k| k.starts_with("照片/")), "not ticked: not up there: {up:?}");
 }
 
 #[test]
 fn suggestion_lines_read_back() {
     let home = "/Users/me";
-    for s in [hints::Suggest::Rename { from: "照片/其它".into(), to: "照片/其他".into() }, hints::Suggest::Trash { path: "回忆_2606".into() }] {
+    for s in [hints::Suggest::Rename { from: "照片/其它".into(), to: "照片/其他".into() }] {
         assert_eq!(hints::Suggest::parse(&s.line()), Some(s.clone()));
         assert_eq!(hints::Suggest::all_in(&format!("- x（1 个）；{}{}\n- y", hints::CAN, s.line())), vec![s]);
     }
@@ -416,16 +418,17 @@ fn backup_cards_are_checked_then_done_on_the_drive() {
     use serde_json::json;
     let (_d, j, v) = sandbox("cards");
     let s = with_tasks(vec![task(2, "照片", "照片"), task(3, "小柚", "回忆/小柚")]);
-    // checked: paths there, nothing in VAULT or 旧版, nothing taken, no task's own folder to the Trash
+    // checked: paths there, nothing in VAULT or ARCHIVE, nothing taken; no dup or task cards any more
+    std::fs::create_dir_all(v.path.join(copy::OLD).join("x")).unwrap();
     for (name, args, why) in [
         (cards::MOVE, json!({ "items": [{ "from": "照片/其它", "to": "照片/城市", "why": "x" }] }), "已经有"),
         (cards::MOVE, json!({ "items": [{ "from": "照片/没有", "to": "照片/x", "why": "x" }] }), "硬盘上没有"),
-        (cards::MOVE, json!({ "items": [{ "from": "旧版/x", "to": "x", "why": "x" }] }), "旧版"),
+        (cards::MOVE, json!({ "items": [{ "from": format!("{}/x", copy::OLD), "to": "x", "why": "x" }] }), "归档"),
+        (cards::MOVE, json!({ "items": [{ "from": "照片/其它", "to": format!("{}/其它", copy::OLD), "why": "x" }] }), "归档"),
         (cards::MOVE, json!({ "items": [{ "from": "照片", "to": "照片/里面", "why": "x" }] }), "自己里面"),
-        (cards::TRASH, json!({ "items": [{ "path": "VAULT/秘密.txt", "why": "x" }] }), "不能动"),
-        (cards::TRASH, json!({ "items": [{ "path": "回忆/小柚", "why": "x" }] }), "任务 #3"),
-        (cards::TRASH, json!({ "items": [{ "path": "回忆", "why": "x" }] }), "任务 #3"),
-        (cards::TRASH, json!({ "items": [{ "path": "../x", "why": "x" }] }), "不是硬盘上的路径"),
+        (cards::MOVE, json!({ "items": [{ "from": "VAULT/秘密.txt", "to": "x", "why": "x" }] }), "不能动"),
+        (cards::MOVE, json!({ "items": [{ "from": "../x", "to": "x", "why": "x" }] }), "不是硬盘上的路径"),
+        (cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "x" }] }), "不归备份管"),
         (cards::TASK, json!({ "source": "~/Downloads/作品", "target": "作品", "why": "x" }), "清单"),
     ] {
         let e = build(&j, &s, name, args.clone()).unwrap_err();
@@ -439,12 +442,10 @@ fn backup_cards_are_checked_then_done_on_the_drive() {
     let d = compared(&j, &v, &s.tasks[0]);
     assert!(d.moved.is_empty() && d.same == 5 && !v.path.join("照片/其它").exists());
     assert!(cards::run(&j, &s, &agent::Card { state: "done".into(), ..mv.clone() }, &[0]).is_err());
-    // the dup to the drive's own Trash (the fake drive's .Trashes)
-    let tr = build(&j, &s, cards::TRASH, json!({ "items": [{ "path": "回忆_2606", "why": "回忆 里有一样的" }] })).unwrap();
-    assert_eq!((tr.kind.as_str(), tr.items[0].size), ("drive_trash", 2_000_000));
+    // a dup card from before 1.1.3 only says it's gone; the drive untouched
+    let tr = agent::Card { kind: "drive_trash".into(), state: "pending".into(), drive: Some(fake::DRIVE_UUID.into()), items: vec![agent::TrashItem { path: "回忆_2606".into(), ..Default::default() }], ..Default::default() };
     let (st, res, _) = cards::run(&j, &s, &tr, &[0]).unwrap();
-    assert_eq!((st, res["items"][0]["done"].as_bool()), ("done", Some(true)));
-    assert!(!v.path.join("回忆_2606").exists() && v.path.join(".Trashes/501/回忆_2606/小柚/2024/a.mov").exists());
+    assert!(st == "failed" && res["error"].as_str().unwrap().contains("不归备份管") && v.path.join("回忆_2606").exists());
     // a task card from before the 清单 only says where to go now
     let old = agent::Card { kind: "task".into(), state: "pending".into(), drive: Some(fake::DRIVE_UUID.into()), task: Some(cards::TaskPlan { source: "/Users/me/Downloads/作品".into(), target: "作品".into(), ..Default::default() }), ..Default::default() };
     let (st, res, after) = cards::run(&j, &s, &old, &[]).unwrap();
@@ -452,7 +453,7 @@ fn backup_cards_are_checked_then_done_on_the_drive() {
     let after = s.clone();
     // moving a task's drive folder takes the task along
     let mv = build(&j, &after, cards::MOVE, json!({ "items": [{ "from": "回忆/小柚", "to": "小柚", "why": "和电脑上同名" }] })).unwrap();
-    assert_eq!(mv.items[0].note.as_deref(), Some("任务 #3 的硬盘文件夹会跟着改"));
+    assert_eq!(mv.items[0].note.as_deref(), Some("Downloads 里的 小柚 备份到这里，会跟着改"));
     let (_, _, moved) = cards::run(&j, &after, &mv, &[0]).unwrap();
     let moved = moved.unwrap();
     assert_eq!(moved.tasks.iter().find(|t| t.id == 3).unwrap().target, "小柚");
@@ -471,8 +472,8 @@ fn the_agent_looks_at_the_backup_and_the_mock_proposes_what_the_clues_say() {
     compare_all(&j, &s);
     let look = |args: &str| look::tool_with(&j, &s, args, 8000);
     let a = look(r#"{"view":"overview"}"#);
-    assert!(a.text.contains("#2 ~/Downloads/照片 → 照片：一样 3 · 新加 2 · 改名或挪了 2") && a.text.contains("可以：在硬盘上改名 回忆/小柚 → 小柚") && a.text.contains("没勾的（不备份）：作品"), "{}", a.text);
-    assert!(a.text.contains("勾了、只在硬盘上的：回忆、回忆_2606、影音"), "{}", a.text);
+    assert!(a.text.contains("#2 ~/Downloads/照片：一样 3 · 新加 2 · 改名或挪了 2\n") && a.text.contains("可以：在硬盘上改名 回忆/小柚 → 小柚") && a.text.contains("没勾的（不备份）：作品"), "{}", a.text);
+    assert!(a.text.contains("勾了、只在硬盘上的（归档）：回忆、回忆_2606、影音") && a.text.contains("都是归档") && !a.text.contains("只在硬盘上 1"), "{}", a.text);
     let a = look(r#"{"view":"diff","task":2,"group":"moved"}"#);
     assert!(a.text.contains("其它/IMG_0101.jpg → 其他/IMG_0101.jpg"), "{}", a.text);
     let a = look(r#"{"view":"drive","path":""}"#);
@@ -484,7 +485,7 @@ fn the_agent_looks_at_the_backup_and_the_mock_proposes_what_the_clues_say() {
     // the mock Agent on the automatic look: what the clues say, each a card that checks out
     let system = look::situation(&j, &s);
     let calls = agent::mock_calls(&look::question(fake::DRIVE), &system);
-    assert_eq!(calls.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), [look::BACKUP, cards::MOVE, cards::TRASH]);
+    assert_eq!(calls.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), [look::BACKUP, cards::MOVE]);
     for c in &calls[1..] {
         let card = cards::build(&j, &s, &c.name, &c.arguments).unwrap_or_else(|e| panic!("{}: {e}", c.arguments));
         assert!(!card.items.is_empty());
@@ -536,7 +537,7 @@ fn with_pikpak(limit: u32) -> Settings {
 }
 
 fn cloud_files(j: &Janitor, folder: &str) -> Vec<String> {
-    let l = diff::list(&rclone::fake_root(j).join(folder), &Skip::default(), &AtomicBool::new(false)).unwrap();
+    let l = diff::list(&rclone::fake_root(j).join(folder), &Skip { mirror: true }, &AtomicBool::new(false)).unwrap();
     l.files.keys().cloned().collect()
 }
 
@@ -567,61 +568,98 @@ fn pikpak_logs_in_through_an_encrypted_config() {
 }
 
 #[test]
-fn pikpak_mirrors_the_drive_and_follows_renames_and_deletions() {
+fn the_cloud_compares_like_a_sync_goes() {
+    let m = |v: &[(&str, u64)]| v.iter().map(|(k, s)| (k.to_string(), *s)).collect::<std::collections::BTreeMap<String, u64>>();
+    let drive = m(&[("A/x", 1), ("A/y", 2), ("A/sub/z", 3), ("A/新", 9), ("B/w", 4), ("B/moved.txt", 8), ("C/q", 7)]);
+    let cloud = m(&[("A/x", 1), ("A/y", 5), ("A/old/z", 3), ("A/gone", 6), ("D/moved.txt", 8), ("C/q", 7), ("E/e", 1)]);
+    let per = pikpak::cloud_diff(&drive, &cloud, &["A".into(), "B".into()]);
+    assert_eq!(per.keys().collect::<Vec<_>>(), ["A", "B"], "only the folders asked for");
+    let a = &per["A"];
+    assert_eq!((a.same, a.same_bytes), (1, 1));
+    assert_eq!(a.changed, [pikpak::Item { path: "y".into(), size: 2 }]);
+    assert_eq!(a.moved, [diff::Move { from: "old/z".into(), to: "sub/z".into(), size: 3 }]);
+    assert_eq!(a.new, [pikpak::Item { path: "新".into(), size: 9 }]);
+    assert_eq!(a.extra, [pikpak::Item { path: "gone".into(), size: 6 }]);
+    // D isn't asked for: its file stays there, B's is uploaded
+    assert_eq!((per["B"].new.len(), per["B"].moved.len(), per["B"].extra.len()), (2, 0, 0));
+}
+
+#[test]
+fn pikpak_compares_then_mirrors_the_ticked_folders() {
     if !has_rclone() {
         return;
     }
     let (_d, j, v) = sandbox("pikpak-sync");
-    let s = with_pikpak(0);
+    let tops = ["回忆", "回忆_2606", "影音", "照片", "资料"];
+    let s = Settings { picked: Some(tops.map(String::from).to_vec()), ..with_pikpak(0) };
     rclone::Rclone::new(&j, None).unwrap().login("xiaoyou@example.com", "x").unwrap();
-    // the whole drive but VAULT and the junk, names in NFC
     std::fs::create_dir_all(v.path.join(".Trashes/501")).unwrap();
     std::fs::write(v.path.join(".Trashes/501/扔掉的.txt"), "x").unwrap();
     std::fs::write(v.path.join("照片/.DS_Store"), "x").unwrap();
-    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    let on_drive: Vec<String> = diff::list(&v.path, &Skip { mirror: true }, &AtomicBool::new(false)).unwrap().files.into_keys().filter(|k| k.contains('/')).collect();
+    // before: the folder isn't on PikPak yet; everything is new
+    let sn = pikpak::compare_for_test(&j, &s);
+    assert!(sn.missing() && sn.error().is_none(), "{sn:?}");
+    assert_eq!(sn.per().values().map(|d| d.new.len()).sum::<usize>(), on_drive.len());
+    // the ticked folders but VAULT and the junk, names in NFC; ARCHIVE up there never read
+    let (p, d) = pikpak::sync_for_test(&j, &s, &tops, 100);
     assert!(d.ok && d.errors.is_empty(), "{d:?}");
     let up = cloud_files(&j, fake::DRIVE);
-    let on_drive: Vec<String> = diff::list(&v.path, &Skip::default(), &AtomicBool::new(false)).unwrap().files.into_keys().filter(|k| k != volumes::FAKE_FILE).collect();
-    assert_eq!(up, on_drive, "a mirror of the drive");
+    assert_eq!(up, on_drive, "a mirror of the ticked folders");
     assert!(up.iter().all(|k| !k.to_lowercase().contains("vault") && !k.contains(".Trashes") && !k.contains("DS_Store") && !k.contains(".pomelo")), "{up:?}");
-    assert!(up.contains(&"照片/Caf\u{e9}.jpg".to_string()));
     let raw: Vec<String> = std::fs::read_dir(rclone::fake_root(&j).join(fake::DRIVE).join("照片")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     assert!(raw.contains(&"Caf\u{e9}.jpg".to_string()), "uploaded in NFC: {raw:?}");
     assert_eq!((p.files.load(Ordering::Relaxed), p.total_files.load(Ordering::Relaxed)), (up.len() as u64, up.len() as u64));
-    assert_eq!(p.bytes.load(Ordering::Relaxed), p.total_bytes.load(Ordering::Relaxed));
-    assert_eq!(pikpak::ended_text(&p, &d), format!("传了 {} 个（{}）", up.len(), gb(p.bytes.load(Ordering::Relaxed))));
-    // nothing changed: nothing goes up
-    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    assert_eq!(pikpak::ended_text(&p, &d), format!("同步好了：传了 {} 个（{}）", up.len(), gb(p.bytes.load(Ordering::Relaxed))));
+    let cloud = rclone::fake_root(&j).join(fake::DRIVE);
+    std::fs::create_dir_all(cloud.join("ARCHIVE/以前的")).unwrap();
+    std::fs::write(cloud.join("ARCHIVE/以前的/b.txt"), "x").unwrap();
+    // compared again: all the same; a sync moves nothing
+    let sn = pikpak::compare_for_test(&j, &s);
+    assert!(!sn.missing() && sn.per().values().all(|d| d.new.is_empty() && d.changed.is_empty() && d.moved.is_empty() && d.extra.is_empty()), "{sn:?}");
+    assert_eq!(sn.per()["照片"].same, 6);
+    let (p, d) = pikpak::sync_for_test(&j, &s, &tops, 100);
     assert!(d.ok && p.files.load(Ordering::Relaxed) == 0);
     assert_eq!(pikpak::ended_text(&p, &d), "和硬盘上一样");
-    // a folder renamed on the drive (柚子's card) is a move up there, not an upload
+    // a folder renamed on the drive, a changed file, one gone, one only up there: compared, then done as said
     std::fs::rename(v.path.join("照片/其它"), v.path.join("照片/其他")).unwrap();
-    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    std::fs::write(v.path.join("资料/2609 实习/日程.xlsx"), vec![1u8; 17_000]).unwrap();
+    std::fs::remove_file(v.path.join("影音/电影/片.mkv")).unwrap();
+    std::fs::write(cloud.join("资料/手传的.txt"), "hand").unwrap();
+    let sn = pikpak::compare_for_test(&j, &s);
+    let per = sn.per();
+    assert_eq!(per["照片"].moved.iter().map(|m| (m.from.as_str(), m.to.as_str())).collect::<Vec<_>>(), [("其它/IMG_0101.jpg", "其他/IMG_0101.jpg"), ("其它/IMG_0102.jpg", "其他/IMG_0102.jpg")]);
+    assert_eq!(per["资料"].changed.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), ["2609 实习/日程.xlsx"]);
+    assert_eq!(per["资料"].extra.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), ["手传的.txt"]);
+    assert_eq!(per["影音"].extra.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), ["电影/片.mkv"]);
+    let (p, d) = pikpak::sync_for_test(&j, &s, &["照片", "资料", "影音"], 100);
     assert!(d.ok, "{d:?}");
-    assert_eq!((p.files.load(Ordering::Relaxed), p.renames.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed)), (0, 2, 0));
-    assert_eq!(pikpak::ended_text(&p, &d), "在 PikPak 上挪了 2 个");
+    assert_eq!((p.files.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed)), (1, 2), "{}", pikpak::ended_text(&p, &d));
+    assert_eq!(pikpak::ended_text(&p, &d), "同步好了：传了 1 个（17 KB），在 PikPak 上挪了 2 个，挪进 ARCHIVE 2 个");
+    let up = cloud_files(&j, fake::DRIVE);
+    assert!(up.contains(&"照片/其他/IMG_0101.jpg".to_string()) && !up.iter().any(|k| k.starts_with("照片/其它")), "{up:?}");
+    let archived = |rel: &str| cloud.join("ARCHIVE/2026-11-25").join(rel);
+    assert!(archived("影音/电影/片.mkv").exists() && archived("资料/手传的.txt").exists(), "into ARCHIVE, never deleted");
+    assert_eq!(std::fs::metadata(archived("资料/2609 实习/日程.xlsx")).unwrap().len(), 16_000, "the old copy kept");
+    assert_eq!(std::fs::metadata(cloud.join("资料/2609 实习/日程.xlsx")).unwrap().len(), 17_000);
+    assert!(cloud.join("ARCHIVE/以前的/b.txt").exists());
+    let sn = pikpak::compare_for_test(&j, &s);
+    assert!(sn.per().values().all(|d| d.new.is_empty() && d.changed.is_empty() && d.moved.is_empty() && d.extra.is_empty()), "{sn:?}");
+    // the records: its folders, what moved; an empty sync leaves none
     let c = crate::youzi::store::tests::memory_db();
-    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
-    pikpak::record_end(&c, id, &p, &d).unwrap();
-    assert_eq!(runs(&c, 10).unwrap()[0].note.as_deref(), Some("在 PikPak 上挪了 2 个"), "a sync that only moved is kept");
-    assert!(cloud_files(&j, fake::DRIVE).contains(&"照片/其他/IMG_0101.jpg".to_string()));
-    // a duplicate trashed on the drive: in the cloud's trash, not gone
-    std::fs::remove_dir_all(v.path.join("回忆_2606")).unwrap();
-    let (p, d) = pikpak::sync_for_test(&j, &s, false);
-    assert!(d.ok && p.deletes.load(Ordering::Relaxed) == 1, "{d:?}");
-    assert!(rclone::fake_trash(&j).join("2026-11-25/回忆_2606/小柚/2024/a.mov").exists());
-    assert!(!cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("回忆_2606")));
-    // the records: what moved; an empty sync leaves none
-    let c = crate::youzi::store::tests::memory_db();
-    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
-    pikpak::record_end(&c, id, &p, &d).unwrap();
+    let done = ["照片".to_string(), "资料".into(), "影音".into()];
+    let id = pikpak::record_start(&c, fake::DRIVE, &done).unwrap();
+    pikpak::record_end(&c, id, &done, &p, &d).unwrap();
     let r = &runs(&c, 10).unwrap()[0];
-    assert_eq!((r.dest.as_str(), r.status.as_str(), r.note.as_deref()), ("pikpak", "done", Some("挪进 PikPak 回收站 1 个")));
-    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
-    pikpak::record_end(&c, id, &rclone::Progress::new(), &rclone::Done { ok: true, ..Default::default() }).unwrap();
+    assert_eq!((r.dest.as_str(), r.status.as_str(), r.tasks.iter().map(|t| (t.target.as_str(), t.done)).collect::<Vec<_>>()), ("pikpak", "done", vec![("照片", true), ("资料", true), ("影音", true)]));
+    assert!(r.note.as_deref().unwrap_or("").contains("挪进 PikPak 的 ARCHIVE 2 个"), "{:?}", r.note);
+    let v2 = pikpak::view(&j, &s, &runs(&c, 10).unwrap());
+    assert!(v2.folders.iter().find(|f| f.name == "照片").unwrap().last.is_some() && v2.folders.iter().find(|f| f.name == "回忆").unwrap().last.is_none());
+    let id = pikpak::record_start(&c, fake::DRIVE, &done).unwrap();
+    pikpak::record_end(&c, id, &done, &rclone::Progress::new(), &rclone::Done { ok: true, ..Default::default() }).unwrap();
     assert_eq!(runs(&c, 10).unwrap().len(), 1);
     // a run left running: each kind settles on its own
-    let id = pikpak::record_start(&c, fake::DRIVE).unwrap();
+    let id = pikpak::record_start(&c, fake::DRIVE, &done).unwrap();
     settle_stale(&c, "drive").unwrap();
     assert_eq!(runs(&c, 10).unwrap()[0].status, "running");
     settle_stale(&c, "pikpak").unwrap();
@@ -629,7 +667,7 @@ fn pikpak_mirrors_the_drive_and_follows_renames_and_deletions() {
 }
 
 #[test]
-fn pikpak_holds_back_many_deletions_and_stops_without_half_files() {
+fn pikpak_holds_back_more_moves_than_compared_and_stops_without_half_files() {
     if !has_rclone() {
         return;
     }
@@ -640,22 +678,24 @@ fn pikpak_holds_back_many_deletions_and_stops_without_half_files() {
     for i in 0..(rclone::MAX_DELETE + 20) {
         std::fs::write(many.join(format!("{i}.txt")), format!("{i}")).unwrap();
     }
-    let s = with_pikpak(0);
-    assert!(pikpak::sync_for_test(&j, &s, false).1.ok);
-    // the drive suddenly misses a lot: the sync stops at the limit and waits for 照样同步
+    let s = Settings { picked: Some(vec!["影音".into()]), ..with_pikpak(0) };
+    assert!(pikpak::sync_for_test(&j, &s, &["影音"], 100).1.ok);
+    // the drive suddenly misses a lot: more than allowed stops it
     std::fs::remove_dir_all(&many).unwrap();
-    let (p, d) = pikpak::sync_for_test(&j, &s, false);
+    let (p, d) = pikpak::sync_for_test(&j, &s, &["影音"], rclone::MAX_DELETE as u64);
     assert!(!d.ok && d.too_many_deletes, "{d:?}");
-    assert!(pikpak::ended_text(&p, &d).starts_with("要挪进 PikPak 回收站的超过 100 个"));
+    assert!(pikpak::ended_text(&p, &d).starts_with("要挪进 ARCHIVE 的比对出来的多"));
     assert!(cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("影音/零碎/")));
-    let (_, d) = pikpak::sync_for_test(&j, &s, true);
+    // the first ones went into ARCHIVE before it stopped; compared, the rest count: it goes through
+    assert_eq!(pikpak::compare_for_test(&j, &s).per()["影音"].extra.len(), 20);
+    assert_eq!(std::fs::read_dir(rclone::fake_root(&j).join(fake::DRIVE).join("ARCHIVE/2026-11-25/影音/零碎")).unwrap().count(), rclone::MAX_DELETE as usize);
+    let (_, d) = pikpak::sync_for_test(&j, &s, &["影音"], 20 + rclone::MAX_DELETE as u64);
     assert!(d.ok, "{d:?}");
     assert!(!cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("影音/零碎/")));
     // stopped halfway (a slow line): no half file up there; the next sync carries on
     let big = v.path.join("影音/长片.mov");
     std::fs::write(&big, vec![7u8; 3_000_000]).unwrap();
-    let slow = with_pikpak(1);
-    let drive = drive_of(&j, &slow).unwrap();
+    let drive = drive_of(&j, &s).unwrap();
     let p = std::sync::Arc::new(rclone::Progress::new());
     let stopper = {
         let p = p.clone();
@@ -664,12 +704,12 @@ fn pikpak_holds_back_many_deletions_and_stops_without_half_files() {
             p.kill();
         })
     };
-    let d = rclone::Rclone::new(&j, None).unwrap().sync(&drive.path, fake::DRIVE, &[], 1, false, "2026-11-25", &p);
+    let d = rclone::Rclone::new(&j, None).unwrap().sync(&drive.path, fake::DRIVE, &["影音".into()], 1, 100, "2026-11-25", &p);
     stopper.join().unwrap();
     assert!(d.stopped && !d.ok, "{d:?}");
     let up = cloud_files(&j, fake::DRIVE);
     assert!(!up.contains(&"影音/长片.mov".to_string()) && up.iter().all(|k| !k.contains("partial")), "{up:?}");
-    let (p, d) = pikpak::sync_for_test(&j, &with_pikpak(0), false);
+    let (p, d) = pikpak::sync_for_test(&j, &s, &["影音"], 100);
     assert!(d.ok && p.files.load(Ordering::Relaxed) == 1, "{d:?}");
 }
 

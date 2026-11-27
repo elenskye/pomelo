@@ -3549,20 +3549,19 @@ pub(crate) mod tests {
         for c in &h.cards {
             let what = match c.kind.as_str() {
                 "task" => c.task.as_ref().map(|t| format!("{} {} → {}（{}）", c.title, t.source, t.target, t.why)).unwrap_or_default(),
-                "move" | "drive_trash" => c.items.iter().map(|i| format!("{}{}（{}）", i.path, i.to.as_ref().map(|t| format!(" → {t}")).unwrap_or_default(), i.why)).collect::<Vec<_>>().join("；"),
+                "move" => c.items.iter().map(|i| format!("{}{}（{}）", i.path, i.to.as_ref().map(|t| format!(" → {t}")).unwrap_or_default(), i.why)).collect::<Vec<_>>().join("；"),
                 _ => c.title.clone(),
             };
             println!("  {} · {what}", c.kind);
             match c.kind.as_str() {
                 "task" => done.extend(c.task.iter().map(|t| format!("task:{}", t.source.rsplit('/').next().unwrap_or_default()))),
                 "move" => done.extend(c.items.iter().map(|i| format!("move:{}", i.path))),
-                "drive_trash" => done.extend(c.items.iter().map(|i| format!("trash:{}", i.path))),
                 _ => {}
             }
         }
-        let want = ["move:回忆/小柚", "move:照片/其它", "trash:回忆_2606"];
+        let want = ["move:回忆/小柚", "move:照片/其它"];
         let hit: Vec<&&str> = want.iter().filter(|w| done.iter().any(|d| d == **w)).collect();
-        println!("--- 三张该出的卡片出了 {} 张：{hit:?}；多出来的：{:?}；说到没勾的作品：{}", hit.len(), done.iter().filter(|d| !want.contains(&d.as_str())).collect::<Vec<_>>(), h.content.contains("作品"));
+        println!("--- 两张该出的卡片出了 {} 张：{hit:?}；多出来的：{:?}；说到没勾的作品：{}；说到归档的影音：{}", hit.len(), done.iter().filter(|d| !want.contains(&d.as_str())).collect::<Vec<_>>(), h.content.contains("作品"), h.content.contains("影音"));
         assert!(r.is_ok(), "{r:?}");
         assert!(!h.content.to_lowercase().contains("vault") && h.cards.iter().all(|c| !serde_json::to_string(c).unwrap().to_lowercase().contains("vault")));
     }
