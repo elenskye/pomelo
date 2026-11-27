@@ -62,6 +62,7 @@ const cloud = (p: { new?: [string, number][]; changed?: [string, number][]; move
   changed: group((p.changed ?? []).map(([a, n]) => item(a, n))),
   moved: group(p.moved ?? []),
   extra: group((p.extra ?? []).map(([a, n]) => item(a, n))),
+  clash: group([]),
 });
 /** How each drive folder compares with PikPak (the ticked ones are listed). */
 const CLOUD: Record<string, CloudDiff> = {

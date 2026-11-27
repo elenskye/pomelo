@@ -414,7 +414,7 @@ function PikPakCard(props: { ov: BackupOverview }) {
   const [dialog, setDialog] = useState<"login" | "settings" | null>(null);
   const [over, setOver] = useState<Map<string, boolean>>(new Map());
   const busy = (f: CloudFolder) => toSync(f.diff).files + toSync(f.diff).other > 0;
-  const on = (f: CloudFolder) => over.get(f.name) ?? busy(f);
+  const on = (f: CloudFolder) => over.get(f.name) ?? (busy(f) && !f.diff?.clash.count);
   const picked = p.folders.filter((f) => on(f) && f.diff);
   const total = picked.reduce((a, f) => ({ files: a.files + toSync(f.diff).files, bytes: a.bytes + toSync(f.diff).bytes }), { files: 0, bytes: 0 });
   const ready = !!p.account && !p.waiting && !p.comparing && !p.running && !p.error && !ov.run.running;
@@ -472,6 +472,7 @@ function CloudRow(props: { p: PikPakView; f: CloudFolder; on: boolean; locked: b
         [`要传 ${t.files}`, t.files],
         [`在 PikPak 上挪 ${d.moved.count}`, d.moved.count],
         [`挪进 ARCHIVE ${d.extra.count}`, d.extra.count],
+        [`PikPak 上会撞名 ${d.clash.count}`, d.clash.count],
       ].filter(([, n]) => n).map(([s]) => s as string)
     : [];
   const syncing = p.running && p.syncing.includes(f.name);
@@ -496,6 +497,7 @@ function CloudRow(props: { p: PikPakView; f: CloudFolder; on: boolean; locked: b
           <Rows title="大小不一样的" note="PikPak 上那份挪进 ARCHIVE" count={d.changed.count} size={d.changed.bytes} rows={d.changed.rows.map((r) => ({ key: r.path, left: r.path, right: bytes(r.size) }))} />
           <Rows title="在 PikPak 上挪" note="不重新传" count={d.moved.count} size={d.moved.bytes} rows={d.moved.rows.map((m) => ({ key: m.to, left: `${m.from} → ${m.to}`, right: bytes(m.size) }))} />
           <Rows title="只在 PikPak 上" note="挪进 ARCHIVE" count={d.extra.count} size={d.extra.bytes} rows={d.extra.rows.map((r) => ({ key: r.path, left: r.path, right: bytes(r.size) }))} />
+          <Rows title="传到 PikPak 上会撞名" note="改掉一个再同步" count={d.clash.count} size={d.clash.bytes} rows={d.clash.rows.map((r) => ({ key: r.path, left: r.path, right: bytes(r.size) }))} />
         </div>
       )}
     </li>

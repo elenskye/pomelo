@@ -8,9 +8,13 @@
 //!   same name and size → moved there; the rest uploaded; what only PikPak has → into ARCHIVE. In the background
 //!   when the drive comes, after a backup run, a move on the drive, a sync, logging in, a new folder, 重新对比,
 //!   and when the page finds it due; kept in memory (`CloudSnap`).
+//!   Drive names go by what they're called on PikPak (`rclone::cloud_name`); two that would get one name there
+//!   (`clash`) keep their folder from syncing until one is renamed.
 //! - Syncing (`start`): the folders I ticked; one at a time; a backup run starting stops it and it carries on
 //!   after (`resume`); compared again when it ends. More moves into ARCHIVE than compared (plus
-//!   `rclone::MAX_DELETE`) stop it.
+//!   `rclone::MAX_DELETE`) stop it. Uploads that came back renamed `name(1)` (a name held by a half-made upload
+//!   PikPak hides): their folders are set aside into `ARCHIVE/<day>/<folder> (stuck <time>)`, what can be seen is
+//!   moved back, and the sync goes once more.
 //! - Each sync that moved something (or failed) is a `backup_runs` row with `dest` 'pikpak' (`tasks`: its folders
 //!   by name, id 0; `note`: what went where). The App quitting stops rclone; the next sync carries on.
 
@@ -64,6 +68,8 @@ pub struct CloudDiff {
     pub moved: Vec<diff::Move>,
     /// Only on PikPak: into ARCHIVE.
     pub extra: Vec<Item>,
+    /// Drive files that would get another's name on PikPak: the folder doesn't sync until one is renamed.
+    pub clash: Vec<Item>,
 }
 
 /// The last comparison.
@@ -110,6 +116,11 @@ fn rclone_of(state: &AppState, j: &Janitor) -> Result<Rclone, String> {
 
 fn local_day(state: &AppState) -> String {
     state.youzi.with_db(|c| Ok(c.query_row("SELECT date('now', 'localtime')", [], |r| r.get::<_, String>(0)).unwrap_or_default())).unwrap_or_default()
+}
+
+/// HHMMSS, local.
+fn local_clock(state: &AppState) -> String {
+    state.youzi.with_db(|c| Ok(c.query_row("SELECT strftime('%H%M%S', 'now', 'localtime')", [], |r| r.get::<_, String>(0)).unwrap_or_default())).unwrap_or_default()
 }
 
 /// The drive's top folders picked in the 清单.
@@ -183,20 +194,40 @@ pub fn compare_with(j: &Janitor, s: &Settings, rc: &Rclone) -> Option<CloudSnap>
     let tops = picked_on(s, &drive);
     let mut sn = CloudSnap { key: key_of(s, &drive, &tops), at: unix_now(), ..Default::default() };
     let stop = AtomicBool::new(false);
+    // by the names they get on PikPak (the top folder keeps its own: the filters and the diff go by it)
     let mut on_drive: BTreeMap<String, u64> = BTreeMap::new();
+    let mut clashes: Vec<(String, Item)> = Vec::new();
     for t in &tops {
-        match diff::list(&drive.path.join(t), &Skip { mirror: true }, &stop) {
-            Ok(l) => on_drive.extend(l.files.iter().map(|(k, (_, m))| (format!("{}/{k}", diff::nfc(t)), m.size))),
+        let top = diff::nfc(t);
+        let l = match diff::list(&drive.path.join(t), &Skip { mirror: true }, &stop) {
+            Ok(l) => l,
             Err(e) => {
                 sn.error = Some(format!("硬盘上的 {t} 没读成：{e}"));
                 return Some(sn);
             }
+        };
+        let mut named: HashMap<String, &str> = HashMap::new();
+        for (k, (_, m)) in &l.files {
+            let up = rclone::cloud_name(k);
+            if let Some(other) = named.insert(up.clone(), k) {
+                for p in [other, k.as_str()] {
+                    if !clashes.iter().any(|(ct, c)| *ct == top && c.path == p) {
+                        clashes.push((top.clone(), Item { path: p.to_string(), size: l.files.get(p).map_or(0, |(_, m)| m.size) }));
+                    }
+                }
+            }
+            on_drive.insert(format!("{top}/{up}"), m.size);
         }
     }
     match rc.list(&s.pikpak.folder_for(&drive.name), &tops) {
         Ok(cloud) => {
             sn.missing = cloud.is_none();
             sn.per = cloud_diff(&on_drive, &cloud.unwrap_or_default(), &tops);
+            for (top, item) in clashes {
+                if let Some(d) = sn.per.get_mut(&top) {
+                    d.clash.push(item);
+                }
+            }
         }
         Err(e) => sn.error = Some(e),
     }
@@ -316,10 +347,15 @@ pub fn start(app: &AppHandle, tops: &[String]) -> Result<(), String> {
     if j.backup.cloud.comparing.load(Ordering::SeqCst) {
         return Err("正在和 PikPak 对比，等它对完".into());
     }
+    let key = key_of(&s, &drive, &picked);
+    let clashing: Vec<String> = j.backup.cloud.snap.lock().ok().and_then(|g| g.as_ref().filter(|sn| sn.key == key).map(|sn| tops.iter().filter(|t| sn.per.get(&diff::nfc(t)).is_some_and(|d| !d.clash.is_empty())).cloned().collect())).unwrap_or_default();
+    if !clashing.is_empty() {
+        return Err(format!("{} 里有名字传到 PikPak 上会撞名，先改名再同步", clashing.join("、")));
+    }
     if j.backup.cloud.running.swap(true, Ordering::SeqCst) {
         return Err("正在同步".into());
     }
-    let max = max_delete(&j, &key_of(&s, &drive, &picked), &tops);
+    let max = max_delete(&j, &key, &tops);
     let app = app.clone();
     std::thread::spawn(move || {
         let st = app.state::<AppState>();
@@ -333,12 +369,78 @@ pub fn start(app: &AppHandle, tops: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// What a sync moved (over its passes).
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Tally {
+    pub files: u64,
+    pub bytes: u64,
+    pub deletes: u64,
+    pub renames: u64,
+}
+
+impl Tally {
+    pub fn of(p: &Progress) -> Self {
+        Tally { files: p.files.load(Ordering::Relaxed), bytes: p.bytes.load(Ordering::Relaxed), deletes: p.deletes.load(Ordering::Relaxed), renames: p.renames.load(Ordering::Relaxed) }
+    }
+
+    fn add(self, o: Tally) -> Self {
+        Tally { files: self.files + o.files, bytes: self.bytes + o.bytes, deletes: self.deletes + o.deletes, renames: self.renames + o.renames }
+    }
+}
+
+/// The cloud folders (as named there) holding names a half-made upload took.
+pub fn stuck_folders(d: &Done) -> Vec<String> {
+    let mut f: Vec<String> = d.stuck.iter().filter_map(|o| rclone::cloud_name(&diff::nfc(o)).rsplit_once('/').map(|(p, _)| p.to_string())).collect();
+    f.sort();
+    f.dedup();
+    f
+}
+
+/// Where a stuck folder goes in the cloud folder's ARCHIVE.
+pub fn aside_for(rel: &str, day: &str, clock: &str) -> String {
+    format!("{}/{day}/{rel} (stuck {clock})", super::copy::OLD)
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Syncs `tops`; when uploads came back renamed, sets their folders aside and syncs once more. What moved over
+/// the passes, how the last one ended, the folders set aside.
+fn sync_mending(rc: &Rclone, run: &Mutex<Arc<Progress>>, source: &std::path::Path, folder: &str, tops: &[String], limit: u32, max: u64, day: &str, clock: &str) -> (Tally, Done, Vec<String>) {
+    let p = run.lock().map(|g| g.clone()).unwrap_or_default();
+    let d = rc.sync(source, folder, tops, limit, max, day, &p);
+    let tally = Tally::of(&p);
+    let stuck = stuck_folders(&d);
+    if stuck.is_empty() || d.stopped || d.fatal.is_some() || d.too_many_deletes {
+        return (tally, d, Vec::new());
+    }
+    let (mut fixed, mut failed) = (Vec::new(), Vec::new());
+    for f in stuck {
+        if p.stop.load(Ordering::SeqCst) {
+            break;
+        }
+        match rc.set_aside(folder, &f, &aside_for(&f, day, clock)) {
+            Ok(()) => fixed.push(f),
+            Err(e) => failed.push((f, format!("卡住的名字没收拾成：{e}"))),
+        }
+    }
+    if fixed.is_empty() || p.stop.load(Ordering::SeqCst) {
+        let mut d = d;
+        d.errors.extend(failed);
+        return (tally, d, fixed);
+    }
+    let p2 = Arc::new(Progress::new());
+    if let Ok(mut g) = run.lock() {
+        *g = p2.clone();
+    }
+    let mut d2 = rc.sync(source, folder, tops, limit, max, day, &p2);
+    d2.errors.extend(failed);
+    (tally.add(Tally::of(&p2)), d2, fixed)
+}
+
 /// One sync, recorded.
 fn once(st: &AppState, j: &Janitor, s: &Settings, drive: &Volume, tops: &[String], max: u64) {
     let c = &j.backup.cloud;
-    let p = Arc::new(Progress::new());
     if let Ok(mut g) = c.run.lock() {
-        *g = p.clone();
+        *g = Arc::new(Progress::new());
     }
     if let Ok(mut g) = c.tops.lock() {
         *g = tops.to_vec();
@@ -359,9 +461,10 @@ fn once(st: &AppState, j: &Janitor, s: &Settings, drive: &Volume, tops: &[String
         Err(e) => return end(e),
     };
     let id = st.youzi.with_db(|c| record_start(c, &drive.name, tops)).ok();
-    let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), tops, s.pikpak.limit, max, &local_day(st), &p);
+    let (day, clock) = (local_day(st), local_clock(st));
+    let (t, d, fixed) = sync_mending(&rc, &c.run, &drive.path, &s.pikpak.folder_for(&drive.name), tops, s.pikpak.limit, max, &day, &clock);
     if let Some(id) = id {
-        let _ = st.youzi.with_db(|c| record_end(c, id, tops, &p, &d));
+        let _ = st.youzi.with_db(|c| record_end(c, id, tops, &t, &d, fixed.len()));
     }
     if !d.stopped {
         if let Ok(q) = rc.about() {
@@ -370,7 +473,7 @@ fn once(st: &AppState, j: &Janitor, s: &Settings, drive: &Volume, tops: &[String
             }
         }
     }
-    end(ended_text(&p, &d));
+    end(ended_text(&t, &d, fixed.len()));
 }
 
 /// The App quits: rclone goes too (the next sync carries on).
@@ -391,14 +494,17 @@ pub(super) fn record_start(c: &Connection, drive: &str, tops: &[String]) -> Resu
 }
 
 /// The row as it ended; a sync that changed nothing and went fine leaves none.
-pub(super) fn record_end(c: &Connection, id: i64, tops: &[String], p: &Progress, d: &Done) -> Result<(), String> {
-    let (files, bytes, deletes, renames) = (p.files.load(Ordering::Relaxed), p.bytes.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed), p.renames.load(Ordering::Relaxed));
-    if d.ok && files == 0 && deletes == 0 && renames == 0 && d.errors.is_empty() {
+pub(super) fn record_end(c: &Connection, id: i64, tops: &[String], t: &Tally, d: &Done, fixed: usize) -> Result<(), String> {
+    let Tally { files, bytes, deletes, renames } = *t;
+    if d.ok && files == 0 && deletes == 0 && renames == 0 && d.errors.is_empty() && fixed == 0 {
         c.execute("DELETE FROM backup_runs WHERE id = ?1", [id]).map_err(crate::modules::common::err)?;
         return Ok(());
     }
     let status = if d.ok { "done" } else if d.stopped { "stopped" } else { "failed" };
     let mut note: Vec<String> = Vec::new();
+    if fixed > 0 {
+        note.push(format!("{fixed} 个文件夹里有名字被没传完的旧上传占着，整个挪进 ARCHIVE、能看见的挪回来后再传了一遍"));
+    }
     if renames > 0 {
         note.push(format!("在 PikPak 上挪了 {renames} 个"));
     }
@@ -421,8 +527,8 @@ pub(super) fn record_end(c: &Connection, id: i64, tops: &[String], p: &Progress,
 }
 
 /// One line for the page about how a sync ended.
-pub(super) fn ended_text(p: &Progress, d: &Done) -> String {
-    let (files, bytes, deletes, renames) = (p.files.load(Ordering::Relaxed), p.bytes.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed), p.renames.load(Ordering::Relaxed));
+pub(super) fn ended_text(t: &Tally, d: &Done, fixed: usize) -> String {
+    let Tally { files, bytes, deletes, renames } = *t;
     let moved = if files > 0 { format!("传了 {files} 个（{}）", super::gb(bytes)) } else { String::new() };
     let head = if d.too_many_deletes {
         "要挪进 ARCHIVE 的比对出来的多，先停下了：点「重新对比」再看看".into()
@@ -435,7 +541,8 @@ pub(super) fn ended_text(p: &Progress, d: &Done) -> String {
     } else if d.ok {
         let renamed = if renames > 0 { format!("在 PikPak 上挪了 {renames} 个") } else { String::new() };
         let archived = if deletes > 0 { format!("挪进 ARCHIVE {deletes} 个") } else { String::new() };
-        format!("同步好了：{}", [moved, renamed, archived].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("，"))
+        let mended = if fixed > 0 { format!("收拾了 {fixed} 个卡住的文件夹") } else { String::new() };
+        format!("同步好了：{}", [moved, renamed, archived, mended].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("，"))
     } else {
         format!("没传完{}", if moved.is_empty() { String::new() } else { format!("：{moved}") })
     };
@@ -453,6 +560,7 @@ pub struct CloudDiffView {
     pub changed: Group<Item>,
     pub moved: Group<diff::Move>,
     pub extra: Group<Item>,
+    pub clash: Group<Item>,
 }
 
 /// A picked drive folder on the PikPak side.
@@ -532,6 +640,7 @@ pub fn view(j: &Janitor, s: &Settings, runs: &[RunRow]) -> PikPakView {
                 changed: group(&d.changed, |r| r.size),
                 moved: group(&d.moved, |m| m.size),
                 extra: group(&d.extra, |r| r.size),
+                clash: group(&d.clash, |r| r.size),
             }),
         })
         .collect();
@@ -688,13 +797,13 @@ pub fn janitor_pikpak_stop(janitor: State<'_, Janitor>) {
 }
 
 #[cfg(test)]
-pub(super) fn sync_for_test(j: &Janitor, s: &Settings, tops: &[&str], max: u64) -> (Arc<Progress>, Done) {
+pub(super) fn sync_for_test(j: &Janitor, s: &Settings, tops: &[&str], max: u64) -> (Tally, Done) {
     let drive = drive_of(j, s).expect("the fake drive");
     let p = Arc::new(Progress::new());
     let rc = Rclone::new(j, None).expect("rclone");
     let tops: Vec<String> = tops.iter().map(|t| t.to_string()).collect();
     let d = rc.sync(&drive.path, &s.pikpak.folder_for(&drive.name), &tops, s.pikpak.limit, max, "2026-11-25", &p);
-    (p, d)
+    (Tally::of(&p), d)
 }
 
 #[cfg(test)]

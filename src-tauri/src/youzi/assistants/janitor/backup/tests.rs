@@ -379,7 +379,7 @@ fn a_folder_kept_out_is_left_alone() {
     assert!(text.contains("清单里没勾的文件夹") && text.contains("回忆_2606"), "{text}");
     // the cloud: only the ticked folders, both ways
     let f = rclone::only(&["回忆".into(), "a*[b]".into()]);
-    assert_eq!(f, ["--filter", "+ /回忆/**", "--filter", "+ /a\\*\\[b\\]/**", "--filter", "- **"]);
+    assert_eq!(f, ["--filter", "+ /回忆/**", "--filter", "+ /a\\*\\[b\\]/**", "--filter", "+ /a_\\[b\\]/**", "--filter", "- **"]);
     if !has_rclone() {
         return;
     }
@@ -609,8 +609,8 @@ fn pikpak_compares_then_mirrors_the_ticked_folders() {
     assert!(up.iter().all(|k| !k.to_lowercase().contains("vault") && !k.contains(".Trashes") && !k.contains("DS_Store") && !k.contains(".pomelo")), "{up:?}");
     let raw: Vec<String> = std::fs::read_dir(rclone::fake_root(&j).join(fake::DRIVE).join("照片")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     assert!(raw.contains(&"Caf\u{e9}.jpg".to_string()), "uploaded in NFC: {raw:?}");
-    assert_eq!((p.files.load(Ordering::Relaxed), p.total_files.load(Ordering::Relaxed)), (up.len() as u64, up.len() as u64));
-    assert_eq!(pikpak::ended_text(&p, &d), format!("同步好了：传了 {} 个（{}）", up.len(), gb(p.bytes.load(Ordering::Relaxed))));
+    assert_eq!(p.files, up.len() as u64);
+    assert_eq!(pikpak::ended_text(&p, &d, 0), format!("同步好了：传了 {} 个（{}）", up.len(), gb(p.bytes)));
     let cloud = rclone::fake_root(&j).join(fake::DRIVE);
     std::fs::create_dir_all(cloud.join("ARCHIVE/以前的")).unwrap();
     std::fs::write(cloud.join("ARCHIVE/以前的/b.txt"), "x").unwrap();
@@ -619,8 +619,8 @@ fn pikpak_compares_then_mirrors_the_ticked_folders() {
     assert!(!sn.missing() && sn.per().values().all(|d| d.new.is_empty() && d.changed.is_empty() && d.moved.is_empty() && d.extra.is_empty()), "{sn:?}");
     assert_eq!(sn.per()["照片"].same, 6);
     let (p, d) = pikpak::sync_for_test(&j, &s, &tops, 100);
-    assert!(d.ok && p.files.load(Ordering::Relaxed) == 0);
-    assert_eq!(pikpak::ended_text(&p, &d), "和硬盘上一样");
+    assert!(d.ok && p.files == 0);
+    assert_eq!(pikpak::ended_text(&p, &d, 0), "和硬盘上一样");
     // a folder renamed on the drive, a changed file, one gone, one only up there: compared, then done as said
     std::fs::rename(v.path.join("照片/其它"), v.path.join("照片/其他")).unwrap();
     std::fs::write(v.path.join("资料/2609 实习/日程.xlsx"), vec![1u8; 17_000]).unwrap();
@@ -634,8 +634,8 @@ fn pikpak_compares_then_mirrors_the_ticked_folders() {
     assert_eq!(per["影音"].extra.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), ["电影/片.mkv"]);
     let (p, d) = pikpak::sync_for_test(&j, &s, &["照片", "资料", "影音"], 100);
     assert!(d.ok, "{d:?}");
-    assert_eq!((p.files.load(Ordering::Relaxed), p.deletes.load(Ordering::Relaxed)), (1, 2), "{}", pikpak::ended_text(&p, &d));
-    assert_eq!(pikpak::ended_text(&p, &d), "同步好了：传了 1 个（17 KB），在 PikPak 上挪了 2 个，挪进 ARCHIVE 2 个");
+    assert_eq!((p.files, p.deletes), (1, 2), "{}", pikpak::ended_text(&p, &d, 0));
+    assert_eq!(pikpak::ended_text(&p, &d, 0), "同步好了：传了 1 个（17 KB），在 PikPak 上挪了 2 个，挪进 ARCHIVE 2 个");
     let up = cloud_files(&j, fake::DRIVE);
     assert!(up.contains(&"照片/其他/IMG_0101.jpg".to_string()) && !up.iter().any(|k| k.starts_with("照片/其它")), "{up:?}");
     let archived = |rel: &str| cloud.join("ARCHIVE/2026-11-25").join(rel);
@@ -649,14 +649,14 @@ fn pikpak_compares_then_mirrors_the_ticked_folders() {
     let c = crate::youzi::store::tests::memory_db();
     let done = ["照片".to_string(), "资料".into(), "影音".into()];
     let id = pikpak::record_start(&c, fake::DRIVE, &done).unwrap();
-    pikpak::record_end(&c, id, &done, &p, &d).unwrap();
+    pikpak::record_end(&c, id, &done, &p, &d, 0).unwrap();
     let r = &runs(&c, 10).unwrap()[0];
     assert_eq!((r.dest.as_str(), r.status.as_str(), r.tasks.iter().map(|t| (t.target.as_str(), t.done)).collect::<Vec<_>>()), ("pikpak", "done", vec![("照片", true), ("资料", true), ("影音", true)]));
     assert!(r.note.as_deref().unwrap_or("").contains("挪进 PikPak 的 ARCHIVE 2 个"), "{:?}", r.note);
     let v2 = pikpak::view(&j, &s, &runs(&c, 10).unwrap());
     assert!(v2.folders.iter().find(|f| f.name == "照片").unwrap().last.is_some() && v2.folders.iter().find(|f| f.name == "回忆").unwrap().last.is_none());
     let id = pikpak::record_start(&c, fake::DRIVE, &done).unwrap();
-    pikpak::record_end(&c, id, &done, &rclone::Progress::new(), &rclone::Done { ok: true, ..Default::default() }).unwrap();
+    pikpak::record_end(&c, id, &done, &Default::default(), &rclone::Done { ok: true, ..Default::default() }, 0).unwrap();
     assert_eq!(runs(&c, 10).unwrap().len(), 1);
     // a run left running: each kind settles on its own
     let id = pikpak::record_start(&c, fake::DRIVE, &done).unwrap();
@@ -664,6 +664,82 @@ fn pikpak_compares_then_mirrors_the_ticked_folders() {
     assert_eq!(runs(&c, 10).unwrap()[0].status, "running");
     settle_stale(&c, "pikpak").unwrap();
     assert_eq!(runs(&c, 10).unwrap().iter().find(|r| r.id == id).unwrap().status, "stopped");
+}
+
+#[test]
+fn pikpak_names_and_stuck_uploads_are_read() {
+    // names PikPak won't take go up as _ (the PikPak App's way); full-width ones stay
+    assert_eq!(rclone::cloud_name("资料/移民:认同/Does it? a*b \"x\" <y> |z\\.pdf"), "资料/移民_认同/Does it_ a_b _x_ _y_ _z_.pdf");
+    assert_eq!(rclone::cloud_name("回忆/问：答？.pdf"), "回忆/问：答？.pdf");
+    assert_eq!(rclone::only(&["a:b".into()]), ["--filter", "+ /a:b/**", "--filter", "+ /a_b/**", "--filter", "- **"]);
+    // an upload that came back renamed name(n) is a name held on PikPak; a sanitized name isn't
+    let p = rclone::Progress::new();
+    let mut d = rclone::Done::default();
+    for (o, msg) in [
+        ("ELEN/Image/Lyy/IMG_5817.PNG", r#"Failed to copy: uploaded file name mismatch: expected \"IMG_5817.PNG\", got \"IMG_5817(1).PNG\""#),
+        ("ELEN/Image/Lyy/IMG_5817.PNG", r#"Failed to copy: uploaded file name mismatch: expected \"IMG_5817.PNG\", got \"IMG_5817(1).PNG\""#),
+        ("资料/移民:认同/notes", r#"Failed to copy: uploaded file name mismatch: expected \"notes\", got \"notes(12)\""#),
+        ("资料/x/*a.pdf", r#"Failed to copy: uploaded file name mismatch: expected \"*a.pdf\", got \"_a(1).pdf\""#),
+        ("资料/x/b.pdf", r#"Failed to copy: uploaded file name mismatch: expected \"b.pdf\", got \"b (1).pdf\""#),
+    ] {
+        p.read_line(&format!(r#"{{"level":"error","msg":"{msg}","object":"{o}"}}"#), &mut d);
+    }
+    p.read_line(r#"{"level":"error","msg":"Can't retry any of the errors - not attempting retries"}"#, &mut d);
+    assert_eq!(d.stuck, ["ELEN/Image/Lyy/IMG_5817.PNG", "资料/移民:认同/notes"]);
+    assert_eq!(pikpak::stuck_folders(&d), ["ELEN/Image/Lyy", "资料/移民_认同"]);
+    assert!(d.errors.iter().all(|(_, m)| !m.starts_with("Can't retry")), "{:?}", d.errors);
+    assert_eq!(pikpak::aside_for("ELEN/Image/Lyy", "2026-11-27", "201530"), format!("{}/2026-11-27/ELEN/Image/Lyy (stuck 201530)", copy::OLD));
+    let t = pikpak::Tally { files: 3, bytes: 3_000_000, ..Default::default() };
+    assert_eq!(pikpak::ended_text(&t, &rclone::Done { ok: true, ..Default::default() }, 2), "同步好了：传了 3 个（3 MB），收拾了 2 个卡住的文件夹");
+}
+
+#[test]
+fn pikpak_takes_the_names_it_can_and_sets_stuck_folders_aside() {
+    if !has_rclone() {
+        return;
+    }
+    let (_d, j, v) = sandbox("pikpak-names");
+    let s = Settings { picked: Some(vec!["资料".into(), "照片".into()]), ..with_pikpak(0) };
+    rclone::Rclone::new(&j, None).unwrap().login("xiaoyou@example.com", "x").unwrap();
+    let cloud = rclone::fake_root(&j).join(fake::DRIVE);
+    let put = |root: &Path, rel: &str, body: &str| {
+        std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
+        std::fs::write(root.join(rel), body).unwrap();
+    };
+    // on the drive with : ? *; up there already as the PikPak App named them
+    put(&v.path, "资料/移民:认同/a.pdf", "aaa");
+    put(&v.path, "资料/问答?.pdf", "bb");
+    put(&v.path, "资料/*新的.pdf", "new");
+    put(&cloud, "资料/移民_认同/a.pdf", "aaa");
+    put(&cloud, "资料/问答_.pdf", "bb");
+    let sn = pikpak::compare_for_test(&j, &s);
+    let z = &sn.per()["资料"];
+    let ours: Vec<&str> = z.new.iter().map(|x| x.path.as_str()).filter(|p| p.contains("新的") || p.contains("问答") || p.contains("移民")).collect();
+    assert_eq!((ours, z.same), (vec!["_新的.pdf"], 2), "{z:?}");
+    assert!(z.extra.is_empty() && z.clash.is_empty(), "{z:?}");
+    let (_, d) = pikpak::sync_for_test(&j, &s, &["资料", "照片"], 100);
+    assert!(d.ok && d.errors.is_empty(), "{d:?}");
+    assert!(cloud.join("资料/_新的.pdf").exists() && cloud.join("资料/移民_认同/a.pdf").exists() && !cloud.join("资料/移民:认同").exists());
+    let sn = pikpak::compare_for_test(&j, &s);
+    assert!(sn.per().values().all(|d| d.new.is_empty() && d.changed.is_empty() && d.moved.is_empty() && d.extra.is_empty()), "{sn:?}");
+    // two drive names that'd be one up there: said, kept from syncing
+    put(&v.path, "资料/b?.txt", "1");
+    put(&v.path, "资料/b*.txt", "22");
+    let sn = pikpak::compare_for_test(&j, &s);
+    let mut clash: Vec<&str> = sn.per()["资料"].clash.iter().map(|x| x.path.as_str()).collect();
+    clash.sort();
+    assert_eq!(clash, ["b*.txt", "b?.txt"]);
+    // a stuck folder: set aside whole (what no listing shows — here a .DS_Store, left out by the filters — with
+    // it), what can be seen moved back
+    put(&cloud, "照片/城市/.DS_Store", "held");
+    let rc = rclone::Rclone::new(&j, None).unwrap();
+    let aside = pikpak::aside_for("照片/城市", "2026-11-27", "201530");
+    rc.set_aside(fake::DRIVE, "照片/城市", &aside).unwrap();
+    let mut back: Vec<String> = std::fs::read_dir(cloud.join("照片/城市")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    back.sort();
+    assert_eq!(back, ["IMG_0001.jpg", "IMG_0002.jpg"]);
+    assert!(cloud.join(&aside).join(".DS_Store").exists() && !cloud.join(&aside).join("IMG_0001.jpg").exists());
+    assert!(rc.set_aside(fake::DRIVE, "照片/没有", &pikpak::aside_for("照片/没有", "2026-11-27", "201531")).is_err());
 }
 
 #[test]
@@ -684,7 +760,7 @@ fn pikpak_holds_back_more_moves_than_compared_and_stops_without_half_files() {
     std::fs::remove_dir_all(&many).unwrap();
     let (p, d) = pikpak::sync_for_test(&j, &s, &["影音"], rclone::MAX_DELETE as u64);
     assert!(!d.ok && d.too_many_deletes, "{d:?}");
-    assert!(pikpak::ended_text(&p, &d).starts_with("要挪进 ARCHIVE 的比对出来的多"));
+    assert!(pikpak::ended_text(&p, &d, 0).starts_with("要挪进 ARCHIVE 的比对出来的多"));
     assert!(cloud_files(&j, fake::DRIVE).iter().any(|k| k.starts_with("影音/零碎/")));
     // the first ones went into ARCHIVE before it stopped; compared, the rest count: it goes through
     assert_eq!(pikpak::compare_for_test(&j, &s).per()["影音"].extra.len(), 20);
@@ -710,7 +786,7 @@ fn pikpak_holds_back_more_moves_than_compared_and_stops_without_half_files() {
     let up = cloud_files(&j, fake::DRIVE);
     assert!(!up.contains(&"影音/长片.mov".to_string()) && up.iter().all(|k| !k.contains("partial")), "{up:?}");
     let (p, d) = pikpak::sync_for_test(&j, &s, &["影音"], 100);
-    assert!(d.ok && p.files.load(Ordering::Relaxed) == 1, "{d:?}");
+    assert!(d.ok && p.files == 1, "{d:?}");
 }
 
 #[test]

@@ -12,7 +12,12 @@
 //!   nothing when anything failed); more of those than compared (pikpak.rs) stop it. Names go up in NFC (rclone
 //!   matches NFC and NFD as one). Names on PikPak are read and written as they are (`PIKPAK_ENCODING`): rclone's
 //!   default takes full-width ： ？ ＊ … for stand-ins of : ? * …, but the PikPak App stores them as typed, so
-//!   files it uploaded wouldn't match. Progress: rclone's JSON stats, once a second.
+//!   files it uploaded wouldn't match. What PikPak won't take in a name (: ? * " < > | \) goes up as _, as the PikPak
+//!   App does (`NAME_TRANSFORM`, `cloud_name`). Progress: rclone's JSON stats, once a second.
+//! - An upload cut off (停下, the App quitting) can leave a half-made file on PikPak that no listing shows but that
+//!   holds its name: the next upload comes back renamed `name(1)` (`Done::stuck`). `set_aside` moves the folder
+//!   holding it into ARCHIVE whole (a server-side directory move takes the hidden one along) and moves what can be
+//!   seen back, file by file; the next upload then gets its name.
 //! - `list`: what the cloud folder holds in those folders (names and sizes), to compare before a sync.
 //! - Sandbox (dev, tests, a scratch data dir): the 「PikPak」 is a local folder (`<data>/janitor-cloud/PikPak`),
 //!   reached through the same encrypted config; uploads go through rclone's ordinary copy, so the limit and the
@@ -38,6 +43,15 @@ pub const MAX_DELETE: u32 = 100;
 /// The fake cloud, beside the fake Mac.
 pub const FAKE_CLOUD: &str = "janitor-cloud";
 const SANDBOX_PASS: &str = "pomelo-sandbox-rclone";
+/// Names PikPak won't take's characters → _ (rclone's `--name-transform`; `cloud_name` the same in Rust).
+pub const NAME_TRANSFORM: &str = r#"all,regex=[:?*"<>|\\]/_"#;
+const UNTAKEN: &str = ":?*\"<>|\\";
+
+/// A drive path as it's called on PikPak.
+pub fn cloud_name(p: &str) -> String {
+    p.chars().map(|c| if UNTAKEN.contains(c) { '_' } else { c }).collect()
+}
+
 /// PikPak's name encoding: rclone's default without the Windows characters (: ? * | < > " \ and their full-width
 /// forms go up and come back as they are).
 pub const PIKPAK_ENCODING: &str = "Slash,Ctl,LeftSpace,RightSpace,RightPeriod,InvalidUtf8,Dot";
@@ -75,7 +89,13 @@ pub fn filters() -> Vec<String> {
 /// Only these top folders, on both sides (what the cloud has elsewhere stays, unread).
 pub fn only(tops: &[String]) -> Vec<String> {
     let glob = |p: &str| p.chars().flat_map(|c| if "*?[]{}\\".contains(c) { vec!['\\', c] } else { vec![c] }).collect::<String>();
-    let mut f: Vec<String> = tops.iter().flat_map(|t| ["--filter".to_string(), format!("+ /{}/**", glob(&diff::nfc(t)))]).collect();
+    let mut f: Vec<String> = Vec::new();
+    for t in tops {
+        let (raw, up) = (diff::nfc(t), cloud_name(&diff::nfc(t)));
+        for n in if raw == up { vec![raw] } else { vec![raw, up] } {
+            f.extend(["--filter".to_string(), format!("+ /{}/**", glob(&n))]);
+        }
+    }
     f.extend(["--filter".to_string(), "- **".to_string()]);
     f
 }
@@ -245,7 +265,7 @@ impl Rclone {
         }
         let mut c = self.cmd();
         c.arg("sync").arg(source).arg(self.dest(folder));
-        c.args(["--use-json-log", "-v", "--stats", "1s", "--stats-log-level", "NOTICE", "--check-first", "--size-only", "--track-renames", "--track-renames-strategy", "leaf", "--local-unicode-normalization", "--retries", "3"]);
+        c.args(["--use-json-log", "-v", "--stats", "1s", "--stats-log-level", "NOTICE", "--check-first", "--size-only", "--track-renames", "--track-renames-strategy", "leaf", "--local-unicode-normalization", "--retries", "3", "--name-transform", NAME_TRANSFORM]);
         c.args(filters());
         c.args(only(tops));
         if limit_mb > 0 {
@@ -288,6 +308,22 @@ impl Rclone {
         }
         done
     }
+
+    /// Moves the cloud folder `rel` to `aside` whole (server-side, hidden leftovers too), then what can be seen
+    /// back to `rel`, file by file: `rel` is a fresh folder without what held its names.
+    pub fn set_aside(&self, folder: &str, rel: &str, aside: &str) -> Result<(), String> {
+        let (from, to) = (self.dest(&format!("{folder}/{rel}")), self.dest(&format!("{folder}/{aside}")));
+        // no filters: rclone moves the directory itself when it can
+        self.run(&["move", &from, &to]).map_err(|e| format!("没挪成：{e}"))?;
+        if self.run(&["lsjson", "--stat", &from]).is_ok() {
+            return Err("没能整个挪走（PikPak 没做目录挪动）".into());
+        }
+        // with filters: file by file, only what a listing shows
+        let mut args: Vec<String> = vec!["move".into(), to, from];
+        args.extend(filters());
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.run(&args).map(|_| ()).map_err(|e| format!("没挪回来：{e}"))
+    }
 }
 
 /// A sync as it goes (from rclone's stats), and how to stop it.
@@ -322,6 +358,24 @@ pub struct Done {
     pub errors: Vec<(String, String)>,
     /// Why it couldn't run.
     pub fatal: Option<String>,
+    /// Source paths whose upload came back renamed `name(n)`: the name is held on PikPak.
+    pub stuck: Vec<String>,
+}
+
+/// `got` is `expected` with `(n)` put before its extension (PikPak's answer to a name already held).
+fn renamed_aside(expected: &str, got: &str) -> bool {
+    let (stem, ext) = match expected.rfind('.').filter(|i| *i > 0) {
+        Some(i) => expected.split_at(i),
+        None => (expected, ""),
+    };
+    got.strip_prefix(stem).and_then(|r| r.strip_suffix(ext)).and_then(|m| m.strip_prefix('(')).and_then(|m| m.strip_suffix(')')).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The two names of rclone's `uploaded file name mismatch: expected "a", got "b"`.
+fn mismatch(msg: &str) -> Option<(&str, &str)> {
+    let r = msg.split_once("uploaded file name mismatch: expected \"")?.1;
+    let (expected, r) = r.split_once("\", got \"")?;
+    Some((expected, r.strip_suffix('"')?))
 }
 
 impl Progress {
@@ -371,8 +425,13 @@ impl Progress {
         if msg.contains("--max-delete") {
             done.too_many_deletes = true;
         }
+        if let (Some((expected, got)), Some(o)) = (mismatch(msg), v["object"].as_str()) {
+            if renamed_aside(expected, got) && !done.stuck.iter().any(|s| s == o) {
+                done.stuck.push(o.to_string());
+            }
+        }
         // rclone's summing-up lines repeat what was said per file
-        let summary = ["Cancelling sync", "not deleting", "Fatal error received", "Failed to sync", "Attempt "].iter().any(|w| msg.starts_with(w));
+        let summary = ["Cancelling sync", "not deleting", "Fatal error received", "Failed to sync", "Attempt ", "Can't retry"].iter().any(|w| msg.starts_with(w));
         if summary || done.errors.len() >= ERRORS_MAX || rules::mentions_sealed(line) {
             return;
         }
