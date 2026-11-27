@@ -1,0 +1,46 @@
+/* DevJanitor 的清理、环境：每一类一枚小贴纸（分类色的贴纸填色、白边、歪一点，像别处的贴纸一样不跟明暗走），
+   里面是那一类的界面小图标；环境页宽的时候卡片排两栏。 */
+.jn-badge {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--jn-size, 30px);
+  height: var(--jn-size, 30px);
+  border-radius: 999px;
+  background: var(--jn-fill, var(--pm-cat-sky-sticker));
+  color: var(--pm-on-sticky);
+  box-shadow: 0 0 0 2px var(--pm-art-white), 0 1.5px 3px var(--pm-art-shadow);
+  transform: rotate(var(--jn-tilt, -5deg));
+}
+.jn-badge.jn-small { --jn-size: 24px; }
+/* 这一类选了几项：贴纸右上角一个主色的小圆 */
+.jn-badge { position: relative; }
+.jn-badge > .jn-count {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  font-weight: 700;
+  transform: rotate(calc(-1 * var(--jn-tilt, -5deg)));
+}
+.jn-badge.jn-mint { --jn-fill: var(--pm-cat-mint-sticker); }
+.jn-badge.jn-sky { --jn-fill: var(--pm-cat-sky-sticker); }
+.jn-badge.jn-pink { --jn-fill: var(--pm-cat-pink-sticker); }
+.jn-badge.jn-orange { --jn-fill: var(--pm-cat-orange-sticker); }
+.jn-badge.jn-grape { --jn-fill: var(--pm-cat-grape-sticker); }
+
+/* 环境页：一类里的卡片按高矮分到两栏；窄的时候一栏 */
+.jn-envs { container-type: inline-size; }
+.jn-cols { display: flex; gap: 16px; align-items: flex-start; }
+.jn-cols > .jn-col { flex: 1 1 0; min-width: 0; }
+@container (max-width: 879px) {
+  .jn-cols { flex-direction: column; align-items: stretch; gap: 0; }
+}

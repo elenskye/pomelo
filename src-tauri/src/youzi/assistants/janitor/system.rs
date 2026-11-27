@@ -104,15 +104,17 @@ impl Sys {
         Sys::Fake(f)
     }
 
-    /// (total, free) of the disk, in bytes.
+    /// (total, free) of the disk, in bytes. Free is what System Settings shows: free plus purgeable (APFS
+    /// snapshots, caches the system clears itself), as Foundation's "available for important usage";
+    /// `df` (free only) when that can't be had.
     pub fn disk(&self, scanned: u64) -> Option<(u64, u64)> {
         match self {
             Sys::Fake(f) => Some((f.disk_total, f.disk_total.saturating_sub(scanned + f.system))),
-            Sys::Real => {
+            Sys::Real => volume_capacity("/").or_else(|| {
                 let out = run("/bin/df", &["-k", "-P", "/System/Volumes/Data"], SHORT).or_else(|| run("/bin/df", &["-k", "-P", "/"], SHORT))?;
                 let cols: Vec<u64> = out.lines().nth(1)?.split_whitespace().skip(1).take(3).filter_map(|v| v.parse().ok()).collect();
                 (cols.len() == 3).then(|| (cols[0] * 1024, cols[2] * 1024))
-            }
+            }),
         }
     }
 
@@ -135,8 +137,11 @@ impl Sys {
                     let line = line.trim_start();
                     let Some((pid, comm)) = line.split_once(' ') else { continue };
                     let comm = comm.trim();
+                    // an app runs when its own program does (Office's widgets run inside its bundle all the time)
                     if let Some(i) = comm.find(".app/Contents/") {
-                        bundles.insert(comm[..i + 4].to_string());
+                        if comm[i + 14..].starts_with("MacOS/") {
+                            bundles.insert(comm[..i + 4].to_string());
+                        }
                     }
                     let base = comm.rsplit('/').next().unwrap_or(comm);
                     if dev_tool(base) {
@@ -269,6 +274,107 @@ impl Sys {
             }
         }
     }
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFURLVolumeTotalCapacityKey: *const std::ffi::c_void;
+    static kCFURLVolumeAvailableCapacityForImportantUsageKey: *const std::ffi::c_void;
+    fn CFURLCreateFromFileSystemRepresentation(allocator: *const std::ffi::c_void, buffer: *const u8, len: isize, is_dir: u8) -> *const std::ffi::c_void;
+    fn CFURLCopyResourcePropertyForKey(url: *const std::ffi::c_void, key: *const std::ffi::c_void, value: *mut *const std::ffi::c_void, error: *mut *const std::ffi::c_void) -> u8;
+    fn CFNumberGetValue(number: *const std::ffi::c_void, kind: isize, out: *mut std::ffi::c_void) -> u8;
+    fn CFRelease(cf: *const std::ffi::c_void);
+}
+
+/// (total, available for important usage) of the volume holding `path` (CoreFoundation, no dependency).
+fn volume_capacity(path: &str) -> Option<(u64, u64)> {
+    const SINT64: isize = 4;
+    unsafe {
+        let url = CFURLCreateFromFileSystemRepresentation(std::ptr::null(), path.as_ptr(), path.len() as isize, 1);
+        if url.is_null() {
+            return None;
+        }
+        let get = |key: *const std::ffi::c_void| -> Option<u64> {
+            let mut v: *const std::ffi::c_void = std::ptr::null();
+            if CFURLCopyResourcePropertyForKey(url, key, &mut v, std::ptr::null_mut()) == 0 || v.is_null() {
+                return None;
+            }
+            let mut n: i64 = 0;
+            let ok = CFNumberGetValue(v, SINT64, &mut n as *mut i64 as *mut std::ffi::c_void) != 0;
+            CFRelease(v);
+            (ok && n > 0).then_some(n as u64)
+        };
+        let out = get(kCFURLVolumeTotalCapacityKey).zip(get(kCFURLVolumeAvailableCapacityForImportantUsageKey));
+        CFRelease(url);
+        out
+    }
+}
+
+/// What a regular file holds on APFS (`getattrlist`'s extended common attributes): the bytes only it holds,
+/// and — when it may share blocks with clones (`cp -c`, Finder's duplicate) — its clone family.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CloneInfo {
+    /// Bytes no other file shares (what deleting it frees).
+    pub private: u64,
+    /// May share blocks with another file.
+    pub shared: bool,
+    /// Files with the same id are full clones of one data stream (`refs` of them, itself included).
+    pub id: u64,
+    pub refs: u32,
+}
+
+#[repr(C)]
+struct AttrList {
+    bitmapcount: u16,
+    reserved: u16,
+    commonattr: u32,
+    volattr: u32,
+    dirattr: u32,
+    fileattr: u32,
+    forkattr: u32,
+}
+
+extern "C" {
+    fn getattrlist(path: *const std::ffi::c_char, list: *mut AttrList, buf: *mut std::ffi::c_void, size: usize, options: u32) -> i32;
+}
+
+/// None: not APFS (or not answered), so the caller counts the allocated size.
+pub fn clone_info(path: &Path) -> Option<CloneInfo> {
+    use std::os::unix::ffi::OsStrExt;
+    const RETURNED: u32 = 0x8000_0000;
+    const PRIVATESIZE: u32 = 0x8;
+    const CLONEID: u32 = 0x100;
+    const EXT_FLAGS: u32 = 0x200;
+    const CLONE_REFCNT: u32 = 0x1000;
+    const NOFOLLOW: u32 = 0x1;
+    const CMN_EXTENDED: u32 = 0x20;
+    const MAY_SHARE: u64 = 0x1;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut list = AttrList { bitmapcount: 5, reserved: 0, commonattr: RETURNED, volattr: 0, dirattr: 0, fileattr: 0, forkattr: PRIVATESIZE | CLONEID | EXT_FLAGS | CLONE_REFCNT };
+    let mut buf = [0u8; 128];
+    if unsafe { getattrlist(c.as_ptr(), &mut list, buf.as_mut_ptr() as *mut std::ffi::c_void, buf.len(), NOFOLLOW | CMN_EXTENDED) } != 0 {
+        return None;
+    }
+    // u32 length, attribute_set_t (5 × u32), then the asked ones that came back, in bit order
+    let u32_at = |i: usize| u32::from_ne_bytes(buf[i..i + 4].try_into().unwrap_or_default());
+    let u64_at = |i: usize| u64::from_ne_bytes(buf[i..i + 8].try_into().unwrap_or_default());
+    let got = u32_at(20);
+    if got & (PRIVATESIZE | EXT_FLAGS) != PRIVATESIZE | EXT_FLAGS {
+        return None;
+    }
+    let mut at = 24;
+    let private = u64_at(at);
+    at += 8;
+    let id = if got & CLONEID != 0 {
+        at += 8;
+        u64_at(at - 8)
+    } else {
+        0
+    };
+    let flags = u64_at(at);
+    at += 8;
+    let refs = if got & CLONE_REFCNT != 0 { u32_at(at) } else { 1 };
+    Some(CloneInfo { private, shared: flags & MAY_SHARE != 0, id, refs })
 }
 
 fn docker_name(t: &str) -> String {

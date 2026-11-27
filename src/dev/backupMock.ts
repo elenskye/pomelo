@@ -7,7 +7,7 @@
 // second and a half. A done move card puts 小柚 where its task looks and takes the moves off.
 // PikPak: logged in and compared (`&pikpak=none`: not logged in): the ticked drive folders, three with something
 // to do; 开始同步 runs five seconds and puts the folders in step; 停下 stops it; logging in or a backup ending compares
-// again for a second. How a run or a sync ended pops up once (`ends`).
+// again for a second. How a run or a sync ended pops up once (`ends`). Three earlier records, each can be deleted.
 import type { BackupDiff, BackupListRow, BackupLook, BackupOverview, BackupRecord, BackupTask, CloudDiff, PikPakView } from "@/modules/youzi/assistants/janitorApi";
 import { BACKUP_TEXT, backupCardHooks, backupCards, janitorCards } from "./janitorMock";
 
@@ -48,7 +48,13 @@ let tasks: BackupTask[] = [
   { id: 3, source: "/Users/me/Downloads/小柚", target: "小柚", last: null, problem: null, diff: diff({ new: [row("2024/a.mov", 2_000_000), row("2024/b.jpg", 150_000), row("2026/c.jpg", 160_000), row("2026/d.jpg", 170_000)] }) },
 ];
 let nextId = 4;
-let runs: BackupRecord[] = [];
+const record = (id: number, dest: "drive" | "pikpak", status: BackupRecord["status"], targets: string[], files: number, bytes: number, day: string, errors: [string, string][] = []): BackupRecord => ({ id, dest, drive: DRIVE.name, status, tasks: targets.map((t) => ({ id: 0, source: "", target: t, files: 0, bytes: 0, updated: 0, done: status === "done" })), files, bytes, errors, note: null, startedAt: `${day}T09:00:00.000Z`, finishedAt: `${day}T09:05:00.000Z` });
+let runs: BackupRecord[] = [
+  record(3, "pikpak", "failed", ["资料", "照片"], 2, 310_000, "2026-11-20", [["照片/截图/截屏 2.png", "网络断了"]]),
+  record(2, "pikpak", "done", ["资料", "照片", "回忆", "影音"], 18, 9_800_000, "2026-11-12"),
+  record(1, "drive", "done", ["资料", "照片"], 12, 1_400_000, "2026-11-10"),
+];
+let nextRun = 4;
 let comparingUntil = 0;
 let run: { until: number; ids: number[]; files: number; bytes: number } | null = null;
 let ended: string | null = null;
@@ -81,7 +87,7 @@ function pikSettle() {
   for (const t of r.tops) CLOUD[t] = cloud({ same: CLOUD[t].same + CLOUD[t].new.count + CLOUD[t].changed.count + CLOUD[t].moved.count });
   pik.ended = `同步好了：传了 ${r.files} 个（${(r.bytes / 1_000_000).toFixed(0)} MB）`;
   pik.ends++;
-  runs = [{ id: runs.length + 1, dest: "pikpak", drive: DRIVE.name, status: "done", tasks: r.tops.map((t) => ({ id: 0, source: "", target: t, files: 0, bytes: 0, updated: 0, done: true })), files: r.files, bytes: r.bytes, errors: [], note: null, startedAt: new Date(r.until - 5000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
+  runs = [{ id: nextRun++, dest: "pikpak", drive: DRIVE.name, status: "done", tasks: r.tops.map((t) => ({ id: 0, source: "", target: t, files: 0, bytes: 0, updated: 0, done: true })), files: r.files, bytes: r.bytes, errors: [], note: null, startedAt: new Date(r.until - 5000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
 }
 
 function pikView(): PikPakView {
@@ -159,7 +165,7 @@ function settle() {
   const r = run;
   run = null;
   tasks = tasks.map((t) => (r.ids.includes(t.id) && t.diff ? { ...t, last: new Date().toISOString(), diff: { ...t.diff, new: group([]), changed: group([]), same: t.diff.same + t.diff.new.count + t.diff.changed.count } } : t));
-  runs = [{ id: runs.length + 1, dest: "drive", drive: DRIVE.name, status: "done", tasks: tasks.filter((t) => r.ids.includes(t.id)).map((t) => ({ id: t.id, source: t.source, target: t.target, files: 0, bytes: 0, updated: 0, done: true })), files: r.files, bytes: r.bytes, errors: [], note: null, startedAt: new Date(r.until - 3000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
+  runs = [{ id: nextRun++, dest: "drive", drive: DRIVE.name, status: "done", tasks: tasks.filter((t) => r.ids.includes(t.id)).map((t) => ({ id: t.id, source: t.source, target: t.target, files: 0, bytes: 0, updated: 0, done: true })), files: r.files, bytes: r.bytes, errors: [], note: null, startedAt: new Date(r.until - 3000).toISOString(), finishedAt: new Date().toISOString() }, ...runs];
   ended = r.files ? `备份好了：复制了 ${r.files} 个文件` : "备份好了：没有要复制的";
   ends++;
   pik.comparingUntil = Date.now() + 1000;
@@ -255,6 +261,12 @@ export const backupHandlers: Record<string, (a: Args) => unknown> = {
     const chosen = tasks.filter((t) => ids.includes(t.id) && t.diff);
     run = { until: Date.now() + 3000, ids, files: chosen.reduce((s, t) => s + (t.diff?.new.count ?? 0) + (t.diff?.changed.count ?? 0), 0), bytes: chosen.reduce((s, t) => s + (t.diff?.new.bytes ?? 0) + (t.diff?.changed.bytes ?? 0), 0) };
     ended = null;
+    return view();
+  },
+  janitor_backup_forget: (a) => {
+    const r = runs.find((x) => x.id === a.id);
+    if (!r || r.status === "running") throw new Error("这条记录还没做完，或已经删了");
+    runs = runs.filter((x) => x.id !== a.id);
     return view();
   },
   janitor_backup_stop: () => {

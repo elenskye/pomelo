@@ -257,16 +257,5 @@ export const janitorLive = () => {
   return n > 0 ? `可清 ${(n / 1e9).toFixed(1)} GB` : null;
 };
 
-const CATEGORIES = [
-  { id: "node_modules", name: "项目里的 node_modules", rebuild: "在项目里 pnpm install（或 npm install）", takes: "一两分钟", network: true, download: false },
-  { id: "rust_target", name: "Rust 的 target", rebuild: "下次编译时重建", takes: "几分钟（Pomelo 约一分半）", network: false, download: false },
-  { id: "python", name: "Python 虚拟环境和 __pycache__", rebuild: "按项目的依赖清单重新装；__pycache__ 运行时自己生成", takes: "几分钟", network: true, download: false },
-  { id: "web_build", name: "前端的构建产物", rebuild: "下次构建时重建（npm run build）", takes: "几十秒", network: false, download: false },
-  { id: "pkg_cache", name: "包管理器的下载缓存", rebuild: "用到时重新下载", takes: "看网速", network: true, download: true },
-  { id: "conda", name: "Conda 的包缓存", rebuild: "conda clean 清掉没在用的包；以后装包时重新下载", takes: "看网速", network: true, download: true },
-  { id: "jvm", name: "Gradle、Maven 的缓存", rebuild: "下次构建时重新下载", takes: "看网速", network: true, download: true },
-  { id: "xcode", name: "Xcode 的编译缓存和旧文件", rebuild: "下次编译时重建；连上设备时重新准备", takes: "几分钟", network: true, download: false },
-  { id: "app_cache", name: "各个 App 的缓存", rebuild: "App 用到时自己再生成", takes: "马上", network: false, download: false },
-  { id: "codex", name: "Codex 的运行时", rebuild: "Codex 用到时重新下载", takes: "几分钟", network: true, download: false },
-  { id: "logs", name: "日志", rebuild: "不用重建", takes: "", network: false, download: false },
-];
+/** 一键清理's categories, as Rust has them. */
+const CATEGORIES = data.categories;

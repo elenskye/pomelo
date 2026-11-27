@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 /// Bumped when the fake Mac changes (an older one is made again).
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 pub const HOME: &str = "/Users/me";
 /// The fake external drive (backup/), in `<data>/janitor-volumes`.
 pub const DRIVE: &str = "小柚的硬盘";
@@ -249,6 +249,21 @@ pub fn build(root: &Path, now: SystemTime) -> Result<(), String> {
     abs("/usr/local/mysql-9.4.0-macos15-arm64/bin/mysqld", 160 * MB, 200)?;
     symlink(root, "/usr/local/mysql", "mysql-9.4.0-macos15-arm64")?;
     f(".claude/projects/pomelo/session.jsonl", 120 * MB, 0)?;
+    // 1.1.5: tools recognised since (Gemini CLI, Antigravity, Godot, gh), a WebKit cache a script left
+    f(".gemini/tmp/chats.json", 40 * MB, 2)?;
+    app(root, "Antigravity", "com.google.antigravity", 300 * MB, now)?;
+    f("Library/Application Support/Antigravity/User/workspaceStorage/a", 120 * MB, 1)?;
+    app(root, "Godot", "org.godotengine.godot", 150 * MB, now)?;
+    f(".config/gh/hosts.yml", 200, 30)?;
+    f("Library/Caches/wkprobe/WebKit/NetworkCache/a", 30 * MB, 4)?;
+    // litter: Finder's .DS_Store (not in a bundle, Library, or a protected place) and Office's lock files
+    for p in ["Documents", "Downloads", "Desktop", "Documents/GitHub/pomelo", "Movies", "Documents/Seeker", "Documents/GitHub/personal-website", "Library", "Documents/GitHub/pomelo/node_modules"] {
+        f(&format!("{p}/.DS_Store"), 6_148, 3)?;
+    }
+    abs("/Applications/Google Chrome.app/Contents/.DS_Store", 6_148, 30)?;
+    f("Documents/~$论文草稿.docx", 162, 5)?;
+    f("Documents/.~lock.报告.odt#", 90, 5)?;
+    f("Documents/Seeker/cv/cn/~$简历-v3.docx", 162, 5)?;
     abs("/usr/local/lib/libsomething.dylib", 50 * MB, 200)?;
     // 备份 (1.1.0): the Mac side of the backup tasks, and VAULT (nothing may list it)
     for (virt, size, seed, days) in MAC_BACKUP {

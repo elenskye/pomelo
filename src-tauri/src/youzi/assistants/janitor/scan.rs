@@ -6,6 +6,12 @@
 //!   files are sparse). A file with several hard links counts once, where it's met first; an item frees
 //!   only its files whose every link is inside it (pnpm's node_modules link into the store, Conda's envs
 //!   into `pkgs`: deleting those frees little, and the size says so).
+//! - APFS clones (`cp -c`: Peck's eval worktrees clone a warmed `target/` and `node_modules` into each)
+//!   share their blocks: a file counts its private bytes, and a family of full clones counts the shared
+//!   part once, where it's met first (like a hard link); a clone that changed since counts only what's its
+//!   own (the rest is its original's). An item frees the shared part only when the whole family is in it.
+//! - Litter (`.DS_Store`, Office's `~$` lock files): one item a kind over the personal folders (not in a
+//!   bundle, an item, a protected place), the files kept in `extra.files`; cleaning deletes those.
 //! - Never crosses into another volume, never follows symlinks, never looks for single files inside a
 //!   bundle (`.app`, a Photos library…), never looks for projects inside an item (node_modules within
 //!   node_modules). Places that need Full Disk Access are skipped (and counted) when it isn't given.
@@ -105,8 +111,9 @@ struct Dir {
     newest: i64,
     markers: u16,
     denied: bool,
-    /// Bytes of own files with more than one link (counted here because met first).
-    linked: u64,
+    /// Bytes counted here that deleting this folder alone may not free: own files with more than one link,
+    /// the shared part of full clones (counted here because met first).
+    held: u64,
     seed: u32,
 }
 
@@ -114,9 +121,16 @@ struct Dir {
 struct FileRec {
     dir: u32,
     name: Box<str>,
+    /// What it adds to its folder's size.
     size: u64,
+    /// What deleting it alone frees (a clone: its private bytes).
+    frees: u64,
+    /// Its length (duplicates are compared by it).
+    len: u64,
     mtime: i64,
     ino: (u64, u64),
+    /// The clone family it's a full member of (0: none): the same data, not a duplicate.
+    clone: u64,
     /// Outside ~/Library, not in a bundle, an item or the Trash.
     personal: bool,
     downloads: bool,
@@ -130,6 +144,8 @@ enum SeedKind {
     Project(&'static str),
     Place(&'static str, &'static str, How),
     AppCache(&'static str),
+    /// A cache holding only a web view's data (rules::web_cache).
+    WebCache,
     UnknownCache,
     Conda(String),
     DeviceSupport,
@@ -156,11 +172,17 @@ struct Job {
     downloads: bool,
 }
 
+/// A hard-linked inode (0, dev, ino) or a family of full clones (1, dev, clone id).
+type Held = (u8, u64, u64);
+
 struct Links {
-    /// (dev, ino) → (links, seed, seen in that seed, size, met elsewhere too)
-    inside: HashMap<(u64, u64), (u64, u32, u64, u64, bool)>,
-    seen: HashSet<(u64, u64)>,
+    /// → (members, seed, seen in that seed, size, met elsewhere too)
+    inside: HashMap<Held, (u64, u32, u64, u64, bool)>,
+    seen: HashSet<Held>,
 }
+
+/// Litter: (folder, name, size, kind).
+type Litter = (u32, Box<str>, u64, &'static str);
 
 struct Walk<'a> {
     cfg: &'a Config,
@@ -168,6 +190,7 @@ struct Walk<'a> {
     dirs: Mutex<Vec<Dir>>,
     files: Mutex<Vec<FileRec>>,
     seeds: Mutex<Vec<Seed>>,
+    litter: Mutex<Vec<Litter>>,
     apps: Mutex<Vec<String>>,
     leftover_dirs: Mutex<Vec<(u32, String)>>,
     links: Mutex<Links>,
@@ -211,6 +234,7 @@ impl<'a> Walk<'a> {
             dirs: Mutex::new(Vec::new()),
             files: Mutex::new(Vec::new()),
             seeds: Mutex::new(Vec::new()),
+            litter: Mutex::new(Vec::new()),
             apps: Mutex::new(Vec::new()),
             leftover_dirs: Mutex::new(Vec::new()),
             links: Mutex::new(Links { inside: HashMap::new(), seen: HashSet::new() }),
@@ -299,7 +323,11 @@ impl<'a> Walk<'a> {
             return Some(SeedKind::Conda(parent_virt.to_string()));
         }
         if parent_virt == self.caches {
-            return Some(rules::app_cache(name).map_or(SeedKind::UnknownCache, SeedKind::AppCache));
+            if let Some(app) = rules::app_cache(name) {
+                return Some(SeedKind::AppCache(app));
+            }
+            let entries: Vec<String> = std::fs::read_dir(real).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+            return Some(if rules::web_cache(&entries) && !rules::apple_cache(name) { SeedKind::WebCache } else { SeedKind::UnknownCache });
         }
         if self.device_support.iter().any(|d| d == parent_virt) {
             return Some(SeedKind::DeviceSupport);
@@ -331,8 +359,9 @@ impl<'a> Walk<'a> {
             }
         }
         let markers = list.iter().fold(0u16, |b, (n, _)| b | rules::marker_bit(n));
-        let (mut own, mut files, mut newest, mut linked) = (0u64, 0u32, 0i64, 0u64);
+        let (mut own, mut files, mut newest, mut held) = (0u64, 0u32, 0i64, 0u64);
         let mut recs: Vec<FileRec> = Vec::new();
+        let mut litter: Vec<Litter> = Vec::new();
         let mut kids: Vec<(String, std::fs::Metadata)> = Vec::new();
         let watched_here = self.watched.contains(&job.virt);
         let in_trash = rules::within(&job.virt, &self.trash);
@@ -341,42 +370,77 @@ impl<'a> Walk<'a> {
                 kids.push((name, m));
                 continue;
             }
-            let size = if self.cfg.allocated { m.blocks() * 512 } else { m.len() };
+            let alloc = if self.cfg.allocated { m.blocks() * 512 } else { m.len() };
             let ino = (m.dev(), m.ino());
+            let (mut size, mut frees, mut clone) = (alloc, alloc, 0u64);
             let mut counted = true;
             if m.nlink() > 1 && m.is_file() {
                 let mut l = self.links.lock().unwrap_or_else(|e| e.into_inner());
-                counted = l.seen.insert(ino);
+                let key = (0, ino.0, ino.1);
+                counted = l.seen.insert(key);
                 if job.seed != NONE {
-                    let e = l.inside.entry(ino).or_insert((m.nlink(), job.seed, 0, size, false));
+                    let e = l.inside.entry(key).or_insert((m.nlink(), job.seed, 0, size, false));
                     if e.1 == job.seed {
                         e.2 += 1;
                     } else {
                         e.4 = true;
                     }
                 }
+                if counted {
+                    held += size;
+                }
+            } else if self.cfg.allocated && m.is_file() && alloc > 0 {
+                if let Some(ci) = super::system::clone_info(&job.real.join(&name)).filter(|c| c.shared) {
+                    let private = ci.private.min(alloc);
+                    (size, frees) = (private, private);
+                    if ci.refs > 1 && ci.id != 0 {
+                        clone = ci.id;
+                        let shared = alloc - private;
+                        let key = (1, ino.0, ci.id);
+                        let mut l = self.links.lock().unwrap_or_else(|e| e.into_inner());
+                        if l.seen.insert(key) {
+                            size += shared;
+                            held += shared;
+                        }
+                        if job.seed != NONE {
+                            let e = l.inside.entry(key).or_insert((ci.refs as u64, job.seed, 0, shared, false));
+                            if e.1 == job.seed {
+                                e.2 += 1;
+                            } else {
+                                e.4 = true;
+                            }
+                        }
+                    }
+                }
             }
             if counted {
                 own += size;
-                if m.nlink() > 1 {
-                    linked += size;
-                }
+            } else {
+                size = 0;
             }
             files += 1;
             newest = newest.max(mtime(&m));
             if !m.is_file() {
                 continue;
             }
+            if job.personal && job.seed == NONE && !job.bundle && !in_trash {
+                if let Some(kind) = rules::litter(&name) {
+                    litter.push((job.dir, name.as_str().into(), alloc, kind));
+                }
+            }
             let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-            let installer = job.downloads && size >= rules::INSTALLER_FILE && rules::INSTALLER_EXT.contains(&ext.as_str());
-            if !job.bundle && (size >= rules::DUP_FILE || installer || watched_here) {
-                recs.push(FileRec { dir: job.dir, name: name.into(), size, mtime: mtime(&m), ino, personal: job.personal && job.seed == NONE && !in_trash, downloads: job.downloads });
+            let installer = job.downloads && alloc >= rules::INSTALLER_FILE && rules::INSTALLER_EXT.contains(&ext.as_str());
+            if !job.bundle && (alloc >= rules::DUP_FILE || installer || watched_here) {
+                recs.push(FileRec { dir: job.dir, name: name.into(), size, frees, len: m.len(), mtime: mtime(&m), ino, clone, personal: job.personal && job.seed == NONE && !in_trash, downloads: job.downloads });
             }
         }
         self.progress.files.fetch_add(files as u64, Ordering::Relaxed);
         self.progress.bytes.fetch_add(own, Ordering::Relaxed);
         if !recs.is_empty() {
             self.files.lock().unwrap_or_else(|e| e.into_inner()).extend(recs);
+        }
+        if !litter.is_empty() {
+            self.litter.lock().unwrap_or_else(|e| e.into_inner()).extend(litter);
         }
         // 0: nothing to note, 1: an installed app, 2: a Library entry that may be a removed app's
         let mut prepared: Vec<(Dir, Job, Option<SeedKind>, bool, u8)> = Vec::new();
@@ -399,7 +463,7 @@ impl<'a> Walk<'a> {
             // personal files: not ~/Library, the Trash or a dot folder of home (tools' own: ~/.nvm, ~/.ollama…)
             let personal = job.personal && !rules::within(&virt, &self.library) && !rules::within(&virt, &self.trash) && !(job.virt == self.cfg.home && name.starts_with('.'));
             let downloads = job.downloads || virt == self.downloads;
-            let dir = Dir { parent: job.dir, name: name.as_str().into(), own: 0, files: 0, newest: 0, markers: 0, denied: skipped, linked: 0, seed: NONE };
+            let dir = Dir { parent: job.dir, name: name.as_str().into(), own: 0, files: 0, newest: 0, markers: 0, denied: skipped, held: 0, seed: NONE };
             let child = Job { dir: NONE, real, virt, dev: job.dev, seed: job.seed, bundle, personal, downloads };
             prepared.push((dir, child, seed, skipped, note));
         }
@@ -412,7 +476,7 @@ impl<'a> Walk<'a> {
             me.files = files;
             me.newest = me.newest.max(newest);
             me.markers = markers;
-            me.linked = linked;
+            me.held = held;
             let mut seeds = prepared.iter().any(|p| p.2.is_some()).then(|| self.seeds.lock().unwrap_or_else(|e| e.into_inner()));
             for (mut dir, mut child, seed, skipped, note) in prepared {
                 let idx = dirs.len() as u32;
@@ -611,7 +675,7 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
                 continue;
             }
             let idx = dirs.len() as u32;
-            dirs.push(Dir { parent: NONE, name: label.as_str().into(), own: 0, files: 0, newest: 0, markers: 0, denied: false, linked: 0, seed: NONE });
+            dirs.push(Dir { parent: NONE, name: label.as_str().into(), own: 0, files: 0, newest: 0, markers: 0, denied: false, held: 0, seed: NONE });
             let personal = virt == cfg.home;
             jobs.push(Job { dir: idx, real, virt: virt.clone(), dev: m.dev(), seed: NONE, bundle: false, personal, downloads: false });
             root_dirs.push((idx, virt, label));
@@ -631,6 +695,7 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
     let dirs = walk.dirs.into_inner().unwrap_or_else(|e| e.into_inner());
     let files = walk.files.into_inner().unwrap_or_else(|e| e.into_inner());
     let seeds = walk.seeds.into_inner().unwrap_or_else(|e| e.into_inner());
+    let litter = walk.litter.into_inner().unwrap_or_else(|e| e.into_inner());
     let apps = walk.apps.into_inner().unwrap_or_else(|e| e.into_inner());
     let leftover_dirs = walk.leftover_dirs.into_inner().unwrap_or_else(|e| e.into_inner());
     let links = walk.links.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -640,7 +705,7 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
     let mut total: Vec<u64> = dirs.iter().map(|d| d.own).collect();
     let mut count: Vec<u64> = dirs.iter().map(|d| d.files as u64).collect();
     let mut newest: Vec<i64> = dirs.iter().map(|d| d.newest).collect();
-    let mut linked: Vec<u64> = dirs.iter().map(|d| d.linked).collect();
+    let mut held: Vec<u64> = dirs.iter().map(|d| d.held).collect();
     let mut denied: Vec<u64> = dirs.iter().map(|d| d.denied as u64).collect();
     let mut active: Vec<i64> = dirs.iter().map(|d| d.newest).collect();
     for i in (0..n).rev() {
@@ -652,7 +717,7 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
         total[p] += total[i];
         count[p] += count[i];
         newest[p] = newest[p].max(newest[i]);
-        linked[p] += linked[i];
+        held[p] += held[i];
         denied[p] += denied[i];
         if dirs[i].seed == NONE && &*dirs[i].name != ".git" {
             active[p] = active[p].max(active[i]);
@@ -693,16 +758,16 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
     let protected = Protected::new(&cfg.home, &cfg.site);
     let (procs, running_apps) = sys.running();
 
-    // what each seed frees
-    let mut freed_links: HashMap<u32, u64> = HashMap::new();
-    for (links_n, seed, seen, size, elsewhere) in links.inside.values() {
-        if !elsewhere && seen == links_n {
-            *freed_links.entry(*seed).or_default() += size;
+    // what each seed frees: its own bytes, plus links and clone families wholly inside it
+    let mut freed_held: HashMap<u32, u64> = HashMap::new();
+    for (members, seed, seen, size, elsewhere) in links.inside.values() {
+        if !elsewhere && seen >= members {
+            *freed_held.entry(*seed).or_default() += size;
         }
     }
     let freeable = |si: u32| -> u64 {
         let d = seeds[si as usize].dir as usize;
-        total[d].saturating_sub(linked[d]) + freed_links.get(&si).copied().unwrap_or(0)
+        total[d].saturating_sub(held[d]) + freed_held.get(&si).copied().unwrap_or(0)
     };
 
     let mut items: Vec<ItemRow> = Vec::new();
@@ -727,7 +792,7 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
         let si = si as u32;
         let d = seed.dir as usize;
         let virt = path_of(d, &mut paths);
-        if protected.of(&virt).is_some() && !matches!(seed.kind, SeedKind::Archive | SeedKind::UnknownCache) {
+        if protected.of(&virt).is_some() && !matches!(seed.kind, SeedKind::Archive | SeedKind::UnknownCache | SeedKind::WebCache) {
             continue; // 一键清理 never enters a protected place
         }
         let size = freeable(si);
@@ -786,6 +851,9 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
                     extra["inUse"] = json!("App 开着");
                 }
                 push(&mut items, false, rules::APP_CACHE, rules::app_cache_title(&dirs[d].name), vec![virt], size, newest[d], None, None, extra);
+            }
+            SeedKind::WebCache => {
+                push(&mut items, false, rules::APP_CACHE, format!("{}{}的网页缓存", dirs[d].name, rules::gap(&dirs[d].name)), vec![virt], size, newest[d], None, None, json!({ "how": "remove" }));
             }
             SeedKind::Conda(root) => {
                 let mut extra = json!({ "how": "conda", "program": format!("{root}/bin/conda") });
@@ -892,7 +960,7 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
                 let e = leftovers.entry(id).or_insert((Vec::new(), 0, 0));
                 let virt = join(&parent, &f.name);
                 e.0.push(virt.clone());
-                e.1 += f.size;
+                e.1 += f.frees;
                 e.2 = e.2.max(f.mtime);
                 leftover_paths.insert(virt);
             }
@@ -914,14 +982,15 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
     }
 
     // big and long-unopened files; installers in Downloads
-    let personal: Vec<&FileRec> = files.iter().filter(|f| f.personal && f.size >= rules::OLD_FILE).collect();
+    // what deleting frees (a clone frees only its own bytes)
+    let personal: Vec<&FileRec> = files.iter().filter(|f| f.personal && f.frees >= rules::OLD_FILE).collect();
     let real_paths: Vec<PathBuf> = personal.iter().map(|f| cfg.real_of(&join(&path_of(f.dir as usize, &mut paths), &f.name))).collect();
     let opened = sys.last_opened(&real_paths);
     let old_before = cfg.now - rules::OLD_DAYS * 86400;
     for (f, real) in personal.iter().zip(&real_paths) {
         let last = opened.get(real).copied().map_or(f.mtime, |o| o.max(f.mtime));
         let old = last < old_before;
-        if f.size < rules::BIG_FILE && !old {
+        if f.frees < rules::BIG_FILE && !old {
             continue;
         }
         let virt = join(&path_of(f.dir as usize, &mut paths), &f.name);
@@ -932,22 +1001,22 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
         if let Some(p) = protected.of(&virt) {
             extra["protected"] = json!(p);
         }
-        push(&mut items, true, rules::BIG, f.name.to_string(), vec![virt], f.size, f.mtime, None, None, extra);
+        push(&mut items, true, rules::BIG, f.name.to_string(), vec![virt], f.frees, f.mtime, None, None, extra);
     }
-    for f in files.iter().filter(|f| f.downloads && f.size >= rules::INSTALLER_FILE) {
+    for f in files.iter().filter(|f| f.downloads && f.frees >= rules::INSTALLER_FILE) {
         let ext = f.name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
         if !rules::INSTALLER_EXT.contains(&ext.as_str()) {
             continue;
         }
         let virt = join(&path_of(f.dir as usize, &mut paths), &f.name);
-        push(&mut items, true, rules::INSTALLERS, f.name.to_string(), vec![virt], f.size, f.mtime, None, None, json!({}));
+        push(&mut items, true, rules::INSTALLERS, f.name.to_string(), vec![virt], f.frees, f.mtime, None, None, json!({}));
     }
 
     // duplicates: same size → same first and last 64 KB → same content
     progress.phase("找重复的文件");
     let mut by_size: HashMap<u64, Vec<&FileRec>> = HashMap::new();
-    for f in files.iter().filter(|f| f.personal && f.size >= rules::DUP_FILE) {
-        by_size.entry(f.size).or_default().push(f);
+    for f in files.iter().filter(|f| f.personal && f.len >= rules::DUP_FILE) {
+        by_size.entry(f.len).or_default().push(f);
     }
     let mut groups: Vec<Vec<(&FileRec, String)>> = Vec::new();
     let mut sizes: Vec<u64> = by_size.iter().filter(|(_, v)| v.len() > 1).map(|(s, _)| *s).collect();
@@ -956,8 +1025,8 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
         if progress.stop.load(Ordering::Relaxed) {
             return Err("扫描停下了".into());
         }
-        let mut seen_ino = HashSet::new();
-        let cands: Vec<(&FileRec, String)> = by_size[&size].iter().filter(|f| seen_ino.insert(f.ino)).map(|f| (*f, join(&path_of(f.dir as usize, &mut paths), &f.name))).collect();
+        let (mut seen_ino, mut seen_clone) = (HashSet::new(), HashSet::new());
+        let cands: Vec<(&FileRec, String)> = by_size[&size].iter().filter(|f| seen_ino.insert(f.ino) && (f.clone == 0 || seen_clone.insert(f.clone))).map(|f| (*f, join(&path_of(f.dir as usize, &mut paths), &f.name))).collect();
         if cands.len() < 2 {
             continue;
         }
@@ -988,8 +1057,34 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
             if let Some(p) = protected.of(&virt) {
                 extra["protected"] = json!(p);
             }
-            push(&mut items, true, rules::DUPLICATES, f.name.to_string(), vec![virt], f.size, f.mtime, None, None, extra);
+            push(&mut items, true, rules::DUPLICATES, f.name.to_string(), vec![virt], f.frees, f.mtime, None, None, extra);
         }
+    }
+
+    // litter: one item a kind, whatever its size; Office's are in use while an Office app runs
+    for kind in [rules::DS_STORE, rules::OFFICE_TEMP] {
+        let mut found: Vec<(String, u64)> = Vec::new();
+        for (d, name, size, _) in litter.iter().filter(|l| l.3 == kind) {
+            let virt = join(&path_of(*d as usize, &mut paths), name);
+            if protected.of(&virt).is_none() {
+                found.push((virt, *size));
+            }
+        }
+        if found.is_empty() {
+            continue;
+        }
+        found.sort();
+        let size = found.iter().map(|f| f.1).sum();
+        let mut extra = json!({ "how": "litter", "tag": format!("{} 个", found.len()), "files": found.iter().map(|f| &f.0).collect::<Vec<_>>() });
+        if kind == rules::OFFICE_TEMP {
+            extra["apps"] = json!(rules::OFFICE_APPS);
+            if let Some(app) = rules::OFFICE_APPS.iter().find(|a| running_apps.contains(**a)) {
+                extra["inUse"] = json!(format!("{} 开着", office_name(app)));
+            }
+        }
+        let title = rules::category(kind).map_or(kind, |c| c.name).to_string();
+        items.push(ItemRow { id: next_id, listed: false, kind: kind.into(), title, paths: vec![cfg.home.clone()], size, newest: 0, project: None, project_newest: None, extra });
+        next_id += 1;
     }
 
     // the 开发环境 (env.rs), from the tree and the items found
@@ -1042,6 +1137,17 @@ pub fn scan(cfg: &Config, sys: &Sys, progress: &Progress) -> Result<Outcome, Str
         "files": nodes[0].files,
     });
     Ok(Outcome { summary, nodes, items, envs })
+}
+
+/// "com.microsoft.Word" → Word.
+pub fn office_name(app: &str) -> &'static str {
+    match app {
+        "com.microsoft.Word" => "Word",
+        "com.microsoft.Excel" => "Excel",
+        "com.microsoft.Powerpoint" => "PowerPoint",
+        "org.libreoffice.script" => "LibreOffice",
+        _ => "WPS",
+    }
 }
 
 fn walk_watched(home: &str, parent: &str) -> bool {

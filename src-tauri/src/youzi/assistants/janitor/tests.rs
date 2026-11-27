@@ -72,6 +72,16 @@ fn the_fake_mac_is_scanned() {
     assert!(all.iter().all(|i| !i.paths[0].contains("/.vscode/") && !i.paths[0].contains("/envs/")), "{:?}", all.iter().map(|i| &i.paths[0]).collect::<Vec<_>>());
     assert!(one_click(&ov, "npx 的缓存").checked);
     assert_eq!(one_click(&ov, "personal-website · .vercel/output").size, 30 * MB);
+    // a cache holding only WebKit's data (a script's) is a known App cache
+    assert!(!one_click(&ov, "wkprobe 的网页缓存").checked);
+    // litter: one item a kind, over the personal folders only (not Seeker, the website, Library, a bundle, node_modules)
+    let ds = one_click(&ov, ".DS_Store（访达记的显示方式）");
+    assert_eq!((ds.tag.as_deref(), ds.size, ds.checked), (Some("5 个"), 5 * 6_148, false));
+    let office = one_click(&ov, "Office 的临时文件");
+    assert_eq!((office.tag.as_deref(), office.in_use.as_deref()), (Some("3 个"), None));
+    let litter_class = ov.categories.iter().filter(|g| g.class == "litter").map(|g| g.id.as_str()).collect::<Vec<_>>();
+    assert_eq!(litter_class, [rules::DS_STORE, rules::OFFICE_TEMP, rules::LOGS]);
+    assert!(ov.groups.iter().all(|g| !g.class.is_empty()));
     // nothing in 一键清理 is protected
     assert!(ov.categories.iter().flat_map(|g| &g.items).all(|i| i.protected.is_none() && !i.paths.iter().any(|p| p.contains("/Documents/LLM"))));
 
@@ -160,22 +170,31 @@ fn the_fake_macs_environments() {
     assert_eq!(env("homebrew").note.as_deref(), Some("2 个包、1 个 App"));
     let old = row("homebrew", "node 24.11");
     assert!(old.part && env("homebrew").size == brew.size);
-    // Gradle, Docker, Xcode, editors, .NET, the known and the unknown
+    // Gradle, Docker, Xcode, editors, .NET, the other tools and the unknown
     assert!(env("jvm").items.iter().any(|i| i.title == "Gradle 8.5"));
+    assert_eq!((env("java").class.as_str(), env("conda").class.as_str(), env("docker").class.as_str(), env("xcode").class.as_str()), ("lang", "pkg", "vm", "app"));
     assert_eq!(env("docker").note.as_deref(), Some("3 个镜像 · 3 个容器 · 2 个数据卷"));
     assert!(row("docker", "python:3.12").part);
     assert!(row("xcode", "命令行工具").default);
-    let ext = row("editors", "VS Code 的扩展");
-    assert_eq!(ext.packages, Some(3));
-    assert!(row("editors", "ms-python.python-2025.9.0").part);
+    let ext = row("vscode", "VS Code 的扩展");
+    assert_eq!((ext.packages, ext.unit.as_deref()), (Some(3), Some("个扩展")));
+    assert!(row("vscode", "ms-python.python-2025.9.0").part);
+    assert!(row("vscode", "Visual Studio Code").path.as_deref() == Some("/Applications/Visual Studio Code.app"));
+    assert!(row("vscode", "VS Code 的数据").size == 400 * MB && env("vscode").class == "editor");
+    assert!(row("antigravity", "Antigravity 的数据").size == 120 * MB);
     assert!(row("dotnet", ".NET SDK 9.0.100").default);
-    for t in ["Ollama 的模型", "Claude Code 的数据", "MySQL 9.4.0"] {
-        assert!(env("known").items.iter().any(|i| i.title == t), "{t}");
+    for (id, t) in [("ollama", "Ollama 的模型"), ("claude-code", "Claude Code 的数据"), ("mysql", "MySQL 9.4.0"), ("gemini", "Gemini CLI 的数据"), ("ml-cache", "Whisper 的模型"), ("godot", "Godot")] {
+        assert!(env(id).items.iter().any(|i| i.title == t), "{t}");
     }
-    assert!(env("known").items.iter().all(|i| i.title != "MySQL"), "the symlink isn't a second install");
+    assert_eq!((env("ollama").class.as_str(), env("mysql").class.as_str(), env("godot").class.as_str()), ("ai", "db", "app"));
+    let llm = row("local-llm", "本地模型（llmctl）");
+    assert_eq!(llm.protected.as_deref(), Some("本地模型"));
+    assert!(env("mysql").items.iter().all(|i| i.title != "MySQL"), "the symlink isn't a second install");
+    assert!(envs.iter().all(|e| e.id != "gh"), "a tool under 10 MB is claimed, not shown");
     let mut unknown: Vec<&str> = env("unknown").items.iter().map(|i| i.title.as_str()).collect();
     unknown.sort();
-    assert_eq!(unknown, [".mystery-tool", "someapp", "whisper"]);
+    assert_eq!(unknown, [".mystery-tool", "someapp"]);
+    assert_eq!(env("unknown").class, "unknown");
     // files in dot folders aren't 大文件
     let ov = overview(&j, &Settings::default(), &[]).unwrap();
     assert!(group(&ov, rules::BIG).iter().all(|i| !i.paths[0].contains("/.")));
@@ -329,7 +348,7 @@ fn janitor_mock_json() {
             Ok(rows)
         })
         .unwrap();
-    let out = serde_json::json!({ "overview": ov, "nodes": nodes, "envs": j.envs() });
+    let out = serde_json::json!({ "overview": ov, "nodes": nodes, "envs": j.envs(), "categories": rules::CATEGORIES });
     std::fs::write(std::env::var("POMELO_JANITOR_MOCK").expect("POMELO_JANITOR_MOCK"), serde_json::to_string(&out).unwrap()).unwrap();
 }
 
@@ -503,4 +522,76 @@ mod agent_tests {
         assert!(agent::mock_calls("删掉 JDK 8 sudo", "").iter().any(|c| c.arguments.contains("sudo")));
         assert_eq!(names("用只读的看看清单"), [agent::LOOK, agent::LOOK, agent::RUN, agent::LOOK]);
     }
+}
+
+/// Litter: cleaning deletes the files the scan found (still litter, not protected), whatever is left.
+#[test]
+fn cleaning_litter() {
+    let (_d, j) = sandbox("litter");
+    let ov = scanned(&j);
+    let id = |t: &str| one_click(&ov, t).id;
+    let out = clean(&j, &[id(".DS_Store（访达记的显示方式）"), id("Office 的临时文件")], &Settings::default(), SITE).unwrap();
+    assert_eq!((out.done, out.failed.len()), (2, 0));
+    for gone in ["Documents/.DS_Store", "Downloads/.DS_Store", "Documents/~$论文草稿.docx", "Documents/.~lock.报告.odt#", "Downloads/资料/~$周报.docx"] {
+        assert!(!j.real_of(&format!("/Users/me/{gone}")).exists(), "{gone}");
+    }
+    for kept in ["Documents/Seeker/.DS_Store", "Documents/Seeker/cv/cn/~$简历-v3.docx", "Documents/GitHub/personal-website/.DS_Store", "Library/.DS_Store", "Documents/论文草稿.docx"] {
+        assert!(j.real_of(&format!("/Users/me/{kept}")).exists(), "{kept}");
+    }
+    assert!(j.real_of("/Applications/Google Chrome.app/Contents/.DS_Store").exists());
+    // Office open: its lock files wait
+    let row = store::ItemRow { id: 0, listed: false, kind: rules::OFFICE_TEMP.into(), title: String::new(), paths: vec![], size: 0, newest: 0, project: None, project_newest: None, extra: serde_json::json!({ "how": "litter", "apps": rules::OFFICE_APPS }) };
+    let apps: std::collections::HashSet<String> = ["com.microsoft.Word".to_string()].into();
+    assert_eq!(busy_now(&row, &[system::Proc { name: "node".into(), cwd: Some("/Users/me".into()) }], &apps).as_deref(), Some("Word 开着"));
+    assert_eq!(busy_now(&row, &[system::Proc { name: "node".into(), cwd: Some("/Users/me".into()) }], &Default::default()), None);
+}
+
+/// APFS clones (`cp -c`) share their blocks: the shared part counts once, an item holding one clone frees
+/// nothing of it, an item holding the whole family frees it; a full clone isn't a duplicate.
+#[test]
+fn clones_count_once() {
+    let dir = temp_dir("janitor-clones");
+    let root = dir.join("disk");
+    let home = "/Users/me";
+    let w = |virt: &str, data: &[u8]| {
+        let p = scan::real_of(&root, virt);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, data).unwrap();
+    };
+    let clone = |from: &str, to: &str| {
+        let t = scan::real_of(&root, to);
+        std::fs::create_dir_all(t.parent().unwrap()).unwrap();
+        assert!(std::process::Command::new("/bin/cp").arg("-c").arg(scan::real_of(&root, from)).arg(&t).status().unwrap().success());
+    };
+    let data: Vec<u8> = (0..12 * MB as usize).map(|i| (i * 7 % 251) as u8).collect();
+    for p in ["a", "b"] {
+        w(&format!("{home}/Documents/GitHub/{p}/Cargo.toml"), b"[package]");
+        w(&format!("{home}/Documents/GitHub/{p}/.git/HEAD"), b"ref");
+    }
+    // a's target is the original; b's is a clone of it (Peck's eval worktrees)
+    w(&format!("{home}/Documents/GitHub/a/target/debug/lib.rlib"), &data);
+    clone(&format!("{home}/Documents/GitHub/a/target/debug/lib.rlib"), &format!("{home}/Documents/GitHub/b/target/debug/lib.rlib"));
+    // a family wholly inside one target: both copies there
+    w(&format!("{home}/Documents/GitHub/b/target/debug/own.rlib"), &data[..6 * MB as usize]);
+    clone(&format!("{home}/Documents/GitHub/b/target/debug/own.rlib"), &format!("{home}/Documents/GitHub/b/target/release/own.rlib"));
+    // a full clone isn't a duplicate
+    w(&format!("{home}/Movies/片.mov"), &data);
+    clone(&format!("{home}/Movies/片.mov"), &format!("{home}/Movies/片 副本.mov"));
+    let cfg = Config { root: root.clone(), home: home.into(), site: SITE.into(), allocated: true, skip: Default::default(), now: unix_now(), threads: 2, rules: vec![] };
+    let Some(info) = system::clone_info(&scan::real_of(&root, &format!("{home}/Movies/片 副本.mov"))) else {
+        eprintln!("clones_count_once: not on APFS, skipped");
+        return;
+    };
+    assert!(info.shared && info.refs == 2 && info.private == 0);
+    let out = scan::scan(&cfg, &Sys::fake(&root), &Progress::default()).unwrap();
+    let total = out.nodes.iter().find(|n| n.path == home).unwrap().size;
+    let blocks = |n: u64| n.div_ceil(4096) * 4096;
+    // 12 MB (lib.rlib) + 6 MB (own.rlib) + 12 MB (片.mov) once each, plus the small files
+    assert!(total >= blocks(12 * MB) * 2 + blocks(6 * MB) && total < blocks(12 * MB) * 2 + blocks(6 * MB) + MB, "{total}");
+    let item = |t: &str| out.items.iter().find(|i| i.title == t).unwrap_or_else(|| panic!("{t}: {:?}", out.items.iter().map(|i| &i.title).collect::<Vec<_>>()));
+    // a's target holds lib.rlib's blocks, shared with b's copy: deleting it frees nothing of them
+    assert!(out.items.iter().all(|i| i.title != "a · target"), "frees nothing, not listed");
+    // b's target holds a clone of lib.rlib (frees nothing) and the whole own.rlib family (frees it once)
+    assert_eq!(item("b · target").size, blocks(6 * MB));
+    assert!(out.items.iter().all(|i| i.kind != rules::DUPLICATES), "full clones aren't duplicates");
 }

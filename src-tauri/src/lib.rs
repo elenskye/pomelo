@@ -743,6 +743,7 @@ pub fn run() {
             youzi::assistants::janitor::backup::janitor_backup_pick,
             youzi::assistants::janitor::backup::janitor_backup_start,
             youzi::assistants::janitor::backup::janitor_backup_stop,
+            youzi::assistants::janitor::backup::janitor_backup_forget,
             youzi::assistants::janitor::backup::janitor_backup_move,
             youzi::assistants::janitor::backup::look::janitor_backup_look,
             youzi::assistants::janitor::backup::cards::janitor_card_backup,

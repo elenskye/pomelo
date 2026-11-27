@@ -1,20 +1,18 @@
 // DevJanitor (助手, v0.8 阶段 6; Rust youzi/assistants/janitor/): 柚子's 电脑管家. 磁盘: memory as one bar,
 // the disk as a sunburst (click a ring to go in, the crumbs to go back) beside the same folders as a list.
-// 清理: 一键清理 by category (download caches and long-untouched projects checked; 在用 can't be), deleted
-// for good after one confirm; the listed groups go to the Trash (a protected item asks again); 清空废纸篓.
-// 备份 (1.1.0): JanitorBackup.tsx.
-// 环境 (阶段 7): the 开发环境 the scan recognized, each a card of rows (version, who installed it, the default,
-// packages and the biggest); rows inside another one are indented. Only looking.
+// 清理 and 环境 (sorted into classes, 1.1.5): JanitorLists.tsx. 备份 (1.1.0): JanitorBackup.tsx.
 // Agent (阶段 8): DevJanitor's own conversation (not in 柚子's list) with its model and 思考 above it; its
 // cards (JanitorCards.tsx) under the replies; 新对话 drops the old one.
-// 设置: which categories 一键清理 holds and their names (click to rename), how many days make a project 很久没动
-// (not undone); the Agent's rules (rename, 删: one undo step each); its SKILL (mine to rewrite) and the rest it's told.
+// 设置: which categories 一键清理 holds (with their class's sticker) and their names (click to rename), how many
+// days make a project 很久没动 (not undone); the Agent's rules (rename, 删: one undo step each); its SKILL (mine to
+// rewrite, in its own framed box) and the rest it's told.
 // Everything but the buttons is selectable (copy a path, a size, a card's command).
 // Opening the page scans in the background unless the last scan is fresh; the last result shows meanwhile.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, FolderOpen, Plus, Trash2, X } from "@/shared/icons";
+import { ClassBadge, CleanTab, EnvTab } from "./JanitorLists";
 import { useSubNav, useSubPage } from "@/app/subpage";
 import { Section } from "@/settings/layout";
 import { StackBar, Sunburst, type SunNode } from "@/shared/charts";
@@ -30,7 +28,7 @@ import { Transcript, type TranscriptHandle } from "../Transcript";
 import { PrepNotices, activeIn, messagesKey, useLiveReply, usePrepare } from "../useChat";
 import { JanitorCards } from "./JanitorCards";
 import { BackupBar, BackupTab, type BackupView } from "./JanitorBackup";
-import { JANITOR_KEY, ago, bytes, dayOf, janitorApi, type JanitorEnvItem, type JanitorGroup, type JanitorItem, type JanitorOutcome, type JanitorOverview, type JanitorRing } from "./janitorApi";
+import { JANITOR_KEY, bytes, dayOf, janitorApi, type JanitorOverview, type JanitorRing } from "./janitorApi";
 import { MdField } from "@/shared/editor/MdField";
 import { showDialog } from "@/shared/dialog";
 import { pad } from "@/shared/dates";
@@ -65,9 +63,11 @@ export function JanitorPage() {
       </div>
       {tab === "agent" ? (
         <div className="flex min-h-0 flex-1 flex-col pt-2"><AgentTab /></div>
+      ) : tab === "clean" ? (
+        <div className="flex min-h-0 flex-1 flex-col pt-4"><CleanTab ov={ov.data} /></div>
       ) : (
         <div className="selectable -m-1 min-h-0 flex-1 overflow-y-auto p-1 pt-4">
-          {tab === "disk" ? <DiskTab ov={ov.data} /> : tab === "clean" ? <CleanTab ov={ov.data} /> : tab === "backup" ? <BackupTab view={backupView} /> : tab === "env" ? <EnvTab ov={ov.data} /> : <SettingsTab />}
+          {tab === "disk" ? <DiskTab ov={ov.data} /> : tab === "backup" ? <BackupTab view={backupView} /> : tab === "env" ? <EnvTab ov={ov.data} /> : <SettingsTab />}
         </div>
       )}
     </div>
@@ -234,239 +234,6 @@ function findRing(n: JanitorRing, path: string): JanitorRing | null {
   return null;
 }
 
-// ---- 清理 ----
-
-function ItemRow(props: { item: JanitorItem; on: boolean; toggle: () => void }) {
-  const toast = useToast();
-  const it = props.item;
-  const busy = !!it.inUse;
-  const path = it.paths[0];
-  return (
-    <li className={`flex items-start gap-2.5 px-4 py-2 text-sm ${busy ? "text-muted-foreground" : ""}`}>
-      <input type="checkbox" checked={props.on && !busy} disabled={busy} onChange={props.toggle} aria-label={it.title} className="mt-1 size-3.5 shrink-0 accent-[var(--primary)]" />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-          <span className="min-w-0 truncate">{it.title}</span>
-          {it.tag && <span className="shrink-0 text-xs text-muted-foreground">{it.tag}</span>}
-          {it.inUse && <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs">在用 · {it.inUse}</span>}
-          {it.protected && <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-primary">受保护 · {it.protected}</span>}
-        </div>
-        <div className="flex min-w-0 items-baseline gap-x-2 text-xs text-muted-foreground">
-          <button type="button" title="在访达中显示" onClick={() => janitorApi.reveal(path).catch((e) => toast(errorText(e), "error"))} className="min-w-0 truncate text-left font-mono hover:text-foreground hover:underline">
-            {path}
-            {it.paths.length > 1 ? ` 等 ${it.paths.length} 处` : ""}
-          </button>
-          <span className="shrink-0">· {ago(it.newest)}</span>
-        </div>
-        {it.note && <div className="text-xs text-muted-foreground">{it.note}</div>}
-      </div>
-      <span className="shrink-0 pt-px tabular-nums">{bytes(it.size)}</span>
-    </li>
-  );
-}
-
-function CategoryCard(props: { g: JanitorGroup; on: (it: JanitorItem) => boolean; toggle: (it: JanitorItem) => void }) {
-  const { g } = props;
-  return (
-    <Section title={`${g.name} · ${bytes(g.size)}`}>
-      {g.rebuild && (
-        <p className="border-b px-4 py-1.5 text-xs text-muted-foreground">
-          {[g.rebuild, g.takes, g.network ? "要联网" : "不用联网"].filter(Boolean).join(" · ")}
-        </p>
-      )}
-      <ul className="divide-y">
-        {g.items.map((it) => <ItemRow key={it.id} item={it} on={props.on(it)} toggle={() => props.toggle(it)} />)}
-      </ul>
-    </Section>
-  );
-}
-
-function DupCard(props: { g: JanitorGroup; picked: Set<number>; toggle: (it: JanitorItem) => void }) {
-  const sets = useMemo(() => {
-    const m = new Map<number, JanitorItem[]>();
-    for (const it of props.g.items) m.set(it.dup ?? 0, [...(m.get(it.dup ?? 0) ?? []), it]);
-    return [...m.values()].filter((v) => v.length > 1);
-  }, [props.g.items]);
-  if (!sets.length) return null;
-  return (
-    <Section title={`${props.g.name} · ${sets.length} 组`}>
-      {sets.map((set, i) => (
-        <ul key={i} className="divide-y border-b last:border-b-0">
-          {set.map((it) => <ItemRow key={it.id} item={it} on={props.picked.has(it.id)} toggle={() => props.toggle(it)} />)}
-        </ul>
-      ))}
-    </Section>
-  );
-}
-
-function outcomeText(o: JanitorOutcome, verb: string) {
-  const head = !o.done ? `没有${verb}` : verb === "移走" ? `移到废纸篓 ${o.done} 项（${bytes(o.freed)}）` : `${verb}了 ${o.done} 项，腾出 ${bytes(o.freed)}`;
-  return o.failed.length ? `${head}；${o.failed.length} 项没成：${o.failed.slice(0, 3).map(([t, why]) => `${t}（${why}）`).join("、")}` : head;
-}
-
-function CleanTab(props: { ov: JanitorOverview }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [confirm, confirmDialog] = useConfirm();
-  const { categories, groups, summary } = props.ov;
-  const at = summary?.scannedAt ?? 0;
-  const [over, setOver] = useState<Map<number, boolean>>(new Map());
-  const [listed, setListed] = useState<Set<number>>(new Set());
-  const [busy, setBusy] = useState<string | null>(null);
-  useEffect(() => {
-    setOver(new Map());
-    setListed(new Set());
-  }, [at]);
-  const on = (it: JanitorItem) => !it.inUse && (over.get(it.id) ?? it.checked);
-  const toggle = (it: JanitorItem) => setOver((m) => new Map(m).set(it.id, !on(it)));
-  const toggleListed = (it: JanitorItem) => setListed((s) => (s.has(it.id) ? new Set([...s].filter((x) => x !== it.id)) : new Set(s).add(it.id)));
-  const chosen = categories.flatMap((g) => g.items).filter(on);
-  const chosenSize = chosen.reduce((s, i) => s + i.size, 0);
-  const listedItems = groups.flatMap((g) => g.items).filter((i) => listed.has(i.id));
-  const listedSize = listedItems.reduce((s, i) => s + i.size, 0);
-  const refresh = () => qc.invalidateQueries({ queryKey: JANITOR_KEY });
-  const run = async (label: string, f: () => Promise<JanitorOutcome>, verb: string) => {
-    setBusy(label);
-    try {
-      const o = await f();
-      toast(outcomeText(o, verb), o.failed.length ? "error" : "info");
-    } catch (e) {
-      toast(errorText(e), "error");
-    } finally {
-      setBusy(null);
-      await refresh();
-    }
-  };
-  const clean = async () => {
-    if (!chosen.length) return;
-    if (!(await confirm({ title: `清理选中的 ${chosen.length} 项？`, message: `腾出约 ${bytes(chosenSize)}。直接删除，不进废纸篓。`, confirmLabel: "清理", danger: true }))) return;
-    await run("clean", () => janitorApi.clean(chosen.map((i) => i.id)), "清理");
-  };
-  const toTrash = async () => {
-    if (!listedItems.length) return;
-    if (!(await confirm({ title: `把 ${listedItems.length} 项移到废纸篓？`, message: `一共 ${bytes(listedSize)}，在废纸篓里还能放回去。`, confirmLabel: "移到废纸篓" }))) return;
-    const guarded = listedItems.filter((i) => i.protected);
-    let ok = false;
-    if (guarded.length) {
-      ok = await confirm({
-        title: `其中 ${guarded.length} 项在受保护的地方`,
-        message: guarded.slice(0, 5).map((i) => `${i.title}（${i.protected}）`).join("、") + (guarded.length > 5 ? " 等" : "") + "。也移到废纸篓吗？",
-        confirmLabel: "也移走",
-        danger: true,
-      });
-    }
-    const ids = listedItems.filter((i) => ok || !i.protected).map((i) => i.id);
-    if (!ids.length) return;
-    await run("trash", () => janitorApi.trash(ids, ok), "移走");
-  };
-  const emptyTrash = async () => {
-    if (!summary) return;
-    if (!(await confirm({ title: "清空废纸篓？", message: `${summary.trash.count} 项、${bytes(summary.trash.size)}，清空后找不回来。`, confirmLabel: "清空", danger: true }))) return;
-    await run("empty", janitorApi.emptyTrash, "清空");
-  };
-  if (!summary) return <EmptyState title={props.ov.scan.running ? "正在扫描磁盘…" : "还没扫描"} />;
-  const docker = summary.docker;
-  return (
-    <div>
-      {confirmDialog}
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-card border bg-card px-4 py-3">
-        <span className="text-base font-bold">一键清理</span>
-        <span className="text-sm text-muted-foreground tabular-nums">选了 {chosen.length} 项 · {bytes(chosenSize)}</span>
-        <Button variant="primary" className="ml-auto" disabled={!chosen.length || !!busy} onClick={() => void clean()}>{busy === "clean" ? "正在清理…" : "清理选中的"}</Button>
-        <Button disabled={!summary.trash.size || !!busy} onClick={() => void emptyTrash()}>{busy === "empty" ? "正在清空…" : `清空废纸篓（${bytes(summary.trash.size)}）`}</Button>
-      </div>
-      {categories.length ? categories.map((g) => <CategoryCard key={g.id} g={g} on={on} toggle={toggle} />) : <p className="mb-6 px-1 text-sm text-muted-foreground">没有能一键清理的</p>}
-      {(groups.length > 0 || docker) && (
-        <div className="mt-8 mb-4 flex flex-wrap items-center gap-3 rounded-card border bg-card px-4 py-3">
-          <span className="text-base font-bold">只列出来</span>
-          <span className="text-sm text-muted-foreground tabular-nums">选了 {listedItems.length} 项 · {bytes(listedSize)}</span>
-          <Button className="ml-auto" disabled={!listedItems.length || !!busy} onClick={() => void toTrash()}>{busy === "trash" ? "正在移走…" : "移到废纸篓"}</Button>
-        </div>
-      )}
-      {groups.map((g) =>
-        g.id === "duplicates" ? (
-          <DupCard key={g.id} g={g} picked={listed} toggle={toggleListed} />
-        ) : (
-          <Section key={g.id} title={`${g.name} · ${bytes(g.size)}`}>
-            <ul className="divide-y">{g.items.map((it) => <ItemRow key={it.id} item={it} on={listed.has(it.id)} toggle={() => toggleListed(it)} />)}</ul>
-          </Section>
-        ),
-      )}
-      {docker && (
-        <Section title={`Docker · ${bytes(docker.size)}`}>
-          {docker.parts?.length ? (
-            <ul className="divide-y">
-              {docker.parts.map((p) => (
-                <li key={p.name} className="flex items-baseline gap-2.5 px-4 py-2 text-sm">
-                  <span className="min-w-0 flex-1">{p.name}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">能回收 {bytes(p.reclaimable)}</span>
-                  <span className="w-20 text-right tabular-nums">{bytes(p.size)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="px-4 py-2 text-sm text-muted-foreground">Docker 没开，只知道一共多大</p>
-          )}
-        </Section>
-      )}
-    </div>
-  );
-}
-
-// ---- 环境 ----
-
-/** What a row's count counts, by environment. */
-const UNIT: Record<string, string> = { editors: "个扩展", homebrew: "个包和 App", xcode: "台", android: "个平台", rust: "个工具" };
-
-function EnvRow(props: { it: JanitorEnvItem; unit: string }) {
-  const toast = useToast();
-  const it = props.it;
-  const extra = [it.packages != null ? `${it.packages} ${props.unit}` : null, it.top.length ? `最大：${it.top.map(([n, s]) => `${n} ${bytes(s)}`).join("、")}` : null].filter(Boolean).join(" · ");
-  return (
-    <li className={`flex items-start gap-2.5 py-2 pr-4 text-sm ${it.part ? "pl-9" : "pl-4"}`}>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-          <span className={`min-w-0 truncate ${it.part ? "text-muted-foreground" : ""}`}>{it.title}</span>
-          {it.version && !it.title.includes(it.version) && <span className="shrink-0 text-xs text-muted-foreground">{it.version}</span>}
-          {it.default && <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-primary">默认</span>}
-          {it.tag && <span className="shrink-0 text-xs text-muted-foreground">{it.tag}</span>}
-          {it.protected && <span className="shrink-0 rounded-full bg-accent px-1.5 text-xs text-primary">受保护 · {it.protected}</span>}
-          {it.admin && <span className="shrink-0 text-xs text-muted-foreground">删要管理员密码</span>}
-        </div>
-        {(it.by || it.path) && (
-          <div className="flex min-w-0 items-baseline gap-x-2 text-xs text-muted-foreground">
-            {it.by && <span className="shrink-0">{it.by}</span>}
-            {it.path && (
-              <button type="button" title="在访达中显示" onClick={() => janitorApi.reveal(it.path!).catch((e) => toast(errorText(e), "error"))} className="min-w-0 truncate text-left font-mono hover:text-foreground hover:underline">
-                {it.path}
-              </button>
-            )}
-          </div>
-        )}
-        {extra && <div className="text-xs text-muted-foreground">{extra}</div>}
-      </div>
-      <span className="shrink-0 pt-px tabular-nums">{bytes(it.size)}</span>
-    </li>
-  );
-}
-
-function EnvTab(props: { ov: JanitorOverview }) {
-  const at = props.ov.summary?.scannedAt ?? 0;
-  const envs = useQuery({ queryKey: [...JANITOR_KEY, "envs", at], queryFn: janitorApi.envs, enabled: !!props.ov.summary });
-  if (!props.ov.summary) return <EmptyState title={props.ov.scan.running ? "正在扫描磁盘…" : "还没扫描"} />;
-  if (!envs.data) return null;
-  if (!envs.data.length) return <EmptyState title={props.ov.scan.running ? "正在认开发环境…" : "还没认出开发环境"} />;
-  return (
-    <div className="mx-auto w-full max-w-4xl">
-      {envs.data.map((e) => (
-        <Section key={e.id} title={`${e.name} · ${bytes(e.size)}`} actions={e.note ? <span className="text-xs text-muted-foreground">{e.note}</span> : undefined}>
-          <ul className="divide-y">{e.items.map((it, k) => <EnvRow key={`${it.path ?? it.title}:${k}`} it={it} unit={UNIT[e.id] ?? "个包"} />)}</ul>
-        </Section>
-      ))}
-    </div>
-  );
-}
-
 // ---- Agent ----
 
 const AGENT_KEY = [...JANITOR_KEY, "agent"];
@@ -563,6 +330,7 @@ function SettingsTab() {
         <ul className="divide-y">
           {view.data.categories.map((c) => (
             <li key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+              <ClassBadge id={c.class} />
               <div className="min-w-0 flex-1">
                 <NameEdit
                   name={s.names?.[c.id] ?? c.name}
@@ -683,6 +451,7 @@ function AgentPrompt() {
     );
   return (
     <Section
+      bare
       title="发给 Agent 的说明"
       help="SKILL 是 Agent 做事的规矩，能改；开头和「现在的情况」由程序每次写好。"
       actions={
@@ -694,9 +463,7 @@ function AgentPrompt() {
         </>
       }
     >
-      <div className="px-4 py-3 text-sm">
-        <MdField label="SKILL" value={text} onChange={setDraft} rows={16} className="font-reading text-xs" />
-      </div>
+      <MdField label="SKILL" value={text} onChange={setDraft} rows={16} className="font-reading text-xs" />
       {showing && createPortal(<PromptHead text={`${p.head}\n\n## 现在的情况\n${p.situation}`} onClose={() => setShowing(false)} />, document.body)}
     </Section>
   );

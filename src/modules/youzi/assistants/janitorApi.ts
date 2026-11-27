@@ -21,7 +21,8 @@ export type JanitorItem = {
   dup: number | null;
 };
 
-export type JanitorGroup = { id: string; name: string; rebuild: string | null; takes: string | null; network: boolean | null; size: number; items: JanitorItem[] };
+/** `class`: the 清理 page's class (Rust rules.rs; an Agent rule's: agent). */
+export type JanitorGroup = { id: string; name: string; class: string; rebuild: string | null; takes: string | null; network: boolean | null; size: number; items: JanitorItem[] };
 
 type JanitorSummary = {
   scannedAt: number;
@@ -48,12 +49,13 @@ export type JanitorRing = { path: string; name: string; kind: "disk" | "dir" | "
 type JanitorRingView = { node: JanitorRing; crumbs: [string, string][] };
 
 /** One row of a 开发环境 (Rust janitor/env.rs). `part`: inside another row, not added to the size. */
-export type JanitorEnvItem = { title: string; version: string | null; path: string | null; size: number; by: string | null; default: boolean; packages: number | null; top: [string, number][]; tag: string | null; part: boolean; protected: string | null; admin: boolean; newest: number };
-export type JanitorEnv = { id: string; name: string; size: number; note: string | null; items: JanitorEnvItem[] };
+export type JanitorEnvItem = { title: string; version: string | null; path: string | null; size: number; by: string | null; default: boolean; packages: number | null; top: [string, number][]; tag: string | null; part: boolean; protected: string | null; admin: boolean; newest: number; unit: string | null };
+/** `class`: the 环境 page's section (Rust env.rs). */
+export type JanitorEnv = { id: string; name: string; class: string; size: number; note: string | null; items: JanitorEnvItem[] };
 
 export type JanitorOutcome = { freed: number; done: number; failed: [string, string][] };
 type JanitorMemory = { total: number; used: number; pressure: "normal" | "warn" | "critical"; top: { name: string; bytes: number }[] };
-type JanitorCategory = { id: string; name: string; rebuild: string; takes: string; network: boolean; download: boolean };
+type JanitorCategory = { id: string; name: string; rebuild: string; takes: string; network: boolean; download: boolean; class: string };
 /** `names`: my names for the built-in categories (id → name). */
 export type JanitorSettings = { off: string[]; staleDays: number; agent?: JanitorChoice; names?: Record<string, string> };
 /** What the Agent is told: the SKILL (mine to rewrite; `custom`: it's mine) and the rest, written each time. */
@@ -189,6 +191,8 @@ export const backupApi = {
   pick: (name: string, on: boolean) => invoke<BackupOverview>("janitor_backup_pick", { name, on }),
   start: (ids: number[]) => invoke<BackupOverview>("janitor_backup_start", { ids }),
   stop: () => invoke<void>("janitor_backup_stop"),
+  /** Deletes a record (not one still running). */
+  forget: (id: number) => invoke<BackupOverview>("janitor_backup_forget", { id }),
   /** Renames on the drive the moves picked (by their path on the Mac). */
   move: (id: number, paths: string[]) => invoke<{ done: number; failed: [string, string][]; overview: BackupOverview }>("janitor_backup_move", { id, paths }),
   /** 柚子看一眼: the Agent looks now. */

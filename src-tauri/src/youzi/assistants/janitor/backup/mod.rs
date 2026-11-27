@@ -973,6 +973,16 @@ pub async fn janitor_backup_start(app: tauri::AppHandle, state: State<'_, AppSta
     overview_now(&state, &janitor)
 }
 
+/// Deletes a record from the list (not one still running). Not undone: the runs write these rows themselves.
+#[tauri::command]
+pub async fn janitor_backup_forget(state: State<'_, AppState>, janitor: State<'_, Janitor>, id: i64) -> Result<Overview, String> {
+    let n = state.youzi.with_db(|c| c.execute("DELETE FROM backup_runs WHERE id = ?1 AND status != 'running'", [id]).map_err(crate::modules::common::err))?;
+    if n == 0 {
+        return Err("这条记录还没做完，或已经删了".into());
+    }
+    overview_now(&state, &janitor)
+}
+
 #[tauri::command]
 pub fn janitor_backup_stop(janitor: State<'_, Janitor>) {
     if let Ok(r) = janitor.backup.run.lock() {

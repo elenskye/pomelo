@@ -37,7 +37,8 @@ export function Row(props: { label: string; help?: ReactNode; children?: ReactNo
   );
 }
 
-export function Section(props: { title: string; help?: ReactNode; actions?: ReactNode; children: ReactNode }) {
+/** `bare`: no card around the content (it draws its own frame, like a MdField). */
+export function Section(props: { title: string; help?: ReactNode; actions?: ReactNode; bare?: boolean; children: ReactNode }) {
   return (
     <section className="mb-6">
       <div className="mb-2 flex items-end justify-between gap-4 px-1">
@@ -47,7 +48,7 @@ export function Section(props: { title: string; help?: ReactNode; actions?: Reac
         </h2>
         {props.actions && <div className="flex shrink-0 gap-2">{props.actions}</div>}
       </div>
-      <div className="rounded-card border bg-card">{props.children}</div>
+      {props.bare ? props.children : <div className="rounded-card border bg-card">{props.children}</div>}
     </section>
   );
 }

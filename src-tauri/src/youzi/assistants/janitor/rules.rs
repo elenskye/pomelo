@@ -7,6 +7,10 @@
 //!   place (the website's deps and build outputs aren't protected).
 //! - Default-checked: download caches (`Category::download`) and the deps / builds of a project untouched for
 //!   `stale_days` (its newest file outside those dirs and `.git`); never the website's node_modules.
+//! - Litter (`.DS_Store`, Office's lock files): small files in the personal folders, one item a kind whatever
+//!   their size; Office's are 在用 while Word, Excel, PowerPoint, LibreOffice or WPS runs.
+//! - The 清理 page groups the categories and the listed groups by class (`Category::class`, `GROUPS`; the
+//!   page draws each class with its icon).
 
 use serde::Serialize;
 
@@ -21,10 +25,12 @@ pub struct Category {
     pub network: bool,
     /// A download cache: checked by default.
     pub download: bool,
+    /// The page's class: deps, build, download, app, litter (an Agent rule's is `agent`).
+    pub class: &'static str,
 }
 
-const fn cat(id: &'static str, name: &'static str, rebuild: &'static str, takes: &'static str, network: bool, download: bool) -> Category {
-    Category { id, name, rebuild, takes, network, download }
+const fn cat(id: &'static str, name: &'static str, rebuild: &'static str, takes: &'static str, network: bool, download: bool, class: &'static str) -> Category {
+    Category { id, name, rebuild, takes, network, download, class }
 }
 
 pub const NODE_MODULES: &str = "node_modules";
@@ -38,20 +44,39 @@ pub const XCODE: &str = "xcode";
 pub const APP_CACHE: &str = "app_cache";
 pub const CODEX: &str = "codex";
 pub const LOGS: &str = "logs";
+pub const DS_STORE: &str = "ds_store";
+pub const OFFICE_TEMP: &str = "office_temp";
 
-pub const CATEGORIES: [Category; 11] = [
-    cat(NODE_MODULES, "项目里的 node_modules", "在项目里 pnpm install（或 npm install）", "一两分钟", true, false),
-    cat(RUST_TARGET, "Rust 的 target", "下次编译时重建", "几分钟（Pomelo 约一分半）", false, false),
-    cat(PYTHON, "Python 虚拟环境和 __pycache__", "按项目的依赖清单重新装；__pycache__ 运行时自己生成", "几分钟", true, false),
-    cat(WEB_BUILD, "前端的构建产物", "下次构建时重建（npm run build）", "几十秒", false, false),
-    cat(PKG_CACHE, "包管理器的下载缓存", "用到时重新下载", "看网速", true, true),
-    cat(CONDA, "Conda 的包缓存", "conda clean 清掉没在用的包；以后装包时重新下载", "看网速", true, true),
-    cat(JVM, "Gradle、Maven 的缓存", "下次构建时重新下载", "看网速", true, true),
-    cat(XCODE, "Xcode 的编译缓存和旧文件", "下次编译时重建；连上设备时重新准备", "几分钟", true, false),
-    cat(APP_CACHE, "各个 App 的缓存", "App 用到时自己再生成", "马上", false, false),
-    cat(CODEX, "Codex 的运行时", "Codex 用到时重新下载", "几分钟", true, false),
-    cat(LOGS, "日志", "不用重建", "", false, false),
+pub const CATEGORIES: [Category; 13] = [
+    cat(NODE_MODULES, "项目里的 node_modules", "在项目里 pnpm install（或 npm install）", "一两分钟", true, false, "deps"),
+    cat(PYTHON, "Python 虚拟环境和 __pycache__", "按项目的依赖清单重新装；__pycache__ 运行时自己生成", "几分钟", true, false, "deps"),
+    cat(RUST_TARGET, "Rust 的 target", "下次编译时重建", "几分钟（Pomelo 约一分半）", false, false, "build"),
+    cat(WEB_BUILD, "前端的构建产物", "下次构建时重建（npm run build）", "几十秒", false, false, "build"),
+    cat(XCODE, "Xcode 的编译缓存和旧文件", "下次编译时重建；连上设备时重新准备", "几分钟", true, false, "build"),
+    cat(PKG_CACHE, "包管理器的下载缓存", "用到时重新下载", "看网速", true, true, "download"),
+    cat(CONDA, "Conda 的包缓存", "conda clean 清掉没在用的包；以后装包时重新下载", "看网速", true, true, "download"),
+    cat(JVM, "Gradle、Maven 的缓存", "下次构建时重新下载", "看网速", true, true, "download"),
+    cat(APP_CACHE, "各个 App 的缓存", "App 用到时自己再生成", "马上", false, false, "app"),
+    cat(CODEX, "Codex 的运行时", "Codex 用到时重新下载", "几分钟", true, false, "app"),
+    cat(DS_STORE, ".DS_Store（访达记的显示方式）", "访达再打开那个文件夹时自己再建；删了那些文件夹的图标位置、排序回到默认", "马上", false, false, "litter"),
+    cat(OFFICE_TEMP, "Office 的临时文件", "不用重建：Word、Excel、PowerPoint 打开文档时留的锁文件（~$ 开头，访达里看不到），正常关掉会自己删", "", false, false, "litter"),
+    cat(LOGS, "日志", "不用重建", "", false, false, "litter"),
 ];
+
+/// Litter by a file's name: `.DS_Store`; Office's `~$` lock files, LibreOffice's `.~lock.…#`, Word's `~WRL….tmp`.
+pub fn litter(name: &str) -> Option<&'static str> {
+    if name == ".DS_Store" {
+        return Some(DS_STORE);
+    }
+    let lower = name.to_ascii_lowercase();
+    let office = name.strip_prefix("~$").is_some_and(|r| !r.is_empty())
+        || (name.starts_with(".~lock.") && name.ends_with('#'))
+        || (["~wrl", "~wrd", "~wra"].iter().any(|p| lower.starts_with(p)) && lower.ends_with(".tmp"));
+    office.then_some(OFFICE_TEMP)
+}
+
+/// The apps whose running makes Office's lock files 在用.
+pub const OFFICE_APPS: [&str; 6] = ["com.microsoft.Word", "com.microsoft.Excel", "com.microsoft.Powerpoint", "org.libreoffice.script", "com.kingsoft.wpsoffice.mac", "com.kingsoft.wpsoffice.mac.global"];
 
 pub fn category(id: &str) -> Option<&'static Category> {
     CATEGORIES.iter().find(|c| c.id == id)
@@ -66,14 +91,15 @@ pub const UNKNOWN_CACHE: &str = "unknown_cache";
 pub const ARCHIVES: &str = "archives";
 pub const MAIL: &str = "mail";
 
-pub const GROUPS: [(&str, &str); 7] = [
-    (BIG, "大文件和很久没打开的文件"),
-    (INSTALLERS, "下载里的安装包和压缩包"),
-    (LEFTOVERS, "删掉的 App 留下的文件"),
-    (DUPLICATES, "重复的文件"),
-    (UNKNOWN_CACHE, "不认得的 App 缓存"),
-    (ARCHIVES, "Xcode 的 Archives"),
-    (MAIL, "邮件（Mail）的数据"),
+/// (group, name, the page's class).
+pub const GROUPS: [(&str, &str, &str); 7] = [
+    (BIG, "大文件和很久没打开的文件", "big"),
+    (DUPLICATES, "重复的文件", "dup"),
+    (INSTALLERS, "下载里的安装包和压缩包", "installers"),
+    (LEFTOVERS, "删掉的 App 留下的文件", "left"),
+    (UNKNOWN_CACHE, "不认得的 App 缓存", "left"),
+    (ARCHIVES, "Xcode 的 Archives", "xarchive"),
+    (MAIL, "邮件（Mail）的数据", "mail"),
 ];
 
 /// Mail's places (under home; Full Disk Access): title, what deleting means. Listed, never 一键清理.
@@ -201,7 +227,7 @@ pub const CONDA_ROOTS: [&str; 10] = [
 
 /// Known App caches in ~/Library/Caches (deleting them only costs a reload): the folder name, the app
 /// whose running makes it 「在用」, the name shown.
-pub const APP_CACHES: [(&str, &str, &str); 28] = [
+pub const APP_CACHES: [(&str, &str, &str); 44] = [
     ("com.elenskye.pomelo", "com.elenskye.pomelo", "Pomelo OS"),
     ("com.google.Chrome", "com.google.Chrome", "Chrome"),
     ("Google", "com.google.Chrome", "Google"),
@@ -230,7 +256,29 @@ pub const APP_CACHES: [(&str, &str, &str); 28] = [
     ("typescript", "", "TypeScript"),
     ("Cypress", "", "Cypress"),
     ("electron-builder", "", "electron-builder"),
+    ("Codex", "com.openai.codex", "Codex"),
+    ("com.openai.codex", "com.openai.codex", "Codex"),
+    ("claude-cli-nodejs", "", "Claude Code"),
+    ("com.google.GeminiMacOS", "com.google.GeminiMacOS", "Gemini"),
+    ("com.google.antigravity", "com.google.antigravity", "Antigravity"),
+    ("antigravity", "com.google.antigravity", "Antigravity 编辑器"),
+    ("com.netease.163music", "com.netease.163music", "网易云音乐"),
+    ("WeType", "com.tencent.inputmethod.wetype", "微信输入法"),
+    ("com.tencent.inputmethod.wetype", "com.tencent.inputmethod.wetype", "微信输入法"),
+    ("com.oracle.java.JavaAppletPlugin", "", "Java 插件"),
+    ("com.pikcloud.pikplayer.mac", "com.pikcloud.pikplayer.mac", "PikPak 播放器"),
+    ("com.west2online.ClashX", "com.west2online.ClashX", "ClashX"),
+    ("com.google.GoogleUpdater", "", "Google 更新程序"),
+    ("com.microsoft.autoupdate.fba", "", "Microsoft 自动更新"),
+    ("Godot", "", "Godot"),
+    ("CCTClearcutLogger", "", "Google 日志上报"),
 ];
+
+/// A cache folder holding only a web view's data (`WebKit`, and Apple's own caches): a small tool's or a
+/// script's (Pomelo's and Peck's WebKit checks leave `wk`, `shots`, `pomelo`…). Deleting it costs a reload.
+pub fn web_cache(entries: &[String]) -> bool {
+    entries.iter().any(|n| n == "WebKit") && entries.iter().all(|n| n == "WebKit" || n == ".DS_Store" || n.starts_with("com.apple."))
+}
 
 /// A known App cache: the app it belongs to ("" = none to check).
 pub fn app_cache(name: &str) -> Option<&'static str> {
@@ -244,14 +292,23 @@ pub fn app_cache(name: &str) -> Option<&'static str> {
 pub fn app_cache_title(name: &str) -> String {
     if let Some(app) = name.strip_suffix(".ShipIt") {
         let shown = APP_CACHES.iter().find(|(n, ..)| *n == app).map_or(app, |(.., t)| *t);
-        return format!("{shown} 的更新下载");
+        return format!("{shown}{}的更新下载", gap(shown));
     }
-    APP_CACHES.iter().find(|(n, ..)| *n == name).map_or_else(|| name.to_string(), |(.., t)| format!("{t} 的缓存"))
+    APP_CACHES.iter().find(|(n, ..)| *n == name).map_or_else(|| name.to_string(), |(.., t)| format!("{t}{}的缓存", gap(t)))
+}
+
+/// A space between a Latin name and the Chinese after it (「Chrome 的缓存」, 「网易云音乐的缓存」).
+pub fn gap(name: &str) -> &'static str {
+    if name.chars().last().is_some_and(|c| c.is_ascii()) {
+        " "
+    } else {
+        ""
+    }
 }
 
 /// macOS's own caches (not listed as 不认得的 App 缓存).
 pub fn apple_cache(name: &str) -> bool {
-    name.to_ascii_lowercase().starts_with("com.apple.") || ["GeoServices", "PassKit", "Animoji", "CloudKit", "familycircled", "Metadata", "SpeechModelCache", "FamilyCircle", "Siri"].contains(&name)
+    name.to_ascii_lowercase().starts_with("com.apple.") || ["GeoServices", "PassKit", "Animoji", "CloudKit", "familycircled", "Metadata", "SpeechModelCache", "FamilyCircle", "Siri", "askpermissiond"].contains(&name)
 }
 
 /// Bundles the program never looks into for single files (an app's parts, a Photos library…).
@@ -393,10 +450,24 @@ mod tests {
     }
 
     #[test]
+    fn litter_by_name() {
+        assert_eq!(litter(".DS_Store"), Some(DS_STORE));
+        for n in ["~$周报.docx", "~$Book1.xlsx", ".~lock.报告.odt#", "~WRL0001.tmp"] {
+            assert_eq!(litter(n), Some(OFFICE_TEMP), "{n}");
+        }
+        for n in ["~$", "DS_Store", "周报.docx", ".~lock.a", "~notes.tmp", "a.tmp"] {
+            assert_eq!(litter(n), None, "{n}");
+        }
+        assert!(web_cache(&["WebKit".into()]) && web_cache(&["WebKit".into(), "com.apple.e5rt.e5bundlecache".into()]));
+        assert!(!web_cache(&["WebKit".into(), "harness-runtime".into()]) && !web_cache(&[]));
+    }
+
+    #[test]
     fn known_caches_and_bundles() {
         assert_eq!(app_cache("com.google.Chrome"), Some("com.google.Chrome"));
         assert_eq!(app_cache("com.microsoft.VSCode.ShipIt"), Some(""));
         assert_eq!(app_cache("com.unknown.thing"), None);
+        assert_eq!((app_cache_title("com.google.Chrome"), app_cache_title("com.netease.163music"), app_cache_title("com.microsoft.VSCode.ShipIt")), ("Chrome 的缓存".to_string(), "网易云音乐的缓存".to_string(), "VS Code 的更新下载".to_string()));
         assert!(is_bundle("Google Chrome.app") && is_bundle("Photos Library.photoslibrary") && !is_bundle("movie.mp4"));
         assert!(markers_have(marker_bit("Cargo.toml") | marker_bit(".git"), &["Cargo.toml"]) && !project_root(marker_bit("pyvenv.cfg")));
     }

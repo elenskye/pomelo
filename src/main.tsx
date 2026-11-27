@@ -40,6 +40,7 @@ import "./index.css";
 import "@/modules/youzi/messages.css";
 import "@/modules/youzi/list.css";
 import "@/modules/youzi/assistants/pub2md.css";
+import "@/modules/youzi/assistants/janitor.css";
 
 // Browser-only UI testing: `pnpm dev` → http://localhost:1420/?mock (tree-shaken from builds).
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {

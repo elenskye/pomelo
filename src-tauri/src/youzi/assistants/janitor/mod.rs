@@ -8,7 +8,8 @@
 //!   (store.rs; never backed up, exported or undone).
 //! - 一键清理 deletes for good (after the page's confirm); listed items go to the Trash, a protected one only
 //!   when the page confirmed twice (`protected_ok`); 清空废纸篓 empties ~/.Trash. Before deleting, Rust looks
-//!   again: still there, not protected, not in use now. None of it is undone.
+//!   again: still there, not protected, not in use now. Litter (`.DS_Store`, Office's lock files) deletes the
+//!   files the scan found that are still litter by name. None of it is undone.
 //! - Settings (youzi.db preference `assistant.janitor`): categories kept out of 一键清理, 很久没动 days, the
 //!   Agent's model. Not undone. The Agent's rules (agent.rs, youzi.db `janitor_rules`) are their own groups
 //!   in 一键清理; adding and deleting one is an undo step.
@@ -267,6 +268,8 @@ pub struct Item {
 pub struct Group {
     pub id: String,
     pub name: String,
+    /// The page's class (rules::Category::class, rules::GROUPS; an Agent rule's: agent).
+    pub class: String,
     pub rebuild: Option<String>,
     pub takes: Option<String>,
     pub network: Option<bool>,
@@ -325,22 +328,22 @@ fn item_of(i: &store::ItemRow, s: &Settings, now: i64) -> Item {
 pub fn overview(j: &Janitor, s: &Settings, agent_rules: &[agent::Rule]) -> Result<Overview, String> {
     let rows = j.with_db(|c| store::items(c))?;
     let t = unix_now();
-    let group = |id: String, name: String, rebuild: String, takes: String, network: bool| {
+    let group = |id: String, name: String, class: &str, rebuild: String, takes: String, network: bool| {
         let items: Vec<Item> = rows.iter().filter(|r| !r.listed && r.kind == id).map(|r| item_of(r, s, t)).collect();
-        Group { id, name, rebuild: Some(rebuild), takes: (!takes.is_empty()).then_some(takes), network: Some(network), size: items.iter().map(|i| i.size).sum(), items }
+        Group { id, name, class: class.into(), rebuild: Some(rebuild), takes: (!takes.is_empty()).then_some(takes), network: Some(network), size: items.iter().map(|i| i.size).sum(), items }
     };
     let categories = rules::CATEGORIES
         .iter()
         .filter(|c| !s.off.iter().any(|o| o == c.id))
-        .map(|c| group(c.id.into(), s.name_of(c), c.rebuild.into(), c.takes.into(), c.network))
-        .chain(agent_rules.iter().map(|r| group(format!("rule:{}", r.id), r.name.clone(), r.rebuild.clone(), String::new(), false)))
+        .map(|c| group(c.id.into(), s.name_of(c), c.class, c.rebuild.into(), c.takes.into(), c.network))
+        .chain(agent_rules.iter().map(|r| group(format!("rule:{}", r.id), r.name.clone(), "agent", r.rebuild.clone(), String::new(), false)))
         .filter(|g| !g.items.is_empty())
         .collect::<Vec<_>>();
     let groups = rules::GROUPS
         .iter()
-        .map(|(id, name)| {
+        .map(|(id, name, class)| {
             let items: Vec<Item> = rows.iter().filter(|r| r.listed && r.kind == *id).map(|r| item_of(r, s, t)).collect();
-            Group { id: (*id).into(), name: (*name).into(), rebuild: None, takes: None, network: None, size: items.iter().map(|i| i.size).sum(), items }
+            Group { id: (*id).into(), name: (*name).into(), class: (*class).into(), rebuild: None, takes: None, network: None, size: items.iter().map(|i| i.size).sum(), items }
         })
         .filter(|g| !g.items.is_empty())
         .collect();
@@ -438,7 +441,8 @@ fn empty(real: &Path) -> Result<(), String> {
 
 /// Is it in use now (looked at again right before deleting)?
 fn busy_now(i: &store::ItemRow, procs: &[system::Proc], apps: &std::collections::HashSet<String>) -> Option<String> {
-    let dirs: Vec<&str> = i.project.iter().map(String::as_str).chain(i.paths.iter().map(String::as_str)).collect();
+    // litter's path is the home folder: only its apps make it busy
+    let dirs: Vec<&str> = if i.extra["how"] == "litter" { Vec::new() } else { i.project.iter().map(String::as_str).chain(i.paths.iter().map(String::as_str)).collect() };
     if let Some(p) = procs.iter().find(|p| p.cwd.as_deref().is_some_and(|c| dirs.iter().any(|d| rules::within(c, d)))) {
         return Some(format!("{} 在跑", p.name));
     }
@@ -447,7 +451,36 @@ fn busy_now(i: &store::ItemRow, procs: &[system::Proc], apps: &std::collections:
             return Some("App 开着".into());
         }
     }
+    if let Some(app) = i.extra["apps"].as_array().into_iter().flatten().filter_map(|a| a.as_str()).find(|a| apps.contains(*a)) {
+        return Some(format!("{} 开着", scan::office_name(app)));
+    }
     None
+}
+
+/// Deletes the litter files an item found (still there, still litter by name, not protected); a file gone
+/// already is fine. Fails only when none could be deleted.
+fn remove_litter(j: &Janitor, i: &store::ItemRow, protected: &Protected) -> Result<(), String> {
+    let files: Vec<&str> = i.extra["files"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).collect();
+    let mut last = None;
+    let mut done = 0;
+    for v in &files {
+        let name = v.rsplit('/').next().unwrap_or(v);
+        if rules::litter(name) != Some(i.kind.as_str()) || protected.of(v).is_some() {
+            continue;
+        }
+        let real = j.real_of(v);
+        match std::fs::symlink_metadata(&real) {
+            Ok(m) if m.is_file() => match std::fs::remove_file(&real) {
+                Ok(()) => done += 1,
+                Err(e) => last = Some(format!("删不掉：{e}")),
+            },
+            _ => done += 1,
+        }
+    }
+    match last {
+        Some(e) if done == 0 => Err(e),
+        _ => Ok(()),
+    }
 }
 
 pub fn clean(j: &Janitor, ids: &[i64], s: &Settings, site: &str) -> Result<Outcome, String> {
@@ -464,7 +497,7 @@ pub fn clean(j: &Janitor, ids: &[i64], s: &Settings, site: &str) -> Result<Outco
         for i in rows.iter().filter(|i| !i.listed) {
             let why = if s.off.contains(&i.kind) {
                 Some("这一类没放进一键清理".to_string())
-            } else if let Some(p) = i.paths.iter().find_map(|p| protected.of(p)) {
+            } else if let Some(p) = i.paths.iter().filter(|_| i.extra["how"] != "litter").find_map(|p| protected.of(p)) {
                 Some(format!("受保护（{p}）"))
             } else {
                 busy_now(i, &procs, &apps)
@@ -475,7 +508,10 @@ pub fn clean(j: &Janitor, ids: &[i64], s: &Settings, site: &str) -> Result<Outco
             }
             let how = i.extra["how"].as_str().unwrap_or("remove");
             let mut res = Ok(());
-            for p in &i.paths {
+            if how == "litter" {
+                res = remove_litter(j, i, &protected);
+            }
+            for p in i.paths.iter().filter(|_| how != "litter") {
                 let real = j.real_of(p);
                 res = match how {
                     "empty" => empty(&real),

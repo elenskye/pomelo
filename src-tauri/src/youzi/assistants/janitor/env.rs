@@ -5,6 +5,9 @@
 //! - Each environment: rows with version, where, size, who installed it, the default, packages (count and the
 //!   biggest). A row inside another one (an old Homebrew version, an old extension, a Docker image) is
 //!   `part` and isn't added to the environment's size.
+//! - Each environment is in a class (`class`, the page's sections: 编程语言, 包管理, 容器和虚拟机, 做 App 和游戏,
+//!   编辑器和 IDE, AI 工具和模型, 数据库, 其他工具, 认不出来的); editors and the other tools are cards of their own
+//!   (`EDITORS`, `TOOLS`: folders and apps), an app only when it's there, a folder from 10 MB.
 //! - 其他: big folders nobody claims (home's dot folders, ~/.cache, ~/.local/share, ~/.config, /opt, /usr/local
 //!   outside Homebrew's), 100 MB or more after taking out what's claimed inside — for the Agent to work out.
 //! - Defaults come from the tools (java_home, xcode-select) or their files; real commands only on the real
@@ -37,6 +40,8 @@ pub struct EnvItem {
     /// Deleting it needs an administrator's password.
     pub admin: bool,
     pub newest: i64,
+    /// What `packages` counts (个包 when none).
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -44,6 +49,8 @@ pub struct EnvItem {
 pub struct Env {
     pub id: String,
     pub name: String,
+    /// The page's section: lang, pkg, vm, app, editor, ai, db, tools, unknown.
+    pub class: String,
     pub size: u64,
     pub note: Option<String>,
     pub items: Vec<EnvItem>,
@@ -199,13 +206,13 @@ impl Found {
         self.claims.push(p.into());
     }
 
-    fn add(&mut self, id: &str, name: &str, note: Option<String>, items: Vec<EnvItem>) {
+    fn add(&mut self, id: &str, name: &str, class: &str, note: Option<String>, items: Vec<EnvItem>) {
         if items.is_empty() {
             return;
         }
         self.claims.extend(items.iter().filter_map(|i| i.path.clone()));
         let size = items.iter().filter(|i| !i.part).map(|i| i.size).sum();
-        self.envs.push(Env { id: id.into(), name: name.into(), size, note, items });
+        self.envs.push(Env { id: id.into(), name: name.into(), class: class.into(), size, note, items });
     }
 }
 
@@ -226,7 +233,7 @@ pub fn detect(c: &Ctx) -> Vec<Env> {
     ruby(c, &mut f);
     flutter(c, &mut f);
     android(c, &mut f);
-    known(c, &mut f);
+    tools(c, &mut f);
     unknown(c, &mut f);
     f.envs
 }
@@ -279,8 +286,10 @@ fn java(c: &Ctx, f: &mut Found) {
             i.default = true;
         }
     }
-    f.claim(c.home(".sdkman"));
-    f.add("java", "Java", None, items);
+    for p in [".sdkman", ".gervill", ".oracle_jre_usage", "Library/Application Support/JREInstaller", "Library/Application Support/Oracle"] {
+        f.claim(c.home(p));
+    }
+    f.add("java", "Java", "lang", None, items);
 }
 
 // ---- Conda ----
@@ -321,7 +330,7 @@ fn conda(c: &Ctx, f: &mut Found) {
         f.claim(root);
     }
     f.claim(c.home(".conda"));
-    f.add("conda", "Conda", None, items);
+    f.add("conda", "Conda", "pkg", None, items);
 }
 
 // ---- Python ----
@@ -361,6 +370,7 @@ fn python(c: &Ctx, f: &mut Found) {
         let cfg = c.read(&format!("{p}/pyvenv.cfg")).unwrap_or_default();
         let version = cfg.lines().find_map(|l| l.split_once('=').filter(|(k, _)| matches!(k.trim(), "version" | "version_info")).map(|(_, v)| v.trim().split(".final").next().unwrap_or("").to_string())).filter(|v| !v.is_empty());
         let mut i = c.item(it.title.clone(), version.map(|v| format!("Python {v}")), p, "项目");
+        i.size = it.size;
         (i.packages, i.top) = c.site_packages(p);
         i.tag = Some("一键清理能清".into());
         items.push(i);
@@ -374,7 +384,11 @@ fn python(c: &Ctx, f: &mut Found) {
     }
     f.claim(c.home(".pyenv"));
     f.claim(uv);
-    f.add("python", "Python", None, items);
+    // Python's tools' settings (Jupyter, IPython, Matplotlib, Keras, IDLE, virtualenv)
+    for p in [".ipython", ".jupyter", ".matplotlib", ".keras", ".idlerc", "Library/Application Support/virtualenv"] {
+        f.claim(c.home(p));
+    }
+    f.add("python", "Python", "lang", None, items);
 }
 
 // ---- Node ----
@@ -434,10 +448,10 @@ fn node(c: &Ctx, f: &mut Found) {
     if let Some(k) = pick {
         items[k].default = true;
     }
-    for p in [".nvm", ".volta", ".local/share/fnm"] {
+    for p in [".nvm", ".volta", ".local/share/fnm", ".config/configstore"] {
         f.claim(c.home(p));
     }
-    f.add("node", "Node", None, items);
+    f.add("node", "Node", "lang", None, items);
 }
 
 // ---- Rust ----
@@ -465,16 +479,19 @@ fn rust(c: &Ctx, f: &mut Found) {
         let mut i = c.item("cargo 的工具和仓库", None, &cargo, "rustup");
         let tools: Vec<String> = c.ls(&format!("{cargo}/bin")).into_iter().filter(|n| !RUSTUP_PROXIES.contains(&n.as_str())).collect();
         i.packages = (!tools.is_empty()).then_some(tools.len() as u64);
+        i.unit = Some("个工具".into());
         i.top = c.top(&cargo, 5);
         items.push(i);
     }
     for it in c.items.iter().filter(|i| i.kind == rules::RUST_TARGET && !i.listed) {
+        // what deleting it frees, as 清理 says (clones shared with other projects aren't)
         let mut i = c.item(it.title.clone(), None, &it.paths[0], "项目");
+        i.size = it.size;
         i.tag = Some("一键清理能清".into());
         items.push(i);
     }
     f.claim(c.home(".rustup"));
-    f.add("rust", "Rust", None, items);
+    f.add("rust", "Rust", "lang", None, items);
 }
 
 // ---- Homebrew ----
@@ -507,7 +524,7 @@ fn homebrew(c: &Ctx, f: &mut Found) {
         }
         f.claim(prefix);
     }
-    f.add("homebrew", "Homebrew", note, items);
+    f.add("homebrew", "Homebrew", "pkg", note, items);
 }
 
 // ---- Gradle, Maven ----
@@ -544,7 +561,7 @@ fn jvm_tools(c: &Ctx, f: &mut Found) {
     }
     f.claim(c.home(".gradle"));
     f.claim(c.home(".m2"));
-    f.add("jvm", "Gradle、Maven", None, items);
+    f.add("jvm", "Gradle、Maven", "pkg", None, items);
 }
 
 // ---- Docker ----
@@ -566,6 +583,10 @@ fn docker(c: &Ctx, f: &mut Found) {
             items.push(c.item(title, None, &p, ""));
         }
     }
+    if c.is_dir("/Applications/OrbStack.app") {
+        let version = c.sys.app_version(&c.cfg.real_of("/Applications/OrbStack.app"));
+        items.push(c.item("OrbStack", version, "/Applications/OrbStack.app", "安装包"));
+    }
     if items.is_empty() {
         return;
     }
@@ -577,8 +598,10 @@ fn docker(c: &Ctx, f: &mut Found) {
     for (name, size) in details.map(|d| d.images).unwrap_or_default() {
         items.push(EnvItem { title: name, size, by: Some("镜像".into()), part: true, ..Default::default() });
     }
-    f.claim(c.home(".docker"));
-    f.add("docker", "Docker", Some(note), items);
+    for p in [".docker", "Library/Application Support/docker-secrets-engine", "Library/Application Support/Docker Desktop", "Library/Application Support/com.docker.install"] {
+        f.claim(c.home(p));
+    }
+    f.add("docker", "Docker", "vm", Some(note), items);
 }
 
 // ---- Xcode ----
@@ -598,6 +621,7 @@ fn xcode(c: &Ctx, f: &mut Found) {
     if c.is_dir(&devices) {
         let mut i = c.item("模拟器设备", None, &devices, "Xcode");
         i.packages = Some(c.dirs(&devices).len() as u64);
+        i.unit = Some("台".into());
         items.push(i);
     }
     for dir in ["/Library/Developer/CoreSimulator/Volumes", "/Library/Developer/CoreSimulator/Profiles/Runtimes"] {
@@ -611,7 +635,7 @@ fn xcode(c: &Ctx, f: &mut Found) {
         }
     }
     f.claim(c.home("Library/Developer"));
-    f.add("xcode", "Xcode 和模拟器", None, items);
+    f.add("xcode", "Xcode 和模拟器", "app", None, items);
 }
 
 // ---- editors' extensions ----
@@ -627,36 +651,63 @@ pub fn ext_split(n: &str) -> (&str, &str) {
     (n, "")
 }
 
+/// Editors: (card id, name, its extensions under home, its apps, its own folders under home: (path, title)).
+const EDITORS: [(&str, &str, &str, &[&str], &[(&str, &str)]); 6] = [
+    ("vscode", "VS Code", ".vscode/extensions", &["Visual Studio Code.app"], &[("Library/Application Support/Code", "VS Code 的数据"), (".vscode-shared", "VS Code 的共享数据"), (".ServiceHub", "C# 插件的服务（ServiceHub）"), ("Library/Application Support/csdevkit", "C# Dev Kit 的数据"), ("Library/Application Support/Microsoft DevDiv", "C# Dev Kit 的工具"), (".local/share/CMakeTools", "CMake Tools 的数据")]),
+    ("vscode-insiders", "VS Code Insiders", ".vscode-insiders/extensions", &["Visual Studio Code - Insiders.app"], &[("Library/Application Support/Code - Insiders", "VS Code Insiders 的数据")]),
+    ("cursor", "Cursor", ".cursor/extensions", &["Cursor.app"], &[("Library/Application Support/Cursor", "Cursor 的数据")]),
+    ("windsurf", "Windsurf", ".windsurf/extensions", &["Windsurf.app"], &[("Library/Application Support/Windsurf", "Windsurf 的数据")]),
+    ("antigravity", "Antigravity", ".antigravity/extensions", &["Antigravity.app"], &[("Library/Application Support/Antigravity", "Antigravity 的数据")]),
+    ("zed", "Zed", "", &["Zed.app"], &[("Library/Application Support/Zed", "Zed 的数据")]),
+];
+
+/// An app in /Applications (its version from Info.plist).
+fn app_item(c: &Ctx, name: &str) -> Option<EnvItem> {
+    let p = join("/Applications", name);
+    c.is_dir(&p).then(|| c.item(name.trim_end_matches(".app"), c.sys.app_version(&c.cfg.real_of(&p)), &p, "App"))
+}
+
 fn editors(c: &Ctx, f: &mut Found) {
-    let mut items = Vec::new();
-    for (rel, name) in [(".vscode/extensions", "VS Code"), (".vscode-insiders/extensions", "VS Code Insiders"), (".cursor/extensions", "Cursor"), (".windsurf/extensions", "Windsurf"), (".antigravity/extensions", "Antigravity")] {
-        let dir = c.home(rel);
-        let exts = c.dirs(&dir);
-        if exts.is_empty() {
-            continue;
-        }
-        let mut i = c.item(format!("{name} 的扩展"), None, &dir, name);
-        i.packages = Some(exts.len() as u64);
-        i.top = c.top(&dir, 5);
-        items.push(i);
-        // the same extension in several versions: the older ones are left over
-        let mut by: std::collections::BTreeMap<&str, Vec<&String>> = Default::default();
-        for e in &exts {
-            by.entry(ext_split(e).0).or_default().push(e);
-        }
-        for (_, mut vers) in by.into_iter().filter(|(_, v)| v.len() > 1) {
-            vers.sort_by_key(|v| ver_key(ext_split(v).1));
-            vers.pop();
-            for v in vers {
-                let mut old = c.item(v.clone(), Some(ext_split(v).1.to_string()), &join(&dir, v), name);
-                old.tag = Some("旧版本".into());
-                old.part = true;
-                items.push(old);
+    for (id, name, ext_dir, apps, data) in EDITORS {
+        let mut items: Vec<EnvItem> = apps.iter().filter_map(|a| app_item(c, a)).collect();
+        if !ext_dir.is_empty() {
+            let dir = c.home(ext_dir);
+            let exts = c.dirs(&dir);
+            if !exts.is_empty() {
+                let mut i = c.item(format!("{name} 的扩展"), None, &dir, name);
+                i.packages = Some(exts.len() as u64);
+                i.unit = Some("个扩展".into());
+                i.top = c.top(&dir, 5);
+                items.push(i);
+                // the same extension in several versions: the older ones are left over
+                let mut by: std::collections::BTreeMap<&str, Vec<&String>> = Default::default();
+                for e in &exts {
+                    by.entry(ext_split(e).0).or_default().push(e);
+                }
+                for (_, mut vers) in by.into_iter().filter(|(_, v)| v.len() > 1) {
+                    vers.sort_by_key(|v| ver_key(ext_split(v).1));
+                    vers.pop();
+                    for v in vers {
+                        let mut old = c.item(v.clone(), Some(ext_split(v).1.to_string()), &join(&dir, v), name);
+                        old.tag = Some("旧版本".into());
+                        old.part = true;
+                        items.push(old);
+                    }
+                }
             }
+            f.claim(c.home(ext_dir.split('/').next().unwrap_or(ext_dir)));
         }
-        f.claim(c.home(rel.split('/').next().unwrap_or(rel)));
+        for (rel, title) in data {
+            let p = c.home(rel);
+            if c.is_dir(&p) && c.size(&p) >= 10 * rules::MB {
+                let mut i = c.item(*title, None, &p, name);
+                i.top = c.top(&p, 3);
+                items.push(i);
+            }
+            f.claim(p);
+        }
+        f.add(id, name, "editor", None, items);
     }
-    f.add("editors", "编辑器的扩展", None, items);
 }
 
 // ---- .NET, Go, Ruby, Flutter, Android ----
@@ -698,10 +749,10 @@ fn dotnet(c: &Ctx, f: &mut Found) {
     if let Some(i) = items.iter_mut().filter(|i| i.title.starts_with(".NET SDK")).max_by_key(|i| ver_key(i.version.as_deref().unwrap_or(""))) {
         i.default = true;
     }
-    for p in ["/usr/local/share/dotnet".to_string(), c.home(".dotnet"), c.home(".nuget")] {
+    for p in ["/usr/local/share/dotnet".to_string(), c.home(".dotnet"), c.home(".nuget"), c.home(".local/share/NuGet"), c.home("Library/Application Support/dotnet")] {
         f.claim(p);
     }
-    f.add("dotnet", ".NET", None, items);
+    f.add("dotnet", ".NET", "lang", None, items);
 }
 
 fn go(c: &Ctx, f: &mut Found) {
@@ -721,7 +772,7 @@ fn go(c: &Ctx, f: &mut Found) {
     }
     f.claim(c.home("go"));
     f.claim(c.home("sdk"));
-    f.add("go", "Go", None, items);
+    f.add("go", "Go", "lang", None, items);
 }
 
 fn ruby(c: &Ctx, f: &mut Found) {
@@ -733,7 +784,7 @@ fn ruby(c: &Ctx, f: &mut Found) {
     for p in [".rbenv", ".rvm", ".gem"] {
         f.claim(c.home(p));
     }
-    f.add("ruby", "Ruby", None, items);
+    f.add("ruby", "Ruby", "lang", None, items);
 }
 
 fn flutter(c: &Ctx, f: &mut Found) {
@@ -749,7 +800,7 @@ fn flutter(c: &Ctx, f: &mut Found) {
     for p in ["flutter", "development/flutter", "fvm", ".pub-cache"] {
         f.claim(c.home(p));
     }
-    f.add("flutter", "Flutter、Dart", None, items);
+    f.add("flutter", "Flutter、Dart", "app", None, items);
 }
 
 fn android(c: &Ctx, f: &mut Found) {
@@ -758,6 +809,7 @@ fn android(c: &Ctx, f: &mut Found) {
     if c.is_dir(&sdk) {
         let mut i = c.item("Android SDK", None, &sdk, "Android Studio");
         i.packages = Some(c.dirs(&format!("{sdk}/platforms")).len() as u64);
+        i.unit = Some("个平台".into());
         i.top = c.top(&sdk, 5);
         items.push(i);
     }
@@ -765,64 +817,125 @@ fn android(c: &Ctx, f: &mut Found) {
     for a in c.dirs(&avd).into_iter().filter(|a| a.ends_with(".avd")) {
         items.push(c.item(format!("模拟器 {}", a.trim_end_matches(".avd")), None, &join(&avd, &a), "Android Studio"));
     }
+    items.extend(app_item(c, "Android Studio.app"));
     f.claim(c.home(".android"));
     f.claim(c.home("Library/Android"));
-    f.add("android", "Android", None, items);
+    f.add("android", "Android", "app", None, items);
 }
 
 // ---- other known ones, and the unknown ----
 
-const KNOWN: [(&str, &str, &str); 24] = [
-    ("~/.codex", "Codex 的数据", "Codex"),
-    ("~/.claude", "Claude Code 的数据", "Claude Code"),
-    ("~/.local/share/claude", "Claude Code 的版本", "Claude Code"),
-    ("~/.p2", "Eclipse 的插件（p2）", "Eclipse"),
-    ("~/.ollama", "Ollama 的模型", "Ollama"),
-    ("~/.lmstudio", "LM Studio 的模型", "LM Studio"),
-    ("~/.cache/lm-studio", "LM Studio 的模型", "LM Studio"),
-    ("~/.cache/huggingface", "Hugging Face 的缓存", "Hugging Face"),
-    ("~/.cache/torch", "PyTorch 的缓存", "PyTorch"),
-    ("~/.julia", "Julia", "Julia"),
-    ("~/.ghcup", "Haskell（ghcup）", "ghcup"),
-    ("~/.composer", "PHP Composer", "Composer"),
-    ("~/.bun", "Bun", "Bun"),
-    ("~/.deno", "Deno", "Deno"),
-    ("~/.local/share/pnpm", "pnpm", "pnpm"),
-    ("~/.swiftpm", "Swift 的包", "Swift"),
-    ("~/.konan", "Kotlin/Native", "Kotlin"),
-    ("~/.platformio", "PlatformIO", "PlatformIO"),
-    ("~/.espressif", "ESP-IDF", "Espressif"),
-    ("~/Library/Arduino15", "Arduino", "Arduino"),
-    ("~/.minikube", "minikube", "minikube"),
-    ("/usr/local/texlive", "TeX Live", "安装包"),
-    ("/Library/TeX", "MacTeX", "安装包"),
-    ("/Library/Frameworks/R.framework", "R", "安装包"),
+/// Other tools, a card each: (id, name, class, places). A place is `/Applications/X.app` (shown when there),
+/// or a folder (absolute, or under home with `~/`; shown from 10 MB, always claimed): (path, title, who).
+const TOOLS: &[(&str, &str, &str, &[(&str, &str, &str)])] = &[
+    // 编程语言
+    ("kotlin", "Kotlin", "lang", &[("~/.konan", "Kotlin/Native", "Kotlin"), ("~/Library/Application Support/kotlin", "Kotlin 的编译守护进程", "Kotlin"), ("~/.skiko", "Skiko（Compose 的图形库）", "Kotlin")]),
+    ("swift", "Swift", "lang", &[("~/.swiftpm", "Swift 的包", "Swift"), ("~/Library/org.swift.swiftpm", "Swift 的包（资源库）", "Swift")]),
+    ("julia", "Julia", "lang", &[("~/.julia", "Julia", "Julia")]),
+    ("haskell", "Haskell", "lang", &[("~/.ghcup", "Haskell（ghcup）", "ghcup"), ("~/.stack", "Haskell Stack", "Stack"), ("~/.cabal", "Cabal 的包", "Cabal")]),
+    ("php", "PHP", "lang", &[("~/.composer", "PHP Composer", "Composer"), ("~/.config/composer", "PHP Composer", "Composer")]),
+    ("deno", "Deno", "lang", &[("~/.deno", "Deno", "Deno"), ("~/Library/Caches/deno", "Deno 的缓存", "Deno")]),
+    ("bun", "Bun", "lang", &[("~/.bun", "Bun", "Bun")]),
+    ("elixir", "Elixir、Erlang", "lang", &[("~/.mix", "Mix", "Elixir"), ("~/.hex", "Hex 的包", "Elixir"), ("~/.asdf", "asdf 装的版本", "asdf")]),
+    ("lua", "Lua", "lang", &[("~/.luarocks", "LuaRocks 的包", "LuaRocks")]),
+    ("perl", "Perl", "lang", &[("~/perl5", "Perl 的模块", "cpan")]),
+    ("zig", "Zig", "lang", &[("~/.cache/zig", "Zig 的缓存", "Zig")]),
+    ("r", "R", "lang", &[("/Library/Frameworks/R.framework", "R", "安装包"), ("/Applications/RStudio.app", "RStudio", "App")]),
+    // 包管理
+    ("npm", "npm、pnpm", "pkg", &[("~/.npm", "npm 的缓存和 npx", "npm"), ("~/.local/share/pnpm", "pnpm", "pnpm"), ("~/Library/pnpm", "pnpm 的仓库", "pnpm")]),
+    ("pipx", "pipx", "pkg", &[("~/.local/pipx", "pipx 装的工具", "pipx")]),
+    ("macports", "MacPorts", "pkg", &[("/opt/local", "MacPorts", "安装包")]),
+    // 容器和虚拟机
+    ("minikube", "Kubernetes", "vm", &[("~/.minikube", "minikube", "minikube"), ("~/.kube", "kubectl 的设置", "kubectl"), ("~/.kind", "kind", "kind")]),
+    ("lima", "Lima", "vm", &[("~/.lima", "Lima 的虚拟机", "Lima")]),
+    ("podman", "Podman", "vm", &[("~/.local/share/containers", "Podman 的镜像和容器", "Podman"), ("/Applications/Podman Desktop.app", "Podman Desktop", "App")]),
+    ("utm", "UTM", "vm", &[("/Applications/UTM.app", "UTM", "App"), ("~/Library/Containers/com.utmapp.UTM", "UTM 的虚拟机", "UTM")]),
+    ("parallels", "Parallels", "vm", &[("/Applications/Parallels Desktop.app", "Parallels Desktop", "App"), ("~/Parallels", "Parallels 的虚拟机", "Parallels")]),
+    ("virtualbox", "VirtualBox", "vm", &[("/Applications/VirtualBox.app", "VirtualBox", "App"), ("~/VirtualBox VMs", "VirtualBox 的虚拟机", "VirtualBox")]),
+    ("vmware", "VMware Fusion", "vm", &[("/Applications/VMware Fusion.app", "VMware Fusion", "App"), ("~/Virtual Machines.localized", "VMware 的虚拟机", "VMware")]),
+    ("vagrant", "Vagrant", "vm", &[("~/.vagrant.d", "Vagrant 的盒子", "Vagrant")]),
+    // 做 App 和游戏
+    ("godot", "Godot", "app", &[("/Applications/Godot.app", "Godot", "App"), ("~/Library/Application Support/Godot", "Godot 的数据", "Godot")]),
+    ("unity", "Unity", "app", &[("/Applications/Unity Hub.app", "Unity Hub", "App"), ("/Applications/Unity", "Unity 编辑器", "Unity Hub"), ("~/Library/Unity", "Unity 的缓存", "Unity")]),
+    // 编辑器和 IDE
+    ("jetbrains", "JetBrains", "editor", &[("~/Library/Application Support/JetBrains", "JetBrains 的 IDE", "JetBrains"), ("~/Library/Caches/JetBrains", "JetBrains 的缓存", "JetBrains")]),
+    ("sublime", "Sublime Text", "editor", &[("/Applications/Sublime Text.app", "Sublime Text", "App"), ("~/Library/Application Support/Sublime Text", "Sublime Text 的数据", "Sublime Text")]),
+    ("ultraedit", "UltraEdit", "editor", &[("/Applications/UltraEdit.app", "UltraEdit", "App"), ("~/Library/Application Support/UltraEdit", "UltraEdit 的数据", "UltraEdit")]),
+    ("eclipse", "Eclipse", "editor", &[("~/.p2", "Eclipse 的插件（p2）", "Eclipse"), ("~/.eclipse", "Eclipse 的设置", "Eclipse")]),
+    ("staruml", "StarUML", "editor", &[("/Applications/StarUML.app", "StarUML", "App"), ("~/Library/Application Support/StarUML", "StarUML 的数据", "StarUML")]),
+    // AI 工具和模型
+    ("claude-code", "Claude Code", "ai", &[("~/.claude", "Claude Code 的数据", "Claude Code"), ("~/.local/share/claude", "Claude Code 的版本", "Claude Code"), ("~/.cache/claude", "Claude Code 的缓存", "Claude Code"), ("~/Library/Application Support/Claude", "Claude 桌面版的数据", "Claude")]),
+    ("codex", "Codex", "ai", &[("~/.codex", "Codex 的数据", "Codex"), ("~/Library/Application Support/Codex", "Codex 桌面版的数据", "Codex"), ("~/Library/Application Support/com.openai.codex", "Codex 桌面版的设置", "Codex")]),
+    ("gemini", "Gemini CLI", "ai", &[("~/.gemini", "Gemini CLI 的数据", "Gemini CLI")]),
+    ("grok", "Grok CLI", "ai", &[("~/.grok", "Grok CLI 的数据", "Grok CLI"), ("~/.grokbot", "Grok Bot 的数据", "Grok Bot")]),
+    ("copilot", "GitHub Copilot", "ai", &[("~/.copilot", "Copilot CLI 的数据", "Copilot"), ("~/.config/github-copilot", "Copilot 的设置", "Copilot")]),
+    ("cagent", "Docker cagent", "ai", &[("~/.config/cagent", "cagent 的设置", "Docker")]),
+    ("local-llm", "本地模型", "ai", &[("~/Documents/LLM", "本地模型（llmctl）", "自己部署")]),
+    ("ollama", "Ollama", "ai", &[("/Applications/Ollama.app", "Ollama", "App"), ("~/.ollama", "Ollama 的模型", "Ollama")]),
+    ("lmstudio", "LM Studio", "ai", &[("/Applications/LM Studio.app", "LM Studio", "App"), ("~/.lmstudio", "LM Studio 的模型", "LM Studio"), ("~/.cache/lm-studio", "LM Studio 的模型", "LM Studio")]),
+    ("ml-cache", "模型下载", "ai", &[("~/.cache/huggingface", "Hugging Face 的缓存", "Hugging Face"), ("~/.cache/torch", "PyTorch 的缓存", "PyTorch"), ("~/.cache/whisper", "Whisper 的模型", "Whisper")]),
+    // 数据库
+    ("mysql", "MySQL", "db", &[("/Applications/MySQLWorkbench.app", "MySQL Workbench", "App"), ("~/Library/Application Support/MySQL", "MySQL Workbench 的数据", "MySQL Workbench")]),
+    ("postgres", "PostgreSQL", "db", &[("/Applications/Postgres.app", "Postgres.app", "App"), ("~/Library/Application Support/Postgres", "Postgres.app 的数据", "Postgres.app")]),
+    ("dbeaver", "DBeaver", "db", &[("/Applications/DBeaver.app", "DBeaver", "App"), ("~/Library/DBeaverData", "DBeaver 的数据", "DBeaver")]),
+    ("tableplus", "TablePlus", "db", &[("/Applications/TablePlus.app", "TablePlus", "App")]),
+    // 其他工具
+    ("gh", "GitHub CLI", "tools", &[("~/.config/gh", "gh 的设置", "gh"), ("~/.cache/gh", "gh 的缓存", "gh")]),
+    ("gcloud", "Google Cloud SDK", "tools", &[("~/.config/gcloud", "gcloud 的设置", "gcloud"), ("~/google-cloud-sdk", "Google Cloud SDK", "安装包")]),
+    ("gitkraken", "GitKraken CLI", "tools", &[("~/Library/Application Support/GitKrakenCLI", "GitKraken CLI", "GitKraken")]),
+    ("selenium", "Selenium", "tools", &[("~/.cache/selenium", "Selenium 下载的浏览器驱动", "Selenium")]),
+    ("postman", "Postman", "tools", &[("/Applications/Postman.app", "Postman", "App"), ("~/Library/Application Support/Postman", "Postman 的数据", "Postman")]),
+    ("tex", "TeX", "tools", &[("/usr/local/texlive", "TeX Live", "安装包"), ("/Library/TeX", "MacTeX", "安装包")]),
+    ("arduino", "Arduino、嵌入式", "tools", &[("~/Library/Arduino15", "Arduino", "Arduino"), ("~/.platformio", "PlatformIO", "PlatformIO"), ("~/.espressif", "ESP-IDF", "Espressif")]),
 ];
 
-fn known(c: &Ctx, f: &mut Found) {
-    let mut items = Vec::new();
-    for (p, title, by) in KNOWN {
-        let p = c.at(p);
-        if c.is_dir(&p) && c.size(&p) >= 10 * rules::MB {
-            let mut i = c.item(title, None, &p, by);
-            i.top = c.top(&p, 3);
-            items.push(i);
+fn tools(c: &Ctx, f: &mut Found) {
+    for (id, name, class, places) in TOOLS {
+        let mut items = Vec::new();
+        for (p, title, by) in *places {
+            let p = c.at(p);
+            if p.ends_with(".app") {
+                if let Some(mut i) = app_item(c, p.trim_start_matches("/Applications/")) {
+                    i.title = title.to_string();
+                    items.push(i);
+                }
+            } else if c.is_dir(&p) && c.size(&p) >= 10 * rules::MB {
+                let mut i = c.item(*title, None, &p, by);
+                i.top = c.top(&p, 3);
+                items.push(i);
+            }
+            f.claim(p);
         }
+        // MySQL's own install, named by its version: /usr/local/mysql-9.4.0-macos15-arm64
+        if *id == "mysql" {
+            for d in c.dirs("/usr/local").into_iter().filter(|d| d.starts_with("mysql")) {
+                let p = join("/usr/local", &d);
+                let ver = d.split('-').nth(1).map(str::to_string);
+                items.push(c.item(ver.as_ref().map_or_else(|| "MySQL".to_string(), |v| format!("MySQL {v}")), ver, &p, "安装包"));
+            }
+        }
+        // Homebrew's databases
+        if *class == "db" {
+            let formula = match *id {
+                "mysql" => "mysql",
+                "postgres" => "postgresql",
+                _ => "",
+            };
+            if !formula.is_empty() {
+                brew_versions(c, &mut items, formula, name);
+            }
+        }
+        f.add(id, name, class, None, items);
     }
-    // installs named by version: /usr/local/mysql-9.4.0-macos15-arm64
-    for d in c.dirs("/usr/local").into_iter().filter(|d| d.starts_with("mysql")) {
-        let p = join("/usr/local", &d);
-        let ver = d.split('-').nth(1).map(str::to_string);
-        items.push(c.item(ver.as_ref().map_or_else(|| "MySQL".to_string(), |v| format!("MySQL {v}")), ver, &p, "安装包"));
+    for (formula, name) in [("redis", "Redis"), ("mongodb-community", "MongoDB"), ("sqlite", "SQLite")] {
+        let mut items = Vec::new();
+        brew_versions(c, &mut items, formula, name);
+        f.add(formula, name, "db", None, items);
     }
-    let jb = c.home("Library/Application Support/JetBrains");
-    if c.is_dir(&jb) {
-        let mut i = c.item("JetBrains 的 IDE", None, &jb, "JetBrains");
-        i.packages = Some(c.dirs(&jb).len() as u64);
-        i.top = c.top(&jb, 3);
-        items.push(i);
+    // small tools' own caches nobody needs to see
+    for p in [".cache/fontconfig", ".cache/mesa_shader_cache", ".config/git", ".config/rclone"] {
+        f.claim(c.home(p));
     }
-    f.add("known", "其他认得的", None, items);
 }
 
 /// /usr/local's own folders (Homebrew's and the system's layout), not candidates for 其他.
@@ -832,7 +945,8 @@ pub const UNKNOWN_MIN: u64 = 100 * rules::MB;
 fn unknown(c: &Ctx, f: &mut Found) {
     let home = &c.cfg.home;
     let mut claims: Vec<String> = f.claims.clone();
-    claims.extend(c.items.iter().flat_map(|i| i.paths.iter().cloned()));
+    // litter items stand for the home folder: not a claim
+    claims.extend(c.items.iter().filter(|i| i.extra["how"] != "litter").flat_map(|i| i.paths.iter().cloned()));
     claims.extend(["/opt/homebrew".to_string(), format!("{home}/.Trash")]);
     claims.sort();
     claims.dedup();
@@ -875,7 +989,7 @@ fn unknown(c: &Ctx, f: &mut Found) {
         }
     }
     items.sort_by(|a, b| b.size.cmp(&a.size));
-    f.add("unknown", "其他（认不出来的）", None, items);
+    f.add("unknown", "认不出来的", "unknown", None, items);
 }
 
 #[cfg(test)]

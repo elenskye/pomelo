@@ -12,7 +12,7 @@
 // and the clues say; its reply and cards (JanitorCards.tsx) show here and in Agent. 柚子看一眼 asks again.
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, HardDrive, Settings2 } from "@/shared/icons";
+import { ChevronRight, HardDrive, Settings2, Trash2 } from "@/shared/icons";
 import { Section } from "@/settings/layout";
 import { errorText, useConfirm, useToast } from "@/shared/feedback";
 import { Dropdown } from "@/shared/Dropdown";
@@ -159,8 +159,16 @@ function CardHead(props: { title: string; status: ReactNode; danger?: boolean; c
 
 function BackupBody(props: { ov: BackupOverview }) {
   const { ov } = props;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [confirm, confirmDialog] = useConfirm();
+  const forget = async (r: BackupRecord) => {
+    if (!(await confirm({ title: "删掉这条记录？", message: "只删这条记录，硬盘和 PikPak 上的文件不动。", confirmLabel: "删除", danger: true }))) return;
+    backupApi.forget(r.id).then((o) => qc.setQueryData(BACKUP_KEY, o), (e) => toast(errorText(e), "error"));
+  };
   return (
     <div>
+      {confirmDialog}
       <div className="mb-6 grid items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))]">
         <DownloadsCard ov={ov} />
         <PikPakCard ov={ov} />
@@ -168,7 +176,7 @@ function BackupBody(props: { ov: BackupOverview }) {
       {ov.look && <LookCard look={ov.look} />}
       {ov.runs.length > 0 && (
         <Section title="记录">
-          <ul className="divide-y">{ov.runs.map((r) => <RecordRow key={r.id} r={r} />)}</ul>
+          <ul className="divide-y">{ov.runs.map((r) => <RecordRow key={r.id} r={r} onForget={() => void forget(r)} />)}</ul>
         </Section>
       )}
     </div>
@@ -579,13 +587,13 @@ function PikPakSettings(props: { p: PikPakView; close: () => void }) {
 const STATUS = { running: "还在备份", done: "备份好了", stopped: "停下了", failed: "没备成" } as const;
 const PIKPAK_STATUS = { running: "还在传", done: "传好了", stopped: "停下了", failed: "没传完" } as const;
 
-function RecordRow(props: { r: BackupRecord }) {
+function RecordRow(props: { r: BackupRecord; onForget: () => void }) {
   const { r } = props;
   const [open, setOpen] = useState(false);
   const more = r.errors.length > 0 || !!r.note;
   return (
-    <li className="px-4 py-2 text-sm">
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+    <li className="group py-2 pr-2 pl-4 text-sm">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2">
         <span className="tabular-nums">{when(r.startedAt)}</span>
         <span className={r.status === "failed" ? "text-destructive" : "text-muted-foreground"}>{(r.dest === "pikpak" ? PIKPAK_STATUS : STATUS)[r.status]}</span>
         <span className="min-w-0 truncate text-muted-foreground">{r.dest === "pikpak" ? ["PikPak", ...r.tasks.map((t) => t.target)].join(" · ") : r.tasks.map((t) => t.target).join("、")}</span>
@@ -595,6 +603,11 @@ function RecordRow(props: { r: BackupRecord }) {
             {r.errors.length ? `${r.errors.length} 个没成` : "详情"}
           </button>
         )}
+        <span className={`shrink-0 ${r.status === "running" ? "invisible" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"}`}>
+          <IconButton label="删掉这条记录" tip="删除" danger disabled={r.status === "running"} onClick={props.onForget}>
+            <Trash2 size={14} />
+          </IconButton>
+        </span>
       </div>
       {open && (
         <ul className="selectable mt-1 max-h-48 space-y-0.5 overflow-y-auto text-xs text-muted-foreground">
