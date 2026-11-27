@@ -97,7 +97,8 @@
   - 真模型（先问我）：`real_seeker`（`POMELO_SEEKER_OUT=<文件>`）。
 - **Rater**：`?mock`：五道编的题和四条规则，先在「设置」选一个本地模型；打的字或反馈里写「失败测试」得到失败；「复盘」每说一句模型把它加进表，说「就这些」标成填好；投石问路腾讯的岗位面板能跳到 Rater。Rust：`rater`。
   - 真模型（先问我）：`real_qbank`（`POMELO_QBANK_CASE=简历题|通用题|突击题|润色`、`POMELO_QBANK_OUT=<文件>`，报告放「下载/Rater 测试/第 N 轮/」）、`real_interview`（`POMELO_INTERVIEW_OUT`）、`real_practice`（`POMELO_PRACTICE_CASE=挑卡|追问|反馈`、`POMELO_PRACTICE_OUT`）。复盘 · 记录走柚子的对话，真模型要在打包版里点（临时数据目录，先问我）。
-- **DevJanitor**：Rust：`janitor`。
+- **DevJanitor**：Rust：`janitor`（`cleaning_litter`：.DS_Store、Office 的临时文件只清个人文件夹里的、Office 开着不清；`clones_count_once`：在临时目录里用 `cp -c` 做真的 APFS 克隆，共用的只算一次、一项只算它独占的、克隆不算重复，不在 APFS 上就跳过）。
+  - `?mock#/janitor/clean`：左边分类（一键清理六类、只列出来七类），选了几项写在贴纸角上；「零碎的小文件」里 .DS_Store 5 个、Office 的临时文件 3 个，各一个按钮。`?mock#/janitor/env`：九类，宽窗口两栏。`?mock#/janitor/backup`：记录有三条，悬停出删除。
   - `?mock#/janitor/disk`：数据是 Rust 扫假 Mac 的结果（`src/dev/janitorMock.json`；改了扫描或假 Mac 用 `POMELO_JANITOR_MOCK=<文件> cargo test janitor_mock_json -- --ignored` 重新生成），「重新扫描」跑两秒。
   - `?mock&youzi=ready#/janitor/agent`：问题里有「删」「废纸篓」→ 移到废纸篓的卡片（含一项受保护的）；「命令」「conda」→ conda clean；「sudo」「JDK」→ 要管理员密码的命令；「规则」「一键清理」→ 加规则的卡片；「看看」「文件夹」多看一次下载，「只读」「du」多一行「跑了 du」，「清单」多一行看清单；执行的命令一秒半后「做完了」。
   - 看真磁盘上的速度和准确性先问我：`cargo test --release --manifest-path src-tauri/Cargo.toml real_janitor_scan -- --ignored --nocapture`（只读，跳过 Pomelo 的数据目录、Seeker 文件夹和没权限的地方；`POMELO_JANITOR_SHOW=1` 列出开发目录、App 残留和开发环境，不列个人文件名）。真删、真跑命令、完全磁盘访问权限只在正式版里由我验收。
