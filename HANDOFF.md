@@ -6,7 +6,7 @@
 
 - **正式版 1.1.3**（11-27 装）。库和格式的版本：`pomelo.db` 43、`youzi.db` 44、`search.db` 3、`janitor.db` 2、数据文件格式 43。rclone 1.76 用 Homebrew 装在这台 Mac 上（PikPak 要它；没装时「备份」页会说）。
 - **视觉方案** Pomelo `1.0.1`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画），Design System「Pomelo 柚儿园」按 1.0.1 发在现用账号。
-- **两个会话**：Pomelo 一个；visual-atelier 一个，照它的 `ROADMAP.md` 做。Atelier 里 Pomelo 那一块这边直接改、发版、提交（见 `CLAUDE.md`「visual-atelier」），Atelier 本体归那边。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
+- **visual-atelier**：那边还有它自己的会话（照它的 `ROADMAP.md` 做）。这边对 Atelier 有全部权限：Pomelo 那一块和 Atelier 本体都能直接改、发版、提交，只有改别的项目的方案、给 Atelier 加新功能先问；用到前先读它的 `CLAUDE.md`（见 `CLAUDE.md`「visual-atelier」）。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
 
 ## 没做完的
 
@@ -33,6 +33,7 @@
 
 ## 要留意
 
+- **visual-atelier 的权限**（2026-11-27 定）：这边的会话对 Atelier 有全部权限（本体也能直接改、照那边的规矩提交和打 tag），用到前先读它的 `CLAUDE.md`，见 `CLAUDE.md`「visual-atelier」。
 - **改用到的引擎**（2026-11-27 定）：Pomelo 用到的引擎（含间接用到的）可以直接改、照那边的规矩提交和打 tag，见 `CLAUDE.md`「引擎」和总仓库 `personal-engine-studio/docs/decisions/0009`。
 - 柚子自动看一眼备份：线索变了才问 Agent 的模型（云端的话名字和路径会发出去）；Downloads 里没在清单里勾的文件夹，柚子只说一句、不出卡片；只在硬盘上的是归档，不提。本地 9B 模型不开思考时偶尔只写建议、不出卡片，DevJanitor 的 Agent 用本地模型时开思考更稳。
 - Downloads 里新出现的文件夹（比如测试结果）会出在清单里、默认不勾，柚子看一眼时会提一句；不打算留的看完就删。

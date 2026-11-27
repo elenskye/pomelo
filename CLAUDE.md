@@ -7,6 +7,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 1. **先问我这次属于哪种程度的开发**（见「版本」），定了版本号再动手。
 2. 读 `HANDOFF.md`（交接：现在到哪、正式版装到哪个版本、没做完的、等我做的）、`docs/roadmap.md`（以后做什么、做完的版本）和 `docs/requirements.md` 里要动的那几节。
 3. 按需读：`docs/schema.md`（表和规则）、`docs/design.md`（视觉、共用的摆法和控件）、`docs/architecture.md`（存放、备份、安全、柚子的做法）、`docs/testing.md`（怎么测）。
+4. 这次要用到 visual-atelier（改视觉、同步方案、用 `dw` 看画布、改 Atelier 本身），开工前先读它的 `CLAUDE.md`（见「visual-atelier」）。
 
 ## 版本
 
@@ -32,9 +33,9 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 ## visual-atelier（视觉）
 
-- 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。那边另有一个会话，照它的 `ROADMAP.md` 做；在那边做事照它的 `CLAUDE.md`（「几个会话怎么分」）。
-- **这边的会话在那边能动的**（直接编辑、更新、发版、同步、提交、打 tag，不用问）：`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`，`CHANGELOG.md` 里自己的条目，`ROADMAP.md` 里 Pomelo 那一行。Atelier 本体（`bench/`、别的 `tooling/`、`skills/`、`docs/`、`package.json`……）和它本身的功能归那边的会话，要改先问我。几个项目共用一个仓库：只提交、只打自己做的那部分，提交信息同样全英文，写 `pomelo 1.0.0: …`、tag `pomelo-v1.0.0`（这是视觉方案的版本，和 App 的版本号无关）。
-- **新设计**：先在现用账号的云端画布上出样子，我在那里批；批了源进 `canvases/pomelo-<名字>/`、资产进 `schemes/pomelo/`，再发版、提交、打 tag、核对 tag、同步。方案发版、Design System「Pomelo 柚儿园」的发布、同步进来都由这边的会话做。
+- 方案、资产和原型在 `~/Documents/GitHub/visual-atelier`（`schemes/pomelo/`，规则在它的 `DESIGN.md`）。**用到它就先读它的 `CLAUDE.md`**；在那边做事照它的规矩：版本、Git、提交信息（`v<Atelier 的版本>: …`）、tag、几个会话一起做，不照本文件的「版本」和「Git」。那边还有别的会话（Atelier 自己的、Peck、Pith），工作区里别人没提交的改动别动、别还原，只提交自己改的。
+- **全部权限**（2026-11-27 我定）：这边的会话对 Atelier 有全部权限：Atelier 本体（`bench/`、共用的 `tooling/`、`skills/`、`docs/`、根目录的规则和配置）和 Pomelo 负责的那块（`schemes/pomelo/`、`canvases/pomelo-*/`、`tooling/atlas/`、`tooling/handmade/`）都能直接编辑、优化、更新，照那边的规矩提交、打 tag，不用问、不用另开会话；用的时候发现 Atelier 不顺就回那边改，记进它的 `CHANGELOG.md`。只有两件先问我：改别的项目的方案（Pith、Peck、Vermilion）；给 Atelier 加新功能（修小毛病、改顺手的直接做）。细则见 Atelier `CLAUDE.md`「几个会话怎么分」。方案自己的版本记在 `schemes/pomelo/scheme.json`、tag `pomelo-v<版本>`，和 App 的版本号无关。
+- **新设计**：先在 Atelier 的本地画布上出样子（Pomelo Explore 加一页，照它的 `design-loop` Skill），我在 bench 或「有板有眼」里批；Atelier 的画布和 Design System 默认只在本地，我说了才发到云端（Atelier `CLAUDE.md`「画布与 bench」；问卷页照它的 `questionnaire` Skill 发）。批了源进 `canvases/pomelo-<名字>/`、资产进 `schemes/pomelo/`，再发版、提交、打 tag、核对 tag、同步。方案发版、Design System「Pomelo 柚儿园」的更新、同步进来都由这边的会话做。
 - **同步来的资产**在 `src/vendor/pomelo/`（单向，核对 tag 后 `sync`，不手改，要改回那边改）：`pomelo.css`、`ds.css`、`tokens.ts`、手画零件 `handmade.js`、`marks/`（柚子的表情、模块贴纸、界面小图标、空状态插图、菜单栏和 App 图标……）、Atlas 的设计快照、`VERSION`、`SHA256SUMS`。根元素的 `data-palette`、`data-theme` 由 `src/shared/appearance.ts` 写，`dark:` 只看 `data-theme`。
 - **图标**：界面小图标从 `@/shared/icons` 取（名字沿用 Lucide 的 `Plus`、`Trash2`…；没有也不装 lucide-react）。新图标回那边 `schemes/pomelo/marks/icons.mjs` 画、发版同步，再在 `icons.tsx` 加一行；贴纸、空状态插图同理（那边的 `marks/`）。柚子的表情、模块贴纸用 `src/shared/marks.tsx` 的 `Mark`、`moduleMark`（每次换一套 id，同一张能放很多次）。
 - **Atlas 的设计是冻结的快照**（`src/vendor/pomelo/atlas/<名字>-<版本>/`），不改。只升最后一位的小修替掉同一条线里旧的那份（照旧的做的改照新的画）；升了前两位的两份都留（旧的几份照旧的画）。新设计：那边定稿（名字和版本号我定）、冻结、同步，再改 `youzi/atlas.rs` 的 `DESIGN`。「呈现结果」只能加，旧的行和快照都要读得了。年度小报只有我能删（没有删它的 AI 工具，后台任务也不删）。
