@@ -810,7 +810,11 @@ async fn compose(app: &AppHandle, shared: &Shared, route: &Route, request: &Requ
             s
         })
         .collect();
-    let images = if vision { load_images(app, &sources).await? } else { vec![] };
+    let mut images = if vision { load_images(app, &sources).await? } else { vec![] };
+    let mut sources = sources;
+    if vision {
+        with_pages(app, &mut sources, &mut images).await;
+    }
     let image_cost = images.len() as i64 * IMAGE_TOKENS;
     let attach = |mut msgs: Vec<Msg>| {
         if let Some(m) = msgs.iter_mut().rev().find(|m| m.role == "user") {
@@ -884,6 +888,29 @@ async fn compose(app: &AppHandle, shared: &Shared, route: &Route, request: &Requ
     *shared.reading.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let _ = shared.channel.send(StreamEvent::Reading { current: 0, total: 0, label: String::new() });
     Ok((picked.0, picked.1, true, None))
+}
+
+/// 知识库 passages of a PDF bring their page (knowledge.rs `plan_shots`), numbered after the question's own images.
+async fn with_pages(app: &AppHandle, sources: &mut [reading::Source], images: &mut Vec<Image>) {
+    let kb: Vec<(usize, (i64, String, String))> =
+        sources.iter().enumerate().filter_map(|(i, s)| s.kb.as_ref().filter(|_| s.kind == reading::Kind::Knowledge).map(|k| (i, (k.source, k.path.clone(), s.label.clone())))).collect();
+    if kb.is_empty() {
+        return;
+    }
+    let (marks, pages) = knowledge::page_images(app, kb.iter().map(|(_, p)| p.clone()).collect(), knowledge::MAX_PAGE_IMAGES).await;
+    let base = images.len();
+    for ((i, _), m) in kb.iter().zip(marks) {
+        if let Some(k) = m {
+            sources[*i].content.push_str(&page_note(base + k + 1));
+        }
+    }
+    images.extend(pages);
+}
+
+/// What a passage says when its page goes along (the `n`th image of the message).
+fn page_note(n: usize) -> String {
+    format!("
+（这一页的页图随这条消息附上：第 {n} 张图）")
 }
 
 const IMAGE_SENT: &str = "（图片随这条消息附上）";
@@ -1360,7 +1387,26 @@ impl Host for AppHost<'_> {
                             a
                         }
                     }
-                    Some(scope) => knowledge::kb_tool(self.app, scope, &mut self.sources, &call.arguments, budget).await,
+                    Some(scope) => {
+                        let mut a = knowledge::kb_tool(self.app, scope, &mut self.sources, &call.arguments, budget).await;
+                        // passages it found on a PDF's page bring the page (a cloud model; at most MAX_IMAGES a reply)
+                        let room = MAX_IMAGES.saturating_sub(self.looked).min(knowledge::MAX_PAGE_IMAGES);
+                        if a.state == "ok" && matches!(args["view"].as_str(), None | Some("search")) && matches!(self.target, Target::Cloud { .. }) && room > 0 {
+                            let found: Vec<(i64, (i64, String, String))> = self.sources.0[before..].iter().filter_map(|s| Some((s.n, (s.kb_source?, s.kb_path.clone()?, s.title.clone())))).collect();
+                            let (marks, pages) = knowledge::page_images(self.app, found.iter().map(|f| f.1.clone()).collect(), room).await;
+                            let base = self.images.len();
+                            let notes: Vec<String> = found.iter().zip(&marks).filter_map(|((n, _), m)| m.map(|k| format!("[{n}] 所在那一页的页图是下面那条消息里的第 {} 张图", base + k + 1))).collect();
+                            if !notes.is_empty() {
+                                a.text.push_str(&format!("
+
+{}", notes.join("
+")));
+                            }
+                            self.looked += pages.len();
+                            self.images.extend(pages);
+                        }
+                        a
+                    }
                     None => data::Answer { module: None, label: "查知识库 · 没有可查的".into(), state: "failed", text: "这个对话没有可以查的知识库。".into(), records: vec![] },
                 };
                 publish(self.app, self.shared, &self.sources, before);

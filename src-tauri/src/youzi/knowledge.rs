@@ -490,7 +490,7 @@ pub fn walk(folder: &Path) -> Result<(Vec<Seen>, bool), String> {
             if meta.len() == 0 || meta.len() > files::MAX_BYTES {
                 continue;
             }
-            let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64);
+            let mtime = mtime_of(&meta);
             out.push(Seen { path: r.to_string_lossy().to_string(), size: meta.len() as i64, mtime });
             if out.len() >= MAX_FILES {
                 return Ok((out, true));
@@ -1316,6 +1316,102 @@ pub fn plan(search: &Connection, scope: &Scope, model: &str) -> Result<KbPlan, S
     Ok(KbPlan { libraries: scope.libraries.clone(), ready, pending, skipped: scope.skipped.clone() })
 }
 
+// ---------- page images (1.2.0) ----------
+
+/// Page images that go with one question's (or one search's) 知识库 passages, at most.
+pub const MAX_PAGE_IMAGES: usize = 6;
+/// A page image's longer side (what a cloud model is sent).
+const PAGE_SIDE: u32 = 1568;
+
+/// A file's modification time as `walk` sees it (ns).
+fn mtime_of(meta: &std::fs::Metadata) -> i64 {
+    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64)
+}
+
+/// The PDF page a 知识库 passage is on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shot {
+    pub file: PathBuf,
+    pub page: u32,
+}
+
+/// Which of `passages` (source, file, label) come with their page, and the pages (one per page, the first
+/// `max`). Not for a web page, a source not sent to the cloud, a file gone or changed since it was indexed
+/// (`seen`: the size and mtime its passages were made from), or a passage over several pages.
+pub fn plan_shots(passages: &[(i64, String, String)], sources: &HashMap<i64, Source>, seen: &HashMap<(i64, String), (i64, i64)>, max: usize) -> (Vec<Option<usize>>, Vec<Shot>) {
+    let mut shots: Vec<Shot> = vec![];
+    let mut place = |(source, path, label): &(i64, String, String)| -> Option<usize> {
+        let src = sources.get(source).filter(|s| s.kind == "folder" && s.cloud && !s.deleted)?;
+        let page = u32::try_from(files::page_of(label).filter(|_| scans::is_pdf(path))?).ok()?;
+        let &(size, mtime) = seen.get(&(*source, path.clone()))?;
+        let file = file_path(src, path).ok()?;
+        let meta = std::fs::metadata(&file).ok()?;
+        if meta.len() as i64 != size || mtime_of(&meta) != mtime {
+            return None;
+        }
+        let shot = Shot { file, page };
+        match shots.iter().position(|s| *s == shot) {
+            Some(i) => Some(i),
+            None if shots.len() < max => {
+                shots.push(shot);
+                Some(shots.len() - 1)
+            }
+            None => None,
+        }
+    };
+    let marks = passages.iter().map(&mut place).collect();
+    (marks, shots)
+}
+
+/// The pages drawn as a cloud model gets them (each file read once); None where one can't be drawn.
+pub fn render_shots(shots: &[Shot]) -> Vec<Option<super::provider::Image>> {
+    let mut docs: HashMap<PathBuf, Option<engine_pdf::Document>> = HashMap::new();
+    shots
+        .iter()
+        .map(|s| {
+            let doc = docs.entry(s.file.clone()).or_insert_with(|| std::fs::read(&s.file).ok().and_then(|d| super::pdf::open(&d).ok()));
+            let jpeg = doc.as_ref()?.render(s.page, engine_pdf::ImageFormat::Jpeg, PAGE_SIDE).ok()?;
+            Some(super::provider::Image { media_type: "image/jpeg".into(), data: super::office::base64(&jpeg.bytes) })
+        })
+        .collect()
+}
+
+/// The page images of `passages` for a cloud model (at most `max`), and which image each passage has.
+pub async fn page_images(app: &AppHandle, passages: Vec<(i64, String, String)>, max: usize) -> (Vec<Option<usize>>, Vec<super::provider::Image>) {
+    let none = |n: usize| (vec![None; n], vec![]);
+    if passages.is_empty() || max == 0 {
+        return none(passages.len());
+    }
+    let st = app.state::<AppState>();
+    let ids: HashSet<i64> = passages.iter().map(|p| p.0).collect();
+    let Ok(srcs) = st.youzi.with_db(|c| sources(c, None)) else { return none(passages.len()) };
+    let srcs: HashMap<i64, Source> = srcs.into_iter().filter(|s| ids.contains(&s.id)).map(|s| (s.id, s)).collect();
+    let id_text = id_list(&ids.into_iter().collect::<Vec<_>>());
+    let seen = st.search.with_db(|c| {
+        let mut q = c.prepare(&format!("SELECT source_id, path, size, mtime FROM kb_docs WHERE fresh = 1 AND source_id IN ({id_text})")).map_err(err)?;
+        let rows = q.query_map([], |r| Ok(((r.get::<_, i64>(0)?, r.get::<_, String>(1)?), (r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)))).map_err(err)?;
+        rows.collect::<Result<HashMap<_, _>, _>>().map_err(err)
+    });
+    let Ok(seen) = seen else { return none(passages.len()) };
+    let n = passages.len();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (marks, shots) = plan_shots(&passages, &srcs, &seen, max);
+        let drawn = render_shots(&shots);
+        // drop the pages that couldn't be drawn, renumbering the rest
+        let mut kept = vec![];
+        let mut new_index = vec![None; drawn.len()];
+        for (i, d) in drawn.into_iter().enumerate() {
+            if let Some(image) = d {
+                new_index[i] = Some(kept.len());
+                kept.push(image);
+            }
+        }
+        (marks.into_iter().map(|m| m.and_then(|i| new_index[i])).collect(), kept)
+    })
+    .await
+    .unwrap_or_else(|_| none(n))
+}
+
 // ---------- the manager ----------
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1713,6 +1809,46 @@ pub mod tests {
         assert_eq!((sources.0[0].kb_source, sources.0[0].kb_path.as_deref()), (Some(src), Some("合同/租房合同.md")));
         let f = whole_view(l, whole(&c, &super::scans::tests::memory(), l).unwrap(), &mut sources, &serde_json::json!({ "view": "find", "keyword": "押金" }), 4000);
         assert!(f.text.contains("找到 1 段") && f.label.contains("在《租房合同.md》里找「押金」"), "{f:?}");
+    }
+
+    #[test]
+    fn passages_of_a_pdf_bring_their_page_unless_not_for_the_cloud_gone_or_changed() {
+        let dir = crate::db::tests::temp_dir("kb-shots");
+        let root = dir.join("资料");
+        std::fs::create_dir_all(&root).unwrap();
+        let pdf = crate::youzi::pdf::tests::sample_pdf(&["Page one words", "Page two words", "Page three words"]);
+        std::fs::write(root.join("a.pdf"), &pdf).unwrap();
+        std::fs::write(root.join("b.pdf"), &pdf).unwrap();
+        let folder = |id: i64, cloud: bool| Source { id, library_id: 1, kind: "folder".into(), name: "资料".into(), path: Some(root.to_string_lossy().into()), url: None, artifact_id: None, deleted: false, cloud };
+        let sources = HashMap::from([(1, folder(1, true)), (2, folder(2, false)), (3, Source { kind: "web".into(), path: None, ..folder(3, true) })]);
+        let now = |name: &str| {
+            let m = std::fs::metadata(root.join(name)).unwrap();
+            (m.len() as i64, mtime_of(&m))
+        };
+        let seen = HashMap::from([((1, "a.pdf".to_string()), now("a.pdf")), ((1, "b.pdf".to_string()), (now("b.pdf").0 + 1, now("b.pdf").1)), ((2, "a.pdf".to_string()), now("a.pdf")), ((1, "gone.pdf".to_string()), (1, 1))]);
+        let p = |source: i64, path: &str, label: &str| (source, path.to_string(), label.to_string());
+        let passages = [
+            p(1, "a.pdf", "a.pdf · 第 2 页"),
+            p(1, "a.pdf", "a.pdf · 第 2 页 · 本机识别"), // the same page: the same image
+            p(1, "a.pdf", "a.pdf · 第 3 页"),
+            p(2, "a.pdf", "a.pdf · 第 1 页"),    // not sent to the cloud
+            p(1, "b.pdf", "b.pdf · 第 1 页"),    // changed since indexed
+            p(1, "gone.pdf", "gone.pdf · 第 1 页"), // gone
+            p(3, "", "网页 · 第 1 页"),           // a web page
+            p(1, "a.pdf", "a.pdf · 第 1–2 页"),   // over two pages
+            p(1, "notes.md", "notes.md · 第 1 页"),
+        ];
+        let (marks, shots) = plan_shots(&passages, &sources, &seen, 6);
+        assert_eq!(marks, [Some(0), Some(0), Some(1), None, None, None, None, None, None]);
+        assert_eq!(shots.iter().map(|s| (s.file.file_name().unwrap().to_string_lossy().to_string(), s.page)).collect::<Vec<_>>(), [("a.pdf".into(), 2), ("a.pdf".into(), 3)]);
+        // at most `max` pages
+        let (marks, shots) = plan_shots(&passages, &sources, &seen, 1);
+        assert_eq!((&marks[..3], shots.len()), (&[Some(0), Some(0), None][..], 1));
+        // drawn as sent: the page asked for
+        let drawn = render_shots(&plan_shots(&passages, &sources, &seen, 6).1);
+        let want = crate::youzi::office::base64(&crate::youzi::pdf::page_jpeg(&pdf, 3, PAGE_SIDE).unwrap());
+        assert_eq!(drawn[1].as_ref().map(|i| (i.media_type.as_str(), i.data == want)), Some(("image/jpeg", true)));
+        assert!(render_shots(&[Shot { file: root.join("a.pdf"), page: 9 }])[0].is_none());
     }
 
     #[test]

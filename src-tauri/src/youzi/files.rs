@@ -52,6 +52,14 @@ pub struct Segment {
     pub content: String,
 }
 
+/// The single page a passage label names (「x.pdf · 第 3 页」, 「… · 第 3 页 · 本机识别」); None for a range or none.
+pub fn page_of(label: &str) -> Option<i64> {
+    let at = label.rfind("第 ")?;
+    let rest = &label[at + "第 ".len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    rest[digits.len()..].starts_with(" 页").then(|| digits.parse().ok()).flatten()
+}
+
 impl Segment {
     /// 第 3 页 · 第 3 页 · 本机识别 · 第 3–4 页 · the heading · 第 2 段
     pub fn label(&self) -> String {
@@ -897,6 +905,7 @@ pub mod tests {
         let s = split_text(&long, false);
         assert_eq!(s.iter().map(|x| x.content.chars().count()).collect::<Vec<_>>(), [6000, 6000, 1000]);
         assert_eq!((s[2].label(), Segment { ordinal: 0, page_start: Some(3), page_end: Some(4), heading: None, content: "".into() }.label()), ("第 3 段".into(), "第 3–4 页".into()));
+        assert_eq!([page_of("a.pdf · 第 12 页"), page_of("报告第 3 页.pdf · 第 5 页 · 本机识别"), page_of("a.pdf · 第 3–4 页"), page_of("a.md · 引言")], [Some(12), Some(5), None, None]);
     }
 
     #[test]
