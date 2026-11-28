@@ -23,6 +23,7 @@
   - `&vault=new|open`（默认锁着，测试主密码 `mock-master-1`）、`&touch=fail|none`。
   - `&youzi=ready`：一打开就有模拟的本地模型，「模板」有置顶模板。
   - `&kb=demo`：先放两个知识库（一个扫描件、一个读不了的文件）；打开知识库后扫描件走一遍本机识别（准备识别、识别中，能停下、接着识别）。
+  - PDF 工具箱：问「合同 PDF 里押金那段在哪一页」，回答引用 PDF 的一页，点开在卡片里看那一页（找到的字画出来）。
   - `&brief=fail|off`：今日简报；`&mood=calm|busy|good|worry|plain` 换简报的心情，柚子跟着变。
   - `&atlas=envelope`：假装是新年第一周，首页有信封。
   - `&site=sandbox|missing|clean|big|ahead`：呦呦漫游的开发版还没副本、找不到文件夹、没有改动、有超大的文件、有没推的提交。

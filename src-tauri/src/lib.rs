@@ -319,6 +319,7 @@ pub fn run() {
             youzi::knowledge::youzi_kb_source_rebuild,
             youzi::knowledge::youzi_kb_scans_pause,
             youzi::knowledge::youzi_kb_scans_resume,
+            youzi::cite::youzi_pdf_page,
             youzi::knowledge::youzi_kb_scan,
             youzi::knowledge::youzi_kb_open,
             youzi::knowledge::youzi_conversation_knowledge,

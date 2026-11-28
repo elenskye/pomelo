@@ -4,11 +4,11 @@
 
 ## 现在（2026-11-28）
 
-- **正在做 1.2.0（接 engine-pdf）**，计划在 `docs/roadmap.md`「1.2.0」：Phase 1（换底层）、Phase 2（扫描件进知识库）做完，下一步 Phase 3（检索带页图）。只在 Phase 6 收尾时装正式版；开发中的代码版本号已是 1.2.0。
-  - 钉 engine-pdf `v0.7.0`（GitHub 上的 tag，开 `pdfium`），没用 `[patch]`。到 Phase 5 引擎要补 `mathpix::convert` 和旧任务续跑、发 `v0.8.0`，那时照引擎 `CLAUDE.md`「二」改用到的引擎。
+- **正在做 1.2.0（接 engine-pdf）**，计划在 `docs/roadmap.md`「1.2.0」：Phase 1（换底层）、2（扫描件进知识库）、3（检索带页图）、4（柚子的 PDF 工具）做完，下一步 Phase 5（Pub2MD）。只在 Phase 6 收尾时装正式版；开发中的代码版本号已是 1.2.0。
+  - **engine-pdf 正在做 v0.8.0**（本机提交了 Mathpix 花钱的规矩和共用账本、`page_box`、工具层多导出几个类型；还没打 tag）。Pomelo 的 `src-tauri/Cargo.toml` 用 `[patch."https://github.com/elenskye/engine-pdf"]` 指本机的 `../../personal-engine-studio/engine-pdf`（`Cargo.lock` 里是 0.8.0）。Phase 5 再补 `mathpix::convert` 和旧任务续跑；Phase 6 打 tag `v0.8.0`、你推上去后，把依赖改回钉 `tag = "v0.8.0"`、删掉 `[patch]`。
   - PDFium 静态库：`scripts/pdfium.sh` 从 engine-pdf 的 `local/pdfium/` 用 `cp -c` 克隆到 `src-tauri/vendor/pdfium/`（不进 Git），`pnpm check` / `app:dev` / `app:build` / `app:install` 先跑它；`.cargo/config.toml` 指过去。正式版二进制 29 MB → 35 MB，PDFium 的许可证随 App 在 `Resources/THIRD_PARTY.txt`（源在 `src-tauri/licenses/`）。
   - Phase 1 的对照（59 份真实和样本 PDF，旧实现 vs 引擎）：文字 PDF 46/48 份分段逐字相同，差的 2 份（Arpino、Phoenix）全是补回的连字（443 处，`frst → first`、`e ects → effects`）；原页图 904 页宽高 ±1px 内，知网 2 份按 CropBox 变窄（预期）；有图的页、见字如面合成的页数、链接、目录、标题全同。乱码文字层不再当文字建索引（变成扫描件，Phase 2 去识别）。对照程序是 `youzi/pdf.rs` 末尾的 `compare`（`#[ignore]`）。
-- **库和格式的版本**：`pomelo.db` 43、`youzi.db` 44、`search.db` 3、`ocr.db` 1（1.2 新加）、`janitor.db` 2、数据文件格式 43。
+- **库和格式的版本**：`pomelo.db` 43、`youzi.db` 45（1.2 加了出处的 PDF 位置）、`search.db` 3、`ocr.db` 1（1.2 新加）、`janitor.db` 2、数据文件格式 43。
 - **正式版 1.1.5**（11-27 装）。rclone 1.76 用 Homebrew 装在这台 Mac 上（PikPak 要它；没装时「备份」页会说）。
 - **视觉方案** Pomelo `1.0.2`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画）。Design System「Pomelo 柚儿园」云端那份还是 1.0.1（1.0.2 多的 14 个小图标只在本地，你说要再发）。
 - **visual-atelier**：那边还有它自己的会话（照它的 `ROADMAP.md` 做）。这边对 Atelier 有全部权限：Pomelo 那一块和 Atelier 本体都能直接改、发版、提交，只有改别的项目的方案、给 Atelier 加新功能先问；用到前先读它的 `CLAUDE.md`（见 `CLAUDE.md`「visual-atelier」）。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
@@ -36,6 +36,8 @@
 8. 今日简报的提示词你在正式版里改过，不会自动更新：在「定时 → 今日简报」里把两条新规则加进去（笔记带日期、心情多了「一般」，原文见「恢复默认」），或者点「恢复默认」再改回你的说法。
 
 ## 要留意
+
+- **柚子的 PDF 工具箱**（1.2 Phase 4，`skills/pdfkit.rs`）：插件库多了 general-pdf-toolkit；读文件、查知识库不再读 PDF（按意思搜、列文件照旧）。Mathpix 照 engine-pdf 的花钱规矩：一次超过 $0.5、或所有接 engine-pdf 的 App 最近 24 小时合计超过 $5 才出「问我」卡片。共用账本是 `~/Library/Application Support/engine-pdf/mathpix-ledger.jsonl`（Peck、Pith 接进来后也记在这里）；开发版用开发数据目录里的 `mathpix-ledger-dev.jsonl`，模拟的服务不记账。Mathpix 的 Key 和 Pub2MD 共用。
 
 - **知识库扫描件的本机识别**（1.2 Phase 2，`youzi/scans.rs`）：开发版、测试、模拟模式也用真的 Vision（在本机、不联网，不是模型）。启动 20 秒后 worker 开始，先把 1.2 之前只列名字的扫描件排进队列；「停下」只管那个文件夹、到下次启动为止。识别完的文件要等向量服务开着（或下次用知识库提问）才建索引。Vision 中文约一成错字，段落标「本机识别」。
 

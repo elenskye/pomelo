@@ -1101,7 +1101,7 @@ pub fn files_view(search: &Connection, scope: &Scope, args: &serde_json::Value, 
         } else if is_image(&l.path) {
             "图片，用 look 看".to_string()
         } else if is_scan(l.error.as_deref()) {
-            if l.error.as_deref() == Some(scans::WAITING) { "扫描件，还在本机识别，先用 look 按页看".to_string() } else { "扫描件，没认出字，用 look 按页看".to_string() }
+            if l.error.as_deref() == Some(scans::WAITING) { "扫描件，还在本机识别，可以用 pdf_read 读".to_string() } else { "扫描件，没认出字，用 pdf_render 按页看".to_string() }
         } else {
             Path::new(&l.path).extension().map_or("文件".into(), |e| e.to_string_lossy().to_uppercase())
         };
@@ -1186,6 +1186,9 @@ async fn browse(app: &AppHandle, scope: &Scope, sources: &mut super::cite::Sourc
     if l.source.kind == "folder" && is_image(&l.path) {
         return browse_failed(&format!("《{}》", l.shown), "这是图片，没有文字：用 view=look 看");
     }
+    if l.source.kind == "folder" && scans::is_pdf(&l.path) {
+        return browse_failed(&format!("《{}》", l.shown), &format!("{}；file 写「{}」", super::skills::files::PDF_HINT, l.shown));
+    }
     let read = if l.source.kind == "web" {
         st.youzi.with_db(|c| Ok(whole(c, &st.youzi.scans, &l)))
     } else {
@@ -1212,6 +1215,9 @@ async fn images(app: &AppHandle, scope: &Scope, args: &serde_json::Value) -> sup
         Err(e) => return browse_failed(&format!("图片「{}」", file.chars().take(30).collect::<String>()), &e),
     };
     let ext = l.path.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+    if ext == "pdf" {
+        return browse_failed(&format!("《{}》", l.shown), &format!("{}；file 写「{}」", super::skills::files::PDF_HINT, l.shown));
+    }
     if l.source.kind != "folder" || !super::office::holds_images(&ext) {
         return browse_failed(&format!("《{}》", l.shown), "能看图片的是 .docx、.pptx、.pdf");
     }
@@ -1240,6 +1246,9 @@ pub async fn look(app: &AppHandle, scope: &Scope, sources: &mut super::cite::Sou
         Err(e) => return (browse_failed(&format!("看图「{}」", file.chars().take(30).collect::<String>()), &e), None),
     };
     let doc_ext = l.path.rsplit_once('.').map(|(_, x)| x.to_lowercase()).unwrap_or_default();
+    if doc_ext == "pdf" {
+        return (browse_failed(&format!("《{}》", l.shown), &format!("看 PDF 的某一页用 pdf_render（file 写「{}」，page 写第几页）", l.shown)), None);
+    }
     if l.source.kind == "folder" && super::office::holds_images(&doc_ext) {
         let (one, wanted) = (l.clone(), args.clone());
         let tmp = std::env::temp_dir().join("pomelo-youzi-images");

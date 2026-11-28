@@ -22,6 +22,12 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 pub const TOOL: &str = "pomelo_file";
+/// What 读文件 and 查知识库 say of a PDF (the PDF 工具箱 reads them, 1.2.0).
+pub const PDF_HINT: &str = "PDF 用 PDF 工具箱读：pdf_read 按页读、pdf_find 按字找、pdf_outline 看目录、pdf_render 看某一页（file 写同一个文件名或路径）";
+
+fn is_pdf(m: &Material) -> bool {
+    ext_of(&m.name) == "pdf"
+}
 const EXCERPT_CHARS: usize = 1500;
 const OUTLINE_START: usize = 24;
 /// Long material: at most this many segments go with the question, each scoring at least this share of the best.
@@ -188,7 +194,7 @@ pub fn run(conn: &Connection, mats: &[Material], sources: &mut Sources, argument
         return failed("没有文件", "这个问题没有带文件");
     }
     let want = args["file"].as_str().unwrap_or("").trim().to_string();
-    let chosen: Vec<&Material> = if want.is_empty() {
+    let mut chosen: Vec<&Material> = if want.is_empty() {
         mats.iter().collect()
     } else {
         mats.iter().filter(|m| m.name == want || m.name.contains(&want) || want.contains(m.name.as_str())).collect()
@@ -196,6 +202,13 @@ pub fn run(conn: &Connection, mats: &[Material], sources: &mut Sources, argument
     if chosen.is_empty() {
         return failed("没有这个文件", &format!("file 写文件名（有：{}）", mats.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join("、")));
     }
+    // PDFs are the PDF 工具箱's (pdf_*)
+    let pdfs: Vec<String> = chosen.iter().filter(|m| is_pdf(m)).map(|m| format!("《{}》", m.name)).collect();
+    chosen.retain(|m| !is_pdf(m));
+    if chosen.is_empty() {
+        return failed(&pdfs.join("、"), PDF_HINT);
+    }
+    let pdf_note = if pdfs.is_empty() { String::new() } else { format!("\n\n{} 是 PDF，不在这里：{PDF_HINT}", pdfs.join("、")) };
     let budget = budget.min(crate::youzi::data::MAX_RESULT * 2);
     let est = context::estimate;
     let segs_of = |m: &Material| files::segments(conn, m.artifact);
@@ -213,7 +226,9 @@ pub fn run(conn: &Connection, mats: &[Material], sources: &mut Sources, argument
         "find" => {
             let loaded: Vec<(&Material, Vec<Segment>)> = chosen.iter().filter_map(|m| segs_of(m).ok().map(|s| (*m, s))).collect();
             let files: Vec<(&str, &[Segment])> = loaded.iter().map(|(m, s)| (m.name.as_str(), s.as_slice())).collect();
-            find_view("读文件", &files, &args, budget, &mut |i, seg, label, snippet| sources.passage(loaded[i].0.artifact, seg.ordinal, label, "附件和资料", snippet))
+            let mut a = find_view("读文件", &files, &args, budget, &mut |i, seg, label, snippet| sources.passage(loaded[i].0.artifact, seg.ordinal, label, "附件和资料", snippet));
+            a.text.push_str(&pdf_note);
+            a
         }
         _ => {
             let mut parts = vec![];
@@ -227,6 +242,7 @@ pub fn run(conn: &Connection, mats: &[Material], sources: &mut Sources, argument
             if est(&text) > budget {
                 text = format!("{}\n……（目录太长，后面没给；指定 file 再看）", text.chars().take((budget * 2) as usize).collect::<String>());
             }
+            text.push_str(&pdf_note);
             Answer { module: None, label: format!("读文件 · 目录（{} 个文件）", chosen.len()), state: "ok", text, records: vec![] }
         }
     }
@@ -390,5 +406,23 @@ mod tests {
         // words in every segment don't pull them all in
         let (_, picked) = excerpts(&c, "这一节讲的押金什么时候退还", &src, 4000).unwrap();
         assert_eq!(picked.iter().map(|p| p.ordinal).collect::<Vec<_>>(), [8]);
+    }
+
+    #[test]
+    fn pdfs_are_left_to_the_pdf_toolkit() {
+        let c = memory_db();
+        let dir = crate::db::tests::temp_dir("skill-files-pdf");
+        let md = add(&c, &dir, "笔记.md", "# 一\n押金的事。".as_bytes());
+        let pdf = add(&c, &dir, "合同.pdf", &crate::youzi::pdf::tests::sample_pdf(&["Deposit returned in seven days"]));
+        let mats = vec![Material { artifact: md, name: "笔记.md".into() }, Material { artifact: pdf, name: "合同.pdf".into() }];
+        let mut sources = Sources::default();
+        let o = run(&c, &mats, &mut sources, r#"{"view":"outline"}"#, 4000);
+        assert!(o.text.contains("笔记.md") && o.text.contains("《合同.pdf》 是 PDF") && o.text.contains("pdf_read"), "{}", o.text);
+        assert!(!o.text.contains("Deposit"));
+        let r = run(&c, &mats, &mut sources, r#"{"view":"read","file":"合同.pdf"}"#, 4000);
+        assert_eq!(r.state, "failed");
+        assert!(r.text.contains("pdf_find"), "{}", r.text);
+        let f = run(&c, &mats, &mut sources, r#"{"view":"find","keyword":"Deposit"}"#, 4000);
+        assert!(f.text.contains("是 PDF") && sources.0.is_empty(), "{}", f.text);
     }
 }

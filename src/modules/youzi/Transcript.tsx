@@ -22,7 +22,7 @@
 //   spanning messages or formulas copies as plain text with formulas as written.
 // - ⌘F finds in the page with the CSS Custom Highlight API (no DOM changes).
 import { Fragment, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileDown, MapPin, Pencil, RotateCcw, X } from "@/shared/icons";
 import { errorText, useToast } from "@/shared/feedback";
@@ -417,7 +417,11 @@ function PassageDialog(props: { source: Source; onClose: () => void }) {
       className="m-auto h-fit max-h-[80vh] w-[560px] max-w-[calc(100vw-32px)] rounded-card border bg-popover p-5 text-foreground shadow-xl backdrop:bg-black/30"
     >
       <p className="text-base font-bold">{s.title}</p>
-      <p className="selectable -m-1 mt-3 max-h-[56vh] overflow-y-auto p-1 font-reading text-sm leading-relaxed whitespace-pre-wrap">{s.content}</p>
+      {s.pdfPage != null ? (
+        <PdfPageView source={s as Source & { pdfPage: number }} />
+      ) : (
+        <p className="selectable -m-1 mt-3 max-h-[56vh] overflow-y-auto p-1 font-reading text-sm leading-relaxed whitespace-pre-wrap">{s.content}</p>
+      )}
       <div className="mt-4 flex justify-end gap-2">
         {s.kbSource != null ? (
           <Button onClick={() => openKnowledge(s.kbSource!, s.kbPath ?? "", toast)}>{s.kbPath ? "打开文件" : "打开网页"}</Button>
@@ -429,6 +433,31 @@ function PassageDialog(props: { source: Source; onClose: () => void }) {
         </Button>
       </div>
     </dialog>
+  );
+}
+
+/** A cited PDF page (pdf_* tools): the page itself, drawn now, with what pdf_find matched marked; the text given under it. */
+function PdfPageView(props: { source: Source & { pdfPage: number } }) {
+  const s = props.source;
+  const page = useQuery({ queryKey: ["youzi", "pdfPage", s.artifactId, s.kbSource, s.kbPath, s.pdfPage, s.pdfRects], queryFn: () => youziApi.pdfPage(s), staleTime: Infinity, retry: false });
+  const label = page.data?.label ?? s.pdfLabel;
+  return (
+    <div className="-m-1 mt-3 max-h-[64vh] overflow-y-auto p-1">
+      <p className="text-xs text-muted-foreground">
+        原文件第 {s.pdfPage} 页{label && label !== String(s.pdfPage) ? `（页上印着 ${label}）` : ""}
+      </p>
+      {page.data ? (
+        <div className="relative mt-2 overflow-clip rounded-control border">
+          <img src={page.data.image} alt={`第 ${s.pdfPage} 页`} className="block w-full" />
+          {page.data.boxes.map(([x, y, w, h], i) => (
+            <span key={i} className="pointer-events-none absolute bg-[var(--color-marker)] opacity-50 mix-blend-multiply" style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` }} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-muted-foreground">{page.isError ? `这一页画不出来：${errorText(page.error)}` : "正在画这一页…"}</p>
+      )}
+      {s.content && <p className="selectable mt-3 font-reading text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{s.content}</p>}
+    </div>
   );
 }
 

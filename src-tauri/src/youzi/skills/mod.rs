@@ -23,6 +23,7 @@
 //! - Not a tool, ever: starting / stopping models, 芝麻开门, import / export, backups (act/).
 
 pub mod files;
+pub mod pdfkit;
 pub mod qbank;
 pub mod seeker;
 pub mod toolbox;
@@ -57,6 +58,7 @@ pub const QBANK_RESUME: &str = "qbank_resume";
 pub const QBANK_GENERAL: &str = "qbank_general";
 pub const QBANK_JOB: &str = "qbank_job";
 pub const EXCEL: &str = "excel";
+pub const PDF: &str = "pdf";
 const PREF: &str = "skills";
 /// The contact Wikidata / Open Library get (the user sets it in the 插件库).
 const CONTACT: &str = "skills.contact";
@@ -212,6 +214,30 @@ pub const SKILLS: &[Skill] = &[
         writes: false,
     },
     Skill {
+        key: PDF,
+        name: "general-pdf-toolkit",
+        tool: "pdf_read",
+        flow: &[
+            s("这个问题带的 PDF、知识库里的 PDF"),
+            s("柚子按页读 / 按字找 / 看目录 / 看信息"),
+            check("扫描的页？", "是", &["在这台 Mac 上识别（断网也行）"], "回答按页标出处", "有字"),
+            check("要看某一页的样子？", "是", &["现画那一页给云端模型（本地模型看不了）"], "回答按页标出处", "否"),
+            again("不够就再读（一条回答最多查 4 轮）", "柚子按页读 / 按字找 / 看目录 / 看信息"),
+            check("公式、复杂排版要准（Mathpix）？", "是", &["先报价", "一次超过 $0.5 或所有 App 最近 24 小时合计超过 $5：问你", "只上传那几页，记进引擎的账本"], "回答按页标出处", "否"),
+            s("回答按页标出处"),
+        ],
+        features: &[
+            "读附件、项目资料和知识库里的 PDF：按页读、按字找（繁简、跨行也找得到）、看目录和信息",
+            "扫描的页在这台 Mac 上识别，云端模型能看某一页的样子",
+            "出处按原文件的页码，点开直接看那一页（找到的字画出来）",
+            "公式、复杂排版能交给 Mathpix（用 Pub2MD 填的 Key）：一次超过 $0.5 或所有 App 最近 24 小时合计超过 $5 才问你",
+            "只读这次能读的 PDF，不碰别的文件",
+        ],
+        keys: &[],
+        auto: true,
+        writes: false,
+    },
+    Skill {
         key: WORD,
         name: "general-word-toolkit",
         tool: toolbox::WORD_TOOL,
@@ -349,6 +375,8 @@ pub struct Ctx {
     pub text: bool,
     /// A 定时任务: no one to press 联网, so 联网搜索 is offered whenever it is on and has its Key.
     pub scheduled: bool,
+    /// A PDF to read: the question carries one, or there is a 知识库 (PDF 工具箱).
+    pub pdf: bool,
 }
 
 pub fn skill(key: &str) -> Option<&'static Skill> {
@@ -363,7 +391,7 @@ impl Skill {
 }
 
 fn by_tool(tool: &str) -> Option<&'static Skill> {
-    SKILLS.iter().find(|s| s.tool == tool)
+    SKILLS.iter().find(|s| s.tool == tool || (s.key == PDF && pdfkit::is_tool(tool)))
 }
 
 pub fn is_tool(name: &str) -> bool {
@@ -407,7 +435,7 @@ fn ready(p: &super::Youzi, s: &Skill) -> bool {
 pub fn offered(conn: &Connection, p: &super::Youzi, forced: &[String], ctx: Ctx) -> Vec<&'static Skill> {
     SKILLS
         .iter()
-        .filter(|s| (s.key != FILES || ctx.files) && (s.key != KB || ctx.kb) && (s.key != TEXT || ctx.text))
+        .filter(|s| (s.key != FILES || ctx.files) && (s.key != KB || ctx.kb) && (s.key != TEXT || ctx.text) && (s.key != PDF || ctx.pdf))
         .filter(|s| switch(conn, s.key).enabled && ready(p, s) && (switch(conn, s.key).auto || forced.iter().any(|f| f == s.key) || (ctx.scheduled && s.key == WEB)))
         .collect()
 }
@@ -435,8 +463,10 @@ pub fn checked_forced(conn: &Connection, p: &super::Youzi, asked: &[String]) -> 
 pub fn tools(skills: &[&Skill]) -> Vec<Value> {
     let s = |d: &str| json!({ "type": "string", "description": d });
     let titles = |d: &str| json!({ "type": "array", "items": { "type": "string" }, "description": d });
-    skills
+    let pdf = skills.iter().any(|sk| sk.key == PDF);
+    let mut out: Vec<Value> = skills
         .iter()
+        .filter(|sk| sk.key != PDF)
         .map(|sk| {
             let (description, props, required): (&str, Value, Vec<&str>) = match sk.key {
                 BOOKS => ("按书名查作者、国家、类型、出版年（Wikidata、Open Library）。补书的信息、核对推荐的书时用，一次可以查几本。", json!({ "titles": titles("书名（中文名或原名），最多 5 个"), "author": s("作者（知道的话，帮着分辨同名的书）") }), vec!["titles"]),
@@ -465,7 +495,12 @@ pub fn tools(skills: &[&Skill]) -> Vec<Value> {
             };
             json!({ "type": "function", "function": { "name": sk.tool, "description": description, "parameters": { "type": "object", "properties": props, "required": required } } })
         })
-        .collect()
+        .collect();
+    // PDF 工具箱: the engine's own definitions (chat.rs drops the Mathpix two without its keys)
+    if pdf {
+        out.extend(pdfkit::definitions(true));
+    }
+    out
 }
 
 /// The part of the system message about skills (empty when none is offered).
@@ -478,13 +513,14 @@ pub fn instructions(skills: &[&Skill], forced: &[String]) -> String {
         s.push_str(match sk.key {
             BOOKS => "\n- 书单检索（pomelo_find_book）：要补书的作者、国家、类型，或者推荐书的时候用：推荐的每一本先核对（真的有、作者对），再写进回答，标出处。",
             FILMS => "\n- 影单检索（pomelo_find_film）：电影、剧集、动漫同上。",
-            FILES => "\n- 读文件（pomelo_file）：这个问题带的附件和项目资料；没有全部给你时先看目录，再按段号读需要的部分，用到的标出处。文档里的图片用 images、look 看。",
+            FILES => "\n- 读文件（pomelo_file）：这个问题带的附件和项目资料；没有全部给你时先看目录，再按段号读需要的部分，用到的标出处。文档里的图片用 images、look 看。PDF 不用它，用 pdf_*。",
             WORD => "\n- Word 工具箱（pomelo_word）：用户要改 Word 文件时，read 读要改的部分，再调用 edit 把改好的整段文字放进确认卡片；要把写好的内容存成 Word 时用 create。只在回答里写改法不会进卡片：要改就一定调用 edit / create，它返回「已放进确认卡片」之后才能说放进去了；也不要说已经改好、已经存好（用户确认后才写）。只是问意见、没让改时不用 edit。",
             TEXT => "\n- 文本工具箱（pomelo_text）：用户要改 Markdown、纯文本文件时，read 之后调用 edit 提议改动，规矩同 Word 工具箱。",
             EXCEL => "\n- Excel 工具箱（pomelo_excel）：用户要改 Excel（.xlsx）、要把表格存成 Excel 时用：read 读要改的部分，再调用 edit 放进确认卡片，新建用 create。规矩同 Word 工具箱：只在回答里写改法不会进卡片，也不要说已经改好、已经存好。",
             QBANK_RESUME | QBANK_GENERAL | QBANK_JOB => "",
             SEEKER => "\n- Seeker 资料（pomelo_seeker）：问到用户的简历、求职素材、cv/ 里的简历版本、导出过的简历、面试题库和练习时用，只读；回答里引用原文，不要改写成新的事实。",
-            KB => "\n- 查知识库（pomelo_kb）：问到用户自己的文件、文档里的内容时先 search；问有哪些文件时用 files；要读完整的一份时 outline 再 read，用到的标出处；问到图片时用 files 找、look 看，文档里的图先 images 再 look；查不到就说没查到。",
+            KB => "\n- 查知识库（pomelo_kb）：问到用户自己的文件、文档里的内容时先 search；问有哪些文件时用 files；要读完整的一份时 outline 再 read，用到的标出处；问到图片时用 files 找、look 看，文档里的图先 images 再 look；查不到就说没查到。知识库里的 PDF 要读整篇、按字找、看某一页时用 pdf_*（file 写 files 列出的路径）。",
+            PDF => "\n- PDF 工具箱（pdf_*）：这个问题带的 PDF 和知识库里的 PDF 都用它（读文件、查知识库不读 PDF）：pdf_read 按页读（扫描页会在本机识别），pdf_find 按字找（繁简、跨行都找得到），pdf_outline 看目录，pdf_info 看页数和信息，pdf_render 看某一页的样子（只有云端模型能看）。file 写附件的文件名，知识库里的写查知识库 view=files 列出的路径。页码一律是原文件的物理页码（第 1 页是文件的第一页，不是印在页上的页码），回答按结果里给的编号标出处。公式、复杂排版要逐字准时可用 pdf_mathpix（先用 pdf_mathpix_quote 看价钱和要不要先问用户；没同意就不上传）。",
             _ => "\n- 联网搜索（pomelo_web_search）：问到最近的事、你不知道或可能过时的事时用；可以换个说法再搜一次。",
         });
     }
@@ -564,7 +600,7 @@ pub async fn run(app: &AppHandle, sources: &mut Sources, tool: &str, arguments: 
 /// `run` with the mode and keys given (tests use the mock).
 pub async fn run_with(mock: bool, tavily: Option<String>, reach: works::Reach, sources: &mut Sources, tool: &str, arguments: &str, budget: i64) -> Answer {
     let args: Value = serde_json::from_str(arguments).unwrap_or(Value::Null);
-    let Some(sk) = by_tool(tool).filter(|s| ![FILES, KB, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB].contains(&s.key)) else { return answer("技能 · 没有这个技能".into(), "failed", "没有这个技能。".into()) };
+    let Some(sk) = by_tool(tool).filter(|s| ![FILES, KB, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB, PDF].contains(&s.key)) else { return answer("技能 · 没有这个技能".into(), "failed", "没有这个技能。".into()) };
     if sk.key == WEB {
         let q = args["query"].as_str().unwrap_or("").trim().to_string();
         if q.is_empty() {
@@ -771,6 +807,15 @@ pub fn mock_calls(question: &str, system: &str) -> Vec<(&'static str, Value)> {
             out.push(("pomelo_find_book", json!({ "titles": titles })));
         }
     }
+    // PDF 工具箱 (pdfkit.rs): a PDF named in the question — 「在 合同.pdf 里找「押金」」 finds, 「合同.pdf 第 2 页」 reads, else its info
+    if let Some(file) = q.split(|c: char| c.is_whitespace() || "，。？！、「」《》".contains(c)).find(|w| w.to_lowercase().ends_with(".pdf") && w.len() > 4) {
+        let page: Option<u64> = q.split_once(file).and_then(|(_, r)| r.split_once('页')).map(|(b, _)| b.chars().filter(char::is_ascii_digit).collect::<String>()).and_then(|d| d.parse().ok());
+        match (q.split_once('「').and_then(|(_, r)| r.split_once('」')).map(|(t, _)| t.to_string()), page) {
+            (Some(query), _) => out.push(("pdf_find", json!({ "file": file, "query": query }))),
+            (None, Some(p)) => out.push(("pdf_read", json!({ "file": file, "pages": [p] }))),
+            _ => out.push(("pdf_info", json!({ "file": file }))),
+        }
+    }
     // 「存成 Excel」: Excel 工具箱 proposes a new workbook
     if ["存成", "写成", "做成", "新建"].iter().any(|w| q.contains(&format!("{w} Excel")) || q.contains(&format!("{w}Excel"))) {
         out.push((toolbox::EXCEL_TOOL, json!({ "view": "create", "name": "柚子的表格", "sheets": [{ "name": "十月", "rows": [["项目", "金额", "日期"], ["房租", 3000, "2026-10-01"]] }] })));
@@ -864,7 +909,9 @@ mod tests {
     fn tools_instructions_and_the_mock() {
         let all: Vec<&Skill> = SKILLS.iter().collect();
         let defs = tools(&all);
-        assert_eq!(defs.len(), 12);
+        // twelve skills of one tool each, and the PDF 工具箱's seven (the engine's)
+        assert_eq!(defs.len(), 12 + pdfkit::TOOLS.len());
+        assert!(pdfkit::TOOLS.iter().all(|t| is_tool(t) && defs.iter().any(|d| d["function"]["name"] == *t)));
         assert!(defs.iter().any(|t| t["function"]["name"] == files::TOOL) && defs.iter().any(|t| t["function"]["name"] == KB_TOOL));
         // 读文件 / 查知识库 / 文本工具箱 only where the question has something for them; Word 和 Excel 工具箱 always
         // (it can also make a new document)
@@ -873,7 +920,7 @@ mod tests {
         let p = crate::youzi::Youzi::init(&crate::paths::DataPaths::new(dir.to_path_buf()), &dir, crate::youzi::Mode::Mock);
         let keys = |ctx| offered(&c, &p, &[], ctx).iter().map(|s| s.key).collect::<Vec<_>>();
         assert_eq!(keys(Ctx::default()), [BOOKS, FILMS, WORD, EXCEL, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
-        assert_eq!(keys(Ctx { files: true, kb: true, text: true, scheduled: false }), [BOOKS, FILMS, FILES, KB, WORD, TEXT, EXCEL, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
+        assert_eq!(keys(Ctx { files: true, kb: true, text: true, scheduled: false, pdf: true }), [BOOKS, FILMS, FILES, KB, PDF, WORD, TEXT, EXCEL, SEEKER, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]);
         assert!(SKILLS.iter().filter(|s| s.writes).map(|s| s.key).eq([WORD, TEXT, EXCEL, QBANK_RESUME, QBANK_GENERAL, QBANK_JOB]));
         assert!(SKILLS.iter().filter(|s| s.writes && !s.is_file_toolbox()).map(|s| s.key).eq([QBANK_RESUME, QBANK_GENERAL, QBANK_JOB])); // never for 定时任务
         // 定时任务: 联网搜索 without pressing anything, once it has its Key
@@ -887,6 +934,9 @@ mod tests {
         assert!(mock_calls("今天有什么新闻", &text).iter().all(|c| c.0 != "pomelo_web_search")); // searched up front instead
         assert_eq!(mock_calls("查一下《三体》的作者", "")[0], ("pomelo_find_book", json!({ "titles": ["三体"] })));
         assert_eq!(mock_calls("《霸王别姬》的导演是谁", "")[0].0, "pomelo_find_film");
+        assert_eq!(mock_calls("在 合同.pdf 里找「押金」", "")[0], ("pdf_find", json!({ "file": "合同.pdf", "query": "押金" })));
+        assert_eq!(mock_calls("读一下 合同.pdf 第 2 页", "")[0], ("pdf_read", json!({ "file": "合同.pdf", "pages": [2] })));
+        assert_eq!(mock_calls("合同.pdf 有几页", "")[0].0, "pdf_info");
         assert!(mock_calls("你好", "").is_empty());
     }
 }

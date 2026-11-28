@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 50 张表、版本 43；柚子的 `youzi.db` 56 张表、版本 44；搜索索引 `search.db` 版本 3；知识库扫描件的识别结果 `ocr.db` 版本 1；DevJanitor 的 `janitor.db` 版本 2；数据文件格式 43。这里只写有哪些表、存什么、怎么关联，需求里没写的计算规则、数据文件格式和版本记录；功能和看得到的规则见 `requirements.md`，存放、备份、撤销、加密的做法见 `architecture.md`，细则在各 Rust 文件开头（模块的在 `modules/<模块>.rs`）。
+`pomelo.db` 50 张表、版本 43；柚子的 `youzi.db` 56 张表、版本 45；搜索索引 `search.db` 版本 3；知识库扫描件的识别结果 `ocr.db` 版本 1；DevJanitor 的 `janitor.db` 版本 2；数据文件格式 43。这里只写有哪些表、存什么、怎么关联，需求里没写的计算规则、数据文件格式和版本记录；功能和看得到的规则见 `requirements.md`，存放、备份、撤销、加密的做法见 `architecture.md`，细则在各 Rust 文件开头（模块的在 `modules/<模块>.rs`）。
 
 ## 通用约定
 
@@ -211,7 +211,7 @@ DevJanitor 的偏好见「DevJanitor 的扫描结果」。
 
 **run_queries**（查了什么）：`run_id`、`position`、`round`、`call_id` · `tool` · `arguments`、`module`、`label`（「查了」那一行）、`state`（`ok` / `blocked` / `failed` / `unsupported`）、`result` 交给模型的原文、`records` 列到的记录。当前页面也存一行（`call_id = page`、`position = -1`）。查数据的说法（`data.rs`）：「拖着」= 没截止日期、加了 14 天以上没做；「没动的目标」= 进行中、14 天里没完成任何东西；资产排名按期末汇率折成人民币比。
 
-**run_sources**（出处）：`run_id`、`n` 编号、`kind`（`passage` / `record` / `web`）、记录的 `module` · `record_kind` · `ref_id` · `parent` · `day`、段落的 `artifact_id` · `segment_ordinal`、知识库的 `kb_source` · `kb_path`、网页的 `url`、`title`、`detail`、`content` 当时给模型的文字。
+**run_sources**（出处）：`run_id`、`n` 编号、`kind`（`passage` / `record` / `web`）、记录的 `module` · `record_kind` · `ref_id` · `parent` · `day`、段落的 `artifact_id` · `segment_ordinal`、知识库的 `kb_source` · `kb_path`、网页的 `url`、PDF 的一页的 `pdf_page`（原文件的物理页码）· `pdf_label`（页上印的页码）· `pdf_rects`（pdf_find 找到的字的框，JSON `[[x, y, 宽, 高], …]`，PDF 坐标：pt、左下原点、带 CropBox 偏移）、`title`、`detail`、`content` 当时给模型的文字。
 
 **run_passages**：一次回复检索到的段落（当时的文字和标签；知识库的另记 `kb_source`、`kb_path`、`kb_library` 当时的库名）。**run_memories**：用到的记忆（当时的文字和日期）。
 
@@ -332,5 +332,6 @@ JSON，格式版本 43（`transfer.rs` 的 `FORMAT_VERSION`）。旧格式都能
 | 42 | 每月回顾的内置提示词加「通关的游戏」（只改没改过的） |
 | 43 | `schedules.keep_chat` |
 | 44 | `backup_runs` |
+| 45 | `run_sources` 加 `pdf_page`、`pdf_label`、`pdf_rects`（1.2.0） |
 
 **search.db**：1 搜索索引；2 知识库 `kb_docs`、`kb_chunks`；3 柚子的记录改记 `youzi`。**ocr.db**：1 识别出的页和队列。**janitor.db**：1 扫描结果；2 `backup_seen`。**数据文件**（各版本见 `transfer.rs` 开头）：40 分组和目标带 `icon`；41 `articles`；42 `games`；43 定时任务带 `keepChat`。

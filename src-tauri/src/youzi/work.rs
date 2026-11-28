@@ -619,7 +619,7 @@ mod tests {
         let dir = crate::db::tests::temp_dir("work-word");
         let b = begin_run(&c, None, None, "写报告", "local:x", "X").unwrap();
         finish(&c, b.run_id, b.reply_id, &Outcome { content: "# 租房报告\n\n押金要退 [1]。".into(), state: "completed", ..Default::default() }).unwrap();
-        let src = cite::Source { n: 1, kind: "passage".into(), module: None, record_kind: None, id: None, parent: None, day: None, artifact_id: None, segment: Some(0), title: "合同.md · 押金".into(), detail: Some("知识库 · 生活".into()), content: "押金".into(), url: None, kb_source: Some(1), kb_path: Some("合同.md".into()) };
+        let src = cite::Source { n: 1, kind: "passage".into(), module: None, record_kind: None, id: None, parent: None, day: None, artifact_id: None, segment: Some(0), title: "合同.md · 押金".into(), detail: Some("知识库 · 生活".into()), content: "押金".into(), url: None, kb_source: Some(1), kb_path: Some("合同.md".into()), pdf_page: None, pdf_label: None, pdf_rects: None };
         cite::save(&c, b.run_id, &src).unwrap();
         let d = word_defaults(&c, b.reply_id, "2026-10-18").unwrap();
         assert_eq!(d.name, "租房报告 2026-10-18");

@@ -46,8 +46,9 @@ yaml-rust2 = { version = "0.13", default-features = false }
 ferrous-opencc = "0.4"
 # 速记小窗 (v0.8): ⌥Space from any app (Tauri's own plugin)
 tauri-plugin-global-shortcut = "2"
-# PDF (v1.2): the shared engine; `pdfium` puts lost ligatures back (PDFium linked statically, scripts/pdfium.sh)
-engine-pdf = { git = "https://github.com/elenskye/engine-pdf", tag = "v0.7.0", features = ["pdfium"] }
+# PDF (v1.2): the shared engine; `pdfium` puts lost ligatures back (PDFium linked statically, scripts/pdfium.sh); `fake` is the
+# simulated Mathpix of mock mode
+engine-pdf = { git = "https://github.com/elenskye/engine-pdf", tag = "v0.7.0", features = ["pdfium", "fake"] }
 
 [dev-dependencies]
 engine-pdf = { git = "https://github.com/elenskye/engine-pdf", tag = "v0.7.0", features = ["pdfium", "samples"] }
@@ -66,3 +67,7 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# engine-pdf v0.8.0 is being made with 1.2.0: the local checkout until its tag is pushed (HANDOFF.md)
+[patch."https://github.com/elenskye/engine-pdf"]
+engine-pdf = { path = "../../personal-engine-studio/engine-pdf" }

@@ -15,6 +15,8 @@
 //!   belong to their own reply.
 //! - Web pages (v0.4 phase 6, skills/: 联网搜索, 书单 / 影单检索) are numbered too (kind web, with
 //!   their url; the same url keeps its number) and open in the browser.
+//! - PDF pages (1.2.0, skills/pdfkit.rs): what the pdf_* tools read or found keeps its place — the physical page, its
+//!   label, pdf_find's boxes (`pdf_*` columns) — and opens as that page drawn with the boxes on it (`youzi_pdf_page`).
 
 use super::data::{self, clip, Access, Answer, PageRef};
 use super::reading::{self, Kind};
@@ -60,6 +62,14 @@ pub struct Source {
     pub kb_source: Option<i64>,
     #[serde(default)]
     pub kb_path: Option<String>,
+    /// A PDF page (柚子's pdf_* tools, 1.2.0): the physical page (from 1), the label printed on it, the boxes pdf_find
+    /// matched ([x, y, w, h] in PDF points, bottom-left origin, CropBox offset kept).
+    #[serde(default)]
+    pub pdf_page: Option<i64>,
+    #[serde(default)]
+    pub pdf_label: Option<String>,
+    #[serde(default)]
+    pub pdf_rects: Option<Vec<[f64; 4]>>,
 }
 
 /// One reply's numbered list.
@@ -108,6 +118,9 @@ impl Sources {
                     url: None,
                     kb_source: s.kb.as_ref().map(|k| k.source),
                     kb_path: s.kb.as_ref().map(|k| k.path.clone()),
+                    pdf_page: None,
+                    pdf_label: None,
+                    pdf_rects: None,
                 })
                 .collect(),
         )
@@ -144,6 +157,9 @@ impl Sources {
             url: None,
             kb_source: None,
             kb_path: None,
+            pdf_page: None,
+            pdf_label: None,
+            pdf_rects: None,
         });
         (n, true)
     }
@@ -154,7 +170,39 @@ impl Sources {
             return s.n;
         }
         let n = self.0.len() as i64 + 1;
-        self.0.push(Source { n, kind: "passage".into(), module: None, record_kind: None, id: None, parent: None, day: None, artifact_id: Some(artifact), segment: Some(segment), title: title.into(), detail: Some(detail.into()), content: content.into(), url: None, kb_source: None, kb_path: None });
+        self.0.push(Source { n, kind: "passage".into(), module: None, record_kind: None, id: None, parent: None, day: None, artifact_id: Some(artifact), segment: Some(segment), title: title.into(), detail: Some(detail.into()), content: content.into(), url: None, kb_source: None, kb_path: None, pdf_page: None, pdf_label: None, pdf_rects: None });
+        n
+    }
+
+    /// A PDF page the pdf_* tools read (1.2.0): `artifact` (an attachment or project file) or `kb` (a 知识库 file), the
+    /// physical page, its label, pdf_find's boxes. The same place (page and boxes) keeps its first number.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pdf(&mut self, artifact: Option<i64>, kb: Option<&super::knowledge::KbRef>, title: &str, detail: &str, page: i64, label: Option<&str>, rects: Option<Vec<[f64; 4]>>, content: &str) -> i64 {
+        let (kb_source, kb_path) = (kb.map(|k| k.source), kb.map(|k| k.path.clone()));
+        if let Some(s) = self.0.iter().find(|s| s.pdf_page == Some(page) && s.artifact_id == artifact && s.kb_source == kb_source && s.kb_path == kb_path && s.pdf_rects == rects) {
+            return s.n;
+        }
+        let n = self.0.len() as i64 + 1;
+        self.0.push(Source {
+            n,
+            kind: "passage".into(),
+            module: None,
+            record_kind: None,
+            id: None,
+            parent: None,
+            day: None,
+            artifact_id: artifact,
+            segment: None,
+            title: title.into(),
+            detail: Some(detail.into()),
+            content: content.into(),
+            url: None,
+            kb_source,
+            kb_path,
+            pdf_page: Some(page),
+            pdf_label: label.map(String::from),
+            pdf_rects: rects,
+        });
         n
     }
 
@@ -181,6 +229,9 @@ impl Sources {
             url: None,
             kb_source: Some(k.source),
             kb_path: Some(k.path.clone()),
+            pdf_page: None,
+            pdf_label: None,
+            pdf_rects: None,
         });
         n
     }
@@ -212,6 +263,9 @@ impl Sources {
             url: Some(url.into()),
             kb_source: None,
             kb_path: None,
+            pdf_page: None,
+            pdf_label: None,
+            pdf_rects: None,
         });
         n
     }
@@ -395,9 +449,9 @@ fn conversation_text(c: &Connection, kind: &str, id: i64) -> Result<String, Stri
 
 pub fn save(conn: &Connection, run_id: i64, s: &Source) -> Result<(), String> {
     conn.execute(
-        "INSERT OR REPLACE INTO run_sources (run_id, n, kind, module, record_kind, ref_id, parent, day, artifact_id, segment_ordinal, title, detail, content, url, kb_source, kb_path)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-        params![run_id, s.n, s.kind, s.module, s.record_kind, s.id, s.parent, s.day, s.artifact_id, s.segment, s.title, s.detail, s.content, s.url, s.kb_source, s.kb_path],
+        "INSERT OR REPLACE INTO run_sources (run_id, n, kind, module, record_kind, ref_id, parent, day, artifact_id, segment_ordinal, title, detail, content, url, kb_source, kb_path, pdf_page, pdf_label, pdf_rects)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        params![run_id, s.n, s.kind, s.module, s.record_kind, s.id, s.parent, s.day, s.artifact_id, s.segment, s.title, s.detail, s.content, s.url, s.kb_source, s.kb_path, s.pdf_page, s.pdf_label, s.pdf_rects.as_ref().map(|r| serde_json::to_string(r).unwrap_or_default())],
     )
     .map(|_| ())
     .map_err(err)
@@ -405,7 +459,7 @@ pub fn save(conn: &Connection, run_id: i64, s: &Source) -> Result<(), String> {
 
 pub fn of_run(conn: &Connection, run_id: i64) -> Result<Vec<Source>, String> {
     let mut st = conn
-        .prepare("SELECT n, kind, module, record_kind, ref_id, parent, day, artifact_id, segment_ordinal, title, detail, content, url, kb_source, kb_path FROM run_sources WHERE run_id = ?1 ORDER BY n")
+        .prepare("SELECT n, kind, module, record_kind, ref_id, parent, day, artifact_id, segment_ordinal, title, detail, content, url, kb_source, kb_path, pdf_page, pdf_label, pdf_rects FROM run_sources WHERE run_id = ?1 ORDER BY n")
         .map_err(err)?;
     let rows = st
         .query_map([run_id], |r| {
@@ -425,6 +479,9 @@ pub fn of_run(conn: &Connection, run_id: i64) -> Result<Vec<Source>, String> {
                 url: r.get(12)?,
                 kb_source: r.get(13)?,
                 kb_path: r.get(14)?,
+                pdf_page: r.get(15)?,
+                pdf_label: r.get(16)?,
+                pdf_rects: r.get::<_, Option<String>>(17)?.and_then(|j| serde_json::from_str(&j).ok()),
             })
         })
         .map_err(err)?;
@@ -493,7 +550,7 @@ mod tests {
 
     #[test]
     fn cited_numbers_and_unnumbered_results() {
-        let s = Sources(vec![Source { n: 1, kind: "record".into(), module: None, record_kind: None, id: None, parent: None, day: None, artifact_id: None, segment: None, title: "t".into(), detail: None, content: String::new(), url: None, kb_source: None, kb_path: None }; 2]
+        let s = Sources(vec![Source { n: 1, kind: "record".into(), module: None, record_kind: None, id: None, parent: None, day: None, artifact_id: None, segment: None, title: "t".into(), detail: None, content: String::new(), url: None, kb_source: None, kb_path: None, pdf_page: None, pdf_label: None, pdf_rects: None }; 2]
             .into_iter()
             .enumerate()
             .map(|(i, mut x)| {
@@ -533,6 +590,32 @@ mod tests {
         save(&c, 1, &s.0[0]).unwrap();
         save(&c, 1, &s.0[0]).unwrap(); // saved again as it grows: no duplicate
         assert_eq!(of_run(&c, 1).unwrap(), s.0);
+        // a PDF page (pdf_* tools): its place comes back as it was; the same place keeps its number
+        let kb = super::super::knowledge::KbRef { source: 3, path: "2026/合同.pdf".into(), library: "工作".into() };
+        let n = s.pdf(None, Some(&kb), "合同.pdf · 第 4 页", "知识库 · 工作", 4, Some("iv"), Some(vec![[72.0, 700.5, 120.0, 14.0]]), "押金七天内退还");
+        assert_eq!(s.pdf(None, Some(&kb), "合同.pdf · 第 4 页", "知识库 · 工作", 4, Some("iv"), Some(vec![[72.0, 700.5, 120.0, 14.0]]), "押金七天内退还"), n);
+        assert_ne!(s.pdf(Some(9), None, "合同.pdf · 第 4 页", "附件和资料", 4, None, None, "押金"), n);
+        for one in &s.0 {
+            save(&c, 1, one).unwrap();
+        }
+        let back = of_run(&c, 1).unwrap();
+        assert_eq!(back, s.0);
+        assert_eq!((back[1].pdf_page, back[1].pdf_label.as_deref(), back[1].pdf_rects.as_ref().map(|r| r[0][1])), (Some(4), Some("iv"), Some(700.5)));
+    }
+
+    #[test]
+    fn a_cited_pdf_page_is_drawn_with_its_boxes_on_it() {
+        let dir = crate::db::tests::temp_dir("cite-pdf-page");
+        let file = dir.join("a.pdf");
+        std::fs::write(&file, crate::youzi::pdf::tests::sample_pdf(&["First words here", "Second page words"])).unwrap();
+        // sample pages are 300 × 200 pt; a box at the text line (x 20, y 100)
+        let p = pdf_page(&file, 2, &[[20.0, 95.0, 150.0, 20.0], [0.0, 0.0, 0.0, 0.0]]).unwrap();
+        assert!(p.image.starts_with("data:image/jpeg;base64,"));
+        assert_eq!(p.boxes.len(), 1);
+        let b = p.boxes[0];
+        assert!((b[0] - 20.0 / 300.0).abs() < 1e-6 && (b[1] - 85.0 / 200.0).abs() < 1e-6 && (b[3] - 0.1).abs() < 1e-6, "{b:?}");
+        assert!(pdf_page(&dir.join("gone.pdf"), 1, &[]).unwrap_err().contains("找不到"));
+        assert!(pdf_page(&file, 9, &[]).is_err());
     }
 
     /// 见字如面: found while readable, then locked or put in the trash: not read; hidden / not for this cloud model: blocked.
@@ -559,4 +642,52 @@ mod tests {
         assert_eq!(read(&Access { cloud: true, cloud_allowed: vec!["notes".into()], ..Default::default() }, 1).state, "blocked");
         assert_eq!(read(&Access { cloud: true, cloud_allowed: vec!["articles".into()], ..Default::default() }, 1).state, "ok");
     }
+}
+
+// ---------- a cited PDF page ----------
+
+/// A cited PDF page as the dialog shows it: the page drawn (a data URL), pdf_find's boxes on it (left, top, width,
+/// height as fractions of the image), the label printed on it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfPage {
+    pub image: String,
+    pub boxes: Vec<[f64; 4]>,
+    pub label: Option<String>,
+}
+
+/// Draws page `page` of the PDF at `path`, its boxes (PDF points) placed on the image. Slow: off the main thread.
+pub fn pdf_page(path: &std::path::Path, page: u32, rects: &[[f64; 4]]) -> Result<PdfPage, String> {
+    let data = std::fs::read(path).map_err(|_| "原文件找不到了，可能已经移走或删除".to_string())?;
+    let doc = super::pdf::open(&data)?;
+    let image = doc.render(page, engine_pdf::ImageFormat::Jpeg, 1400).map_err(super::pdf::error_text)?;
+    let geometry = doc.page_box(page).map_err(super::pdf::error_text)?;
+    let boxes = rects
+        .iter()
+        .map(|r| {
+            let on = geometry.on_image(&engine_pdf::edit::Rect { x: r[0], y: r[1], width: r[2], height: r[3] });
+            [on.x, on.y, on.width, on.height]
+        })
+        .filter(|b| b[2] > 0.0 && b[3] > 0.0)
+        .collect();
+    Ok(PdfPage { image: format!("data:image/jpeg;base64,{}", super::office::base64(&image.bytes)), boxes, label: doc.label(page) })
+}
+
+/// A cited PDF page (an attachment or project file by `artifact_id`, a 知识库 file by `kb_source` and `kb_path`).
+#[tauri::command]
+pub async fn youzi_pdf_page(app: tauri::AppHandle, artifact_id: Option<i64>, kb_source: Option<i64>, kb_path: Option<String>, page: u32, rects: Option<Vec<[f64; 4]>>) -> Result<PdfPage, String> {
+    use tauri::Manager;
+    let st = app.state::<crate::AppState>();
+    let path = match (kb_source, kb_path, artifact_id) {
+        (Some(source), Some(rel), _) => {
+            let src = st.youzi.with_db(|c| super::knowledge::source(c, source))?;
+            super::knowledge::file_path(&src, &rel)?
+        }
+        (_, _, Some(id)) => {
+            let dir = st.youzi.files_dir().to_path_buf();
+            st.youzi.with_db(|c| super::files::path_of(c, &dir, id))?
+        }
+        _ => return Err("找不到这一页的文件".into()),
+    };
+    tauri::async_runtime::spawn_blocking(move || pdf_page(&path, page, &rects.unwrap_or_default())).await.map_err(|e| e.to_string())?
 }

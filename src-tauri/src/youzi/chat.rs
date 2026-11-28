@@ -1058,6 +1058,11 @@ pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: St
         tools.retain(|t| !t["function"]["name"].as_str().is_some_and(act::is_act));
     }
     tools.extend(skills::tools(&offered));
+    // PDF 工具箱: Mathpix only with its keys (mock mode needs none)
+    let mathpix = st.youzi.mode == super::Mode::Mock || (st.youzi.keys.has(skills::pdfkit::ID_ACCOUNT) && st.youzi.keys.has(skills::pdfkit::KEY_ACCOUNT));
+    if !mathpix {
+        tools.retain(|t| !t["function"]["name"].as_str().is_some_and(|n| skills::pdfkit::MATHPIX.contains(&n)));
+    }
     if tools.is_empty() {
         return None;
     }
@@ -1072,7 +1077,7 @@ pub(crate) async fn lookup_plan(app: &AppHandle, access: data::Access, today: St
 /// with its Key) and 问我 for a cloud model; no Pomelo data.
 async fn janitor_plan(app: &AppHandle, access: data::Access, today: String, counter: &Counter, asks: bool) -> Option<Lookup> {
     let st = app.state::<AppState>();
-    let ctx = skills::Ctx { files: false, kb: false, text: false, scheduled: true };
+    let ctx = skills::Ctx { files: false, kb: false, text: false, scheduled: true, pdf: false };
     let mut web = st.youzi.with_db(|c| Ok(skills::offered(c, &st.youzi, &[], ctx))).unwrap_or_default();
     web.retain(|s| s.key == skills::WEB);
     let mut tools = janitor::tools();
@@ -1218,15 +1223,20 @@ impl AppHost<'_> {
     /// ASK: the card goes to the page and this reply stops here until I answer (or 停止 ends its task).
     async fn ask_me(&self, call: &ToolCall) -> data::Answer {
         let not_asked = |text: String| data::Answer { module: None, label: "没问成".into(), state: "failed", text, records: vec![] };
-        let st = self.app.state::<AppState>();
         let questions = match ask::parse(&call.arguments) {
             Ok(q) => q,
             Err(e) => return not_asked(e),
         };
-        let card = match st.youzi.with_db(|c| ask::save(c, self.shared.run_id, &questions)) {
-            Ok(a) => a,
-            Err(e) => return not_asked(e),
-        };
+        match self.ask_questions(&questions).await {
+            Ok(text) => data::Answer { module: None, label: "问了你".into(), state: "ok", text, records: vec![] },
+            Err(e) => not_asked(e),
+        }
+    }
+
+    /// A 问我 card (the model's, or a paid call's question): the reply waits for my answer.
+    async fn ask_questions(&self, questions: &[ask::Question]) -> Result<String, String> {
+        let st = self.app.state::<AppState>();
+        let card = st.youzi.with_db(|c| ask::save(c, self.shared.run_id, questions))?;
         // what it wrote so far is safe while it waits
         {
             let b = self.shared.buf.lock().unwrap_or_else(|e| e.into_inner());
@@ -1235,12 +1245,100 @@ impl AppHost<'_> {
         let answer = self.shared.ask.open(card.id);
         let _ = self.shared.channel.send(StreamEvent::Ask { ask: card });
         st.youzi.changed();
-        match answer.await {
-            Ok(text) => {
-                st.youzi.changed();
-                data::Answer { module: None, label: "问了你".into(), state: "ok", text, records: vec![] }
+        let text = answer.await.map_err(|_| "没等到回答。".to_string())?;
+        st.youzi.changed();
+        Ok(text)
+    }
+
+    /// The PDFs this question may read with the pdf_* tools: its own PDF files (stored copies) and its 知识库's.
+    fn pdf_files(&self) -> Vec<skills::pdfkit::Allowed> {
+        let st = self.app.state::<AppState>();
+        let dir = st.youzi.files_dir().to_path_buf();
+        let mut out: Vec<skills::pdfkit::Allowed> = st
+            .youzi
+            .with_db(|c| {
+                Ok(self
+                    .materials
+                    .iter()
+                    .filter(|m| skills::files::ext_of(&m.name) == "pdf")
+                    .filter_map(|m| files::path_of(c, &dir, m.artifact).ok().map(|path| skills::pdfkit::Allowed { id: m.name.clone(), path, artifact: Some(m.artifact), kb: None }))
+                    .collect())
+            })
+            .unwrap_or_default();
+        if let Some(scope) = &self.kb {
+            let listed = st.search.with_db(|c| knowledge::listed(c, scope)).unwrap_or_default();
+            out.extend(listed.into_iter().filter(|l| l.source.kind == "folder" && super::scans::is_pdf(&l.path)).filter_map(|l| {
+                let path = knowledge::file_path(&l.source, &l.path).ok()?;
+                Some(skills::pdfkit::Allowed { id: l.shown.clone(), path, artifact: None, kb: Some(knowledge::KbRef { source: l.source.id, path: l.path.clone(), library: l.library.clone() }) })
+            }));
+        }
+        out
+    }
+
+    /// PDF 工具箱 (skills/pdfkit.rs): an engine-pdf tool on the question's PDFs, off the main thread. A paid call the
+    /// engine's spend rule asks about waits for a 问我 card first; no sends nothing.
+    async fn pdf(&mut self, call: &ToolCall, budget: i64) -> data::Answer {
+        use skills::pdfkit;
+        let name = call.name.clone();
+        let failed = |text: String| data::Answer { module: None, label: format!("PDF · {name} · 没成"), state: "failed", text: format!("没成：{text}"), records: vec![] };
+        let cloud = matches!(self.target, Target::Cloud { .. });
+        let room = MAX_IMAGES.saturating_sub(self.looked);
+        let args = match pdfkit::adjust(&name, serde_json::from_str(&call.arguments).unwrap_or_default(), cloud, room) {
+            Ok(a) => a,
+            Err(e) => return failed(e),
+        };
+        let allowed = self.pdf_files();
+        let file = args["file"].as_str().and_then(|f| pdfkit::resolve(&allowed, f).ok()).cloned();
+        let st = self.app.state::<AppState>();
+        let options = pdfkit::options(st.youzi.mode, &st.paths.root);
+        let keys = match st.youzi.mode {
+            super::Mode::Mock => Some((zeroize::Zeroizing::new("mock-id".to_string()), zeroize::Zeroizing::new("mock-key".to_string()))),
+            super::Mode::Real => st.youzi.keys.read(pdfkit::ID_ACCOUNT).ok().zip(st.youzi.keys.read(pdfkit::KEY_ACCOUNT).ok()).map(|(i, k)| (zeroize::Zeroizing::new(i), zeroize::Zeroizing::new(k))),
+        };
+        if name == pdfkit::MATHPIX_RUN && keys.is_none() {
+            return failed("还没填 Mathpix 的 App ID 和 App Key（在 Pub2MD 的设置里填）。告诉用户。".into());
+        }
+        let result = if name == pdfkit::MATHPIX_RUN {
+            let (a, n, k, o, keys2) = (allowed.clone(), name.clone(), args.clone(), options.clone(), keys.clone());
+            let prepared = tauri::async_runtime::spawn_blocking(move || pdfkit::prepare(&pdfkit::toolkit(o), &n, &k, &pdfkit::Host { allowed: &a, keys: keys2, yes: false })).await;
+            let prepared = match prepared {
+                Ok(Ok(p)) => p,
+                Ok(Err(e)) => return pdfkit::failed(&name, &e),
+                Err(e) => return failed(e.to_string()),
+            };
+            // the engine's spend rule: asked when it says so (a card that waits for me)
+            let why = options.ledger.approval(prepared.quote().map(|q| q.usd));
+            let yes = match (why, prepared.quote()) {
+                (None, _) => true,
+                (Some(why), Some(quote)) => {
+                    let q = pdfkit::ask_question(file.as_ref().map_or("PDF", |f| f.id.as_str()), quote, &why.to_string());
+                    match self.ask_questions(&[q]).await {
+                        Ok(answer) => pdfkit::said_yes(&answer),
+                        Err(e) => return failed(e),
+                    }
+                }
+                (Some(_), None) => false,
+            };
+            if !yes {
+                return data::Answer { module: None, label: "PDF · Mathpix · 你没同意".into(), state: "failed", text: "用户没同意，没有上传，一个请求都没发。别再试这一次的 Mathpix，用 pdf_read 读。".into(), records: vec![] };
             }
-            Err(_) => not_asked("没等到回答。".into()),
+            let (a, o) = (allowed.clone(), options);
+            tauri::async_runtime::spawn_blocking(move || pdfkit::run_prepared(&pdfkit::toolkit(o), prepared, &pdfkit::Host { allowed: &a, keys, yes })).await
+        } else {
+            let (a, n, k) = (allowed.clone(), name.clone(), args.clone());
+            tauri::async_runtime::spawn_blocking(move || pdfkit::call(&pdfkit::toolkit(options), &n, &k, &pdfkit::Host { allowed: &a, keys, yes: false })).await
+        };
+        match result {
+            Ok(Ok(out)) => {
+                let before = self.sources.0.len();
+                let (a, images) = pdfkit::answer(&name, file.as_ref(), out, &mut self.sources, cloud, room, self.images.len(), budget);
+                publish(self.app, self.shared, &self.sources, before);
+                self.looked += images.len();
+                self.images.extend(images);
+                a
+            }
+            Ok(Err(e)) => pdfkit::failed(&name, &e),
+            Err(e) => failed(e.to_string()),
         }
     }
 
@@ -1266,6 +1364,9 @@ impl AppHost<'_> {
             Err(e) => return failed(format!("《{}》", m.name), e),
         };
         let ext = skills::files::ext_of(&m.name);
+        if ext == "pdf" {
+            return failed(format!("《{}》", m.name), skills::files::PDF_HINT.into());
+        }
         if !super::office::holds_images(&ext) {
             return failed(format!("《{}》", m.name), "这种文件里的图片看不了（能看 .docx、.pptx、.pdf 的）".into());
         }
@@ -1488,6 +1589,7 @@ impl Host for AppHost<'_> {
                 .youzi
                 .with_db(|c| Ok(skills::seeker::run(c, self.app.state::<AppState>().youzi.mode, &self.access, &call.arguments, budget)))
                 .unwrap_or_else(|e| data::Answer { module: None, label: "Seeker 资料 · 没读成".into(), state: "failed", text: format!("没读成：{e}"), records: vec![] }),
+            name if skills::pdfkit::is_tool(name) => self.pdf(call, budget).await,
             name if skills::is_tool(name) => {
                 let before = self.sources.0.len();
                 let a = skills::run(self.app, &mut self.sources, name, &call.arguments, budget).await;
@@ -1680,7 +1782,7 @@ async fn generate(app: AppHandle, shared: Arc<Shared>, route: Route, mut request
         let st = app.state::<AppState>();
         st.youzi.with_db(|c| Ok(st.search.with_db(|s| Ok(skills::toolbox::editable_excel(c, Some(s), &request.sources, kb.as_ref()))).unwrap_or_else(|_| skills::toolbox::editable_excel(c, None, &request.sources, None)))).unwrap_or_default()
     };
-    let ctx = skills::Ctx { files: !materials.is_empty(), kb: kb.is_some(), text: !text_files.is_empty(), scheduled: request.read_only };
+    let ctx = skills::Ctx { files: !materials.is_empty(), kb: kb.is_some(), text: !text_files.is_empty(), scheduled: request.read_only, pdf: !request.read_only && (kb.is_some() || materials.iter().any(|m| skills::files::ext_of(&m.name) == "pdf")) };
     // earlier lookups go with their questions only where this model may still see them
     let mut lookup = match access_for(&app, &route) {
         Some((access, today)) if jan => {
@@ -2316,6 +2418,30 @@ pub(crate) mod tests {
     }
 
     impl TestHost {
+        /// PDF 工具箱 as AppHost runs it (on the question's stored PDFs; the simulated Mathpix, no ledger, no card).
+        fn pdf(&mut self, name: &str, arguments: &str, budget: i64) -> data::Answer {
+            use skills::pdfkit;
+            let (Some(youzi), Some(dir)) = (&self.youzi, &self.files_dir) else { return data::Answer { module: None, label: "PDF · 没有文件".into(), state: "failed", text: "没有文件".into(), records: vec![] } };
+            let allowed: Vec<pdfkit::Allowed> = self.materials.iter().filter(|m| skills::files::ext_of(&m.name) == "pdf").filter_map(|m| files::path_of(youzi, dir, m.artifact).ok().map(|path| pdfkit::Allowed { id: m.name.clone(), path, artifact: Some(m.artifact), kb: None })).collect();
+            let cloud = matches!(self.target, Target::Cloud { .. });
+            let room = MAX_IMAGES.saturating_sub(self.looked);
+            let args = match pdfkit::adjust(name, serde_json::from_str(arguments).unwrap_or_default(), cloud, room) {
+                Ok(a) => a,
+                Err(e) => return data::Answer { module: None, label: format!("PDF · {name} · 没成"), state: "failed", text: e, records: vec![] },
+            };
+            let file = args["file"].as_str().and_then(|f| pdfkit::resolve(&allowed, f).ok()).cloned();
+            let options = engine_pdf::mathpix::Options { ledger: engine_pdf::mathpix::spend::Ledger::Off, ..pdfkit::options(crate::youzi::Mode::Mock, dir) };
+            match pdfkit::call(&pdfkit::toolkit(options), name, &args, &pdfkit::Host { allowed: &allowed, keys: None, yes: true }) {
+                Ok(out) => {
+                    let (a, images) = pdfkit::answer(name, file.as_ref(), out, &mut self.sources, cloud, room, self.images.len(), budget);
+                    self.looked += images.len();
+                    self.images.extend(images);
+                    a
+                }
+                Err(e) => pdfkit::failed(name, &e),
+            }
+        }
+
         /// 读文件's images / look as AppHost does them, on the stored copy.
         fn file_images(&mut self, arguments: &str) -> data::Answer {
             let failed = |label: String, why: String| data::Answer { module: None, label: format!("读文件 · {label}"), state: "failed", text: format!("没成：{why}"), records: vec![] };
@@ -2410,6 +2536,7 @@ pub(crate) mod tests {
                     let found = crate::search::query::found_by_words(&s, &req.text, mask, &exclude, 12).unwrap();
                     cite::results(&req.text, &crate::search::query::Answer { found, note: None }, &mut self.sources, budget)
                 }
+                name if skills::pdfkit::is_tool(name) => self.pdf(name, &call.arguments, budget),
                 skills::files::TOOL if matches!(serde_json::from_str::<serde_json::Value>(&call.arguments).unwrap_or_default()["view"].as_str(), Some("images" | "look")) => self.file_images(&call.arguments),
                 skills::files::TOOL => match &self.youzi {
                     Some(p) => skills::files::run(p, &self.materials, &mut self.sources, &call.arguments, budget),
@@ -3399,6 +3526,36 @@ pub(crate) mod tests {
         assert_eq!((q.state.as_str(), q.label.as_str()), ("blocked", "钱来钱往 · 不发给云端，没看"));
         assert!(!h.requests[1].0.iter().any(|m| m.content.contains("¥")), "no amount reaches the cloud model");
         assert!(h.content.starts_with("钱来钱往不发给云端，这部分没看。"), "{}", h.content);
+    }
+
+    /// PDF 工具箱: an attached PDF found by pdf_find, cited by its physical page with the boxes; a local model reads it
+    /// without page images.
+    #[test]
+    fn an_attached_pdf_is_read_with_the_pdf_tools_and_cited_by_page() {
+        let dir = crate::db::tests::temp_dir("chat-pdf");
+        let youzi = memory_db();
+        let a = files::tests::add(&youzi, &dir, "合同.pdf", &crate::youzi::pdf::tests::sample_pdf(&["Lease terms overview", "Deposit returned within seven days"]));
+        let sources = reading::sources(&youzi, &[], &[a], &[], &[]).unwrap();
+        let mut h = TestHost::new(crate::db::tests::memory_db(), data::Access::default());
+        h.materials = skills::files::materials(&sources);
+        h.youzi = Some(youzi);
+        h.files_dir = Some(dir.join("files"));
+        h.script = vec![ToolCall { id: "p1".into(), name: "pdf_find".into(), arguments: r#"{"file":"合同.pdf","query":"returned within"}"#.into() }];
+        ask(&mut h, "押金几天退？").unwrap();
+        let (state, label) = { let r = h.recorded.borrow(); (r[0].3.state.clone(), r[0].3.label.clone()) };
+        assert_eq!((state.as_str(), label.as_str()), ("ok", "PDF · 在《合同.pdf》里找 · 1 处"));
+        let hit = h.sources.0.iter().find(|s| s.pdf_page.is_some()).unwrap();
+        assert_eq!((hit.pdf_page, hit.artifact_id, hit.title.as_str()), (Some(2), Some(a), "合同.pdf · 第 2 页"));
+        assert!(hit.pdf_rects.as_ref().is_some_and(|r| !r.is_empty()));
+        let tool = h.requests[1].0.iter().rev().find(|m| m.role == "tool").unwrap();
+        assert!(tool.content.contains(&format!("第 1 处（第 2 页）[{}]", hit.n)), "{}", tool.content);
+        // the mock is a local model: pdf_read goes without images, pdf_render is refused
+        h.script = vec![ToolCall { id: "p2".into(), name: "pdf_read".into(), arguments: r#"{"file":"合同.pdf","pages":[2]}"#.into() }, ToolCall { id: "p3".into(), name: "pdf_render".into(), arguments: r#"{"file":"合同.pdf","page":2}"#.into() }];
+        let before = h.recorded.borrow().len();
+        ask(&mut h, "第二页写了什么").unwrap();
+        let rec = h.recorded.borrow();
+        assert_eq!((rec[before].3.state.as_str(), rec[before + 1].3.state.as_str()), ("ok", "failed"));
+        assert!(h.images.is_empty());
     }
 
     /// 查知识库's look: the image goes in a user message after the round's results, then the answer.

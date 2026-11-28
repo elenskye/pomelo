@@ -157,6 +157,10 @@ export type Source = {
   /** A 知识库 passage: its source and file (relative to the folder; "" for a web page). */
   kbSource?: number | null;
   kbPath?: string | null;
+  /** A PDF page (柚子's pdf_* tools): the physical page, the label printed on it, pdf_find's boxes ([x, y, w, h] in PDF points). */
+  pdfPage?: number | null;
+  pdfLabel?: string | null;
+  pdfRects?: [number, number, number, number][] | null;
 };
 /** 柚子's proposals to write (youzi/act.rs): one tick each; confirming writes the ticked ones in one ⌘Z step. */
 export type CardField = { label: string; before?: string | null; after: string; long?: boolean };
@@ -542,6 +546,9 @@ export const youziApi = {
   kbScan: () => invoke<void>("youzi_kb_scan"),
   /** A folder's file (path "" = the folder), or a web page in the browser. */
   kbOpen: (sourceId: number, path: string) => invoke<void>("youzi_kb_open", { sourceId, path }),
+  /** A cited PDF page drawn, its boxes as fractions of the image (left, top, width, height). */
+  pdfPage: (s: { artifactId: number | null; kbSource?: number | null; kbPath?: string | null; pdfPage: number; pdfRects?: [number, number, number, number][] | null }) =>
+    invoke<{ image: string; boxes: [number, number, number, number][]; label: string | null }>("youzi_pdf_page", { artifactId: s.artifactId, kbSource: s.kbSource ?? null, kbPath: s.kbPath ?? null, page: s.pdfPage, rects: s.pdfRects ?? null }),
   conversationKnowledge: (sessionId: number, on: boolean) => invoke<void>("youzi_conversation_knowledge", { sessionId, on }),
   /** [] = follow the project (or all); choosing also turns the switch on. */
   conversationLibraries: (sessionId: number, libraryIds: number[]) => invoke<void>("youzi_conversation_libraries", { sessionId, libraryIds }),

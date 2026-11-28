@@ -2639,7 +2639,7 @@ const MOCK_REASONING = "用户想检查排版。先列出要覆盖的格式：�
 const MOCK_REPLY = "## 排版自检\n\n这是开发版的**模拟回复**，用来检查消息的显示；正式版才会连接真正的模型。\n这一行紧跟在上一行后面。\n\n### 列表\n\n1. 第一项：包含 `行内代码`\n2. 第二项，下面还有子项：\n   - 子项 A\n   - 子项 B，带一个[链接](https://example.com)\n3. 第三项\n\n> 引用段落：阅读旧消息时，界面不会被拉到底部。\n\n| 模型 | 量化 | 上下文 | 适合的任务 | 备注 |\n| --- | --- | --- | --- | --- |\n| Qwen3 14B | Q4_K_M | 16K | 中文写作、日常问答 | 会先思考再回答 |\n| Qwen3.5 9B | Q8_0 | 32K | 代码解释与长资料阅读 | 源自官方权重的转换版 |\n\n```rust\nfn greet(name: &str) -> String {\n    format!(\"你好，{name}\") // 这一行故意写得很长，用来检查长代码能否横向滚动而不撑破窗口\n}\n```\n\n行内公式 $E = mc^2$，金额 $5 和 $10 不是公式。独立公式：\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n这些应该原样显示：<b>不是粗体</b>。\n\n最后一段。";
 type Emit = (e: Record<string, unknown>) => void;
 // ---- v0.4 citations (youzi/cite.rs): passages, then search results, numbered ----
-type PSource = { n: number; kind: "record" | "passage" | "web"; module: string | null; recordKind: string | null; id: number | null; parent: number | null; day: string | null; artifactId: number | null; segment: number | null; title: string; detail: string | null; content: string; url?: string; kbSource?: number | null; kbPath?: string | null };
+type PSource = { n: number; kind: "record" | "passage" | "web"; module: string | null; recordKind: string | null; id: number | null; parent: number | null; day: string | null; artifactId: number | null; segment: number | null; title: string; detail: string | null; content: string; url?: string; kbSource?: number | null; kbPath?: string | null; pdfPage?: number; pdfLabel?: string; pdfRects?: [number, number, number, number][] };
 // ---- v0.4.5 阶段 7: 知识库 (knowledge.rs): libraries of folders (made-up files) and saved pages; a build takes ~2.5 s ----
 type PKbDoc = { path: string; text: string; error?: string; image?: boolean };
 type PKbSource = { id: number; libraryId: number; kind: "folder" | "web"; path: string | null; artifactId: number | null; cloud: boolean; docs: PKbDoc[]; buildUntil: number | null; ocr?: { from: number; stoppedAt: number | null } };
@@ -3727,6 +3727,7 @@ const P_SKILLS: PSkillDef[] = [
   { key: "web", name: "general-web-search", tool: "pomelo_web_search", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"用了斜杠命令或「联网」？","yes":"是","side":["先拿问题直接搜一次，结果和问题一起给柚子"],"join":"柚子写搜索词","no":"否"},{"kind":"step","text":"柚子写搜索词"},{"kind":"step","text":"Tavily 搜索，读搜到的网页摘要"},{"kind":"again","text":"不够就换个词再搜（一条回答最多查 4 轮）","back":"柚子写搜索词"},{"kind":"step","text":"回答带来源"}], features: ["上网查新的信息，回答带来源，点了用浏览器打开","用斜杠命令时直接拿问题去搜（可能带上私人内容）","搜到的存进对话，追问还用得上","定时任务不用按「联网」，打开了、填了 Key 就能自己搜","要填 Tavily API Key"], keys: [{ account: "tavily", label: "Tavily API Key", required: true }], auto: false },
   { key: "files", name: "general-file-reader", tool: "pomelo_file", flow: [{"kind":"step","text":"这个问题带的文件"},{"kind":"check","ask":"放得进这次的篇幅？","yes":"是","side":["全文随问题发给模型"],"join":"回答标出处","no":"放不下"},{"kind":"step","text":"先给目录和按问题挑出的段落"},{"kind":"step","text":"柚子按段号读 / 按字找"},{"kind":"again","text":"不够就再读（一条回答最多查 4 轮）","back":"柚子按段号读 / 按字找"},{"kind":"check","ask":"问到文档里的图？","yes":"是","side":["列出 Word、PowerPoint、PDF 里的图片","云端模型看一张（PDF 看整页），本地模型看不了"],"join":"回答标出处","no":"否"},{"kind":"step","text":"回答标出处"}], features: ["读附件和项目资料：看目录、按段号读、按字找","资料太长时先给目录和按问题挑出的段落，再读需要的部分","云端模型能看 Word、PowerPoint 里的图片和 PDF 的整页，一个回答最多 8 张","只读已经带上的文件，不碰别的文件","内容只随这个问题发给你选的模型"], keys: [], auto: true },
   { key: "kb", name: "general-knowledge-base", tool: "pomelo_kb", flow: [{"kind":"step","text":"问题"},{"kind":"step","text":"选库：对话 → 项目 → 全部"},{"kind":"check","ask":"用的是云端模型？","yes":"是","side":["跳过设成不发给云端的文件夹"],"join":"找段落 / 列文件 / 读整篇","no":"否"},{"kind":"step","text":"找段落 / 列文件 / 读整篇"},{"kind":"check","ask":"是图片、扫描件或文档里的图？","yes":"是","side":["按意思找不到，只认文件名；云端模型能看"],"join":"回答标出处","no":"否"},{"kind":"again","text":"不够就再查（一条回答最多查 4 轮）","back":"找段落 / 列文件 / 读整篇"},{"kind":"step","text":"回答标出处"}], features: ["按问题在知识库里找相关的段落","列出库里有哪些文件，整篇读一个文件（看目录、按段读、按字找）","图片和扫描件按意思找不到，云端模型能看，Word、PowerPoint、PDF 里嵌的图片也能看","用云端模型时不查不发给云端的文件夹"], keys: [], auto: true },
+  { key: "pdf", name: "general-pdf-toolkit", tool: "pdf_read", flow: [{"kind":"step","text":"这个问题带的 PDF、知识库里的 PDF"},{"kind":"step","text":"柚子按页读 / 按字找 / 看目录 / 看信息"},{"kind":"check","ask":"扫描的页？","yes":"是","side":["在这台 Mac 上识别（断网也行）"],"join":"回答按页标出处","no":"有字"},{"kind":"check","ask":"要看某一页的样子？","yes":"是","side":["现画那一页给云端模型（本地模型看不了）"],"join":"回答按页标出处","no":"否"},{"kind":"again","text":"不够就再读（一条回答最多查 4 轮）","back":"柚子按页读 / 按字找 / 看目录 / 看信息"},{"kind":"check","ask":"公式、复杂排版要准（Mathpix）？","yes":"是","side":["先报价","一次超过 $0.5 或所有 App 最近 24 小时合计超过 $5：问你","只上传那几页，记进引擎的账本"],"join":"回答按页标出处","no":"否"},{"kind":"step","text":"回答按页标出处"}], features: ["读附件、项目资料和知识库里的 PDF：按页读、按字找（繁简、跨行也找得到）、看目录和信息","扫描的页在这台 Mac 上识别，云端模型能看某一页的样子","出处按原文件的页码，点开直接看那一页（找到的字画出来）","公式、复杂排版能交给 Mathpix（用 Pub2MD 填的 Key）：一次超过 $0.5 或所有 App 最近 24 小时合计超过 $5 才问你","只读这次能读的 PDF，不碰别的文件"], keys: [], auto: true },
   { key: "word", name: "general-word-toolkit", tool: "pomelo_word", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Word？","yes":"是","side":["名称和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 Word，读成编号的段落"},{"kind":"step","text":"柚子提出修改"},{"kind":"check","ask":"这一段改不了（表格、域，或格式对不上）？","yes":"是","side":["不放进卡片，告诉柚子为什么"],"join":"柚子提出修改","no":"能改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（只动改了的字，不留备份）"}], features: ["改文字和格式：加粗、斜体、下划线、标题、列表","加段、删段","新建一个 Word，你点「保存」才存","只改附件和知识库里的 Word；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
   { key: "text", name: "general-text-toolkit", tool: "pomelo_text", flow: [{"kind":"step","text":"附件或知识库里的 Markdown / 文本，读成编号的段落"},{"kind":"step","text":"柚子提出修改"},{"kind":"step","text":"放进确认卡片（同一段再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（保留原来的换行和编码，不留备份）"}], features: ["改段、删段","保留原来的换行和编码","只改附件和知识库里的这类文件；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
   { key: "excel", name: "general-excel-toolkit", tool: "pomelo_excel", flow: [{"kind":"step","text":"问题"},{"kind":"check","ask":"要新建一个 Excel？","yes":"是","side":["表和内容放进卡片","你选文件夹、点「保存」才存"],"join":"","no":"改已有的"},{"kind":"step","text":"附件或知识库里的 .xlsx，读成一行行带位置的格子"},{"kind":"step","text":"柚子提出修改：改格子、加行、删行"},{"kind":"check","ask":"改不了（合并的格子、设了保护的表，有图表的表不能加删行）？","yes":"是","side":["不放进卡片，告诉柚子为什么"],"join":"柚子提出修改：改格子、加行、删行","no":"能改"},{"kind":"step","text":"放进确认卡片（同一格再改就换掉）"},{"kind":"step","text":"你勾选、点「写入文件」"},{"kind":"check","ask":"文件这之间被改过？","yes":"是","side":["不写，要重新读"],"join":"","no":"没有"},{"kind":"step","text":"写入文件（下面的行和公式挪好，样式不动，不留备份）"}], features: ["改格子里的数字、文字、日期和公式，空格子能填","加行、删行，下面的行和用到它们的公式跟着挪","新建一个 .xlsx，你点「保存」才存","只认 .xlsx，只改附件和知识库里的；不留备份，文件被改过就不写","定时任务也能用：卡片留在那次的对话里，你点了才写"], keys: [], auto: true },
@@ -3780,6 +3781,8 @@ const pSkillCalls = (q: string, asked: string[], scheduled = false): [string, Re
   }
   // 读文件's images (chat.rs file_images): 「文档里的图」
   if (offered("files") && /(文档|Word|PPT|PowerPoint|PDF).*图/i.test(q)) out.push(["pomelo_file", { view: "images", file: "报告.docx" }], ["pomelo_file", { view: "look", file: "报告.docx", image: 1 }]);
+  // PDF 工具箱 (skills/pdfkit.rs): 「合同 PDF 里押金那段在哪一页」
+  if (offered("pdf") && /PDF/i.test(q) && /找|哪一页|哪页|第.*页/.test(q)) out.push(["pdf_find", { file: "合同.pdf", query: "押金" }]);
   // 查知识库's files / whole-file views (knowledge.rs kb_tool): 「知识库里有哪些文件」「读一下知识库里的《看房记录》」
   if (offered("kb") && pkb.sources.length && /知识库/.test(q)) {
     if (/图片|看图/.test(q)) out.push(["pomelo_kb", { view: "files" }], ["pomelo_kb", { view: "look", file: "白板.png" }]);
@@ -3811,6 +3814,11 @@ const pSkillRun = (tool: string, args: Record<string, unknown>, sources: PSource
       return { module: null, label: "Excel 工具箱 · 提议改《预算.xlsx》3 处", state: "ok", result: "已放进确认卡片：《预算.xlsx》表「十月」B3、表「十月」删第 4 行、表「十月」第 5 行后加 1 行。还没写进文件：用户勾选后点「写入文件」才写。", records: [] };
     }
     return { module: null, label: "Excel 工具箱 · 读《预算.xlsx》表「十月」", state: "ok", result: "《预算.xlsx》的表：\n- 「十月」4 行，到第 5 行、C 列\n表「十月」（每行：行号：列=值，空格子不写）：\n1：A=项目 | B=金额 | C=日期\n3：A=房租 | B=3000 | C=2026-10-01\n4：A=水电 | B=120.5 | C=2026-10-05\n5：A=合计 | B==SUM(B3:B4)（结果 3120.5）", records: [] };
+  }
+  if (tool === "pdf_find") {
+    const n = sources.length + 1;
+    sources.push({ n, kind: "passage", module: null, recordKind: null, id: null, parent: null, day: null, artifactId: 1, segment: null, title: "合同.pdf · 第 3 页", detail: "附件和资料", content: "第七条 押金在退房验收后七天内退还，逾期按日加付利息。", pdfPage: 3, pdfLabel: "iii", pdfRects: [[90, 594, 336, 17]] });
+    return { module: null, label: "PDF · 在《合同.pdf》里找 · 1 处", state: "ok", result: `找到 1 处「押金」：\n- 第 3 页（页上印着 iii）：第七条 **押金**在退房验收后七天内退还，逾期按日加付利息。\n\n引用时标：第 1 处（第 3 页）[${n}]`, records: [] };
   }
   if (tool === "pomelo_file") {
     if (args.view === "images") return { module: null, label: "读文件 · 《报告.docx》里的图片", state: "ok", result: "《报告.docx》里有 2 张图片，view=look 用 image 写图号：\n图 1：在「十月的开销」那里\n图 2：在「结论」那里（这种矢量图看不了）", records: [] };
@@ -4280,7 +4288,7 @@ const pRun = (s: PSession, user: PNode, msg: PNode, thinking: boolean, prompt: s
         if (!pky.runs.has(runId)) return;
         const call = calls[qs.length];
         if (!call) {
-          const ns = sources.filter((x) => x.kind === "web" || x.kbSource != null).slice(0, 2).map((x) => `[${x.n}]`).join("");
+          const ns = sources.filter((x) => x.kind === "web" || x.kbSource != null || x.pdfPage != null).slice(0, 2).map((x) => `[${x.n}]`).join("");
           const card = pky.edits.get(msg.id);
           const said = card ? (card.kind === "new-word" || card.kind === "new-excel" ? `这是开发版的**模拟回答**：写好了，放在下面的卡片里，点「保存」才会存成 ${card.kind === "new-word" ? "Word" : "Excel"}。` : card.kind === "excel" ? "这是开发版的**模拟回答**：改了 3 处，放在下面的卡片里，勾选后点「写入文件」才会写进去。" : "这是开发版的**模拟回答**：改了 2 段，放在下面的卡片里，勾选后点「写入文件」才会写进去。") : ns ? `这是开发版的**模拟回答**：查到的里，最相关的是这几条${ns}。` : "这是开发版的**模拟回答**：没查到。";
           return void (run.timer = pStream(msg, thinking, prompt, emit, done, said));
@@ -5252,6 +5260,12 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
       .filter((x) => !x.deleted && ([...pky.used.values()].some((u) => u.attachments.includes(x.id)) || !pky.files.some((f) => f.versions.some((v) => v.artifact === x.id))))
       .map(pInfo),
   youzi_open_file: () => null,
+  youzi_pdf_page: (a) => {
+    const rects = (a.rects as [number, number, number, number][] | null) ?? [];
+    const lines = ["第七条 押金", "押金在退房验收后七天内退还，逾期按日加付利息。", "第八条 维修", "房屋自然损耗由甲方负责维修。"];
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="612" height="792" viewBox="0 0 612 792"><rect width="612" height="792" fill="white"/>${lines.map((t, i) => `<text x="90" y="${170 + i * 26}" font-size="14" fill="#222">${t}</text>`).join("")}<text x="306" y="760" font-size="11" text-anchor="middle" fill="#888">iii</text></svg>`;
+    return { image: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`, boxes: rects.map(([x, y, w, h]) => [x / 612, (792 - y - h) / 792, w / 612, h / 792]), label: "iii" };
+  },
   youzi_project_files: (a) => pky.files.filter((f) => f.projectId === a.projectId).map(pFileView),
   youzi_project_file_add: (a) => {
     const art = pArt(a.artifactId as number);

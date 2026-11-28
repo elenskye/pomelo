@@ -55,6 +55,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 42, name: "monthly_games", sql: include_str!("../../migrations/youzi/0042_monthly_games.sql") },
     Migration { version: 43, name: "schedule_keep_chat", sql: include_str!("../../migrations/youzi/0043_schedule_keep_chat.sql") },
     Migration { version: 44, name: "backup_runs", sql: include_str!("../../migrations/youzi/0044_backup_runs.sql") },
+    Migration { version: 45, name: "pdf_citations", sql: include_str!("../../migrations/youzi/0045_pdf_citations.sql") },
 ];
 
 pub use crate::modules::common::NOW;
