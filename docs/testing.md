@@ -125,7 +125,7 @@
 
 各测试的开关写在它开头的注释里，下面只写常用的。
 
-- **云端**（一律用它）：`POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`（`~/Downloads/ELEN/Pomelo/key/` 里每家一个），下面写 `POMELO_REAL_LLM=1` 的都换成它；默认 DeepSeek Flash；`POMELO_CLOUD_SERVICE`（deepseek、openrouter、openai、anthropic、google、aliyun）和 `POMELO_CLOUD_MODEL=<模型>` 换服务和模型。思考关不掉的模型（OpenRouter 的 GLM 5.3）加 `POMELO_CLOUD_THINK=always`，强度用 `POMELO_CLOUD_EFFORTS=low,high,max`。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。只用编的数据。
+- **云端**（一律用它）：`POMELO_CLOUD_KEY_FILE=<放 Key 的文件>`（`~/Documents/Dataset/Pomelo/key/` 里每家一个，Mathpix 那份两行：App ID、App Key），下面写 `POMELO_REAL_LLM=1` 的都换成它；默认 DeepSeek Flash；`POMELO_CLOUD_SERVICE`（deepseek、openrouter、openai、anthropic、google、aliyun）和 `POMELO_CLOUD_MODEL=<模型>` 换服务和模型。思考关不掉的模型（OpenRouter 的 GLM 5.3）加 `POMELO_CLOUD_THINK=always`，强度用 `POMELO_CLOUD_EFFORTS=low,high,max`。测试打出云端的原始报错（`[cloud]` 开头），App 里不显示。只用编的数据。
 - **本地模型**（只在我特别要求时）：`~/Documents/LLM/scripts/llmctl.sh start qwen359b`，等 `curl -sf 127.0.0.1:8080/health` 通了再跑，用完马上 `llmctl.sh stop`，测试里写 `POMELO_REAL_LLM=1`。一次跑一个问题、给个时限：Qwen3.5 9B 偶尔会想很久停不下来。
 - **柚子**：`POMELO_REAL_LLM=1 POMELO_ASK='问题1|问题2>>追问' cargo test --manifest-path src-tauri/Cargo.toml real_local_model -- --ignored --nocapture`（导入文件加编的数据，在内存里；`POMELO_SHOW=1` 显示查到的原文，`POMELO_AS_CLOUD=1` 按云端的规则，`POMELO_SCHEDULED=1` 按定时任务只读）。
   - 润色补全、一句话填好：`real_assist`、`real_quick`（一句话改好、柚子转为待办只用模拟模型，在 `assist` 里）。
@@ -134,11 +134,12 @@
   - 长资料补读：`real_read_file`（编的 60 章手册，`POMELO_ASK` 换问题）。
   - Word / 文本 / Excel 工具箱：`real_toolbox`（编的文件，打出调用、卡片和写入后读回的结果；`POMELO_TB_CASE=kb,table,excel-cells…` 挑几个，`POMELO_TB_DUMP=1` 只看读出来的段落）。
   - 定时任务：`real_schedule`（定时任务的工具，搜索结果是模拟的；`POMELO_ASK` 换提示词）。
+  - PDF 工具箱：`real_pdf_toolkit`（engine-pdf 的 10 页样本：扫描页、繁体、跨行、看页图；`POMELO_PDF_CASE=scan,trad,lines,look,mathpix` 挑；加 `POMELO_MATHPIX_KEY_FILE=…` 时 `mathpix` 那题真的识别 1 页，记进引擎的共用账本「Pomelo（测试）」）。
   - 看图：`real_file_images`（编的带图的 Word、PowerPoint 和扫描 PDF；`POMELO_IMG_CASE=docx,pptx,pdf` 挑，`POMELO_IMG_OUT=<文件夹>` 只写出这几份文件和编的预算表，拿去 App 里试）、`real_kb_image`（知识库里的图）；只能用云端。
   - 呦呦漫游的补全、按中文起草：`POMELO_REAL_LLM=1` 跑 `real_site_draft`（编的作品）。
 - **向量和重排**：`llmctl.sh start embedding`（或 `rerank`）后跑 `real_embedding`、`real_rerank`，用完停；`real_services_start_and_stop`、`real_meaning_search`、`real_knowledge`（临时目录里编的文件夹）自己启停（先确认都没在跑）。
 - **导入账单**：样本 `~/Downloads/ELEN/Pomelo/pomelo-finance-data`（只读），答案在 `phase5-r2-evaluation/gold.json`：`POMELO_CLOUD_KEY_FILE=… POMELO_CLOUD_SERVICE=… POMELO_CLOUD_MODEL=… POMELO_IMPORTER_DIR=<样本> POMELO_IMPORTER_OUT=<结果.json>` 跑 `real_importer`（强度 `POMELO_IMPORTER_LEVEL=max`）。只在内存里，只写结果文件；报告放 `~/Downloads/Importer 测试/第 N 轮/`。
-- **Pub2MD**（先说用量，我同意再测；Mathpix 按页收费）：Key 文件我给；结果放 `~/Downloads/Pub2MD 测试/第 N 轮/`（过程放 `运行记录/`，写进 `测试记录.md`）。`cargo test --manifest-path src-tauri/Cargo.toml real_pub2md -- --ignored --exact youzi::assistants::pub2md::job::tests::real_pub2md --nocapture`：真的 Mathpix 和云端模型走完整个流程，打出块数、请求、用时和每个模型的词元用量。跑的时候用 Monitor 边算费用边盯输出（到我给的上限就停）。`real_pub2md_probe` 单问 Supervisor 一步（`POMELO_PROBE=terms|fix|plan|read|search`，不用 Mathpix）。改了切块或检查，`POMELO_REPLAY=<以前的结果文件夹>` 跑 `replay_` 拿真结果回放。
+- **Pub2MD**（先说用量，我同意再测；Mathpix 按页收费）：Key 文件我给；结果放 `~/Downloads/Pub2MD 测试/第 N 轮/`（过程放 `运行记录/`，写进 `测试记录.md`）。`cargo test --manifest-path src-tauri/Cargo.toml real_pub2md -- --ignored --exact youzi::assistants::pub2md::job::tests::real_pub2md --nocapture`：真的 Mathpix 和云端模型走完整个流程，打出块数、请求、用时和每个模型的词元用量。跑的时候用 Monitor 边算费用边盯输出（到我给的上限就停）；真花的钱记在引擎的共用账本（`~/Library/Application Support/engine-pdf/mathpix-ledger.jsonl`，「Pomelo（测试）」）。`POMELO_MATHPIX_LOG=1` 打出每个请求和回应的开头（不带 Key 和账号）。别用 `grep` 过滤这份输出（有压缩包的字节，grep 会当二进制吞掉后面的行），用 `grep -a`。`real_pub2md_probe` 单问 Supervisor 一步（`POMELO_PROBE=terms|fix|plan|read|search`，不用 Mathpix）。改了切块或检查，`POMELO_REPLAY=<以前的结果文件夹>` 跑 `replay_` 拿真结果回放。
 - **书单 / 影单检索**：`POMELO_REAL_WEB=1` 跑 `real_works`（示例书名，可以直接跑）；柚子的真模型测试加 `POMELO_REAL_WEB=1` 就用真检索。Tavily 要我的 Key，真的联网搜索只在正式版里试。
 - **网站图标**：`real_site_icons`（几个公开网站，只取首页和图标）；正式版打开一网打尽时才去取。
 - **真实导入文件**（`prototype/` 里的 `pomelo-import.json` 等，只在本机）：`POMELO_SEED_DB=<临时目录>/pomelo.db` 跑 `seed_scratch_db -- --ignored` 生成含全部导入文件的临时数据库；`transfer::tests::real_ -- --ignored` 跑读它们的测试。

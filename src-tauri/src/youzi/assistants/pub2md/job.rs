@@ -1929,17 +1929,37 @@ fn linked(text: &str, links: &[(String, String)]) -> (String, usize) {
     (result, left_out)
 }
 
-/// Mathpix's converter through the engine: submit, wait for each format (5 minutes at most), fetch each.
+const RETRY_PAUSE: Duration = Duration::from_secs(if cfg!(test) { 0 } else { 15 });
+
+/// Mathpix's converter through the engine: submit, wait for each format (5 minutes at most), fetch each. A format
+/// Mathpix fails on now and then (seen right after a fresh 提取) is asked once more after a pause; it costs nothing.
 async fn mathpix_convert(m: &Mathpix, mmd: &str, formats: &[Format], cancel: &Cancel) -> Result<Vec<(Format, Result<Vec<u8>, String>)>, String> {
-    let (mut o, k, c, text, wanted) = (m.options.clone(), m.keys.clone(), cancel.clone(), mmd.to_string(), formats.to_vec());
-    o.max_wait = Duration::from_secs(300);
-    o.poll_interval = Duration::from_secs(2);
-    o.request_timeout = Duration::from_secs(120);
-    let keys: Vec<&'static str> = wanted.iter().map(|f| f.key()).collect();
-    let out = tauri::async_runtime::spawn_blocking(move || mathpix::convert(&text, &keys, &k, &o, &c)).await.map_err(|e| e.to_string())?.map_err(|e| match e {
-        EngineError::Mathpix(ref x) if x.kind == MathpixErrorKind::TooLarge => "文件超过了 Mathpix 转格式的 10 MB 上限".into(),
-        e => said(&e),
-    })?;
+    let once = |wanted: Vec<Format>| {
+        let (mut o, k, c, text) = (m.options.clone(), m.keys.clone(), cancel.clone(), mmd.to_string());
+        o.max_wait = Duration::from_secs(300);
+        o.poll_interval = Duration::from_secs(2);
+        o.request_timeout = Duration::from_secs(120);
+        async move {
+            let keys: Vec<&'static str> = wanted.iter().map(|f| f.key()).collect();
+            tauri::async_runtime::spawn_blocking(move || mathpix::convert(&text, &keys, &k, &o, &c)).await.map_err(|e| e.to_string())?.map_err(|e| match e {
+                EngineError::Mathpix(ref x) if x.kind == MathpixErrorKind::TooLarge => "文件超过了 Mathpix 转格式的 10 MB 上限".to_string(),
+                e => said(&e),
+            })
+        }
+    };
+    let mut out = once(formats.to_vec()).await?;
+    let again = |c: &mathpix::Converted| matches!(&c.result, Err(EngineError::Mathpix(e)) if matches!(e.kind, MathpixErrorKind::Processing | MathpixErrorKind::Service | MathpixErrorKind::ResultMissing | MathpixErrorKind::Network));
+    let retry: Vec<Format> = formats.iter().copied().filter(|f| out.iter().any(|c| c.format == f.key() && again(c))).collect();
+    if !retry.is_empty() && !cancel.is_cancelled() {
+        tokio::time::sleep(RETRY_PAUSE).await;
+        if let Ok(second) = once(retry).await {
+            for c in second {
+                if let Some(slot) = out.iter_mut().find(|x| x.format == c.format) {
+                    *slot = c;
+                }
+            }
+        }
+    }
     Ok(formats
         .iter()
         .map(|f| {
@@ -2572,6 +2592,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_format_mathpix_fails_on_is_asked_once_more() {
+        let dir = crate::db::tests::temp_dir("pub2md-convert-again");
+        std::fs::write(dir.join("译文.mmd"), "正文。").unwrap();
+        let ok = |body: &[u8]| Ok(mathpix::Response { status: 200, body: body.to_vec(), retry_after: None });
+        let fake = Arc::new(mathpix::FakeTransport::scripted([
+            ok(br#"{"conversion_id":"c-1"}"#),
+            ok(br#"{"status":"completed","conversion_status":{"docx":{"status":"error"}}}"#),
+            ok(br#"{"conversion_id":"c-2"}"#),
+            ok(br#"{"status":"completed","conversion_status":{"docx":{"status":"completed"}}}"#),
+            ok(b"PK\x03\x04docx"),
+        ]));
+        let m = Mathpix::with(mathpix::Keys::new("id", "key"), mathpix::Options { transport: fake.clone(), ledger: mathpix::spend::Ledger::Off, ..mathpix::Options::default() });
+        let mut job = Job { formats: vec![Format::Docx], extracted_on: clock("%Y-%m-%d"), ..Default::default() };
+        let made = tauri::async_runtime::block_on(convert(&Report::none(), &dir, &mut job, &m, &["译文.mmd".to_string()], &Cancel::new()));
+        assert_eq!((made, job.convert_notes.len()), (vec!["译文.docx".to_string()], 0));
+        assert_eq!(fake.requests().iter().filter(|r| r.method == mathpix::Method::Post).count(), 2);
+    }
+
+    #[test]
     fn preview_inlines_the_images() {
         let dir = crate::db::tests::temp_dir("pub2md-preview");
         std::fs::create_dir_all(dir.join(ASSETS)).unwrap();
@@ -2607,6 +2646,36 @@ pub(crate) mod tests {
     ///   cargo test real_pub2md -- --ignored --nocapture
     /// Leaves the results and the work log in the folder (a temp one by default) and prints where, the requests,
     /// the time and each model's tokens (用量).
+    /// Mathpix's real service, each request printed (its path and how the answer starts; never the keys).
+    struct Logged(mathpix::UreqTransport);
+
+    impl mathpix::Transport for Logged {
+        fn send(&self, r: mathpix::Request<'_>) -> Result<mathpix::Response, mathpix::TransportError> {
+            let (method, path) = (r.method, r.path.to_string());
+            let out = self.0.send(r);
+            match &out {
+                Ok(a) => {
+                    // JSON without the account's ids; files by their size
+                    let shown = match serde_json::from_slice::<serde_json::Value>(&a.body) {
+                        Ok(mut v) => {
+                            if let Some(o) = v.as_object_mut() {
+                                o.retain(|k, _| !k.ends_with("_id") || k == "pdf_id" || k == "conversion_id");
+                            }
+                            crate::youzi::data::clip(&v.to_string(), 200)
+                        }
+                        Err(_) => format!("({} bytes)", a.body.len()),
+                    };
+                    eprintln!("[mathpix] {method:?} {path} → {} {shown}", a.status)
+                }
+                Err(e) => eprintln!("[mathpix] {method:?} {path} → {e:?}"),
+            }
+            out
+        }
+        fn is_simulated(&self) -> bool {
+            false
+        }
+    }
+
     #[test]
     #[ignore]
     fn real_pub2md() {
@@ -2618,9 +2687,11 @@ pub(crate) mod tests {
             let lines: Vec<String> = std::fs::read_to_string(f).expect("the Mathpix key file").lines().map(|l| l.trim().rsplit('=').next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect();
             mathpix::Keys::new(lines[0].clone(), lines[1].clone())
         });
-        // real uploads go into the ledger shared by every app (money really spent); no key file: the simulated one
+        // real uploads go into the ledger shared by every app (money really spent); no key file: the simulated one.
+        // POMELO_MATHPIX_LOG=1: each request's path and the start of its answer
+        let transport: Arc<dyn mathpix::Transport> = if std::env::var("POMELO_MATHPIX_LOG").as_deref() == Ok("1") { Arc::new(Logged(mathpix::UreqTransport::default())) } else { Arc::new(mathpix::UreqTransport::default()) };
         let mathpix = match keys {
-            Some(k) => Mathpix::with(k, mathpix::Options { app: "Pomelo（测试）".into(), ..mathpix::Options::default() }),
+            Some(k) => Mathpix::with(k, mathpix::Options { app: "Pomelo（测试）".into(), transport, ..mathpix::Options::default() }),
             None => Mathpix::with(mathpix::Keys::new("mock-id", "mock-key"), mathpix::Options { transport: Arc::new(mathpix::FakeTransport::echo()), ledger: mathpix::spend::Ledger::Off, ..mathpix::Options::default() }),
         };
         let api = |t: &Target| match t {
@@ -2676,7 +2747,8 @@ pub(crate) mod tests {
                 });
                 extract(&say, &folder, &mut job, Extraction { mathpix: mathpix.clone(), earlier, cancel: Cancel::new() }).await?;
                 if steps == Steps::Extract {
-                    return Ok(vec![]);
+                    // 另存为 the 原文 as the page does
+                    return Ok(if job.formats.is_empty() { vec![] } else { convert(&say, &folder, &mut job, &mathpix, &[ORIGINAL.to_string()], &Cancel::new()).await });
                 }
                 if kind != Kind::Word {
                     job.rendered = render(&say, &folder, &job, &Cancel::new()).await.unwrap_or(0);
@@ -2884,3 +2956,4 @@ pub(crate) mod tests {
         assert_eq!(terms_lines(&[Term { source: "Transformer".into(), target: "Transformer".into(), note: String::new() }, Term { source: "BLEU".into(), target: "BLEU 分数".into(), note: "指标".into() }], Some("the bleu score")), "- BLEU → BLEU 分数（指标）");
     }
 }
+

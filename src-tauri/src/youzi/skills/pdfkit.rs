@@ -389,6 +389,23 @@ mod tests {
         assert!(images.is_empty());
     }
 
+    /// pdf_find on engine-pdf's sample: 繁體 against 简体, a sentence across a line break, and a scanned page
+    /// (recognized on this Mac) all land on their physical pages.
+    #[test]
+    fn finds_traditional_across_lines_and_on_scans() {
+        let dir = crate::db::tests::temp_dir("pdfkit-find");
+        std::fs::write(dir.join("mixed.pdf"), engine_pdf::samples::Sample::Mixed.generate().unwrap()).unwrap();
+        let all = vec![Allowed { id: "样本.pdf".into(), path: dir.join("mixed.pdf"), artifact: Some(1), kb: None }];
+        let kit = toolkit(mathpix::Options { ledger: Ledger::Off, ..mathpix::Options::default() });
+        let host = Host { allowed: &all, keys: None, yes: false };
+        // (Vision reads page 5's 「北面的山脊」 as 「北面山脊」: a phrase it keeps)
+        for (query, page) in [("觀測站編號", 4), ("with the morning tide. The keeper records", 1), ("第一班列車", 5)] {
+            let out = call(&kit, "pdf_find", &json!({ "file": "样本.pdf", "query": query }), &host).unwrap();
+            let pages: Vec<i64> = out.data["hits"].as_array().unwrap().iter().filter_map(|h| h["location"]["page"].as_i64()).collect();
+            assert!(pages.contains(&page), "{query}: {pages:?}\n{}", out.text);
+        }
+    }
+
     #[test]
     fn mathpix_asks_by_the_engines_rule_and_no_sends_nothing() {
         let dir = crate::db::tests::temp_dir("pdfkit-mathpix");

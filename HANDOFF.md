@@ -4,10 +4,9 @@
 
 ## 现在（2026-11-28）
 
-- **正在做 1.2.0（接 engine-pdf）**，计划在 `docs/roadmap.md`「1.2.0」：Phase 1（换底层）、2（扫描件进知识库）、3（检索带页图）、4（柚子的 PDF 工具）做完，下一步 Phase 5（Pub2MD）。只在 Phase 6 收尾时装正式版；开发中的代码版本号已是 1.2.0。
-  - **engine-pdf 正在做 v0.8.0**（本机提交了 Mathpix 花钱的规矩和共用账本、`page_box`、工具层多导出几个类型；还没打 tag）。Pomelo 的 `src-tauri/Cargo.toml` 用 `[patch."https://github.com/elenskye/engine-pdf"]` 指本机的 `../../personal-engine-studio/engine-pdf`（`Cargo.lock` 里是 0.8.0）。Phase 5 再补 `mathpix::convert` 和旧任务续跑；Phase 6 打 tag `v0.8.0`、你推上去后，把依赖改回钉 `tag = "v0.8.0"`、删掉 `[patch]`。
+- **正在做 1.2.0（接 engine-pdf）**，计划在 `docs/roadmap.md`「1.2.0」：Phase 1–5 做完，Phase 6（收尾）做到一半：真跑做完（记录在 `~/Downloads/v1.2 验收/验收记录.md`），engine-pdf `v0.8.0` 已在本机打 tag、**等你推**；推完这边把依赖改回钉 `tag = "v0.8.0"`、删掉 `src-tauri/Cargo.toml` 里的 `[patch."https://github.com/elenskye/engine-pdf"]`（现在指本机的 `../../personal-engine-studio/engine-pdf`），再做升级测试、装正式版、写 Phase 6 的验收。开发中的代码版本号已是 1.2.0。
   - PDFium 静态库：`scripts/pdfium.sh` 从 engine-pdf 的 `local/pdfium/` 用 `cp -c` 克隆到 `src-tauri/vendor/pdfium/`（不进 Git），`pnpm check` / `app:dev` / `app:build` / `app:install` 先跑它；`.cargo/config.toml` 指过去。正式版二进制 29 MB → 35 MB，PDFium 的许可证随 App 在 `Resources/THIRD_PARTY.txt`（源在 `src-tauri/licenses/`）。
-  - Phase 1 的对照（59 份真实和样本 PDF，旧实现 vs 引擎）：文字 PDF 46/48 份分段逐字相同，差的 2 份（Arpino、Phoenix）全是补回的连字（443 处，`frst → first`、`e ects → effects`）；原页图 904 页宽高 ±1px 内，知网 2 份按 CropBox 变窄（预期）；有图的页、见字如面合成的页数、链接、目录、标题全同。乱码文字层不再当文字建索引（变成扫描件，Phase 2 去识别）。对照程序是 `youzi/pdf.rs` 末尾的 `compare`（`#[ignore]`）。
+  - Phase 1 的对照程序是 `youzi/pdf.rs` 末尾的 `compare`（`#[ignore]`，59 份真实和样本 PDF，旧实现 vs 引擎）。
 - **库和格式的版本**：`pomelo.db` 43、`youzi.db` 45（1.2 加了出处的 PDF 位置）、`search.db` 3、`ocr.db` 1（1.2 新加）、`janitor.db` 2、数据文件格式 43。
 - **正式版 1.1.5**（11-27 装）。rclone 1.76 用 Homebrew 装在这台 Mac 上（PikPak 要它；没装时「备份」页会说）。
 - **视觉方案** Pomelo `1.0.2`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画）。Design System「Pomelo 柚儿园」云端那份还是 1.0.1（1.0.2 多的 14 个小图标只在本地，你说要再发）。
@@ -19,9 +18,11 @@
 
 ## 等你做的
 
-1. **四个旧图标里的小点从来没显示过**（做 1.0.2 时发现：半径 0.9 以下的实心点画不出来）：「磁盘」`hard-drive` 的两个指示灯、`calendar-days`、「是什么」`circle-question-mark`、`message-circle-question`。它们是批过的，要改得开新名字重画，你定要不要改。
-2. **DevJanitor 的 SKILL**：你改过的那份里没有第 8 条「备份」，Agent 看备份时少了这一条的说明（1.1.3 又改了：只在硬盘上的都是归档、不提；不找硬盘上的重复）。想加：先复制你的，在 DevJanitor「设置 → 发给 Agent 的说明」点「恢复默认」看原文，再贴回你的、加上第 8 条。
-3. **在正式版里看 v1.0 的新东西**：
+1. **推 engine-pdf**：`main`（比 GitHub 多 2 个提交）和 tag `v0.8.0`。推完告诉我，我钉 tag、做升级测试、装 1.2.0 正式版。
+2. 在 Mathpix 后台看一眼 11-28 有没有「转格式」的扣费（引擎当它不收费、不记账；扣了要改成照规矩问）。
+3. **四个旧图标里的小点从来没显示过**（做 1.0.2 时发现：半径 0.9 以下的实心点画不出来）：「磁盘」`hard-drive` 的两个指示灯、`calendar-days`、「是什么」`circle-question-mark`、`message-circle-question`。它们是批过的，要改得开新名字重画，你定要不要改。
+4. **DevJanitor 的 SKILL**：你改过的那份里没有第 8 条「备份」，Agent 看备份时少了这一条的说明（1.1.3 又改了：只在硬盘上的都是归档、不提；不找硬盘上的重复）。想加：先复制你的，在 DevJanitor「设置 → 发给 Agent 的说明」点「恢复默认」看原文，再贴回你的、加上第 8 条。
+5. **在正式版里看 v1.0 的新东西**：
    - 见字如面：用输入法新写一篇（在标签下）、段落后回车接着写；翻几篇搬过来的（有图、公式和代码、折着的标题）；双指左滑一下只收一栏；正文右键看分层的菜单，选一段点「柚子链接…」；格式条「更多格式」里的「提示框」；提示框开头的图标和字在一条线上；窗口拉宽指一下「引用」「柚子链接」，落签贴着图标；导出 PDF 两种样式、Word、Markdown 各一次。
    - 柚子链接和玩物有志：念念不忘、见字如面里打 `[[`；正文右上羽毛开书架、拖一条笔记进去；书影游面板最下面「记一条」；五花八门「玩物有志」清单 ⋯ →「搬到玩物有志…」（完成 → 完成时间，常青算在玩、写进备注）。
    - 通知：打开柚儿园 15 秒内弹今天的（有才弹），点一条能打开它；「设置 → 通用 → 通知」一种一行。
@@ -29,15 +30,16 @@
    - 贴纸簿右上「＋ 模块」「＋ 分类」，自建模块右键「删除…」（试的话删完 ⌘Z）；柚子瓣念念不忘那片叶子周围没有方块；点顶栏「＋」再关掉贴纸簿，顶栏不被挤上去。
    - Atlas：玩物有志、自建模块、见字如面的两幕要新写一份年度总结才有（「立即运行」用你选的模型写一份到今天）。
    - 柚子 →「定时」→ 年度总结：「留对话」默认关，写完那个对话会删掉；想留就打开、保存。
-4. 钥匙串访问里「Pomelo OS 芝麻开门」：下次用主密码打开芝麻开门后只留最新的一项，其余手动删。
-5. 一网打尽里没显示全的网址填的是网站首页，要换成具体的页：Paint 里三个「课后挑战」（`appqm4zd22n4131.h5.xiaoeknow.com`）、《原创绘画全攻略》《通用板绘上手》（`appwtd0zghj7591.h5.xet.pomoho.com`）；API 里的「API keys」（`console.mathpix.com`）；Scholar 里的 ESS「Themes - Politics」（`ess.sikt.no/en/`）。
-6. Excel 原表的小瑕疵，需要时在 App 里改：「绘画大地图」在 3 门课里同时是第 0 节和第 1 节；有一节课名只有「加餐 -」；`7S_1` 和 `7S_2` 同名。
-7. 一步一步的分组名里以前打的 emoji（🖥️、📈 这些）还在名字里：想换成图标，在「编辑分组」里把 emoji 删掉，再点名字前那一格挑一个。
-8. 今日简报的提示词你在正式版里改过，不会自动更新：在「定时 → 今日简报」里把两条新规则加进去（笔记带日期、心情多了「一般」，原文见「恢复默认」），或者点「恢复默认」再改回你的说法。
+6. 钥匙串访问里「Pomelo OS 芝麻开门」：下次用主密码打开芝麻开门后只留最新的一项，其余手动删。
+7. 一网打尽里没显示全的网址填的是网站首页，要换成具体的页：Paint 里三个「课后挑战」（`appqm4zd22n4131.h5.xiaoeknow.com`）、《原创绘画全攻略》《通用板绘上手》（`appwtd0zghj7591.h5.xet.pomoho.com`）；API 里的「API keys」（`console.mathpix.com`）；Scholar 里的 ESS「Themes - Politics」（`ess.sikt.no/en/`）。
+8. Excel 原表的小瑕疵，需要时在 App 里改：「绘画大地图」在 3 门课里同时是第 0 节和第 1 节；有一节课名只有「加餐 -」；`7S_1` 和 `7S_2` 同名。
+9. 一步一步的分组名里以前打的 emoji（🖥️、📈 这些）还在名字里：想换成图标，在「编辑分组」里把 emoji 删掉，再点名字前那一格挑一个。
+10. 今日简报的提示词你在正式版里改过，不会自动更新：在「定时 → 今日简报」里把两条新规则加进去（笔记带日期、心情多了「一般」，原文见「恢复默认」），或者点「恢复默认」再改回你的说法。
 
 ## 要留意
 
-- **柚子的 PDF 工具箱**（1.2 Phase 4，`skills/pdfkit.rs`）：插件库多了 general-pdf-toolkit；读文件、查知识库不再读 PDF（按意思搜、列文件照旧）。Mathpix 照 engine-pdf 的花钱规矩：一次超过 $0.5、或所有接 engine-pdf 的 App 最近 24 小时合计超过 $5 才出「问我」卡片。共用账本是 `~/Library/Application Support/engine-pdf/mathpix-ledger.jsonl`（Peck、Pith 接进来后也记在这里）；开发版用开发数据目录里的 `mathpix-ledger-dev.jsonl`，模拟的服务不记账。Mathpix 的 Key 和 Pub2MD 共用。
+- **柚子的 PDF 工具箱**（1.2 Phase 4，`skills/pdfkit.rs`）：插件库多了 general-pdf-toolkit；读文件、查知识库不再读 PDF（按意思搜、列文件照旧）。Mathpix 照 engine-pdf 的花钱规矩：一次超过 $0.5、或所有接 engine-pdf 的 App 最近 24 小时合计超过 $5 才出「问我」卡片。共用账本是 `~/Library/Application Support/engine-pdf/mathpix-ledger.jsonl`（Peck、Pith 接进来后也记在这里；今天真跑的 $0.065 记成「Pomelo（测试）」）；开发版的在开发数据目录的 `ledgers/engine-pdf/` 下，模拟的服务不记账。Mathpix 的 Key 和 Pub2MD 共用。
+- **Pub2MD 换成引擎**（1.2 Phase 5）：上传一拿到就存进 `.pub2md/job.json`，停止、退出后继续不会再传；1.1 留下的半截任务（只有 `pdfId`）接着等、下载。过了花钱的门槛（100 页以上、没存页数的 Word、24 小时合计过 $5）停在「等你确认」，点「上传」才传，柚子也会冒一句。另存为偶尔某个格式转不出来（Mathpix 那边），失败的隔 15 秒自动再要一次；还不行就照旧记在工作日志里。远端的识别结果照旧不删（另存为要用它的图片链接）。
 
 - **知识库扫描件的本机识别**（1.2 Phase 2，`youzi/scans.rs`）：开发版、测试、模拟模式也用真的 Vision（在本机、不联网，不是模型）。启动 20 秒后 worker 开始，先把 1.2 之前只列名字的扫描件排进队列；「停下」只管那个文件夹、到下次启动为止。识别完的文件要等向量服务开着（或下次用知识库提问）才建索引。Vision 中文约一成错字，段落标「本机识别」。
 

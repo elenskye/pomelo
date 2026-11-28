@@ -2430,8 +2430,17 @@ pub(crate) mod tests {
                 Err(e) => return data::Answer { module: None, label: format!("PDF · {name} · 没成"), state: "failed", text: e, records: vec![] },
             };
             let file = args["file"].as_str().and_then(|f| pdfkit::resolve(&allowed, f).ok()).cloned();
-            let options = engine_pdf::mathpix::Options { ledger: engine_pdf::mathpix::spend::Ledger::Off, ..pdfkit::options(crate::youzi::Mode::Mock, dir) };
-            match pdfkit::call(&pdfkit::toolkit(options), name, &args, &pdfkit::Host { allowed: &allowed, keys: None, yes: true }) {
+            // POMELO_MATHPIX_KEY_FILE (real_pdf_toolkit): the real Mathpix, into the shared ledger, and what the spend
+            // rule asks about is answered no
+            let real = std::env::var("POMELO_MATHPIX_KEY_FILE").ok().map(|f| {
+                let lines: Vec<String> = std::fs::read_to_string(f).expect("the Mathpix key file").lines().map(|l| l.trim().rsplit('=').next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect();
+                (zeroize::Zeroizing::new(lines[0].clone()), zeroize::Zeroizing::new(lines[1].clone()))
+            });
+            let (options, yes) = match real {
+                Some(_) => (engine_pdf::mathpix::Options { app: "Pomelo（测试）".into(), ..engine_pdf::mathpix::Options::default() }, false),
+                None => (engine_pdf::mathpix::Options { ledger: engine_pdf::mathpix::spend::Ledger::Off, ..pdfkit::options(crate::youzi::Mode::Mock, dir) }, true),
+            };
+            match pdfkit::call(&pdfkit::toolkit(options), name, &args, &pdfkit::Host { allowed: &allowed, keys: real, yes }) {
                 Ok(out) => {
                     let (a, images) = pdfkit::answer(name, file.as_ref(), out, &mut self.sources, cloud, room, self.images.len(), budget);
                     self.looked += images.len();
@@ -3308,6 +3317,54 @@ pub(crate) mod tests {
                 println!("  [{round}] {} {} → {} ({})", call.name, call.arguments, a.label, a.state);
             }
             println!("--- answer (cites {:?})\n{}", cite::cited(&h.content, &h.sources.0), h.content.trim());
+        }
+    }
+
+    /// PDF 工具箱 with a real cloud model on engine-pdf's 10-page sample (text, scans on pages 2 and 5, blank pages, a
+    /// picture on 6, a formula on 8): a scan, 繁體 and a sentence across lines found, a page looked at, and Mathpix on
+    /// one page for real with POMELO_MATHPIX_KEY_FILE (the engine's spend rule; real uploads go into the shared ledger
+    /// as 「Pomelo（测试）」). Prints each call, the answer and the pages it cites.
+    ///   POMELO_CLOUD_KEY_FILE=… [POMELO_MATHPIX_KEY_FILE=…] [POMELO_PDF_CASE=scan,trad,lines,look,mathpix] cargo test real_pdf_toolkit -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_pdf_toolkit() {
+        let Some((target, window)) = cloud_target() else { return };
+        let dir = crate::db::tests::temp_dir("real-pdf-toolkit");
+        let bytes = engine_pdf::samples::Sample::Mixed.generate().unwrap();
+        let cases = [
+            ("scan", "样本里扫描的那页中文，早上几点有列车驶过北面的山脊？站里的时钟慢了几分钟？"),
+            ("trad", "樣本裡「觀測站編號」寫在哪一頁？編號是什麼？"),
+            ("lines", "英文里 “with the morning tide. The keeper records” 这句话在第几页？说的是什么？"),
+            ("look", "样本第 6 页是一张图，图上画的是什么？"),
+            ("mathpix", "样本第 8 页是公式，自带的文字读不准：用 Mathpix 识别第 8 页，把公式写出来。"),
+        ];
+        let pick = std::env::var("POMELO_PDF_CASE").unwrap_or_else(|_| "all".into());
+        for (case, q) in cases.into_iter().filter(|c| pick == "all" || pick.split(',').any(|p| p == c.0)) {
+            let here = dir.join(case);
+            let youzi = memory_db();
+            let a = files::tests::add(&youzi, &here, "样本.pdf", &bytes);
+            let sources = reading::sources(&youzi, &[], &[a], &[], &[]).unwrap();
+            let mut h = TestHost::new(crate::db::tests::memory_db(), data::Access::default());
+            h.target = target.clone();
+            h.materials = skills::files::materials(&sources);
+            h.youzi = Some(youzi);
+            h.files_dir = Some(here.join("files"));
+            let all = vec![skills::skill(skills::PDF).unwrap()];
+            let tools = skills::tools(&all);
+            let prompt = reading::prompt(q, &sources);
+            let request = Request { data: skills::instructions(&all, &[]), prompt: prompt.clone(), ..Request::default() };
+            let messages = request.messages_with(0, &prompt);
+            let cost = context::estimate(&serde_json::to_string(&tools).unwrap()) + TOOLS_OVERHEAD;
+            let used = context::PROMPT_OVERHEAD + messages.iter().map(|m| context::estimate(&m.content) + context::PER_MESSAGE).sum::<i64>();
+            let counter = Counter::for_target(&h.target);
+            let t = std::time::Instant::now();
+            let r = tauri::async_runtime::block_on(answer_with_lookups(&mut h, &tools, &[], q, cost, &counter, &request, messages, window, used));
+            println!("\n==================== [{case}] {q}  ({:.1}s, {} requests, {} images, {r:?})", t.elapsed().as_secs_f64(), h.requests.len(), h.images.len());
+            for (_, round, call, a) in h.recorded.borrow().iter() {
+                println!("  [{round}] {} {} → {} ({})", call.name, call.arguments, a.label, a.state);
+            }
+            let cited: Vec<String> = cite::cited(&h.content, &h.sources.0).iter().filter_map(|n| h.sources.0.iter().find(|s| s.n == *n)).map(|s| format!("[{}] {} (page {:?}, label {:?})", s.n, s.title, s.pdf_page, s.pdf_label)).collect();
+            println!("--- answer (cites {cited:?})\n{}", h.content.trim());
         }
     }
 
