@@ -47,15 +47,17 @@ pub struct Segment {
     pub ordinal: i64,
     pub page_start: Option<i64>,
     pub page_end: Option<i64>,
+    /// A Markdown section's heading; a page's note (a 知识库 PDF's 本机识别, scans.rs).
     pub heading: Option<String>,
     pub content: String,
 }
 
 impl Segment {
-    /// 第 3 页 · 第 3–4 页 · the heading · 第 2 段
+    /// 第 3 页 · 第 3 页 · 本机识别 · 第 3–4 页 · the heading · 第 2 段
     pub fn label(&self) -> String {
         match (self.page_start, self.page_end, &self.heading) {
             (Some(a), Some(b), _) if a != b => format!("第 {a}–{b} 页"),
+            (Some(a), _, Some(note)) if !note.is_empty() => format!("第 {a} 页 · {note}"),
             (Some(a), _, _) => format!("第 {a} 页"),
             (_, _, Some(h)) if !h.is_empty() => h.clone(),
             _ => format!("第 {} 段", self.ordinal + 1),
@@ -140,6 +142,22 @@ fn pictures_only(path: &Path) -> Option<Prepared> {
 /// A PDF without a text layer (a scan): the knowledge base lists it by name only, like an image.
 pub const SCANNED_PDF: &str = "PDF 没有可提取的文字，可能是扫描版；请先转换成带文字的 PDF";
 
+/// A file's bytes: a regular file (no folder, no symlink), at most 200 MB, not empty.
+pub fn checked_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|_| "文件不存在或没有读取权限".to_string())?;
+    if !meta.file_type().is_file() {
+        return Err("请选择普通文件，不能添加文件夹或符号链接".into());
+    }
+    if meta.len() > MAX_BYTES {
+        return Err("文件太大了（超过 200 MB）".into());
+    }
+    let data = std::fs::read(path).map_err(|e| format!("无法读取文件：{e}"))?;
+    if data.is_empty() {
+        return Err("文件是空的，没有可以读取的文字".into());
+    }
+    Ok(data)
+}
+
 /// `whole_tables`: every row of a big table as text (知识库 files are searched, not sent whole; 查表
 /// only exists for attachments).
 pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
@@ -158,17 +176,7 @@ pub fn read(path: &Path, whole_tables: bool) -> Result<Prepared, String> {
         "csv" => "text/csv",
         e => super::office::image_type(e).ok_or("只支持文本、Markdown、PDF、Word、PowerPoint、Excel、CSV 和图片")?,
     };
-    let meta = std::fs::symlink_metadata(path).map_err(|_| "文件不存在或没有读取权限".to_string())?;
-    if !meta.file_type().is_file() {
-        return Err("请选择普通文件，不能添加文件夹或符号链接".into());
-    }
-    if meta.len() > MAX_BYTES {
-        return Err("文件太大了（超过 200 MB）".into());
-    }
-    let data = std::fs::read(path).map_err(|e| format!("无法读取文件：{e}"))?;
-    if data.is_empty() {
-        return Err("文件是空的，没有可以读取的文字".into());
-    }
+    let data = checked_bytes(path)?;
     let mut row_count = None;
     let (page_count, segments) = if is_image(media_type) {
         (None, vec![])

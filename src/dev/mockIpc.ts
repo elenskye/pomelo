@@ -2642,7 +2642,21 @@ type Emit = (e: Record<string, unknown>) => void;
 type PSource = { n: number; kind: "record" | "passage" | "web"; module: string | null; recordKind: string | null; id: number | null; parent: number | null; day: string | null; artifactId: number | null; segment: number | null; title: string; detail: string | null; content: string; url?: string; kbSource?: number | null; kbPath?: string | null };
 // ---- v0.4.5 阶段 7: 知识库 (knowledge.rs): libraries of folders (made-up files) and saved pages; a build takes ~2.5 s ----
 type PKbDoc = { path: string; text: string; error?: string; image?: boolean };
-type PKbSource = { id: number; libraryId: number; kind: "folder" | "web"; path: string | null; artifactId: number | null; cloud: boolean; docs: PKbDoc[]; buildUntil: number | null };
+type PKbSource = { id: number; libraryId: number; kind: "folder" | "web"; path: string | null; artifactId: number | null; cloud: boolean; docs: PKbDoc[]; buildUntil: number | null; ocr?: { from: number; stoppedAt: number | null } };
+/** 1.2 本机识别 (scans.rs): after a build the scans wait for Vision (1.5 s), then 12 pages at 1.5 s; 停下 freezes it. */
+const P_OCR = { prepare: 1500, page: 1500, pages: 12 };
+const pKbOcr = (src: PKbSource) => {
+  const scans = src.docs.filter((d) => d.error === P_SCANNED);
+  if (!pKbBuilt(src) || !scans.length) return null;
+  src.ocr ??= { from: Math.max(src.buildUntil!, Date.now()), stoppedAt: null };
+  const t = (src.ocr.stoppedAt ?? Date.now()) - src.ocr.from;
+  const page = Math.max(0, Math.floor((t - P_OCR.prepare) / P_OCR.page));
+  if (page >= P_OCR.pages) {
+    for (const d of scans) Object.assign(d, { error: undefined, text: "（本机识别）超市收据：牛奶 12.5 元，面包 8 元，合计 20.5 元。" });
+    return null;
+  }
+  return { path: scans[0].path, page, total: P_OCR.pages, preparing: t < P_OCR.prepare, paused: src.ocr.stoppedAt != null, waiting: scans.length };
+};
 const P_SCANNED = "PDF 没有可提取的文字，可能是扫描版；请先转换成带文字的 PDF";
 const P_KB_FILES: PKbDoc[] = [
   { path: "租房/看房记录.md", text: "看了三套房：采光最好的是朝南那套，押一付三，月租 4500，通勤 35 分钟。" },
@@ -2663,6 +2677,7 @@ const pKbLibs = () => [...pkb.libraries].sort((a, b) => a.sortOrder - b.sortOrde
 const pKbName = (src: PKbSource) => (src.kind === "folder" ? (src.path ?? "").split("/").pop()! : (pky.artifacts.find((a) => a.id === src.artifactId)?.name ?? "网页"));
 const pKbBuilt = (src: PKbSource) => src.buildUntil != null && Date.now() >= src.buildUntil;
 const pKbView = (src: PKbSource) => {
+  const ocr = pKbOcr(src);
   const art = pky.artifacts.find((a) => a.id === src.artifactId);
   const ok = src.docs.filter((d) => !d.error && !d.image);
   const building = src.buildUntil != null && Date.now() < src.buildUntil;
@@ -2671,6 +2686,7 @@ const pKbView = (src: PKbSource) => {
     id: src.id, libraryId: src.libraryId, kind: src.kind, name: pKbName(src), path: src.path, url: art?.url ?? null, artifactId: src.artifactId, deleted: !!art?.deleted, cloud: src.cloud,
     files: src.docs.filter((d) => !d.image && !(pKbBuilt(src) && d.error === P_SCANNED)).length, images: src.docs.filter((d) => d.image).length, scans: pKbBuilt(src) ? src.docs.filter((d) => d.error === P_SCANNED).length : 0, ready: done, pending: building || pKbBuilt(src) ? 0 : ok.length, failed: pKbBuilt(src) ? src.docs.filter((d) => d.error && d.error !== P_SCANNED).map((d) => ({ path: d.path, error: d.error! })) : [],
     building, missing: !!art?.deleted, truncated: false,
+    waiting: ocr?.waiting ?? 0, recognizing: ocr && !ocr.paused ? { path: ocr.path, page: ocr.page, total: ocr.total } : null, preparing: !!ocr?.preparing && !ocr.paused, paused: !!ocr?.paused,
   };
 };
 const pKbBuild = (src: PKbSource) => (src.buildUntil = Date.now() + 2500);
@@ -5447,6 +5463,16 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
   youzi_kb_source_remove: (a) => ((pkb.sources = pkb.sources.filter((x) => x.id !== a.id)), null),
   youzi_kb_source_cloud: (a) => ((pkb.sources.find((x) => x.id === a.id)!.cloud = !!a.on), null),
   youzi_kb_source_rebuild: (a) => (pKbBuild(pkb.sources.find((x) => x.id === a.id)!), null),
+  youzi_kb_scans_pause: (a) => {
+    const src = pkb.sources.find((x) => x.id === a.id);
+    if (src?.ocr && src.ocr.stoppedAt == null) src.ocr.stoppedAt = Date.now();
+    return null;
+  },
+  youzi_kb_scans_resume: (a) => {
+    const src = pkb.sources.find((x) => x.id === a.id);
+    if (src?.ocr?.stoppedAt != null) Object.assign(src.ocr, { from: src.ocr.from + Date.now() - src.ocr.stoppedAt, stoppedAt: null });
+    return null;
+  },
   youzi_kb_scan: () => null,
   youzi_kb_open: () => null,
   youzi_memories: () => [...pky.memories].reverse(),

@@ -797,6 +797,12 @@ fn cv_resumes_are_told_apart_by_series_and_version_and_material_is_names_only() 
     assert!(!text.is_empty());
     assert!(files::text(&dir, &dir.join("material/证件照.jpg")).unwrap_err().contains("只能读 cv/"));
     assert!(files::text(&dir, &dir.join("cv/en/notes.txt")).is_err());
+    // a scanned PDF resume: its page recognized on this Mac
+    std::fs::write(dir.join("cv/en/scanned-resume.pdf"), crate::youzi::scans::tests::scanned_pdf(&[""])).unwrap();
+    let scanned = files::text(&dir, &dir.join("cv/en/scanned-resume.pdf")).unwrap();
+    let first = engine_pdf::samples::Sample::TextEn.source_text(1).unwrap().split_whitespace().take(3).collect::<Vec<_>>().join(" ");
+    assert!(scanned.contains(&first), "{scanned:?}");
+    std::fs::remove_file(dir.join("cv/en/scanned-resume.pdf")).unwrap();
 
     // 柚子 through 「Seeker 资料」: the list (material by name only) and one resume's text
     let c = memory_db();

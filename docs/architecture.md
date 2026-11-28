@@ -19,7 +19,7 @@
 
 ```
 界面（React） ──┐
-               ├── 调用命令 ──▶ Rust 命令层 ──▶ SQLite（pomelo.db · youzi.db · search.db · janitor.db）
+               ├── 调用命令 ──▶ Rust 命令层 ──▶ SQLite（pomelo.db · youzi.db · search.db · ocr.db · janitor.db）
 柚子的 Agent ───┘              业务规则、校验都在这里
                                │
                                └─ 柚子服务 ──▶ 本地模型 8080 · 向量 8081 · 重排 8082 · 六家云端
@@ -37,7 +37,7 @@
 | `~/Library/Application Support/Pomelo OS/` | 真实数据：`pomelo.db`（生活数据和设置）、`youzi.db`（柚子）、`backups/` | **要** |
 | 同上的 `attachments/` | 附件（原文件的副本） | 不进每日备份，交给 Time Machine 这类工具 |
 | 同上的 `youzi-files/` | 柚子的附件和项目资料（另存一份，不和上一行共用） | 不用 |
-| 同上的 `search.db`、`janitor.db` | 搜索索引、DevJanitor 上次扫描的结果 | 不备份、不导出，删了重建 |
+| 同上的 `search.db`、`ocr.db`、`janitor.db` | 搜索索引、知识库扫描件识别出的字、DevJanitor 上次扫描的结果 | 不备份、不导出，删了重建 |
 | 同上的 `icons/` | 一网打尽的网站图标（一个网站一个文件） | 不备份、不导出，删了重新取 |
 | 数据目录的 `rclone/` | 备份用的 rclone 配置（PikPak 的登录），rclone 自己加密，密码只在钥匙串 | 不备份，丢了重新登录 |
 | `~/Library/Application Support/Pomelo OS Dev/` | 开发用的测试数据；`janitor-sandbox/` 是 DevJanitor 的「假 Mac」，`janitor-volumes/` 是备份用的假移动硬盘，`janitor-cloud/` 是假的 PikPak | 不用 |
@@ -58,7 +58,7 @@
 
 - 只新增编号脚本（`src-tauri/migrations/`，规则见 `CLAUDE.md`「数据规则」）；`youzi.db` 有自己的一串和版本号。
 - 启动时要升级就**先自动备份**再逐个执行；数据库比 App 新（装回了旧版）时拒绝打开。
-- `search.db`、`janitor.db` 只有版本号、不升级：对不上就删了重建。
+- `search.db`、`ocr.db`、`janitor.db` 只有版本号、不升级：对不上就删了重建。
 
 ## 备份与导入导出
 
@@ -199,7 +199,7 @@ App 本体约 25 MB，运行时约 130 MB 内存；`pomelo.db` 很小（十年�
 - **插件库**（`skills/`）：开着、Key 齐了、并且「自己决定用」或这一条点名要它才给；点名的在系统消息里写明必须先用（不用 `tool_choice: required`，有的服务不认）。查到的都编号成出处。
 - **定时**（`schedule.rs`）：后台循环每 30 秒看一次到点的，和发消息走同一条路，只是只读、系统消息说我不在；要用的本地模型没开就先启动，跑完只停自己启动的。
 - **今日简报**（`brief.rs`）、**年度总结**（`yearly.rs`）：Rust 先用 `data.rs` 读好要用的再发请求。简报一次请求，不占对话的生成位置；年度总结放不下就先按月整理要点（没变的月份直接用）再写全年。「定时」里的流程图是 `yearly.rs` 的 `FLOW`，改流程要一起改。
-- **知识库**（`knowledge.rs`）：`youzi.db` 只记库、来源、开关这类选择（能撤销）；文件清单、分段和向量在 `search.db`（后台扫描只写它，不挡 ⌘Z）。不监听文件，定时比大小和修改时间；文字没变的段落沿用旧向量。「打开文件」先查路径没出文件夹。
+- **知识库**（`knowledge.rs`）：`youzi.db` 只记库、来源、开关这类选择（能撤销）；文件清单、分段和向量在 `search.db`（后台扫描只写它，不挡 ⌘Z）。不监听文件，定时比大小和修改时间；文字没变的段落沿用旧向量。「打开文件」先查路径没出文件夹。扫描件（`scans.rs`）：建立索引时 PDF 先用自己的字和已经识别好的页，等识别的页进 `ocr.db` 的队列；后台一个 worker 一份一份、一页一页用 engine-pdf 的 Vision 识别，每页存一次（停下、退出都不白做），一份做完把它标成待更新，再建一次时只给新段落算向量。识别结果按文件内容存，和 `search.db` 分开：搜索索引重建不用重新识别。
 - **助手**（`assistants/`）：设置和上一次的结果在偏好 `assistant.<名字>`，不进撤销和导出。Translator（`translate.rs`）长文按段切块依次流式翻，后一块带上前一块译文的结尾；在后台任务里跑，页面轮询。呦呦漫游的按中文起草（`site.rs`）用同一套，结果只在内存。
 - **Pub2MD**（`assistants/pub2md/`，流程在 `job.rs` 开头）：直连 Mathpix，每步存进 `.pub2md/job.json`（「继续」从那里接着做）；简繁用 ferrous-opencc；预览用 mathpix-markdown-it，放进不能跑脚本的 iframe；模拟版用 PDFKit 读出的文字代替 Mathpix。
 - **Work**（`work.rs`、`word.rs`、`skills/toolbox.rs`）：.docx 自己生成。改文件只改 Rust 列出的文件，提议逐段查过放进卡片（记下指纹），写入时文件变了就不写；Word 只改变了的字，其余原样，改不了的拒绝。**Excel 工具箱**（`excel.rs`）：不加新库（zip + quick-xml；calamine 只读），只重写动到的表，挪不好的拒绝，写入时要求打开时全部重算；读大文件在锁外。

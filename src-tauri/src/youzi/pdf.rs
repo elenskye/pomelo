@@ -49,9 +49,19 @@ pub fn text_of(content: Content) -> String {
 
 /// Text of every page, from its text layer only.
 pub fn pages(data: &[u8]) -> Result<Vec<String>, String> {
+    read_texts(data, Ocr::Off)
+}
+
+/// Text of every page, a scanned page recognized on this Mac (slow: off the main thread; the first in a
+/// process waits for Vision to load).
+pub fn pages_recognized(data: &[u8]) -> Result<Vec<String>, String> {
+    read_texts(data, Ocr::auto())
+}
+
+fn read_texts(data: &[u8], ocr: Ocr) -> Result<Vec<String>, String> {
     let doc = open(data)?;
     let all: Vec<u32> = (1..=doc.page_count()).collect();
-    let opts = ReadOptions { ocr: Ocr::Off, render: None, ..Default::default() };
+    let opts = ReadOptions { ocr, render: None, ..Default::default() };
     let read = engine_pdf::read(&doc, &all, &opts, &Cancel::new()).map_err(error_text)?;
     Ok(read.into_iter().map(|p| text_of(p.content)).collect())
 }

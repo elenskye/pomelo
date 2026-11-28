@@ -49,7 +49,7 @@
 
 ## 数据在哪里
 
-- 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`youzi.db` 柚子，`attachments/` 笔记、文章、任务、目标的附件，`youzi-files/` 柚子的附件和资料，`backups/` 每日备份；`search.db` 搜索索引、`janitor.db` DevJanitor 的扫描结果、`icons/` 网站图标，都是算出来的，删了自动重建）
+- 真实数据：`~/Library/Application Support/Pomelo OS/`（`pomelo.db` 生活数据，`youzi.db` 柚子，`attachments/` 笔记、文章、任务、目标的附件，`youzi-files/` 柚子的附件和资料，`backups/` 每日备份；`search.db` 搜索索引、`ocr.db` 知识库扫描件识别出的字、`janitor.db` DevJanitor 的扫描结果、`icons/` 网站图标，都是算出来的，删了自动重建）
 - 本地模型：`~/Documents/LLM`（模型、清单 `config/models.json`、脚本 `scripts/llmctl.sh`）
 - 开发用的测试数据：`~/Library/Application Support/Pomelo OS Dev/`
 - 界面原型：`prototype/ui-r4/index.html`（只在本机，不进 Git）

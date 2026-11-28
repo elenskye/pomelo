@@ -1,6 +1,6 @@
 # 数据结构
 
-`pomelo.db` 50 张表、版本 43；柚子的 `youzi.db` 56 张表、版本 44；搜索索引 `search.db` 版本 3；DevJanitor 的 `janitor.db` 版本 2；数据文件格式 43。这里只写有哪些表、存什么、怎么关联，需求里没写的计算规则、数据文件格式和版本记录；功能和看得到的规则见 `requirements.md`，存放、备份、撤销、加密的做法见 `architecture.md`，细则在各 Rust 文件开头（模块的在 `modules/<模块>.rs`）。
+`pomelo.db` 50 张表、版本 43；柚子的 `youzi.db` 56 张表、版本 44；搜索索引 `search.db` 版本 3；知识库扫描件的识别结果 `ocr.db` 版本 1；DevJanitor 的 `janitor.db` 版本 2；数据文件格式 43。这里只写有哪些表、存什么、怎么关联，需求里没写的计算规则、数据文件格式和版本记录；功能和看得到的规则见 `requirements.md`，存放、备份、撤销、加密的做法见 `architecture.md`，细则在各 Rust 文件开头（模块的在 `modules/<模块>.rs`）。
 
 ## 通用约定
 
@@ -255,8 +255,15 @@ DevJanitor 的偏好见「DevJanitor 的扫描结果」。
 
 - **docs** · **docs_fts**：每条能搜的记录一行（各模块的记录、建出来的模块的条目和课节、柚子的对话标题和每条消息）和按字找的全文索引。**vectors**：记录分段的向量（按向量模型分开，8 位整数）。
 - **file_indexes** · **file_chunks**：项目资料的分段和向量（只留「建立索引」的资料的当前版本）。**memory_vectors**：记忆的向量。
-- **kb_docs** · **kb_chunks**：知识库文件夹里每个能读的文件（网页算一个）和它的分段、向量。**待更新** = 文件变了，或不是当前向量模型算的；读不了的（含没有文字的 PDF）记下原因，文件再变才重试。
+- **kb_docs** · **kb_chunks**：知识库文件夹里每个能读的文件（网页算一个）和它的分段、向量。**待更新** = 文件变了，或不是当前向量模型算的；读不了的记下原因，文件再变才重试。扫描件（PDF 的页都在等本机识别、或什么都没认出）也记在 `error`（`scans.rs` 的 `WAITING`、`NOTHING`），按扫描件算、不算读不了；`sha256` 是分段从什么来的：PDF 用了识别出的页时是「文件的 sha256+ocr页数」。本机识别的页，分段的 `label` 是「第 3 页 · 本机识别」。
 - **meta**：`rules` 文字规则的版本、`model` 当前向量模型、`rebuild` 正在重建。
+
+## 知识库扫描件的识别结果（ocr.db）
+
+从知识库文件夹里的 PDF 算出来的（`youzi/scans.rs` 开头），不进备份、导出和撤销，版本不对就删掉重建（扫描件再识别一遍）。
+
+- **pages**：某份文件（按内容的 sha256）第几页识别出的字（空 = 没认出字）。文件改了内容就是另一份，旧的留着不碍事。
+- **queue**：还要识别的知识库文件（来源编号、文件夹里的相对路径、排队时的 sha256，按 `seq` 先后）。识别完、文件不见了或改了就移出。
 
 ## DevJanitor 的扫描结果（janitor.db）
 
@@ -326,4 +333,4 @@ JSON，格式版本 43（`transfer.rs` 的 `FORMAT_VERSION`）。旧格式都能
 | 43 | `schedules.keep_chat` |
 | 44 | `backup_runs` |
 
-**search.db**：1 搜索索引；2 知识库 `kb_docs`、`kb_chunks`；3 柚子的记录改记 `youzi`。**janitor.db**：1 扫描结果；2 `backup_seen`。**数据文件**（各版本见 `transfer.rs` 开头）：40 分组和目标带 `icon`；41 `articles`；42 `games`；43 定时任务带 `keepChat`。
+**search.db**：1 搜索索引；2 知识库 `kb_docs`、`kb_chunks`；3 柚子的记录改记 `youzi`。**ocr.db**：1 识别出的页和队列。**janitor.db**：1 扫描结果；2 `backup_seen`。**数据文件**（各版本见 `transfer.rs` 开头）：40 分组和目标带 `icon`；41 `articles`；42 `games`；43 定时任务带 `keepChat`。

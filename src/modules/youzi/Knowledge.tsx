@@ -356,6 +356,9 @@ function status(s: KbSource): { text: string; bad?: boolean } {
   const parts = [s.kind === "folder" ? `${s.files} 个文件` : s.pending ? "还没建立索引" : "已建立索引"];
   if (s.images > 0) parts.push(`${s.images} 张图片`);
   if (s.scans > 0) parts.push(`${s.scans} 个扫描件`);
+  if (s.recognizing) parts.push(s.preparing ? "准备识别" : `识别中 第 ${s.recognizing.page}/${s.recognizing.total} 页`);
+  const queued = s.waiting - (s.recognizing ? 1 : 0);
+  if (queued > 0) parts.push(s.paused ? `${queued} 份停下了识别` : s.recognizing ? `还有 ${queued} 份` : `${queued} 份等着识别`);
   if (s.kind === "folder" && s.pending > 0) parts.push(`${s.pending} 个待更新`);
   if (s.truncated) parts.push("文件太多，只读了前 2000 个");
   return { text: parts.join(" · ") };
@@ -382,6 +385,11 @@ function SourceRow(props: { source: KbSource; act: (p: Promise<unknown>) => void
           <p className="truncate text-xs text-muted-foreground">{s.kind === "folder" ? home(s.path ?? "") : (s.url ?? "")}</p>
           <p className={`text-xs ${st.bad ? "text-destructive" : "text-muted-foreground"}`}>
             {st.text}
+            {(s.recognizing || s.waiting > 0) && (
+              <button type="button" onClick={() => props.act(s.paused ? youziApi.kbScansResume(s.id) : youziApi.kbScansPause(s.id))} className="ml-1 hover:text-foreground hover:underline">
+                · {s.paused ? "接着识别" : "停下"}
+              </button>
+            )}
             {s.failed.length > 0 && (
               <button type="button" aria-expanded={showFailed} onClick={() => setShowFailed(!showFailed)} className="ml-1 inline-flex items-center gap-0.5 text-destructive hover:underline">
                 · {s.failed.length} 个读不了 <ChevronRight size={11} className={`transition-transform duration-150 ${showFailed ? "rotate-90" : ""}`} />

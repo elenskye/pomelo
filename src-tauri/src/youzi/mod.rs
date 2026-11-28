@@ -39,6 +39,7 @@ pub mod pdf;
 pub mod provider;
 pub mod reading;
 pub mod rerank;
+pub mod scans;
 pub mod schedule;
 pub mod skills;
 pub mod runtime;
@@ -127,6 +128,8 @@ pub struct Youzi {
     pub index_jobs: index::Jobs,
     /// 知识库 scans and builds (knowledge.rs).
     pub kb: knowledge::Jobs,
+    /// 知识库 PDFs' pages recognized on this Mac, in the background (scans.rs; ocr.db).
+    pub scans: scans::Scans,
     /// 助手 at work (assistants/).
     pub assistants: assistants::State,
     app: OnceLock<AppHandle>,
@@ -164,6 +167,7 @@ impl Youzi {
             runs: chat::Runs::default(),
             index_jobs: index::Jobs::default(),
             kb: knowledge::Jobs::default(),
+            scans: scans::Scans::new(&paths.root),
             assistants: assistants::State::default(),
             app: OnceLock::new(),
         }
@@ -317,7 +321,7 @@ pub struct Status {
 /// Every 5 minutes it also takes the day's backups if missing: Pomelo may stay hidden in the menu
 /// bar for days, so launch / window focus alone can no longer be relied on. Every 30 s (first 5 s
 /// after launch) it runs the 定时任务 that are due (schedule.rs) and posts the day's 系统通知 once their time comes
-/// (notify.rs), and every 10 minutes it compares the
+/// (notify.rs), 20 s in it starts 本机识别 of the 知识库 scans (scans.rs), and every 10 minutes it compares the
 /// 知识库 folders with their index (knowledge.rs).
 pub fn spawn_monitor(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -342,6 +346,9 @@ pub fn spawn_monitor(app: AppHandle) {
             }
             if tick % 30 == 15 {
                 crate::notify::check(&app);
+            }
+            if tick == 20 && st.youzi.is_open() {
+                scans::wake(&app);
             }
             if tick % knowledge::SCAN_EVERY == knowledge::SCAN_EVERY - 1 && st.youzi.is_open() && !crate::search::indexer::quiet() {
                 let app = app.clone();

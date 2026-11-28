@@ -302,8 +302,13 @@ export type KbSource = {
   cloud: boolean;
   files: number;
   images: number;
-  /** PDFs without text (scans): by name only, like images. */
+  /** PDFs without text of their own yet (scans): by name only, like images, until recognized. */
   scans: number;
+  /** Files queued for 本机识别; the one being recognized now (`page` of `total` done), Vision loading, 停下. */
+  waiting: number;
+  recognizing: { path: string; page: number; total: number } | null;
+  preparing: boolean;
+  paused: boolean;
   ready: number;
   pending: number;
   failed: KbFailed[];
@@ -532,6 +537,8 @@ export const youziApi = {
   kbSourceRemove: (id: number) => invoke<void>("youzi_kb_source_remove", { id }),
   kbSourceCloud: (id: number, on: boolean) => invoke<void>("youzi_kb_source_cloud", { id, on }),
   kbSourceRebuild: (id: number) => invoke<void>("youzi_kb_source_rebuild", { id }),
+  kbScansPause: (id: number) => invoke<void>("youzi_kb_scans_pause", { id }),
+  kbScansResume: (id: number) => invoke<void>("youzi_kb_scans_resume", { id }),
   kbScan: () => invoke<void>("youzi_kb_scan"),
   /** A folder's file (path "" = the folder), or a web page in the browser. */
   kbOpen: (sourceId: number, path: string) => invoke<void>("youzi_kb_open", { sourceId, path }),

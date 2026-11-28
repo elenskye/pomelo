@@ -11,11 +11,13 @@
 //!   mtime last seen, what its passages were made from) and its passages with int8 vectors
 //!   (`kb_chunks`). `scan` (opening 柚子, every 10 minutes, after adding) compares size and mtime:
 //!   new and changed files become pending, gone ones go. Building a pending file reads it again
-//!   (files::read: the formats attachments take, whole tables), cuts it like project files
-//!   (index::pieces) and embeds what changed — passages whose text is the same keep their vectors;
-//!   the same bytes only mark it current. Images are listed but never built (no text: `PENDING`
-//!   leaves them out); a PDF without text (a scan, `files::SCANNED_PDF`) is listed by name the same way; a cloud model looks at one with `view=look` (`look`: shrunk like an attached
-//!   image, sent in a user message after the tool results — chat.rs).
+//!   (`read_file`: files::read, the formats attachments take, whole tables; a PDF with what 本机识别 has
+//!   done so far, scans.rs), cuts it like project files (index::pieces) and embeds what changed —
+//!   passages whose text is the same keep their vectors; the same bytes only mark it current. Images
+//!   are listed but never built (no text: `PENDING` leaves them out); a PDF whose pages all wait for
+//!   本机识别, or where nothing was recognized, is listed by name the same way (`is_scan`); a cloud model
+//!   looks at one with `view=look` (`look`: shrunk like an attached image, sent in a user message after
+//!   the tool results — chat.rs).
 //! - When (the user's choice): pending files are built while 8081 runs anyway (after a scan), or
 //!   when a question searches them (`prepare`, which starts 8081); adding a source and 重新建立 start
 //!   it too. One build at a time: a running one takes new requests (`Inner::want`), and a question
@@ -35,6 +37,7 @@ use super::embed::{self, EmbedError, Input};
 use super::files::{self, Segment};
 use super::index::{self, Passage, Piece};
 use super::runtime::{Runtime, ServiceState, Svc};
+use super::scans::{self, Scans};
 use crate::modules::common::{err, Tx};
 use crate::search::vectors;
 use crate::AppState;
@@ -52,9 +55,9 @@ const READABLE: &[&str] = &["txt", "text", "md", "markdown", "pdf", "docx", "doc
 /// Listed (and looked at by a cloud model), never built.
 const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"];
 
-/// A scanned PDF: it was read and had no text.
+/// A scanned PDF: no passages of its own (waiting for 本机识别, or nothing recognized).
 pub fn is_scan(error: Option<&str>) -> bool {
-    error == Some(files::SCANNED_PDF)
+    scans::is_scan(error)
 }
 
 /// A folder's image (by its extension).
@@ -603,17 +606,54 @@ pub fn unchanged(search: &Connection, doc: &Doc) -> Result<(), String> {
 /// What a doc reads as: its name, sha256 and text.
 pub type Read = (String, String, Vec<Segment>);
 
-/// A folder's file (or a web page's copy) as text. Err: it can't be read (kept as its error).
-pub fn read_doc(youzi: &Connection, src: &Source, doc: &Doc) -> Result<Read, String> {
+/// A folder's file (or a web page's copy) as text, and how many of a PDF's pages still wait for 本机识别.
+/// Err: it can't be read (kept as its error).
+pub fn read_doc(youzi: &Connection, scans: &Scans, src: &Source, doc: &Doc) -> Result<(Read, usize), String> {
     if src.kind == "web" {
         let id = src.artifact_id.ok_or("网页的副本不见了")?;
         files::usable(youzi, id)?;
         let sha: String = youzi.query_row("SELECT sha256 FROM artifacts WHERE id = ?1", [id], |r| r.get(0)).map_err(err)?;
-        return Ok((src.name.clone(), sha, files::segments(youzi, id)?));
+        return Ok(((src.name.clone(), sha, files::segments(youzi, id)?), 0));
     }
-    let full = file_path(src, &doc.path)?;
-    let p = files::read(&full, true)?;
-    Ok((p.name, p.sha256, p.segments))
+    read_file(scans, src, &doc.path)
+}
+
+/// A folder's file as the knowledge base reads it (slow: off the main thread): a PDF with the pages 本机识别
+/// has done so far (its `sha` is what the passages are made from, scans.rs), and how many still wait.
+pub fn read_file(scans: &Scans, src: &Source, rel: &str) -> Result<(Read, usize), String> {
+    let full = file_path(src, rel)?;
+    if !scans::is_pdf(rel) {
+        let p = files::read(&full, true)?;
+        return Ok(((p.name, p.sha256, p.segments), 0));
+    }
+    let data = files::checked_bytes(&full)?;
+    let name = full.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let t = scans.read(&data)?;
+    Ok(((name, t.made_from, t.segments), t.waiting))
+}
+
+/// Before embedding a library PDF: its waiting pages go into the queue (or it leaves it); the error to keep
+/// when there is nothing to embed yet.
+pub fn before_embed(scans: &Scans, src: &Source, doc: &Doc, read: &Read, waiting: usize) -> Result<Option<&'static str>, String> {
+    if src.kind != "folder" || !scans::is_pdf(&doc.path) {
+        return Ok(None);
+    }
+    let sha = read.1.split('+').next().unwrap_or(&read.1);
+    if waiting > 0 {
+        scans.queue(src.id, &doc.path, Some(sha))?;
+    } else {
+        scans.unqueue(src.id, &doc.path)?;
+    }
+    Ok(read.2.is_empty().then_some(if waiting > 0 { scans::WAITING } else { scans::NOTHING }))
+}
+
+/// After saving a PDF that was read while pages waited (`queued`: still is): if 本机识别 finished it
+/// meanwhile, build it again.
+pub fn after_save(search: &Connection, doc: &Doc, waiting: usize, queued: bool) -> Result<(), String> {
+    if waiting > 0 && !queued {
+        search.execute("UPDATE kb_docs SET fresh = 0 WHERE id = ?1", [doc.id]).map_err(err)?;
+    }
+    Ok(())
 }
 
 /// A file of a folder source, refusing anything that would leave the folder.
@@ -680,29 +720,36 @@ pub async fn embed_doc(rt: &Runtime, model: &ServiceModel, name: &str, segs: &[S
 /// Builds one pending doc. Err: the embedding service failed (the build stops).
 async fn build_doc(app: &AppHandle, model: &ServiceModel, doc: &Doc, src: &Source) -> Result<(), String> {
     let st = app.state::<AppState>();
+    let scans = &st.youzi.scans;
     let read = if src.kind == "web" {
-        st.youzi.with_db(|c| Ok(read_doc(c, src, doc)))?
+        st.youzi.with_db(|c| Ok(read_doc(c, scans, src, doc)))?
     } else {
-        let (s, d) = (src.clone(), doc.clone());
-        tauri::async_runtime::spawn_blocking(move || {
-            let full = file_path(&s, &d.path)?;
-            files::read(&full, true).map(|p| (p.name, p.sha256, p.segments))
-        })
-        .await
-        .map_err(|e| e.to_string())?
+        let (sc, s, d) = (scans.clone(), src.clone(), doc.clone());
+        tauri::async_runtime::spawn_blocking(move || read_file(&sc, &s, &d.path)).await.map_err(|e| e.to_string())?
     };
-    let (name, sha, segs) = match read {
+    let (read, waiting) = match read {
         Ok(r) => r,
         Err(e) => return st.search.with_db(|c| fail(c, doc, &e)),
     };
-    if doc.error.is_none() && doc.sha256.as_deref() == Some(sha.as_str()) && doc.model.as_deref() == Some(model.key.as_str()) {
-        return st.search.with_db(|c| unchanged(c, doc));
+    let scan = before_embed(scans, src, doc, &read, waiting)?;
+    if waiting > 0 {
+        scans::wake(app);
     }
-    let old = if doc.model.as_deref() == Some(model.key.as_str()) { st.search.with_db(|c| old_vectors(c, doc.id))? } else { HashMap::new() };
-    match embed_doc(&st.youzi.runtime, model, &name, &segs, &old).await? {
-        Ok(made) => st.search.with_db(|c| save(c, doc, &sha, &model.key, &made)),
-        Err(e) => st.search.with_db(|c| fail(c, doc, &e)),
-    }
+    let (name, sha, segs) = read;
+    let r = if let Some(e) = scan {
+        st.search.with_db(|c| fail(c, doc, e))
+    } else if doc.error.is_none() && doc.sha256.as_deref() == Some(sha.as_str()) && doc.model.as_deref() == Some(model.key.as_str()) {
+        st.search.with_db(|c| unchanged(c, doc))
+    } else {
+        let old = if doc.model.as_deref() == Some(model.key.as_str()) { st.search.with_db(|c| old_vectors(c, doc.id))? } else { HashMap::new() };
+        match embed_doc(&st.youzi.runtime, model, &name, &segs, &old).await? {
+            Ok(made) => st.search.with_db(|c| save(c, doc, &sha, &model.key, &made)),
+            Err(e) => st.search.with_db(|c| fail(c, doc, &e)),
+        }
+    };
+    r?;
+    let queued = waiting > 0 && scans.is_queued(doc.source_id, &doc.path)?;
+    st.search.with_db(|c| after_save(c, doc, waiting, queued))
 }
 
 /// Builds the pending docs of `sources` until none is left. `start`: may start 8081; otherwise only
@@ -845,6 +892,7 @@ fn scan_now(app: &AppHandle) -> Result<Vec<i64>, String> {
     let srcs = st.youzi.with_db(|c| sources(c, None))?;
     let keep: HashSet<i64> = srcs.iter().filter(|s| !s.deleted).map(|s| s.id).collect();
     st.search.with_db(|c| keep_sources(c, &keep))?;
+    st.youzi.scans.keep_sources(&keep)?;
     let (mut missing, mut truncated) = (HashSet::new(), HashSet::new());
     for s in srcs.iter().filter(|s| !s.deleted) {
         match (&s.path, s.artifact_id) {
@@ -1053,7 +1101,7 @@ pub fn files_view(search: &Connection, scope: &Scope, args: &serde_json::Value, 
         } else if is_image(&l.path) {
             "图片，用 look 看".to_string()
         } else if is_scan(l.error.as_deref()) {
-            "扫描件，没有文字，用 look 按页看".to_string()
+            if l.error.as_deref() == Some(scans::WAITING) { "扫描件，还在本机识别，先用 look 按页看".to_string() } else { "扫描件，没认出字，用 look 按页看".to_string() }
         } else {
             Path::new(&l.path).extension().map_or("文件".into(), |e| e.to_string_lossy().to_uppercase())
         };
@@ -1090,7 +1138,7 @@ pub fn pick<'a>(all: &'a [Listed], file: &str) -> Result<&'a Listed, String> {
 }
 
 /// The file's text, fresh: a folder's file from disk (whole tables), a web page from its copy.
-pub fn whole(youzi: &Connection, l: &Listed) -> Result<Read, String> {
+pub fn whole(youzi: &Connection, scans: &Scans, l: &Listed) -> Result<Read, String> {
     if let Some(e) = &l.error {
         return Err(format!("这个文件读不了：{e}"));
     }
@@ -1099,8 +1147,7 @@ pub fn whole(youzi: &Connection, l: &Listed) -> Result<Read, String> {
         files::usable(youzi, id)?;
         return Ok((l.source.name.clone(), String::new(), files::segments(youzi, id)?));
     }
-    let p = files::read(&file_path(&l.source, &l.path)?, true)?;
-    Ok((p.name, p.sha256, p.segments))
+    Ok(read_file(scans, &l.source, &l.path)?.0)
 }
 
 /// `view=outline` / `read` / `find` over a file read whole; what is read is numbered as 知识库 passages
@@ -1140,12 +1187,12 @@ async fn browse(app: &AppHandle, scope: &Scope, sources: &mut super::cite::Sourc
         return browse_failed(&format!("《{}》", l.shown), "这是图片，没有文字：用 view=look 看");
     }
     let read = if l.source.kind == "web" {
-        st.youzi.with_db(|c| Ok(whole(c, &l)))
+        st.youzi.with_db(|c| Ok(whole(c, &st.youzi.scans, &l)))
     } else {
-        let one = l.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let p = files::read(&file_path(&one.source, &one.path)?, true)?;
-            Ok::<Read, String>((p.name, p.sha256, p.segments))
+        let (one, sc) = (l.clone(), st.youzi.scans.clone());
+        tauri::async_runtime::spawn_blocking(move || match read_file(&sc, &one.source, &one.path)? {
+            ((_, _, segs), waiting) if segs.is_empty() && waiting > 0 => Err(scans::WAITING.to_string()),
+            (read, _) => Ok::<Read, String>(read),
         })
         .await
         .map_err(|e| e.to_string())
@@ -1295,6 +1342,11 @@ pub struct SourceView {
     /// The folder can't be found / it has more than MAX_FILES files (the last scan).
     pub missing: bool,
     pub truncated: bool,
+    /// 本机识别 (scans.rs): files queued, the one being recognized now, Vision loading, 停下.
+    pub waiting: i64,
+    pub recognizing: Option<scans::Now>,
+    pub preparing: bool,
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1315,11 +1367,11 @@ pub struct Overview {
 
 pub fn source_view(search: &Connection, s: Source, model: &str) -> Result<SourceView, String> {
     let (images, list): (Vec<Doc>, Vec<Doc>) = docs(search, s.id)?.into_iter().partition(|d| is_image(&d.path));
-    let (scans, list): (Vec<Doc>, Vec<Doc>) = list.into_iter().partition(|d| d.fresh && is_scan(d.error.as_deref()));
+    let (scanned, list): (Vec<Doc>, Vec<Doc>) = list.into_iter().partition(|d| d.fresh && is_scan(d.error.as_deref()));
     let ready = list.iter().filter(|d| d.error.is_none() && d.model.as_deref() == Some(model)).count() as i64;
     let pending = list.iter().filter(|d| !d.fresh || (d.error.is_none() && d.model.as_deref() != Some(model))).count() as i64;
     let failed = list.iter().filter_map(|d| d.error.clone().map(|error| Failed { path: d.path.clone(), error })).collect();
-    Ok(SourceView { files: list.len() as i64, images: images.len() as i64, scans: scans.len() as i64, ready, pending, failed, building: false, missing: false, truncated: false, source: s })
+    Ok(SourceView { files: list.len() as i64, images: images.len() as i64, scans: scanned.len() as i64, ready, pending, failed, building: false, missing: false, truncated: false, waiting: 0, recognizing: None, preparing: false, paused: false, source: s })
 }
 
 fn overview(app: &AppHandle) -> Result<Overview, String> {
@@ -1329,6 +1381,7 @@ fn overview(app: &AppHandle) -> Result<Overview, String> {
     let g = st.youzi.kb.lock();
     let (current, missing, truncated, error) = (g.current, g.missing.clone(), g.truncated.clone(), g.error.clone());
     drop(g);
+    let ocr = st.youzi.scans.view()?;
     let mut out = vec![];
     for l in libs {
         let mut views = vec![];
@@ -1337,6 +1390,9 @@ fn overview(app: &AppHandle) -> Result<Overview, String> {
             v.building = current == Some(s.id);
             v.missing = missing.contains(&s.id) || s.deleted;
             v.truncated = truncated.contains(&s.id);
+            if let Some(o) = ocr.get(&s.id) {
+                (v.waiting, v.recognizing, v.preparing, v.paused) = (o.waiting, o.now.clone(), o.preparing, o.paused);
+            }
             views.push(v);
         }
         out.push(LibraryView { id: l.id, name: l.name, sources: views });
@@ -1408,6 +1464,19 @@ pub fn youzi_kb_source_rebuild(app: AppHandle, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// 停下 a source's 本机识别 (until 接着识别 or the next launch).
+#[tauri::command]
+pub fn youzi_kb_scans_pause(app: AppHandle, id: i64) {
+    app.state::<AppState>().youzi.scans.pause(id);
+}
+
+/// 接着识别.
+#[tauri::command]
+pub fn youzi_kb_scans_resume(app: AppHandle, id: i64) {
+    app.state::<AppState>().youzi.scans.resume(id);
+    scans::wake(&app);
+}
+
 /// Opening 柚子 (and the monitor every 10 minutes).
 #[tauri::command]
 pub fn youzi_kb_scan(app: AppHandle) {
@@ -1461,25 +1530,35 @@ pub mod tests {
     /// Builds every pending doc of `source` the way `drain` does; (passages embedded, passages whose
     /// vector was kept).
     pub async fn build_source(youzi: &Connection, search: &Connection, source: i64, rt: &Runtime, model: &ServiceModel) -> (usize, usize) {
+        build_with(youzi, search, &scans::tests::memory(), source, rt, model).await
+    }
+
+    pub async fn build_with(youzi: &Connection, search: &Connection, scans: &Scans, source: i64, rt: &Runtime, model: &ServiceModel) -> (usize, usize) {
         let src = super::source(youzi, source).unwrap();
         let (mut embedded, mut kept) = (0, 0);
         while let Some(doc) = next_pending(search, &[source], &model.key).unwrap() {
-            match read_doc(youzi, &src, &doc) {
+            match read_doc(youzi, scans, &src, &doc) {
                 Err(e) => fail(search, &doc, &e).unwrap(),
-                Ok((name, sha, segs)) => {
-                    if doc.error.is_none() && doc.sha256.as_deref() == Some(sha.as_str()) && doc.model.as_deref() == Some(model.key.as_str()) {
+                Ok((read, waiting)) => {
+                    let scan = before_embed(scans, &src, &doc, &read, waiting).unwrap();
+                    let (name, sha, segs) = read;
+                    if let Some(e) = scan {
+                        fail(search, &doc, e).unwrap();
+                    } else if doc.error.is_none() && doc.sha256.as_deref() == Some(sha.as_str()) && doc.model.as_deref() == Some(model.key.as_str()) {
                         unchanged(search, &doc).unwrap();
-                        continue;
-                    }
-                    let old = if doc.model.as_deref() == Some(model.key.as_str()) { old_vectors(search, doc.id).unwrap() } else { HashMap::new() };
-                    match embed_doc(rt, model, &name, &segs, &old).await.unwrap() {
-                        Ok(made) => {
-                            let reused = made.iter().filter(|m| old.contains_key(&(m.label.clone(), m.content.clone()))).count();
-                            (embedded, kept) = (embedded + made.len() - reused, kept + reused);
-                            save(search, &doc, &sha, &model.key, &made).unwrap()
+                    } else {
+                        let old = if doc.model.as_deref() == Some(model.key.as_str()) { old_vectors(search, doc.id).unwrap() } else { HashMap::new() };
+                        match embed_doc(rt, model, &name, &segs, &old).await.unwrap() {
+                            Ok(made) => {
+                                let reused = made.iter().filter(|m| old.contains_key(&(m.label.clone(), m.content.clone()))).count();
+                                (embedded, kept) = (embedded + made.len() - reused, kept + reused);
+                                save(search, &doc, &sha, &model.key, &made).unwrap()
+                            }
+                            Err(e) => fail(search, &doc, &e).unwrap(),
                         }
-                        Err(e) => fail(search, &doc, &e).unwrap(),
                     }
+                    let queued = waiting > 0 && scans.is_queued(doc.source_id, &doc.path).unwrap();
+                    after_save(search, &doc, waiting, queued).unwrap();
                 }
             }
         }
@@ -1627,13 +1706,72 @@ pub mod tests {
         let l = pick(&all, "租房/合同/租房合同.md").unwrap();
         // outline, read (cited as 知识库 passages: the citation opens the file), find
         let mut sources = crate::youzi::cite::Sources::default();
-        let o = whole_view(l, whole(&c, l).unwrap(), &mut sources, &serde_json::json!({ "view": "outline" }), 4000);
+        let o = whole_view(l, whole(&c, &super::scans::tests::memory(), l).unwrap(), &mut sources, &serde_json::json!({ "view": "outline" }), 4000);
         assert!(o.text.contains("第 4 段 · 第4条：押金在退房后七天内退还"), "{}", o.text);
-        let r = whole_view(l, whole(&c, l).unwrap(), &mut sources, &serde_json::json!({ "view": "read", "from": 4 }), 4000);
+        let r = whole_view(l, whole(&c, &super::scans::tests::memory(), l).unwrap(), &mut sources, &serde_json::json!({ "view": "read", "from": 4 }), 4000);
         assert!(r.text.starts_with("【[1] 租房合同.md · 第4条】") && r.label == "知识库 · 读《租房合同.md》第 4 段", "{r:?}");
         assert_eq!((sources.0[0].kb_source, sources.0[0].kb_path.as_deref()), (Some(src), Some("合同/租房合同.md")));
-        let f = whole_view(l, whole(&c, l).unwrap(), &mut sources, &serde_json::json!({ "view": "find", "keyword": "押金" }), 4000);
+        let f = whole_view(l, whole(&c, &super::scans::tests::memory(), l).unwrap(), &mut sources, &serde_json::json!({ "view": "find", "keyword": "押金" }), 4000);
         assert!(f.text.contains("找到 1 段") && f.label.contains("在《租房合同.md》里找「押金」"), "{f:?}");
+    }
+
+    #[test]
+    fn scans_are_recognized_in_the_background_then_built_again() {
+        let c = memory_db();
+        let s = crate::search::store::tests::memory_db();
+        let sc = scans::tests::memory();
+        let dir = crate::db::tests::temp_dir("kb-scans");
+        let root = dir.join("资料");
+        std::fs::create_dir_all(&root).unwrap();
+        let words = "A page of text long enough to stand for the whole page.";
+        std::fs::write(root.join("扫描.pdf"), scans::tests::scanned_pdf(&["", ""])).unwrap();
+        std::fs::write(root.join("论文.pdf"), scans::tests::scanned_pdf(&[words, words, words, ""])).unwrap();
+        std::fs::write(root.join("旧扫描.pdf"), scans::tests::scanned_pdf(&[""])).unwrap();
+        let lib = create_library(&c, "生活").unwrap();
+        let f = add_folder(&c, lib, &root, &dir.join("data")).unwrap();
+        scan_one(&c, &s, f);
+        let (rt, model) = mock_rt();
+        let build = || tauri::async_runtime::block_on(build_with(&c, &s, &sc, f, &rt, &model));
+        let labels = |path: &str| -> Vec<String> {
+            let mut st = s.prepare("SELECT k.label FROM kb_chunks k JOIN kb_docs d ON d.id = k.doc_id WHERE d.path = ?1 ORDER BY k.ordinal").unwrap();
+            st.query_map([path], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        };
+        build();
+        // the scan waits (a scan by name, no passages); the paper has its text pages; both queued
+        let list = docs(&s, f).unwrap();
+        let doc = |p: &str| list.iter().find(|d| d.path == p).unwrap().clone();
+        assert_eq!(doc("扫描.pdf").error.as_deref(), Some(scans::WAITING));
+        assert!(doc("论文.pdf").error.is_none());
+        assert_eq!(labels("论文.pdf"), ["第 1 页", "第 2 页", "第 3 页"]);
+        assert!(sc.is_queued(f, "扫描.pdf").unwrap() && sc.is_queued(f, "论文.pdf").unwrap());
+        // one seen before 1.2 (listed by name) joins the queue
+        s.execute("UPDATE kb_docs SET error = ?1 WHERE path = '旧扫描.pdf'", [files::SCANNED_PDF]).unwrap();
+        sc.unqueue(f, "旧扫描.pdf").unwrap();
+        assert_eq!(scans::adopt(&s, &sc).unwrap(), 1);
+        assert!(sc.is_queued(f, "旧扫描.pdf").unwrap());
+        let v = source_view(&s, source(&c, f).unwrap(), &model.key).unwrap();
+        assert_eq!((v.files, v.scans, v.ready), (1, 2, 1));
+        // the worker, a file at a time (the old scan reads nothing), each built again
+        let fake = |_: &engine_pdf::Document, page: u32, _: &engine_pdf::Cancel| Ok::<_, String>(format!("Recognized words of page {page}"));
+        let nothing = |_: &engine_pdf::Document, _: u32, _: &engine_pdf::Cancel| Ok::<_, String>(String::new());
+        while let Some(next) = sc.with_db(|q| q.query_row("SELECT path FROM queue ORDER BY seq LIMIT 1", [], |r| r.get::<_, String>(0)).optional().map_err(err)).unwrap() {
+            let ocr: &dyn Fn(&engine_pdf::Document, u32, &engine_pdf::Cancel) -> Result<String, String> = if next == "旧扫描.pdf" { &nothing } else { &fake };
+            let (source, path) = scans::tests::run_one(&sc, &root, ocr).unwrap();
+            scans::build_again(&s, source, &path).unwrap();
+        }
+        build();
+        assert_eq!(labels("扫描.pdf"), ["第 1 页 · 本机识别", "第 2 页 · 本机识别"]);
+        assert_eq!(labels("论文.pdf"), ["第 1 页", "第 2 页", "第 3 页", "第 4 页 · 本机识别"]);
+        let list = docs(&s, f).unwrap();
+        assert_eq!(list.iter().find(|d| d.path == "旧扫描.pdf").unwrap().error.as_deref(), Some(scans::NOTHING));
+        assert!(next_pending(&s, &[f], &model.key).unwrap().is_none());
+        let v = source_view(&s, source(&c, f).unwrap(), &model.key).unwrap();
+        assert_eq!((v.files, v.scans, v.ready), (2, 1, 2));
+        let hits = similar(&s, &[f], &model.key, &embed::mock_vector("Recognized words of page 2"), 20, -1.0).unwrap();
+        assert!(hits.iter().any(|h| h.path == "扫描.pdf" && h.label == "第 2 页 · 本机识别" && h.content.contains("page 2")));
+        // reading it whole uses what was recognized
+        let l = listed(&s, &Scope { libraries: vec!["生活".into()], sources: vec![(source(&c, f).unwrap(), "生活".into())], skipped: vec![] }).unwrap().into_iter().find(|l| l.path == "扫描.pdf").unwrap();
+        assert_eq!(whole(&c, &sc, &l).unwrap().2.len(), 2);
     }
 
     #[test]

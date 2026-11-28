@@ -178,7 +178,8 @@ pub fn in_cv(root: &Path, path: &Path) -> Result<String, String> {
     Ok(p.to_string_lossy().into_owned())
 }
 
-/// The text of one resume under `root`/cv/ (paragraphs or pages, blank lines between).
+/// The text of one resume under `root`/cv/ (paragraphs or pages, blank lines between; a scanned PDF page recognized on
+/// this Mac).
 pub fn text(root: &Path, path: &Path) -> Result<String, String> {
     let cv = std::fs::canonicalize(root.join("cv")).map_err(|_| "Seeker 文件夹里没有 cv/".to_string())?;
     let p = std::fs::canonicalize(path).map_err(|_| "找不到这份简历".to_string())?;
@@ -188,7 +189,7 @@ pub fn text(root: &Path, path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(&p).map_err(|e| format!("读不了：{e}"))?;
     match p.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
         Some("docx") => Ok(crate::youzi::word::read_docx(&bytes)?.items.iter().map(|i| i.text.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n")),
-        Some("pdf") => Ok(crate::youzi::pdf::pages(&bytes)?.join("\n\n")),
+        Some("pdf") => Ok(crate::youzi::pdf::pages_recognized(&bytes)?.join("\n\n")),
         _ => Err("只能读 Word（.docx）和 PDF".into()),
     }
 }
