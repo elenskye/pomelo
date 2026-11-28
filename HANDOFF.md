@@ -4,11 +4,11 @@
 
 ## 现在（2026-11-28）
 
-- **正在做 1.2.0（接 engine-pdf）**，计划在 `docs/roadmap.md`「1.2.0」：Phase 1–5 做完，Phase 6（收尾）做到一半：真跑做完（记录在 `~/Downloads/v1.2 验收/验收记录.md`），engine-pdf `v0.8.0` 已在本机打 tag、**等你推**；推完这边把依赖改回钉 `tag = "v0.8.0"`、删掉 `src-tauri/Cargo.toml` 里的 `[patch."https://github.com/elenskye/engine-pdf"]`（现在指本机的 `../../personal-engine-studio/engine-pdf`），再做升级测试、装正式版、写 Phase 6 的验收。开发中的代码版本号已是 1.2.0。
+- **1.2.0 做完**（接 engine-pdf `v0.8.0`，做了什么见 `docs/roadmap.md`「已完成的版本」）。真跑的记录在 `~/Downloads/v1.2 验收/`（`验收记录.md`，看完整个文件夹能删）。
   - PDFium 静态库：`scripts/pdfium.sh` 从 engine-pdf 的 `local/pdfium/` 用 `cp -c` 克隆到 `src-tauri/vendor/pdfium/`（不进 Git），`pnpm check` / `app:dev` / `app:build` / `app:install` 先跑它；`.cargo/config.toml` 指过去。正式版二进制 29 MB → 35 MB，PDFium 的许可证随 App 在 `Resources/THIRD_PARTY.txt`（源在 `src-tauri/licenses/`）。
   - Phase 1 的对照程序是 `youzi/pdf.rs` 末尾的 `compare`（`#[ignore]`，59 份真实和样本 PDF，旧实现 vs 引擎）。
 - **库和格式的版本**：`pomelo.db` 43、`youzi.db` 45（1.2 加了出处的 PDF 位置）、`search.db` 3、`ocr.db` 1（1.2 新加）、`janitor.db` 2、数据文件格式 43。
-- **正式版 1.1.5**（11-27 装）。rclone 1.76 用 Homebrew 装在这台 Mac 上（PikPak 要它；没装时「备份」页会说）。
+- **正式版 1.2.0**（11-28 装）。rclone 1.76 用 Homebrew 装在这台 Mac 上（PikPak 要它；没装时「备份」页会说）。
 - **视觉方案** Pomelo `1.0.2`（Atlas 的设计 Tabloid 1.1.1，1.0.x 做的照 1.0.3 画）。Design System「Pomelo 柚儿园」云端那份还是 1.0.1（1.0.2 多的 14 个小图标只在本地，你说要再发）。
 - **visual-atelier**：那边还有它自己的会话（照它的 `ROADMAP.md` 做）。这边对 Atelier 有全部权限：Pomelo 那一块和 Atelier 本体都能直接改、发版、提交，只有改别的项目的方案、给 Atelier 加新功能先问；用到前先读它的 `CLAUDE.md`（见 `CLAUDE.md`「visual-atelier」）。visual-atelier 要 Pomelo 接的改动，那边写进 `docs/atelier-sync.md`（用时再建，做完删）。
 
@@ -18,7 +18,7 @@
 
 ## 等你做的
 
-1. **推 engine-pdf**：`main`（比 GitHub 多 2 个提交）和 tag `v0.8.0`。推完告诉我，我钉 tag、做升级测试、装 1.2.0 正式版。
+1. **在正式版里试 1.2**：带一份 PDF 问柚子，点出处看那一页（找到的字画出来）；知识库里的扫描件开 App 20 秒后自己识别，文件夹那一行写着第几页；Pub2MD 放一份 100 页以上的会停在「等你确认」。
 2. 在 Mathpix 后台看一眼 11-28 有没有「转格式」的扣费（引擎当它不收费、不记账；扣了要改成照规矩问）。
 3. **四个旧图标里的小点从来没显示过**（做 1.0.2 时发现：半径 0.9 以下的实心点画不出来）：「磁盘」`hard-drive` 的两个指示灯、`calendar-days`、「是什么」`circle-question-mark`、`message-circle-question`。它们是批过的，要改得开新名字重画，你定要不要改。
 4. **DevJanitor 的 SKILL**：你改过的那份里没有第 8 条「备份」，Agent 看备份时少了这一条的说明（1.1.3 又改了：只在硬盘上的都是归档、不提；不找硬盘上的重复）。想加：先复制你的，在 DevJanitor「设置 → 发给 Agent 的说明」点「恢复默认」看原文，再贴回你的、加上第 8 条。

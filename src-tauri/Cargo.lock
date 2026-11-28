@@ -1267,6 +1267,7 @@ dependencies = [
 [[package]]
 name = "engine-pdf"
 version = "0.8.0"
+source = "git+https://github.com/elenskye/engine-pdf?tag=v0.8.0#4505188147748ad6a4ebccb71e84c2f5ee717a60"
 dependencies = [
  "engine-core",
  "log",
