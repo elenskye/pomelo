@@ -1307,17 +1307,17 @@ impl AppHost<'_> {
                 Err(e) => return failed(e.to_string()),
             };
             // the engine's spend rule: asked when it says so (a card that waits for me)
-            let why = options.ledger.approval(prepared.quote().map(|q| q.usd));
-            let yes = match (why, prepared.quote()) {
-                (None, _) => true,
-                (Some(why), Some(quote)) => {
-                    let q = pdfkit::ask_question(file.as_ref().map_or("PDF", |f| f.id.as_str()), quote, &why.to_string());
+            let why = prepared.why().copied();
+            let yes = match (prepared.needs_confirm(), prepared.quote()) {
+                (false, _) => true,
+                (true, Some(quote)) => {
+                    let q = pdfkit::ask_question(file.as_ref().map_or("PDF", |f| f.id.as_str()), quote, &why.map(|w| w.to_string()).unwrap_or_default());
                     match self.ask_questions(&[q]).await {
                         Ok(answer) => pdfkit::said_yes(&answer),
                         Err(e) => return failed(e),
                     }
                 }
-                (Some(_), None) => false,
+                (true, None) => false,
             };
             if !yes {
                 return data::Answer { module: None, label: "PDF · Mathpix · 你没同意".into(), state: "failed", text: "用户没同意，没有上传，一个请求都没发。别再试这一次的 Mathpix，用 pdf_read 读。".into(), records: vec![] };

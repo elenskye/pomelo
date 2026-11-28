@@ -61,7 +61,7 @@ pub fn options(mode: Mode, data: &Path) -> mathpix::Options {
         Mode::Mock => mathpix::Options {
             app: "Pomelo（开发版）".into(),
             transport: std::sync::Arc::new(mathpix::FakeTransport::echo()),
-            ledger: Ledger::At(data.join("mathpix-ledger-dev.jsonl")),
+            ledger: Ledger::At(data.join("ledgers")),
             ..mathpix::Options::default()
         },
     }
@@ -179,7 +179,7 @@ pub fn prepare(kit: &Toolkit<mathpix::Options>, name: &str, args: &Value, host: 
 
 pub fn run_prepared(kit: &Toolkit<mathpix::Options>, prepared: Prepared, host: &Host) -> Result<Output, ToolError> {
     let (cancel, prices) = (Cancel::new(), Prices::default());
-    kit.run(prepared, &host.ctx(&cancel, &prices))
+    kit.run(if host.yes { prepared.approve() } else { prepared }, &host.ctx(&cancel, &prices))
 }
 
 /// What a failed call tells the model (and the 「查了」 entry).
@@ -387,28 +387,32 @@ mod tests {
         let dir = crate::db::tests::temp_dir("pdfkit-mathpix");
         let all = allowed(&dir);
         let mut options = options(Mode::Mock, &dir);
-        options.ledger = Ledger::At(dir.join("ledger.jsonl"));
-        let ledger = options.ledger.clone();
+        options.ledger = Ledger::At(dir.to_path_buf());
+        let book = options.book();
         let kit = toolkit(options);
         let keys = Some((Zeroizing::new("id".to_string()), Zeroizing::new("key".to_string())));
         let host = Host { allowed: &all, keys: keys.clone(), yes: false };
         let args = json!({ "file": "合同.pdf", "pages": [2] });
         // $0.005: no question, it runs (simulated: nothing recorded)
         let prepared = prepare(&kit, MATHPIX_RUN, &args, &host).unwrap();
-        let usd = prepared.quote().unwrap().usd;
-        assert!(ledger.approval(Some(usd)).is_none());
+        assert!(!prepared.needs_confirm() && prepared.why().is_none());
         let out = run_prepared(&kit, prepared, &host).unwrap();
+        assert!(book.entries(std::time::UNIX_EPOCH).is_empty());
         let mut sources = Sources::default();
         let (a, _) = answer(MATHPIX_RUN, resolve(&all, "合同.pdf").ok(), out, &mut sources, true, 8, 0, 4000);
         assert!(a.label.starts_with("PDF · Mathpix 识别《合同.pdf》1 页"), "{}", a.label);
         // the last day near $5 (every app): asked; 否 → denied, nothing sent
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        ledger.record(&mathpix::spend::Entry { at: now, app: "Peck".into(), service: "Mathpix".into(), pages: 1000, usd: 4.999 }).unwrap();
+        book.record(&mathpix::spend::Entry { at: now, app: "Peck".into(), service: "Mathpix".into(), unit: "page".into(), units: 1000.0, usd: 4.999, estimated: false }).unwrap();
         let prepared = prepare(&kit, MATHPIX_RUN, &args, &host).unwrap();
-        let why = ledger.approval(Some(prepared.quote().unwrap().usd)).unwrap();
+        assert!(prepared.needs_confirm());
+        let why = prepared.why().copied().unwrap();
         let q = ask_question("合同.pdf", prepared.quote().unwrap(), &why.to_string());
         assert!(q.question.contains("最近 24 小时已花"), "{}", q.question);
-        assert_eq!(run_prepared(&kit, prepared, &host).unwrap_err().kind, "denied");
+        assert_eq!(run_prepared(&kit, prepared.clone(), &host).unwrap_err().kind, "denied");
+        // 是 → approved and run
+        let yes = Host { allowed: &all, keys, yes: true };
+        assert!(run_prepared(&kit, prepared, &yes).is_ok());
         assert!(said_yes("我的回答：\n送 Mathpix …？\n→ 是") && !said_yes("我的回答：\n送 Mathpix …？\n→ 否"));
     }
 }
