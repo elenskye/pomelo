@@ -9,15 +9,18 @@
 //!   results, the work log and, while it isn't done, a hidden `.pub2md` with what 继续 needs.
 //! - Settings and the last 10 documents live in youzi.db `preferences` (`assistant.pub2md`); never undone,
 //!   never exported. One document at a time; files added meanwhile wait in a queue (in memory).
-//! - The Mathpix App ID and App Key live in the keychain (mathpix.rs), filled in on the page.
+//! - Mathpix is engine-pdf's (its client, spend rule and ledger shared by every app; job.rs `Mathpix`). The App ID
+//!   and App Key live in the keychain (skills/pdfkit.rs accounts, also the PDF 工具箱's), filled in on the page,
+//!   never in a job file, the log or an error.
 //! - 另存为 (Word, PDF, LaTeX, HTML): the results are sent to Mathpix's converter at the end (job.rs
 //!   `convert`); their images by Mathpix's own links (kept 30 days after 提取).
+//! - A document the spend rule stopped before its upload is 「confirm」 in the recent list; 「上传」
+//!   (`youzi_pub2md_resume` with `upload`) goes on and uploads.
 //! - 预览: an output's text with its images inlined (data: links) for the page's mathpix-markdown-it.
 
 pub mod check;
 pub mod chunk;
 pub mod job;
-pub mod mathpix;
 pub mod mmd;
 pub mod prompts;
 pub mod script;
@@ -25,6 +28,7 @@ pub mod search;
 pub mod source;
 
 pub use crate::youzi::cloud::Level;
+use crate::youzi::skills::pdfkit::{ID_ACCOUNT, KEY_ACCOUNT};
 use crate::youzi::store::{pref_get, pref_set};
 use crate::AppState;
 use rusqlite::Connection;
@@ -275,7 +279,8 @@ pub struct Recent {
     pub folder: String,
     /// "YYYY-MM-DD HH:MM", when it was started.
     pub at: String,
-    /// running | done | stopped | failed
+    /// running | done | stopped | failed | confirm (stopped before the upload by the spend rule; `message` says
+    /// what it would cost and why)
     pub state: String,
     /// Why it stopped or failed.
     pub message: Option<String>,
@@ -368,6 +373,8 @@ struct Inner {
     queue: VecDeque<Waiting>,
     job: Option<Progress>,
     task: Option<tauri::async_runtime::JoinHandle<()>>,
+    /// The run at work's: 停止 stops the engine's work in the blocking pool too.
+    cancel: Option<engine_pdf::Cancel>,
     token: u64,
 }
 
@@ -423,7 +430,7 @@ fn view(st: &AppState) -> Result<View, String> {
     let saved = st.youzi.with_db(|c| Ok(load(c)))?;
     let keys = &st.youzi.keys;
     let web_default = search::service_of(&st.youzi, saved.settings.supervisor.as_deref()).is_some_and(search::native);
-    let (tavily, mathpix_saved) = (keys.has(crate::youzi::skills::web::ACCOUNT), keys.has(mathpix::ID_ACCOUNT) && keys.has(mathpix::KEY_ACCOUNT));
+    let (tavily, mathpix_saved) = (keys.has(crate::youzi::skills::web::ACCOUNT), keys.has(ID_ACCOUNT) && keys.has(KEY_ACCOUNT));
     let (current, queue) = {
         let g = st.youzi.assistants.pub2md.lock();
         (g.job.clone(), g.queue.iter().map(Waiting::name).collect::<Vec<_>>())
@@ -457,7 +464,7 @@ fn view(st: &AppState) -> Result<View, String> {
 /// Starts the next waiting document if none is at work.
 fn next(app: &AppHandle) {
     let st = app.state::<AppState>();
-    let (token, what) = {
+    let (token, what, cancel) = {
         let mut g = st.youzi.assistants.pub2md.lock();
         if g.job.is_some() {
             return;
@@ -465,17 +472,19 @@ fn next(app: &AppHandle) {
         let Some(what) = g.queue.pop_front() else { return };
         g.token += 1;
         g.job = Some(Progress { name: what.name(), folder: String::new(), step: "正在准备…".into(), chunks: 0, done: 0, worker_requests: 0, supervisor_requests: 0, elapsed: 0, models: None, before: 0, started: Some(Instant::now()) });
-        (g.token, what)
+        g.cancel = Some(engine_pdf::Cancel::new());
+        (g.token, what, g.cancel.clone().unwrap_or_default())
     };
     let app2 = app.clone();
     let task = tauri::async_runtime::spawn(async move {
-        job::run(&app2, token, what).await;
+        job::run(&app2, token, what, cancel).await;
         {
             let st = app2.state::<AppState>();
             let mut g = st.youzi.assistants.pub2md.lock();
             if g.token == token {
                 g.job = None;
                 g.task = None;
+                g.cancel = None;
             }
         }
         next(&app2);
@@ -510,7 +519,7 @@ pub async fn youzi_pub2md_settings(app: AppHandle, settings: Settings) -> Result
 
 fn keys_ready(st: &AppState) -> Result<(), String> {
     let k = &st.youzi.keys;
-    if st.youzi.mode == crate::youzi::Mode::Real && !(k.has(mathpix::ID_ACCOUNT) && k.has(mathpix::KEY_ACCOUNT)) {
+    if st.youzi.mode == crate::youzi::Mode::Real && !(k.has(ID_ACCOUNT) && k.has(KEY_ACCOUNT)) {
         return Err("先填上 Mathpix 的 App ID 和 App Key".into());
     }
     Ok(())
@@ -546,9 +555,9 @@ pub fn youzi_pub2md_add(app: AppHandle, paths: Vec<String>) -> Result<View, Stri
     view(&st)
 }
 
-/// 继续 a stopped or failed document (from where it stopped).
+/// 继续 a stopped or failed document (from where it stopped); `upload`: 「上传」 for one the spend rule stopped.
 #[tauri::command]
-pub fn youzi_pub2md_resume(app: AppHandle, folder: String) -> Result<View, String> {
+pub fn youzi_pub2md_resume(app: AppHandle, folder: String, upload: Option<bool>) -> Result<View, String> {
     let st = app.state::<AppState>();
     keys_ready(&st)?;
     let known = st.youzi.with_db(|c| Ok(load(c).recent.iter().any(|r| r.folder == folder)))?;
@@ -560,6 +569,9 @@ pub fn youzi_pub2md_resume(app: AppHandle, folder: String) -> Result<View, Strin
         let mut g = st.youzi.assistants.pub2md.lock();
         if g.job.as_ref().is_some_and(|j| j.folder == folder) || g.queue.contains(&Waiting::Resume(dir.clone())) {
             return view(&st);
+        }
+        if upload == Some(true) {
+            job::approve(&dir)?;
         }
         g.queue.push_front(Waiting::Resume(dir));
     }
@@ -586,6 +598,9 @@ pub fn youzi_pub2md_stop(app: AppHandle) -> Result<View, String> {
         let mut g = st.youzi.assistants.pub2md.lock();
         if let Some(t) = g.task.take() {
             t.abort();
+        }
+        if let Some(c) = g.cancel.take() {
+            c.cancel();
         }
         g.token += 1;
         g.job.take()
@@ -708,15 +723,15 @@ pub fn youzi_pub2md_keys_save(state: State<AppState>, id: String, key: String) -
     let k = &state.youzi.keys;
     crate::youzi::cloud::checked_key(&id).map_err(|_| "App ID 为空或格式不对".to_string())?;
     crate::youzi::cloud::checked_key(&key).map_err(|_| "App Key 为空或格式不对".to_string())?;
-    k.save(mathpix::ID_ACCOUNT, &id)?;
-    k.save(mathpix::KEY_ACCOUNT, &key)?;
+    k.save(ID_ACCOUNT, &id)?;
+    k.save(KEY_ACCOUNT, &key)?;
     view(&state)
 }
 
 #[tauri::command]
 pub fn youzi_pub2md_keys_remove(state: State<AppState>) -> Result<View, String> {
-    state.youzi.keys.remove(mathpix::ID_ACCOUNT)?;
-    state.youzi.keys.remove(mathpix::KEY_ACCOUNT)?;
+    state.youzi.keys.remove(ID_ACCOUNT)?;
+    state.youzi.keys.remove(KEY_ACCOUNT)?;
     view(&state)
 }
 

@@ -93,6 +93,18 @@ pub fn upload(kind: Kind, paths: &[PathBuf]) -> Result<(String, &'static str, Ve
     })
 }
 
+/// A Word file's page count as Word saved it (`docProps/app.xml` `<Pages>`): what Mathpix is quoted by before the
+/// upload. None for a .doc, or a .docx saved without it (then the cost can't be told and the spend rule asks).
+pub fn word_pages(data: &[u8]) -> Option<u32> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data)).ok()?;
+    let mut xml = String::new();
+    zip.by_name("docProps/app.xml").ok()?.take(1_000_000).read_to_string(&mut xml).ok()?;
+    let at = xml.find("<Pages>")? + "<Pages>".len();
+    let n: u32 = xml[at..].split('<').next()?.trim().parse().ok()?;
+    (n > 0).then_some(n)
+}
+
 /// Same files, same fingerprint (for reusing an earlier Mathpix result).
 pub fn fingerprint(paths: &[PathBuf]) -> Result<String, String> {
     let mut all = String::new();
@@ -127,5 +139,24 @@ mod tests {
         assert!(group(&[dir.join("gone.pdf")]).unwrap_err().contains("找不到"));
         assert!(upload(Kind::Pdf, std::slice::from_ref(&a)).unwrap_err().contains("不是 PDF"));
         assert_eq!(fingerprint(std::slice::from_ref(&a)).unwrap(), fingerprint(&[a]).unwrap());
+    }
+
+    #[test]
+    fn a_word_files_saved_page_count_is_its_quote() {
+        use std::io::Write;
+        let docx = |app: Option<&str>| {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            w.start_file("word/document.xml", zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(b"<w:document/>").unwrap();
+            if let Some(app) = app {
+                w.start_file("docProps/app.xml", zip::write::SimpleFileOptions::default()).unwrap();
+                w.write_all(app.as_bytes()).unwrap();
+            }
+            w.finish().unwrap().into_inner()
+        };
+        assert_eq!(word_pages(&docx(Some("<Properties><Template>Normal</Template><Pages>12</Pages><Words>3400</Words></Properties>"))), Some(12));
+        assert_eq!(word_pages(&docx(Some("<Properties><Pages>0</Pages></Properties>"))), None);
+        assert_eq!(word_pages(&docx(None)), None);
+        assert_eq!(word_pages(b"\xD0\xCF\x11\xE0 an old .doc"), None);
     }
 }

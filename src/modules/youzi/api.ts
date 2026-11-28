@@ -265,7 +265,7 @@ export type Pub2mdSettings = {
   /** 使用说明 under the page (Markdown); null = the page's own (Pub2md.tsx ABOUT). */
   about?: string | null;
 };
-export type Pub2mdRecent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
+export type Pub2mdRecent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed" | "confirm"; message: string | null; outputs: string[] };
 type Pub2mdProgress = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null };
 export type Pub2mdView = {
   settings: Pub2mdSettings;
@@ -516,7 +516,7 @@ export const youziApi = {
   pub2mdGroup: (paths: string[]) => invoke<Pub2mdStaged[]>("youzi_pub2md_group", { paths }),
   /** 发送 (images together are one document); returns at once, poll `pub2md`. */
   pub2mdAdd: (paths: string[]) => invoke<Pub2mdView>("youzi_pub2md_add", { paths }),
-  pub2mdResume: (folder: string) => invoke<Pub2mdView>("youzi_pub2md_resume", { folder }),
+  pub2mdResume: (folder: string, upload?: boolean) => invoke<Pub2mdView>("youzi_pub2md_resume", { folder, upload: upload ?? null }),
   pub2mdUnqueue: (index: number) => invoke<Pub2mdView>("youzi_pub2md_unqueue", { index }),
   pub2mdStop: () => invoke<Pub2mdView>("youzi_pub2md_stop"),
   /** A document's folder, or one of its files. */

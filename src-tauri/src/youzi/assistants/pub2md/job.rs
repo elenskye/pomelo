@@ -1,11 +1,15 @@
 //! One document through Pub2MD. Each step is saved in `<folder>/.pub2md/job.json` as it ends (and after
 //! every chunk's step), so 继续 goes on from where a stop, an error or a quit left it:
 //! 1. 提取: an earlier Mathpix result of the same files is used again (its 「Mathpix 原始结果.zip」 still
-//!    there); else the file goes to Mathpix once (the pdf_id is saved at once), then wait and download.
+//!    there); else the file goes to Mathpix once through engine-pdf (`submit` / `submit_file`, the `Submitted`
+//!    saved at once; a job of before 1.2 kept its own pdf_id: `Submitted::uploaded`), then wait and download.
+//!    Before the upload the engine's spend rule (more than $0.5, a Word file without its page count, or all apps'
+//!    last 24 hours past $5) stops the document until 「上传」 (`confirm`); every upload goes into the engine's
+//!    ledger. The remote job isn't deleted: 另存为 needs Mathpix's image links (30 days).
 //!    Written for the user: 原文.mmd (images pointed at assets/), assets/, Mathpix 原始结果.zip. A text file
 //!    (MD / MMD / TXT) is taken as it is (copied into .pub2md) and only translated.
 //! 2. 只提取 ends here. Else: the models (schedule.rs `route`), 原页图 (PDF pages, or the images packed into
-//!    one PDF, as JPEGs; Word and text have none), the term list started beside the cut (英文 → 中文: the
+//!    one PDF, as JPEGs, drawn and saved a page at a time, gone on from on 继续; Word and text have none), the term list started beside the cut (英文 → 中文: the
 //!    Supervisor, looking terms up per search.rs), the cut (draft → the Supervisor's review, chunk.rs).
 //! 3. Each chunk goes 整理 → (精修) → 翻译 → (精修), `parallel` chunk steps at a time, the earliest chunk
 //!    first; a chunk is translated once it is cleaned and the term list is there (简繁: OpenCC, then the
@@ -19,23 +23,28 @@
 //!    chunks; its fixes applied the same way. Then the results in order (an article a file when the
 //!    Supervisor found several): 译文, 整理稿, 术语表, the work log (工作日志.md); `.pub2md` removed. A stop
 //!    or a failure keeps `.pub2md` and writes the log so far.
-//! 5. 另存为 (the formats picked): 译文 and 整理稿 (只提取: 原文) go to Mathpix's converter, their assets/
+//! 5. 另存为 (the formats picked): 译文 and 整理稿 (只提取: 原文) go to Mathpix's converter (the engine's
+//!    `convert`: not charged, decisions 0024), their assets/
 //!    images given back Mathpix's links (kept 30 days after 提取; images without one are left out and
 //!    noted). Not fatal: a failure is noted in the log, the MMD results stay.
-//! Steps 2–4 report progress through `Report` (the page's line; nothing in tests).
+//! Steps 2–4 report progress through `Report` (the page's line; nothing in tests). 停止 aborts the run and
+//! cancels its `Cancel`, which stops the engine's work in the blocking pool (Mathpix's waits, the page images).
+//! Mock: the same code against the engine's simulated Mathpix (skills/pdfkit.rs `options`).
 
 use super::chunk::{self, Article, Budget, Chunk, Plan};
 use super::mmd::{self, Block, Part};
 use super::prompts::{self, TranslateAsk, WorkerAsk};
 use super::search::{self, Lookup};
 use super::source::{self, Kind};
-use super::{check, mathpix, script, set_recent, Format, Lang, Level, Settings, Steps, Waiting};
+use super::{check, script, set_recent, Format, Lang, Level, Settings, Steps, Waiting};
+use engine_pdf::mathpix::{self, MathpixErrorKind, Submitted};
+use engine_pdf::{Cancel, Error as EngineError};
 use crate::youzi::provider::{self, Event, Image, Msg, Options, Target};
 use crate::youzi::{context, office, pdf, schedule, skills, Mode, Route};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -107,7 +116,7 @@ pub struct Term {
     pub note: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Job {
     pub name: String,
@@ -129,7 +138,14 @@ pub struct Job {
     pub formats: Vec<Format>,
     /// "YYYY-MM-DD HH:MM"
     pub started: String,
+    /// What a job of before 1.2 kept of its upload (the whole file): taken over as `submitted`.
     pub pdf_id: Option<String>,
+    /// The upload as the engine keeps it (its id, pages, bill): saved at once, so 继续 never uploads again.
+    pub submitted: Option<Submitted>,
+    /// Stopped before the upload by the spend rule: what it would cost and why (until 「上传」).
+    pub confirm: Option<String>,
+    /// 「上传」 was pressed for it.
+    pub approved: bool,
     pub reused: bool,
     /// "YYYY-MM-DD" of Mathpix's result, and its images: (assets/ name, Mathpix's link).
     pub extracted_on: String,
@@ -287,7 +303,7 @@ fn prepare(st: &AppState, settings: &Settings, what: &Waiting) -> Result<(PathBu
     }
 }
 
-pub async fn run(app: &AppHandle, token: u64, what: Waiting) {
+pub async fn run(app: &AppHandle, token: u64, what: Waiting, cancel: Cancel) {
     let st = app.state::<AppState>();
     let report = Report::of(app, token);
     let settings = st.youzi.with_db(|c| Ok(super::load(c).settings)).unwrap_or_default();
@@ -303,7 +319,7 @@ pub async fn run(app: &AppHandle, token: u64, what: Waiting) {
     st.youzi.assistants.pub2md.update(token, |p| (p.folder, p.name, p.before) = (folder.display().to_string(), name, before));
     report.counts(&job);
     let started = Instant::now();
-    let result = steps(app, &report, &folder, &mut job, &settings).await;
+    let result = steps(app, &report, &folder, &mut job, &settings, &cancel).await;
     job.elapsed += started.elapsed().as_secs();
     finish(&st, &folder, &mut job, result);
 }
@@ -330,6 +346,12 @@ fn finish(st: &AppState, folder: &Path, job: &mut Job, result: Result<Vec<String
             let _ = std::fs::remove_dir_all(work_dir(folder));
             let _ = st.youzi.with_db(|c| set_recent(c, &key, |r| (r.state, r.message, r.outputs) = ("done".into(), None, outputs)));
         }
+        // the spend rule stopped it before the upload: it waits for 「上传」
+        Err(e) if job.confirm.is_some() => {
+            let _ = save(folder, job);
+            let _ = std::fs::write(folder.join(LOG), log(job, &format!("停在上传前：{e}")));
+            let _ = st.youzi.with_db(|c| set_recent(c, &key, |r| (r.state, r.message) = ("confirm".into(), Some(e))));
+        }
         Err(e) => {
             event(job, format!("出错停下：{e}"));
             let _ = save(folder, job);
@@ -339,17 +361,15 @@ fn finish(st: &AppState, folder: &Path, job: &mut Job, result: Result<Vec<String
     }
 }
 
-async fn steps(app: &AppHandle, report: &Report, folder: &Path, job: &mut Job, settings: &Settings) -> Result<Vec<String>, String> {
+async fn steps(app: &AppHandle, report: &Report, folder: &Path, job: &mut Job, settings: &Settings, cancel: &Cancel) -> Result<Vec<String>, String> {
     let st = app.state::<AppState>();
     let text_input = job.kind == Some(Kind::Text);
     if !job.extracted {
         if text_input {
             take_text(folder, job)?;
         } else {
-            let mock = st.youzi.mode == Mode::Mock;
-            let keys = if mock { None } else { Some(mathpix::Keys { id: st.youzi.keys.read(mathpix::ID_ACCOUNT)?, key: st.youzi.keys.read(mathpix::KEY_ACCOUNT)? }) };
             let earlier = earlier(&st, &job.fingerprint, folder);
-            extract(report, folder, job, Extraction { keys, earlier }).await?;
+            extract(report, folder, job, Extraction { mathpix: Mathpix::of(&st)?, earlier, cancel: cancel.clone() }).await?;
             let key = folder.display().to_string();
             st.youzi.with_db(|c| set_recent(c, &key, |r| (r.extracted, r.images) = (job.extracted_on.clone(), job.images.clone())))?;
         }
@@ -363,7 +383,7 @@ async fn steps(app: &AppHandle, report: &Report, folder: &Path, job: &mut Job, s
         outputs.push(RAW_ZIP.into());
     }
     if job.steps == Steps::Extract {
-        outputs.extend(another_format(&st, report, folder, job, &[ORIGINAL.to_string()]).await);
+        outputs.extend(another_format(&st, report, folder, job, &[ORIGINAL.to_string()], cancel).await);
         return Ok(outputs);
     }
     report.step("准备模型…");
@@ -376,7 +396,7 @@ async fn steps(app: &AppHandle, report: &Report, folder: &Path, job: &mut Job, s
     (report.0)(Change::Models(job.models.clone()));
     if job.rendered == 0 && !matches!(job.kind, Some(Kind::Word) | Some(Kind::Text)) {
         report.step("画原页图…");
-        match render(folder, job).await {
+        match render(report, folder, job, cancel).await {
             Ok(n) => {
                 job.rendered = n;
                 event(job, format!("画了 {n} 页原页图"));
@@ -410,29 +430,22 @@ async fn steps(app: &AppHandle, report: &Report, folder: &Path, job: &mut Job, s
     }
     let mut written = assemble(folder, job)?;
     let results: Vec<String> = written.iter().filter(|f| *f != TERMS_FILE && (f.ends_with(".mmd") || f.ends_with(".md"))).cloned().collect();
-    written.extend(another_format(&st, report, folder, job, &results).await);
+    written.extend(another_format(&st, report, folder, job, &results, cancel).await);
     written.extend(outputs);
     Ok(written)
 }
 
 /// 另存为, with the keys (none needed in the mock).
-async fn another_format(st: &AppState, report: &Report, folder: &Path, job: &mut Job, files: &[String]) -> Vec<String> {
+async fn another_format(st: &AppState, report: &Report, folder: &Path, job: &mut Job, files: &[String], cancel: &Cancel) -> Vec<String> {
     if job.formats.is_empty() || job.converted {
         return vec![];
     }
-    let keys = if st.youzi.mode == Mode::Mock {
-        None
-    } else {
-        match (st.youzi.keys.read(mathpix::ID_ACCOUNT), st.youzi.keys.read(mathpix::KEY_ACCOUNT)) {
-            (Ok(id), Ok(key)) => Some(mathpix::Keys { id, key }),
-            _ => {
-                job.convert_notes.push("没有 Mathpix 的 Key，没能另存".into());
-                job.converted = true;
-                return vec![];
-            }
-        }
+    let Ok(m) = Mathpix::of(st) else {
+        job.convert_notes.push("没有 Mathpix 的 Key，没能另存".into());
+        job.converted = true;
+        return vec![];
     };
-    let made = convert(report, folder, job, keys.as_ref(), files).await;
+    let made = convert(report, folder, job, &m, files, cancel).await;
     let _ = save(folder, job);
     made
 }
@@ -472,11 +485,51 @@ pub struct Earlier {
     pub images: Vec<(String, String)>,
 }
 
-/// How to extract: Mathpix with these keys (None = the mock), an earlier result of the same files.
-pub struct Extraction {
-    pub keys: Option<mathpix::Keys>,
-    pub earlier: Option<Earlier>,
+/// Mathpix as this run of Pomelo has it: engine-pdf's client (the shared ledger, as 「Pomelo」) or its simulated
+/// one (mock), with the keys and what 提取 asks for.
+#[derive(Clone)]
+pub struct Mathpix {
+    pub keys: mathpix::Keys,
+    pub options: mathpix::Options,
 }
+
+impl Mathpix {
+    pub fn of(st: &AppState) -> Result<Mathpix, String> {
+        let keys = match st.youzi.mode {
+            Mode::Mock => mathpix::Keys::new("mock-id", "mock-key"),
+            Mode::Real => {
+                let read = |a: &str| st.youzi.keys.read(a).map_err(|_| "先填上 Mathpix 的 App ID 和 App Key".to_string());
+                mathpix::Keys::new(read(skills::pdfkit::ID_ACCOUNT)?, read(skills::pdfkit::KEY_ACCOUNT)?)
+            }
+        };
+        Ok(Mathpix::with(keys, skills::pdfkit::options(st.youzi.mode, &st.paths.root)))
+    }
+
+    /// 提取's settings: the .mmd.zip (text and cropped images), headers and footers kept (整理 decides), an hour
+    /// at most to wait.
+    pub fn with(keys: mathpix::Keys, mut options: mathpix::Options) -> Mathpix {
+        options.mmd_zip = true;
+        options.extra.insert("include_page_info".into(), serde_json::json!(true));
+        options.poll_interval = Duration::from_secs(3);
+        options.max_wait = Duration::from_secs(3600);
+        options.request_timeout = Duration::from_secs(600);
+        Mathpix { keys, options }
+    }
+
+    fn simulated(&self) -> bool {
+        self.options.transport.is_simulated()
+    }
+}
+
+/// How to extract: through this Mathpix, an earlier result of the same files, stopped by `cancel`.
+pub struct Extraction {
+    pub mathpix: Mathpix,
+    pub earlier: Option<Earlier>,
+    pub cancel: Cancel,
+}
+
+/// Mathpix's own limit.
+const MAX_UPLOAD: usize = 1_000_000_000;
 
 pub async fn extract(report: &Report, folder: &Path, job: &mut Job, how: Extraction) -> Result<(), String> {
     let mdir = work_dir(folder).join("mathpix");
@@ -484,11 +537,11 @@ pub async fn extract(report: &Report, folder: &Path, job: &mut Job, how: Extract
     let zip_path = mdir.join("extraction.zip");
     let paths: Vec<PathBuf> = job.sources.iter().map(PathBuf::from).collect();
     let kind = job.kind.unwrap_or(Kind::Pdf);
-    if !zip_path.is_file() && job.pdf_id.is_none() && !job.reused {
-        if let Some(prev) = how.earlier {
+    if !zip_path.is_file() && job.pdf_id.is_none() && job.submitted.is_none() && !job.reused {
+        if let Some(prev) = how.earlier.as_ref() {
             std::fs::copy(&prev.zip, &zip_path).map_err(|e| format!("没能用上次的 Mathpix 结果：{e}"))?;
             job.reused = true;
-            (job.extracted_on, job.images) = (prev.extracted, prev.images);
+            (job.extracted_on, job.images) = (prev.extracted.clone(), prev.images.clone());
             event(job, format!("文件和上次的一样，用了上次的 Mathpix 结果（{}）", prev.zip.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("")));
         }
     }
@@ -498,14 +551,15 @@ pub async fn extract(report: &Report, folder: &Path, job: &mut Job, how: Extract
         }
         report.step("准备上传…");
         let (k, p) = (kind, paths.clone());
-        let (name, mime, data) = tauri::async_runtime::spawn_blocking(move || source::upload(k, &p)).await.map_err(|e| e.to_string())??;
+        let (_, mime, data) = tauri::async_runtime::spawn_blocking(move || source::upload(k, &p)).await.map_err(|e| e.to_string())??;
         if kind == Kind::Images {
             std::fs::write(work_dir(folder).join("input.pdf"), &data).map_err(|e| format!("没能写中间结果：{e}"))?;
         }
-        let text = match &how.keys {
-            None => mock_extract(report, folder, kind, &paths, &data).await?,
-            Some(keys) => mathpix_extract(keys, report, folder, job, &name, mime, &data).await?,
-        };
+        if data.len() > MAX_UPLOAD {
+            return Err("文件超过了 Mathpix 的 1 GB 上限。".into());
+        }
+        let (text, zip) = mathpix_extract(report, folder, job, &how, kind, mime, data).await?;
+        std::fs::write(&zip_path, &zip).map_err(|e| format!("没能写中间结果：{e}"))?;
         std::fs::write(mdir.join("extraction.mmd"), &text).map_err(|e| format!("没能写中间结果：{e}"))?;
         job.extracted_on = clock("%Y-%m-%d");
     }
@@ -530,66 +584,127 @@ pub async fn extract(report: &Report, folder: &Path, job: &mut Job, how: Extract
     save(folder, job)
 }
 
-async fn mock_extract(report: &Report, folder: &Path, kind: Kind, paths: &[PathBuf], data: &[u8]) -> Result<String, String> {
-    let pages = if kind == Kind::Word { 1 } else { pdf::page_count(data).unwrap_or(1) };
-    for i in 1..=pages.min(3) {
-        report.step(&format!("Mathpix 识别中（模拟）{i}/{pages} 页"));
-        tokio::time::sleep(Duration::from_millis(400)).await;
+/// What the engine said went wrong, in its words (never the service's own text or a key).
+fn said(e: &EngineError) -> String {
+    match e {
+        EngineError::Cancelled => "已停止".into(),
+        EngineError::Locked => "这个 PDF 加了密，Mathpix 读不了。先去掉密码再放进来。".into(),
+        EngineError::NotPdf | EngineError::Damaged => "PDF 文件已损坏，无法读取".into(),
+        e => e.to_string(),
     }
-    let text = mathpix::mock_mmd(kind, paths, (kind != Kind::Word).then_some(data))?;
-    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    w.start_file("extraction/extraction.mmd", zip::write::SimpleFileOptions::default()).map_err(|e| e.to_string())?;
-    w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    let zip = w.finish().map_err(|e| e.to_string())?.into_inner();
-    std::fs::write(work_dir(folder).join("mathpix/extraction.zip"), zip).map_err(|e| format!("没能写中间结果：{e}"))?;
-    Ok(text)
 }
 
-async fn mathpix_extract(keys: &mathpix::Keys, report: &Report, folder: &Path, job: &mut Job, name: &str, mime: &str, data: &[u8]) -> Result<String, String> {
-    let id = match job.pdf_id.clone() {
-        Some(id) => id,
-        None => {
-            report.step("上传到 Mathpix…");
-            let id = mathpix::submit(keys, name, mime, data).await?;
-            job.pdf_id = Some(id.clone());
-            event(job, "上传到了 Mathpix");
+/// Upload (once: the `Submitted` is saved at once, from the blocking thread too, so a 停止 mid-upload keeps it),
+/// wait, download. Returns the text and the .mmd.zip.
+async fn mathpix_extract(report: &Report, folder: &Path, job: &mut Job, how: &Extraction, kind: Kind, mime: &'static str, data: Vec<u8>) -> Result<(String, Vec<u8>), String> {
+    let m = &how.mathpix;
+    let blocking = |e: tauri::Error| e.to_string();
+    // an upload of before 1.2: its own pdf_id, the whole file
+    if job.submitted.is_none() {
+        if let Some(id) = job.pdf_id.clone() {
+            let pages = if kind == Kind::Word { None } else { Some(pdf::page_count(&data)? as u32) };
+            job.submitted = Some(Submitted::uploaded(&id, pages, &m.options).map_err(|e| said(&e))?);
+            event(job, "接着等 1.2 以前上传的那一次");
             save(folder, job)?;
-            id
         }
-    };
-    let deadline = Instant::now() + Duration::from_secs(3600);
-    loop {
-        let s = mathpix::status(keys, &id).await?;
-        let pages = match (s.done, s.pages) {
-            (Some(d), Some(n)) => format!(" {d}/{n} 页"),
-            _ => String::new(),
-        };
-        report.step(&format!("Mathpix 识别中{pages}"));
-        if s.state == "completed" {
-            break;
-        }
-        if Instant::now() > deadline {
-            return Err("Mathpix 一个小时还没识别完，过一会儿点「继续」再看".into());
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
-    report.step("从 Mathpix 下载结果…");
-    let text = String::from_utf8(download(keys, &id, "mmd").await?).map_err(|_| "Mathpix 的结果读不懂".to_string())?;
-    let zip = download(keys, &id, "mmd.zip").await?;
-    std::fs::write(work_dir(folder).join("mathpix/extraction.zip"), &zip).map_err(|e| format!("没能写中间结果：{e}"))?;
-    event(job, "从 Mathpix 下载了结果");
-    Ok(text)
+    for attempt in 0..2 {
+        if job.submitted.is_none() {
+            upload(report, folder, job, how, kind, mime, &data).await?;
+        }
+        let mut submitted = job.submitted.clone().ok_or("没有上传")?;
+        let (o, k, c, r) = (m.options.clone(), m.keys.clone(), how.cancel.clone(), report.clone());
+        let waited = tauri::async_runtime::spawn_blocking(move || {
+            let shown = |p: mathpix::Progress| {
+                let pages = match (p.num_pages_completed, p.num_pages) {
+                    (Some(d), Some(n)) => format!(" {d}/{n} 页"),
+                    _ => String::new(),
+                };
+                r.step(&format!("Mathpix 识别中{pages}"));
+            };
+            mathpix::wait(&mut submitted, &k, &o, &c, &shown).map(|()| submitted)
+        })
+        .await
+        .map_err(blocking)?;
+        let submitted = match waited {
+            Ok(s) => s,
+            // the mock after the app was reopened: its simulated service forgot the job; uploaded again (nothing paid)
+            Err(f) if attempt == 0 && m.simulated() && matches!(&f.error, EngineError::Mathpix(e) if e.kind == MathpixErrorKind::ResultMissing) => {
+                job.submitted = None;
+                continue;
+            }
+            Err(f) if matches!(f.error, EngineError::Mathpix(ref e) if e.kind == MathpixErrorKind::Timeout) => return Err("Mathpix 一个小时还没识别完，过一会儿点「继续」再看".into()),
+            Err(f) => return Err(said(&f.error)),
+        };
+        job.submitted = Some(submitted.clone());
+        save(folder, job)?;
+        report.step("从 Mathpix 下载结果…");
+        let (o, k, c) = (m.options.clone(), m.keys.clone(), how.cancel.clone());
+        let got = tauri::async_runtime::spawn_blocking(move || mathpix::fetch(&submitted, &k, &o, &c)).await.map_err(blocking)?.map_err(|f| match f.error {
+            EngineError::Mathpix(ref e) if matches!(e.kind, MathpixErrorKind::Timeout | MathpixErrorKind::ResultMissing) => "Mathpix 的结果一直没准备好，过一会儿点「继续」再试".to_string(),
+            e => said(&e),
+        })?;
+        let zip = got.mmd_zip.ok_or("Mathpix 的结果里没有压缩包")?;
+        event(job, format!("从 Mathpix 下载了结果（{} 页）", job.submitted.as_ref().and_then(Submitted::num_pages).map_or("?".into(), |n| n.to_string())));
+        return Ok((got.mmd, zip));
+    }
+    Err("Mathpix 没能识别这个文件".into())
 }
 
-/// A result, asked again while it isn't assembled yet.
-async fn download(keys: &mathpix::Keys, id: &str, ext: &str) -> Result<Vec<u8>, String> {
-    for _ in 0..100 {
-        if let Some(b) = mathpix::download(keys, id, ext).await? {
-            return Ok(b);
+/// The quote and the engine's spend rule; past it, the document stops here until 「上传」. Then the upload, its
+/// `Submitted` saved at once.
+async fn upload(report: &Report, folder: &Path, job: &mut Job, how: &Extraction, kind: Kind, mime: &'static str, data: &[u8]) -> Result<(), String> {
+    let m = &how.mathpix;
+    let price = m.options.price_per_page;
+    let pages = match kind {
+        Kind::Word => source::word_pages(data),
+        _ => Some(pdf::page_count(data)? as u32),
+    };
+    let usd = pages.map(|n| f64::from(n) * price);
+    if !job.approved {
+        if let Some(why) = m.options.book().approval(usd) {
+            let what = match (pages, usd) {
+                (Some(n), Some(usd)) => format!("要送 Mathpix 识别 {n} 页，预计 ${usd:.3}。"),
+                _ => "要送 Mathpix 识别这份 Word，页数传上去才知道。".into(),
+            };
+            let text = format!("{what}{why}");
+            job.confirm = Some(text.clone());
+            event(job, format!("停在上传前：{text}"));
+            save(folder, job)?;
+            return Err(text);
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
-    Err("Mathpix 的结果一直没准备好，过一会儿点「继续」再试".into())
+    report.step("上传到 Mathpix…");
+    let (o, k, c, d, dir, mut saved) = (m.options.clone(), m.keys.clone(), how.cancel.clone(), data.to_vec(), folder.to_path_buf(), job.clone());
+    let done = tauri::async_runtime::spawn_blocking(move || -> Result<Job, String> {
+        let submitted = if kind == Kind::Word {
+            mathpix::submit_file(&d, mime, pages, &k, &o, &c)
+        } else {
+            let doc = pdf::open(&d)?;
+            let all: Vec<u32> = (1..=doc.page_count()).collect();
+            let quote = mathpix::quote_with_options(&doc, &all, &o).map_err(|e| said(&e))?;
+            mathpix::submit(&doc, &quote, &k, &o, &c)
+        }
+        .map_err(|f| said(&f.error))?;
+        saved.submitted = Some(submitted);
+        saved.confirm = None;
+        event(&mut saved, "上传到了 Mathpix");
+        save(&dir, &saved)?;
+        Ok(saved)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    *job = done;
+    Ok(())
+}
+
+/// 「上传」 for a document the spend rule stopped: it goes on from there (and uploads).
+pub fn approve(folder: &Path) -> Result<(), String> {
+    let mut job = load_job(folder)?;
+    job.approved = true;
+    job.confirm = None;
+    event(&mut job, "点了「上传」");
+    save(folder, &job)
 }
 
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "tif", "tiff"];
@@ -681,7 +796,8 @@ fn cropped_name(url: &str) -> Option<String> {
 
 // ---------- 2. 原页图, the cut ----------
 
-pub async fn render(folder: &Path, job: &Job) -> Result<usize, String> {
+/// 原页图: a page at a time, each saved as it's drawn; pages already there (a stop, 继续) aren't drawn again.
+pub async fn render(report: &Report, folder: &Path, job: &Job, cancel: &Cancel) -> Result<usize, String> {
     let data = match job.kind {
         Some(Kind::Images) => {
             let packed = work_dir(folder).join("input.pdf");
@@ -695,8 +811,8 @@ pub async fn render(folder: &Path, job: &Job) -> Result<usize, String> {
         }
         _ => std::fs::read(job.sources.first().ok_or("没有原文件")?).map_err(|_| "找不到原来的 PDF".to_string())?,
     };
-    let dir = work_dir(folder).join("pages");
-    tauri::async_runtime::spawn_blocking(move || pdf::render_pages(&data, &dir, PAGE_SIDE)).await.map_err(|e| e.to_string())?
+    let (dir, r, c) = (work_dir(folder).join("pages"), report.clone(), cancel.clone());
+    tauri::async_runtime::spawn_blocking(move || pdf::render_pages(&data, &dir, PAGE_SIDE, &c, &|n, total| r.step(&format!("画原页图 {n}/{total}…")))).await.map_err(|e| e.to_string())?
 }
 
 /// One request; the reply and whether it hit its length.
@@ -1718,9 +1834,9 @@ fn state_name(s: State, by_supervisor: bool) -> &'static str {
 /// Mathpix's image links last this long after 提取.
 const LINK_DAYS: f64 = 30.0;
 
-/// 另存为: each result sent to Mathpix's converter (`keys` None: the mock writes stand-ins). Returns the
-/// files written; what didn't go is in `convert_notes`.
-async fn convert(report: &Report, folder: &Path, job: &mut Job, keys: Option<&mathpix::Keys>, files: &[String]) -> Vec<String> {
+/// 另存为: each result sent to Mathpix's converter (the engine's `convert`; the mock's simulated one writes
+/// stand-ins). Returns the files written; what didn't go is in `convert_notes`.
+async fn convert(report: &Report, folder: &Path, job: &mut Job, m: &Mathpix, files: &[String], cancel: &Cancel) -> Vec<String> {
     let formats = job.formats.clone();
     let names: Vec<&str> = formats.iter().map(|f| f.name()).collect();
     let fresh = job.extracted_on.is_empty() || days_since(&job.extracted_on) < LINK_DAYS;
@@ -1734,11 +1850,12 @@ async fn convert(report: &Report, folder: &Path, job: &mut Job, keys: Option<&ma
             job.convert_notes.push(format!("{file}：{left_out} 张图没放进去（{why}）"));
         }
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(s, _)| s);
-        let result = match keys {
-            None => mock_convert(&mmd, &formats),
-            Some(k) => mathpix_convert(k, &mmd, &formats).await,
-        };
+        let result = mathpix_convert(m, &mmd, &formats, cancel).await;
         match result {
+            Err(e) if cancel.is_cancelled() => {
+                job.convert_notes.push(format!("{file} 没能另存：{e}"));
+                break;
+            }
             Err(e) => job.convert_notes.push(format!("{file} 没能另存：{e}")),
             Ok(outs) => {
                 for (f, r) in outs {
@@ -1812,93 +1929,29 @@ fn linked(text: &str, links: &[(String, String)]) -> (String, usize) {
     (result, left_out)
 }
 
-/// Mathpix's converter: submit, wait for each format (5 minutes at most), fetch each.
-async fn mathpix_convert(keys: &mathpix::Keys, mmd: &str, formats: &[Format]) -> Result<Vec<(Format, Result<Vec<u8>, String>)>, String> {
-    let wanted: Vec<&str> = formats.iter().map(|f| f.key()).collect();
-    let id = mathpix::convert(keys, mmd, &wanted).await?;
-    let deadline = Instant::now() + Duration::from_secs(300);
-    let states = loop {
-        let states = mathpix::conversion(keys, &id).await?;
-        let state = |k: &str| states.iter().find(|(f, _)| f == k).map_or("processing", |(_, s)| s.as_str());
-        if wanted.iter().all(|k| state(k) != "processing") || Instant::now() > deadline {
-            break states;
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    };
-    let mut out = vec![];
-    for f in formats {
-        let state = states.iter().find(|(k, _)| k == f.key()).map_or("processing", |(_, s)| s.as_str());
-        let r = match state {
-            "completed" => {
-                let mut got = Err("Mathpix 的文件一直没准备好".to_string());
-                for _ in 0..20 {
-                    match mathpix::converted(keys, &id, f.key()).await {
-                        Ok(Some(b)) => {
-                            got = Ok(b);
-                            break;
-                        }
-                        Ok(None) => tokio::time::sleep(Duration::from_secs(2)).await,
-                        Err(e) => {
-                            got = Err(e);
-                            break;
-                        }
-                    }
-                }
-                got
-            }
-            "processing" => Err("Mathpix 5 分钟还没转好".into()),
-            _ => Err("Mathpix 没能转出来".into()),
-        };
-        out.push((*f, r));
-    }
-    Ok(out)
-}
-
-/// The mock's stand-ins: a real Word file (柚子's writer), a small PDF, zips holding the text.
-fn mock_convert(mmd: &str, formats: &[Format]) -> Result<Vec<(Format, Result<Vec<u8>, String>)>, String> {
-    let zip_one = |name: &str, body: &str| -> Result<Vec<u8>, String> {
-        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        w.start_file(name, zip::write::SimpleFileOptions::default()).map_err(|e| e.to_string())?;
-        w.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
-        Ok(w.finish().map_err(|e| e.to_string())?.into_inner())
-    };
+/// Mathpix's converter through the engine: submit, wait for each format (5 minutes at most), fetch each.
+async fn mathpix_convert(m: &Mathpix, mmd: &str, formats: &[Format], cancel: &Cancel) -> Result<Vec<(Format, Result<Vec<u8>, String>)>, String> {
+    let (mut o, k, c, text, wanted) = (m.options.clone(), m.keys.clone(), cancel.clone(), mmd.to_string(), formats.to_vec());
+    o.max_wait = Duration::from_secs(300);
+    o.poll_interval = Duration::from_secs(2);
+    o.request_timeout = Duration::from_secs(120);
+    let keys: Vec<&'static str> = wanted.iter().map(|f| f.key()).collect();
+    let out = tauri::async_runtime::spawn_blocking(move || mathpix::convert(&text, &keys, &k, &o, &c)).await.map_err(|e| e.to_string())?.map_err(|e| match e {
+        EngineError::Mathpix(ref x) if x.kind == MathpixErrorKind::TooLarge => "文件超过了 Mathpix 转格式的 10 MB 上限".into(),
+        e => said(&e),
+    })?;
     Ok(formats
         .iter()
         .map(|f| {
-            let r = match f {
-                Format::Docx => crate::youzi::word::markdown_to_docx(mmd, &[]),
-                Format::Pdf => Ok(mock_pdf()),
-                Format::Latex => zip_one("document.tex", &format!("% 模拟转出的 LaTeX\n{mmd}")),
-                Format::Html => zip_one("index.html", &format!("<!doctype html><meta charset=\"utf-8\"><pre>{}</pre>", mmd.replace('&', "&amp;").replace('<', "&lt;"))),
+            let r = match out.iter().find(|c| c.format == f.key()).map(|c| &c.result) {
+                Some(Ok(bytes)) => Ok(bytes.clone()),
+                Some(Err(EngineError::Mathpix(e))) if e.kind == MathpixErrorKind::Timeout => Err("Mathpix 5 分钟还没转好".into()),
+                Some(Err(e)) => Err(said(e)),
+                None => Err("Mathpix 没能转出来".into()),
             };
             (*f, r)
         })
         .collect())
-}
-
-/// A one-page PDF saying it's the mock's.
-fn mock_pdf() -> Vec<u8> {
-    let content = "BT /F1 18 Tf 72 720 Td (Pub2MD mock PDF) Tj ET";
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
-        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
-    ];
-    let mut out = b"%PDF-1.4\n".to_vec();
-    let mut offsets = vec![];
-    for (i, o) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
-    }
-    let xref = out.len();
-    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
-    for o in offsets {
-        out.extend(format!("{o:010} 00000 n \n").as_bytes());
-    }
-    out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
-    out
 }
 
 /// A result for the page's 预览: its assets/ images inlined as data: links (each up to 8 MB, 40 MB in all).
@@ -2003,7 +2056,12 @@ pub fn log(job: &Job, how: &str) -> String {
         s.push_str(&format!("- 另存为：{}\n", job.formats.iter().map(|f| f.name()).collect::<Vec<_>>().join("、")));
     }
     if job.kind != Some(Kind::Text) {
-        s.push_str(&format!("- Mathpix：{}\n", if job.reused { "文件和上次的一样，用了上次的结果" } else if job.pdf_id.is_some() { "上传了一次" } else { "没有上传（模拟）" }));
+        let uploaded = match &job.submitted {
+            Some(s) => format!("上传了一次（{} 页）", s.num_pages().unwrap_or(s.pages_sent())),
+            None if job.pdf_id.is_some() => "上传了一次".into(),
+            None => "还没上传".into(),
+        };
+        s.push_str(&format!("- Mathpix：{}\n", if job.reused { "文件和上次的一样，用了上次的结果".into() } else { uploaded }));
     }
     if job.steps != Steps::Extract {
         if !job.models.is_empty() {
@@ -2063,6 +2121,7 @@ pub fn log(job: &Job, how: &str) -> String {
 pub(crate) mod tests {
     use super::super::mmd::tests::PAPER;
     use super::*;
+    use std::io::Write;
     use crate::youzi::cloud::Think;
 
     fn mock(window: i64) -> Route {
@@ -2136,6 +2195,110 @@ pub(crate) mod tests {
             Some(x) => (x.1, x.2, x.3) = (x.1 + 1, x.2 + prompt, x.3 + completion),
             None => u.push((route.to_string(), 1, prompt, completion)),
         }
+    }
+
+    /// The engine's simulated Mathpix with a ledger of the test's own.
+    fn simulated(dir: &Path) -> Mathpix {
+        Mathpix::with(mathpix::Keys::new("mock-id", "mock-key"), mathpix::Options { transport: Arc::new(mathpix::FakeTransport::echo()), ledger: mathpix::spend::Ledger::At(dir.join("ledgers")), ..mathpix::Options::default() })
+    }
+
+    fn posts(fake: &mathpix::FakeTransport) -> usize {
+        fake.requests().iter().filter(|r| r.method == mathpix::Method::Post).count()
+    }
+
+    #[test]
+    fn past_the_spend_rule_it_waits_for_upload_and_a_quit_never_uploads_twice() {
+        let dir = crate::db::tests::temp_dir("pub2md-spend");
+        let paper = dir.join("paper.pdf");
+        std::fs::write(&paper, pdf::tests::sample_pdf(&["Introduction to the topic.", "Results are good.", "We conclude here."])).unwrap();
+        let fake = Arc::new(mathpix::FakeTransport::echo());
+        let m = Mathpix::with(mathpix::Keys::new("mock-id", "mock-key"), mathpix::Options { transport: fake.clone(), ledger: mathpix::spend::Ledger::At(dir.join("ledgers")), app: "Pomelo（测试）".into(), ..mathpix::Options::default() });
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        m.options.book().record(&mathpix::spend::Entry { at: now, app: "Peck".into(), service: "Mathpix".into(), unit: "page".into(), units: 999.0, usd: 4.995, estimated: false }).unwrap();
+        let folder = dir.join("out");
+        std::fs::create_dir_all(work_dir(&folder)).unwrap();
+        let mut job = Job { name: "paper".into(), sources: vec![paper.display().to_string()], kind: Some(Kind::Pdf), steps: Steps::Extract, ..Default::default() };
+        save(&folder, &job).unwrap();
+        let go = |job: &mut Job, report: &Report, cancel: Cancel| tauri::async_runtime::block_on(extract(report, &folder, job, Extraction { mathpix: m.clone(), earlier: None, cancel }));
+        // the last day's $4.995 + 3 pages ($0.015) is past $5: it stops before the upload, nothing sent
+        let e = go(&mut job, &Report::none(), Cancel::new()).unwrap_err();
+        assert!(e.contains("3 页") && e.contains("$0.015") && e.contains("最近 24 小时已花"), "{e}");
+        assert!(load_job(&folder).unwrap().confirm.is_some() && fake.requests().is_empty());
+        // 「上传」, then the app quits while Mathpix works (停止 cancels): the upload was saved at once
+        approve(&folder).unwrap();
+        let mut job = load_job(&folder).unwrap();
+        let cancel = Cancel::new();
+        let c = cancel.clone();
+        let quit = Report(Arc::new(move |ch| {
+            if matches!(ch, Change::Step(s) if s.starts_with("Mathpix 识别中")) {
+                c.cancel();
+            }
+        }));
+        assert_eq!(go(&mut job, &quit, cancel).unwrap_err(), "已停止");
+        let mut job = load_job(&folder).unwrap();
+        assert!(job.submitted.is_some() && job.confirm.is_none() && posts(&fake) == 1);
+        // 继续: waits and downloads, no second upload; the simulated one isn't in the ledger
+        go(&mut job, &Report::none(), Cancel::new()).unwrap();
+        assert!(job.extracted && std::fs::read_to_string(folder.join(ORIGINAL)).unwrap().contains("We conclude here."));
+        assert_eq!(posts(&fake), 1);
+        assert_eq!(m.options.book().entries(std::time::UNIX_EPOCH).len(), 1);
+        assert!(log(&job, "完成").contains("- Mathpix：上传了一次（3 页）"), "{}", log(&job, "完成"));
+    }
+
+    #[test]
+    fn a_word_file_is_quoted_by_its_saved_pages_and_asked_about_without_them() {
+        use std::io::Write;
+        let dir = crate::db::tests::temp_dir("pub2md-word");
+        let docx = |pages: Option<u32>| {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            w.start_file("word/document.xml", zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(b"<w:document/>").unwrap();
+            if let Some(n) = pages {
+                w.start_file("docProps/app.xml", zip::write::SimpleFileOptions::default()).unwrap();
+                w.write_all(format!("<Properties><Pages>{n}</Pages></Properties>").as_bytes()).unwrap();
+            }
+            w.finish().unwrap().into_inner()
+        };
+        for (pages, asked) in [(Some(3), false), (None, true)] {
+            let file = dir.join(format!("notes-{pages:?}.docx"));
+            std::fs::write(&file, docx(pages)).unwrap();
+            let folder = dir.join(format!("out-{pages:?}"));
+            std::fs::create_dir_all(work_dir(&folder)).unwrap();
+            let mut job = Job { name: "notes".into(), sources: vec![file.display().to_string()], kind: Some(Kind::Word), steps: Steps::Extract, ..Default::default() };
+            let r = tauri::async_runtime::block_on(extract(&Report::none(), &folder, &mut job, Extraction { mathpix: simulated(&dir), earlier: None, cancel: Cancel::new() }));
+            match asked {
+                false => assert!(r.is_ok() && job.extracted, "{r:?}"),
+                true => assert!(r.unwrap_err().contains("页数传上去才知道") && job.confirm.is_some()),
+            }
+        }
+    }
+
+    #[test]
+    fn a_job_of_before_1_2_goes_on_from_its_own_upload() {
+        let dir = crate::db::tests::temp_dir("pub2md-old");
+        let paper = dir.join("paper.pdf");
+        std::fs::write(&paper, pdf::tests::sample_pdf(&["One.", "Two."])).unwrap();
+        let folder = dir.join("out");
+        std::fs::create_dir_all(work_dir(&folder)).unwrap();
+        // job.json as 1.1 wrote it: its own pdf_id, the whole file uploaded
+        std::fs::write(work_dir(&folder).join(JOB_FILE), serde_json::json!({ "name": "paper", "sources": [paper.display().to_string()], "kind": "pdf", "steps": "extract", "started": "2026-11-20 10:00", "pdfId": "2026_11_20-oldjob", "events": ["10:00:00 上传到了 Mathpix"] }).to_string()).unwrap();
+        let mut job = load_job(&folder).unwrap();
+        let zip = {
+            use std::io::Write;
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            w.start_file("2026_11_20-oldjob/2026_11_20-oldjob.mmd", zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(b"One.\n\n\\pagebreak\n\nTwo.").unwrap();
+            w.finish().unwrap().into_inner()
+        };
+        let ok = |body: &[u8]| Ok(mathpix::Response { status: 200, body: body.to_vec(), retry_after: None });
+        let fake = Arc::new(mathpix::FakeTransport::scripted([ok(br#"{"status":"completed","num_pages":2}"#), ok(b"One.\n\n\\pagebreak\n\nTwo."), ok(&zip)]));
+        let m = Mathpix::with(mathpix::Keys::new("id", "key"), mathpix::Options { transport: fake.clone(), ledger: mathpix::spend::Ledger::At(dir.join("ledgers")), ..mathpix::Options::default() });
+        tauri::async_runtime::block_on(extract(&Report::none(), &folder, &mut job, Extraction { mathpix: m.clone(), earlier: None, cancel: Cancel::new() })).unwrap();
+        assert!(job.extracted && std::fs::read_to_string(folder.join(ORIGINAL)).unwrap().contains("Two."));
+        let paths: Vec<String> = fake.requests().iter().map(|r| format!("{:?} {}", r.method, r.path)).collect();
+        assert_eq!(paths, ["Get /v3/pdf/2026_11_20-oldjob", "Get /v3/pdf/2026_11_20-oldjob.mmd", "Get /v3/pdf/2026_11_20-oldjob.mmd.zip"]);
+        assert!(m.options.book().entries(std::time::UNIX_EPOCH).is_empty());
+        assert_eq!(job.submitted.as_ref().map(|s| s.pdf_id()), Some("2026_11_20-oldjob"));
     }
 
     fn job_for(dir: &Path, text: &str, steps: Steps) -> (Job, Arc<Vec<Block>>) {
@@ -2345,17 +2508,18 @@ pub(crate) mod tests {
         let dir = crate::db::tests::temp_dir("pub2md-e2e");
         let paper = dir.join("paper.pdf");
         std::fs::write(&paper, pdf::tests::sample_pdf(&["Introduction to the topic.", "Results are good.", "We conclude here."])).unwrap();
+        // a photo big enough to be an image of its own in the packed PDF (a 1 × 1 one is drawn inline)
         let png = dir.join("b.png");
-        std::fs::write(&png, office::tests_png()).unwrap();
+        std::fs::write(&png, pdf::open(&pdf::tests::sample_pdf(&["photo"])).unwrap().render(1, engine_pdf::ImageFormat::Png, 200).unwrap().bytes).unwrap();
         for (sources, kind) in [(vec![paper.clone()], Kind::Pdf), (vec![png.clone(), png.clone()], Kind::Images)] {
             let folder = dir.join(format!("out-{kind:?}"));
             std::fs::create_dir_all(work_dir(&folder)).unwrap();
             let mut job = Job { name: "e2e".into(), sources: sources.iter().map(|p| p.display().to_string()).collect(), kind: Some(kind), steps: Steps::Translate, skip: Settings::default().skip, ..Default::default() };
             tauri::async_runtime::block_on(async {
-                extract(&Report::none(), &folder, &mut job, Extraction { keys: None, earlier: None }).await.unwrap();
+                extract(&Report::none(), &folder, &mut job, Extraction { mathpix: simulated(&dir), earlier: None, cancel: Cancel::new() }).await.unwrap();
                 assert!(job.extracted && folder.join(ORIGINAL).is_file() && folder.join(RAW_ZIP).is_file());
                 assert_eq!(job.pages, if kind == Kind::Pdf { 3 } else { 2 });
-                job.rendered = render(&folder, &job).await.unwrap();
+                job.rendered = render(&Report::none(), &folder, &job, &Cancel::new()).await.unwrap();
                 assert_eq!(job.rendered, job.pages);
             });
             let text = std::fs::read_to_string(folder.join(ORIGINAL)).unwrap();
@@ -2366,7 +2530,7 @@ pub(crate) mod tests {
                 assert!(out.contains("Introduction to the topic.") && out.contains("We conclude here."), "{out}");
                 assert!(std::fs::read_to_string(folder.join(&names[0])).unwrap().contains("译 译 译 译."));
             } else {
-                assert!(out.contains("模拟识别的图片：b.png"), "{out}");
+                assert!(out.contains("模拟识别：第 1 页是图片") && out.contains("第 2 页是图片"), "{out}");
             }
             assert!(work_dir(&folder).join("pages").join(pdf::page_name(1)).is_file());
         }
@@ -2375,7 +2539,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(work_dir(&folder)).unwrap();
         let mut job = Job { name: "again".into(), sources: vec![paper.display().to_string()], kind: Some(Kind::Pdf), ..Default::default() };
         let earlier = dir.join("out-Pdf").join(RAW_ZIP);
-        tauri::async_runtime::block_on(extract(&Report::none(), &folder, &mut job, Extraction { keys: None, earlier: Some(Earlier { zip: earlier, extracted: "2026-10-20".into(), images: vec![("a.jpg".into(), "https://cdn.mathpix.com/cropped/a.jpg".into())] }) })).unwrap();
+        tauri::async_runtime::block_on(extract(&Report::none(), &folder, &mut job, Extraction { mathpix: simulated(&dir), cancel: Cancel::new(), earlier: Some(Earlier { zip: earlier, extracted: "2026-10-20".into(), images: vec![("a.jpg".into(), "https://cdn.mathpix.com/cropped/a.jpg".into())] }) })).unwrap();
         assert!(job.reused && job.events.iter().any(|e| e.contains("用了上次的 Mathpix 结果")));
         assert_eq!((job.extracted_on.as_str(), job.images.len()), ("2026-10-20", 1));
         assert!(std::fs::read_to_string(folder.join(ORIGINAL)).unwrap().contains("We conclude here."));
@@ -2395,14 +2559,14 @@ pub(crate) mod tests {
         let (sent, left) = linked(figure, &[]);
         assert!(!sent.contains("includegraphics") && !sent.contains("max width") && sent.contains("\\caption{说明}") && left == 1, "{sent}");
         let mut job = Job { formats: vec![Format::Docx, Format::Pdf, Format::Latex, Format::Html], images: vec![("a.jpg".into(), "https://cdn.mathpix.com/cropped/a.jpg?x=1".into())], extracted_on: clock("%Y-%m-%d"), ..Default::default() };
-        let made = tauri::async_runtime::block_on(convert(&Report::none(), &dir, &mut job, None, &["译文.mmd".to_string()]));
+        let made = tauri::async_runtime::block_on(convert(&Report::none(), &dir, &mut job, &simulated(&dir), &["译文.mmd".to_string()], &Cancel::new()));
         assert_eq!(made, ["译文.docx", "译文.pdf", "译文.tex.zip", "译文.html.zip"]);
         let head = |f: &str| std::fs::read(dir.join(f)).unwrap()[..4].to_vec();
         assert_eq!((head("译文.docx"), head("译文.pdf"), head("译文.html.zip")), (b"PK\x03\x04".to_vec(), b"%PDF".to_vec(), b"PK\x03\x04".to_vec()));
         assert!(job.converted && job.convert_notes.len() == 1 && job.convert_notes[0].contains("1 张图没放进去（不是 Mathpix 识别出的图"));
         // older than 30 days: Mathpix's links are gone, its images stay out too
         let mut old = Job { formats: vec![Format::Docx], images: job.images.clone(), extracted_on: "2026-01-01".into(), ..Default::default() };
-        tauri::async_runtime::block_on(convert(&Report::none(), &dir, &mut old, None, &["译文.mmd".to_string()]));
+        tauri::async_runtime::block_on(convert(&Report::none(), &dir, &mut old, &simulated(&dir), &["译文.mmd".to_string()], &Cancel::new()));
         assert!(old.convert_notes[0].contains("2 张图没放进去（提取已超过 30 天"), "{:?}", old.convert_notes);
         assert!(log(&job, "完成").contains("- 另存为：Word、PDF、LaTeX、HTML") && log(&job, "完成").contains("## 另存为"));
     }
@@ -2452,8 +2616,13 @@ pub(crate) mod tests {
         };
         let keys = std::env::var("POMELO_MATHPIX_KEY_FILE").ok().map(|f| {
             let lines: Vec<String> = std::fs::read_to_string(f).expect("the Mathpix key file").lines().map(|l| l.trim().rsplit('=').next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect();
-            mathpix::Keys { id: lines[0].clone(), key: lines[1].clone() }
+            mathpix::Keys::new(lines[0].clone(), lines[1].clone())
         });
+        // real uploads go into the ledger shared by every app (money really spent); no key file: the simulated one
+        let mathpix = match keys {
+            Some(k) => Mathpix::with(k, mathpix::Options { app: "Pomelo（测试）".into(), ..mathpix::Options::default() }),
+            None => Mathpix::with(mathpix::Keys::new("mock-id", "mock-key"), mathpix::Options { transport: Arc::new(mathpix::FakeTransport::echo()), ledger: mathpix::spend::Ledger::Off, ..mathpix::Options::default() }),
+        };
         let api = |t: &Target| match t {
             Target::Cloud { model, .. } => format!("{:?} {}", model.service, model.api_model),
             _ => "mock".into(),
@@ -2505,12 +2674,12 @@ pub(crate) mod tests {
                     let _ = std::fs::copy(work_dir(Path::new(&f)).join("mathpix/extraction.mmd"), work_dir(&folder).join("mathpix/extraction.mmd"));
                     Earlier { zip: PathBuf::from(f).join(RAW_ZIP), extracted: clock("%Y-%m-%d"), images: vec![] }
                 });
-                extract(&say, &folder, &mut job, Extraction { keys: keys.clone(), earlier }).await?;
+                extract(&say, &folder, &mut job, Extraction { mathpix: mathpix.clone(), earlier, cancel: Cancel::new() }).await?;
                 if steps == Steps::Extract {
                     return Ok(vec![]);
                 }
                 if kind != Kind::Word {
-                    job.rendered = render(&folder, &job).await.unwrap_or(0);
+                    job.rendered = render(&say, &folder, &job, &Cancel::new()).await.unwrap_or(0);
                 }
             }
             let text = std::fs::read_to_string(original(&folder, &job)).map_err(|e| e.to_string())?;
@@ -2532,7 +2701,7 @@ pub(crate) mod tests {
             let mut written = assemble(&folder, &job)?;
             if !job.formats.is_empty() {
                 let results: Vec<String> = written.iter().filter(|f| *f != TERMS_FILE && (f.ends_with(".mmd") || f.ends_with(".md"))).cloned().collect();
-                written.extend(convert(&say, &folder, &mut job, keys.as_ref(), &results).await);
+                written.extend(convert(&say, &folder, &mut job, &mathpix, &results, &Cancel::new()).await);
             }
             Ok(written)
         });

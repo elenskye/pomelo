@@ -28,7 +28,7 @@ use zeroize::Zeroizing;
 pub const TOOLS: [&str; 7] = ["pdf_info", "pdf_read", "pdf_render", "pdf_find", "pdf_outline", "pdf_mathpix_quote", "pdf_mathpix"];
 pub const MATHPIX: [&str; 2] = ["pdf_mathpix_quote", "pdf_mathpix"];
 pub const MATHPIX_RUN: &str = "pdf_mathpix";
-/// The account names of the Mathpix keys (shared with Pub2MD).
+/// The account names of the Mathpix keys in the keychain (filled in on Pub2MD's page, used by both).
 pub const ID_ACCOUNT: &str = "mathpix-id";
 pub const KEY_ACCOUNT: &str = "mathpix-key";
 /// A page's text attachment inlined at most (characters).
@@ -60,11 +60,18 @@ pub fn options(mode: Mode, data: &Path) -> mathpix::Options {
         Mode::Real => mathpix::Options { app: "Pomelo".into(), ..mathpix::Options::default() },
         Mode::Mock => mathpix::Options {
             app: "Pomelo（开发版）".into(),
-            transport: std::sync::Arc::new(mathpix::FakeTransport::echo()),
+            transport: simulated(),
             ledger: Ledger::At(data.join("ledgers")),
             ..mathpix::Options::default()
         },
     }
+}
+
+/// The engine's simulated Mathpix, one for the whole run of the app: what was handed to it (Pub2MD's upload) is
+/// still there when asked about later (继续 after 停止).
+fn simulated() -> std::sync::Arc<dyn mathpix::Transport> {
+    static FAKE: std::sync::OnceLock<std::sync::Arc<mathpix::FakeTransport>> = std::sync::OnceLock::new();
+    FAKE.get_or_init(|| std::sync::Arc::new(mathpix::FakeTransport::echo())).clone()
 }
 
 // ---------- the files it may read ----------

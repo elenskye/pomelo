@@ -49,7 +49,7 @@ const FORMATS: { value: Pub2mdFormat; label: string }[] = [
   { value: "html", label: "HTML" },
 ];
 const previewable = (f: string) => f.endsWith(".mmd") || f.endsWith(".md");
-const STATES: Record<Pub2mdRecent["state"], string> = { running: "进行中", done: "完成", stopped: "已停止", failed: "出错" };
+const STATES: Record<Pub2mdRecent["state"], string> = { running: "进行中", done: "完成", stopped: "已停止", failed: "出错", confirm: "等你确认" };
 
 function duration(s: number) {
   if (s < 60) return `${s} 秒`;
@@ -57,15 +57,18 @@ function duration(s: number) {
   return `${Math.floor(s / 3600)} 小时 ${Math.floor((s / 60) % 60)} 分`;
 }
 
-/** Until the queue is done: a document that stopped on an error makes the pomelo say so. */
-const failKey = (r: Pub2mdRecent) => `${r.folder}|${r.at}|${r.message ?? ""}`;
+/** Until the queue is done: a document that stopped on an error, or before its upload (the spend rule), makes the
+ *  pomelo say so. */
+const failKey = (r: Pub2mdRecent) => `${r.folder}|${r.at}|${r.state}|${r.message ?? ""}`;
+const stuck = (r: Pub2mdRecent) => r.state === "failed" || r.state === "confirm";
 const watchPub2md = (start: Pub2mdView) => {
-  const seen = new Set(start.recent.filter((r) => r.state === "failed").map(failKey));
+  const seen = new Set(start.recent.filter(stuck).map(failKey));
   watchJob("pub2md", async () => {
     const v = await youziApi.pub2md();
-    const failed = v.recent.find((r) => r.state === "failed" && !seen.has(failKey(r)));
+    const failed = v.recent.find((r) => stuck(r) && !seen.has(failKey(r)));
     if (failed) {
       seen.add(failKey(failed));
+      if (failed.state === "confirm") return `Pub2MD「${failed.name}」等你点「上传」：${failed.message ?? ""}`;
       return `Pub2MD 没做完「${failed.name}」：${failed.message ?? "出错了"}`;
     }
     return v.current || v.queue.length ? null : "";
@@ -185,7 +188,7 @@ export function Pub2mdPage() {
             ))}
           </section>
         )}
-        <Recent data={data} onOpen={show} onResume={(f) => void youziApi.pub2mdResume(f).then((v) => (set(v), watchPub2md(v)), fail)} onDelete={(r) => void remove(r)} />
+        <Recent data={data} onOpen={show} onResume={(f, upload) => void youziApi.pub2mdResume(f, upload).then((v) => (set(v), watchPub2md(v)), fail)} onDelete={(r) => void remove(r)} />
         <About text={settings.about ?? ABOUT} />
       </div>
       {confirmDialog}
@@ -443,7 +446,7 @@ function SettingsTab(props: { data: Pub2mdView; settings: Pub2mdSettings; onChan
   );
 }
 
-function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: string) => void; onResume: (folder: string) => void; onDelete: (r: Pub2mdRecent) => void }) {
+function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: string) => void; onResume: (folder: string, upload?: boolean) => void; onDelete: (r: Pub2mdRecent) => void }) {
   const items = props.data.recent.filter((r) => r.folder !== props.data.current?.folder);
   if (!items.length) return null;
   return (
@@ -455,9 +458,9 @@ function Recent(props: { data: Pub2mdView; onOpen: (folder: string, file?: strin
             <span className="shrink-0 text-xs text-muted-foreground">{r.at}</span>
             <span className={`shrink-0 text-xs ${r.state === "failed" ? "text-destructive" : "text-muted-foreground"}`}>{STATES[r.state]}</span>
             <div className="flex-1" />
-            {(r.state === "stopped" || r.state === "failed") && (
+            {(r.state === "stopped" || r.state === "failed" || r.state === "confirm") && (
               <>
-                <Button onClick={() => props.onResume(r.folder)}>继续</Button>
+                {r.state === "confirm" ? <Button variant="primary" onClick={() => props.onResume(r.folder, true)}>上传</Button> : <Button onClick={() => props.onResume(r.folder)}>继续</Button>}
                 <Button onClick={() => props.onDelete(r)}>删除</Button>
               </>
             )}

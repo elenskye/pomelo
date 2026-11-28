@@ -2722,8 +2722,8 @@ const pTr = {
 // ---- Pub2MD (assistants/pub2md/): a document at a time, simulated step by step; 「失败测试」 in a file
 // name stops at its third chunk once (继续 goes on); `&pub2md=keys` shows the Mathpix keys as in the real app ----
 type P2Settings = { steps: "extract" | "clean" | "translate"; md: boolean; englishOnly: boolean; worker: string | null; workerLevel: string; supervisor: string | null; supervisorLevel: string; backup: string; parallel: number; folder: string | null; lang: string; style: string; domains: string[]; prompt: string; web: boolean | null; refine: boolean; skip: string[]; formats: string[] };
-type P2Recent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed"; message: string | null; outputs: string[] };
-type P2Job = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null; tick: number; steps: "extract" | "clean" | "translate"; md: boolean; text: boolean; cleaned: number; translated: number; failed?: boolean; read?: boolean };
+type P2Recent = { name: string; folder: string; at: string; state: "running" | "done" | "stopped" | "failed" | "confirm"; message: string | null; outputs: string[] };
+type P2Job = { name: string; folder: string; step: string; chunks: number; done: number; workerRequests: number; supervisorRequests: number; elapsed: number; models: string | null; tick: number; steps: "extract" | "clean" | "translate"; md: boolean; text: boolean; cleaned: number; translated: number; failed?: boolean; read?: boolean; approved?: boolean };
 const p2 = {
   settings: { steps: "translate", md: false, englishOnly: false, worker: null, workerLevel: "off", supervisor: null, supervisorLevel: "high", backup: "cloud:deepseek-flash", parallel: 4, folder: null, lang: "enZh", style: "general", domains: [], prompt: "", web: null, refine: false, skip: ["front", "acknowledgments", "references", "appendix"], formats: ["docx"] } as P2Settings,
   recent: [] as P2Recent[],
@@ -2793,6 +2793,8 @@ const p2Tick = () => {
   if (!c) return;
   c.tick += 1;
   c.elapsed = Math.floor(c.tick * 0.35) + 1;
+  // 「厚书」: past the spend rule (300 pages), it stops before the upload until 「上传」
+  if (c.tick === 1 && c.name === "厚书" && !c.approved) return p2End("confirm", "要送 Mathpix 识别 300 页，预计 $1.500。这一次预计 $1.500，超过 $0.5。");
   if (c.tick <= 3) return (c.step = `Mathpix 识别中（模拟）${c.tick}/3 页`);
   const raw = c.text ? [] : ["原文.mmd", "assets", "Mathpix 原始结果.zip"];
   if (c.steps === "extract") return p2End("done", null, [raw[0], ...p2Converted([raw[0]]), ...raw.slice(1), "工作日志.md"]);
@@ -5411,6 +5413,7 @@ const youziHandlers: Record<string, (a: Args) => unknown> = {
   youzi_pub2md_resume: (a) => {
     const folder = String(a.folder);
     if (!p2.paused.has(folder)) throw "找不到这份文档的中间结果，没法接着做";
+    if (a.upload) p2.paused.get(folder)!.approved = true;
     if (!p2.queue.some((q) => q.kind === "resume" && q.folder === folder)) p2.queue.unshift({ kind: "resume", folder });
     p2Next();
     return p2View();
@@ -6737,7 +6740,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     if (o.title === "选择英文简历模板") return "/mock/Seeker/cv/en/resume-template.docx";
     if (o.directory) return o.title === "保存到" ? "/Users/me/Documents/报告" : `/Users/me/Documents/读书笔记${(pPickCount += 1) > 1 ? pPickCount : ""}`;
     // Pub2MD: a paper, then one that fails at its third chunk, then two photos (one document)
-    if (o.title === "选择文件") return [["/mock/Attention Is All You Need.pdf"], ["/mock/失败测试.pdf"], ["/mock/IMG_0001.HEIC", "/mock/IMG_0002.jpg"], ["/mock/读书笔记.md"]][(p2Picks += 1) - 1 - 4 * Math.floor((p2Picks - 1) / 4)];
+    if (o.title === "选择文件") return [["/mock/Attention Is All You Need.pdf"], ["/mock/失败测试.pdf"], ["/mock/IMG_0001.HEIC", "/mock/IMG_0002.jpg"], ["/mock/读书笔记.md"], ["/mock/厚书.pdf"]][(p2Picks += 1) - 1 - 5 * Math.floor((p2Picks - 1) / 5)];
     if (o.title === "改文件") return "/Users/me/Documents/求职/简历.docx";
     if (o.title === "添加附件") return [`/mock/截图 ${(pPickCount += 1)}.png`, "/mock/发票.pdf"];
     if (!o.filters?.some((f) => f.extensions.includes("pdf"))) return "/mock/pomelo-import.json";

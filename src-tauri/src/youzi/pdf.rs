@@ -72,14 +72,24 @@ pub fn page_jpeg(data: &[u8], page: usize, max_side: u32) -> Result<Vec<u8>, Str
 }
 
 /// Draws every page as `page-0001.jpg`… in `dir` (the longer side `max_side` px). Returns the page count.
-pub fn render_pages(data: &[u8], dir: &Path, max_side: u32) -> Result<usize, String> {
+/// Every page's image as a JPEG in `dir` (`page_name`), drawn and saved one at a time; pages already there are
+/// kept (a run stopped half way goes on). `cancel` is checked between pages; `progress(page, pages)`.
+pub fn render_pages(data: &[u8], dir: &Path, max_side: u32, cancel: &Cancel, progress: &dyn Fn(usize, usize)) -> Result<usize, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("没能准备原页图的文件夹：{e}"))?;
     let doc = open(data)?;
+    let total = doc.page_count() as usize;
     for n in 1..=doc.page_count() {
+        cancel.check().map_err(|_| "已停止".to_string())?;
+        let path = dir.join(page_name(n as usize));
+        if path.is_file() {
+            continue;
+        }
+        progress(n as usize, total);
         let jpeg = doc.render(n, ImageFormat::Jpeg, max_side).map_err(error_text)?;
-        std::fs::write(dir.join(page_name(n as usize)), jpeg.bytes).map_err(|e| format!("没能存下原页图：{e}"))?;
+        let tmp = path.with_extension("jpg.tmp");
+        std::fs::write(&tmp, jpeg.bytes).and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| format!("没能存下原页图：{e}"))?;
     }
-    Ok(doc.page_count() as usize)
+    Ok(total)
 }
 
 /// The pages (1-based) holding images, with how many.
@@ -150,11 +160,21 @@ pub mod tests {
     fn pages_become_jpegs_and_images_a_pdf() {
         let dir = crate::db::tests::temp_dir("pdf-render");
         let pdf = sample_pdf(&["Page one", "Page two"]);
-        assert_eq!(render_pages(&pdf, &dir.join("pages"), 400).unwrap(), 2);
+        // stopped before the first page: nothing drawn; then each page once, and only the missing one again
+        let stopped = Cancel::new();
+        stopped.cancel();
+        assert!(render_pages(&pdf, &dir.join("pages"), 400, &stopped, &|_, _| {}).is_err());
+        let drawn = std::sync::Mutex::new(vec![]);
+        assert_eq!(render_pages(&pdf, &dir.join("pages"), 400, &Cancel::new(), &|n, total| drawn.lock().unwrap().push((n, total))).unwrap(), 2);
+        assert_eq!(*drawn.lock().unwrap(), [(1, 2), (2, 2)]);
         for n in [1, 2] {
             let jpg = std::fs::read(dir.join("pages").join(page_name(n))).unwrap();
             assert_eq!(&jpg[..3], &[0xFF, 0xD8, 0xFF]);
         }
+        std::fs::remove_file(dir.join("pages").join(page_name(2))).unwrap();
+        drawn.lock().unwrap().clear();
+        render_pages(&pdf, &dir.join("pages"), 400, &Cancel::new(), &|n, total| drawn.lock().unwrap().push((n, total))).unwrap();
+        assert_eq!(*drawn.lock().unwrap(), [(2, 2)]);
         // 300 × 200 points → 400 px wide
         let (w, h) = crate::youzi::office::size_of(&dir.join("pages/page-0001.jpg")).unwrap();
         assert!(w == 400 && (266..=267).contains(&h), "{w} × {h}");
@@ -238,7 +258,7 @@ mod compare {
             };
             let dir = tmp.join("pages");
             let _ = std::fs::remove_dir_all(&dir);
-            let rendered = render_pages(&data, &dir, 1568);
+            let rendered = render_pages(&data, &dir, 1568, &Cancel::new(), &|_, _| {});
             let dims: Vec<Option<(u32, u32)>> = match &rendered {
                 Ok(n) => (1..=*n).map(|i| std::fs::read(dir.join(page_name(i))).ok().and_then(|b| jpeg_size(&b))).collect(),
                 Err(_) => vec![],
