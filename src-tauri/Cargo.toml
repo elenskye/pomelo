@@ -1,6 +1,6 @@
 [package]
 name = "pomelo"
-version = "1.1.5"
+version = "1.2.0"
 description = "Pomelo OS"
 edition = "2021"
 
@@ -46,6 +46,11 @@ yaml-rust2 = { version = "0.13", default-features = false }
 ferrous-opencc = "0.4"
 # 速记小窗 (v0.8): ⌥Space from any app (Tauri's own plugin)
 tauri-plugin-global-shortcut = "2"
+# PDF (v1.2): the shared engine; `pdfium` puts lost ligatures back (PDFium linked statically, scripts/pdfium.sh)
+engine-pdf = { git = "https://github.com/elenskye/engine-pdf", tag = "v0.7.0", features = ["pdfium"] }
+
+[dev-dependencies]
+engine-pdf = { git = "https://github.com/elenskye/engine-pdf", tag = "v0.7.0", features = ["pdfium", "samples"] }
 
 [profile.release]
 codegen-units = 1

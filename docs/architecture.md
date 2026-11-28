@@ -10,8 +10,8 @@
 | 界面 | React + TypeScript + Vite，Tailwind CSS；少量自己写的组件，不用组件库 |
 | 数据层 | Rust + SQLite |
 | 柚子（AI） | Rust 用 reqwest 连模型、收流式回复；消息排版用 markdown-it、highlight.js、KaTeX |
-| 见字如面 | 自己的 `LiveText` 加 Bear 的 Flavor；highlight.js、KaTeX（和柚子共用）、Mermaid（真有流程图时才加载）；从 Bear 搬家调只读的 `bearcli`；PDF 用系统的 WebKit 和 PDFKit，Word 自己写 XML（zip），不加依赖 |
-| 读写文件 | macOS 自带的 PDFKit（PDF）、`textutil`（读 Word）、`sips`（缩图片）；`zip` + `quick-xml`（PowerPoint、改写 Word），`calamine`（表格），`dom_smoothie`（网页正文） |
+| 见字如面 | 自己的 `LiveText` 加 Bear 的 Flavor；highlight.js、KaTeX（和柚子共用）、Mermaid（真有流程图时才加载）；从 Bear 搬家调只读的 `bearcli`；PDF 用系统的 WebKit 排版、engine-pdf 合成，Word 自己写 XML（zip），不加依赖 |
+| 读写文件 | 共用引擎 engine-pdf（PDF：PDFKit 取字和画页、PDFium 补连字，静态链进 App，PDFium 的许可证随 App 带在 `THIRD_PARTY.txt`）、`textutil`（读 Word）、`sips`（缩图片）；`zip` + `quick-xml`（PowerPoint、改写 Word），`calamine`（表格），`dom_smoothie`（网页正文） |
 | 系统通知 | UserNotifications（`objc2-user-notifications`） |
 | 辅助脚本 | TypeScript（Node），不用 Python |
 
@@ -223,5 +223,5 @@ App 本体约 25 MB，运行时约 130 MB 内存；`pomelo.db` 很小（十年�
 
 - **一个隐藏的窗口**（`print.rs`，页面 `print.html`；细则在 `print.rs` 和 `src/print/layout.ts` 开头）：导出时 Rust 开它，交给它这次的篇目、存到哪、样式，做完关掉；一次只导一批。
 - **排版用编辑器自己的画法**（`bear.ts` 的 `drawDoc`），所以 Bear 的写法在 PDF 里和 App 里一样；按行切成 A4 页。
-- **PDF**：WebKit 一页页画成 PDF（字还是字），PDFKit 合成一份，加上目录的跳转、网址链接、书签和标题。**Word**：页面把排好的行拆成段落和文字片段交给 Rust（`articles/docx.rs`）写出 .docx。
+- **PDF**：WebKit 一页页画成 PDF（字还是字），engine-pdf 合成一份，加上目录的跳转、网址链接、书签和标题。**Word**：页面把排好的行拆成段落和文字片段交给 Rust（`articles/docx.rs`）写出 .docx。
 - Markdown 不经过这个窗口：Rust 直接拷正文和附件。

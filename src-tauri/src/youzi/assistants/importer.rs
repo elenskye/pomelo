@@ -289,11 +289,12 @@ fn page_groups(count: usize) -> Vec<(Vec<usize>, String)> {
 }
 
 fn read_pdf(bytes: Vec<u8>) -> Result<Source, String> {
-    let count = pdf::pages(&bytes)?.len();
+    let doc = pdf::open(&bytes)?;
+    let count = doc.page_count() as usize;
     if count == 0 { return Err("这个 PDF 没有页面".into()); }
     let mut source = Source { sheet: "PDF".into(), ..Default::default() };
     for (i, (pages, label)) in page_groups(count).into_iter().enumerate() {
-        let images = pages.iter().map(|p| Ok(Image { media_type: "image/jpeg".into(), data: office::base64(&pdf::page_jpeg(&bytes, *p, 2400.0)?) })).collect::<Result<Vec<_>, String>>()?;
+        let images = pages.iter().map(|p| Ok(Image { media_type: "image/jpeg".into(), data: office::base64(&doc.render(*p as u32 + 1, engine_pdf::ImageFormat::Jpeg, 2400).map_err(pdf::error_text)?.bytes) })).collect::<Result<Vec<_>, String>>()?;
         source.parts.push(Part { seq: i, images, label, ..Default::default() });
     }
     Ok(source)

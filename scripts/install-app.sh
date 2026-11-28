@@ -10,6 +10,7 @@ if ! security find-identity -v -p codesigning | grep -q "Pomelo Self-Signed"; th
   echo "缺少签名证书 Pomelo Self-Signed（钥匙串访问 → 证书助理 → 创建证书，见 docs/architecture.md）" >&2
   exit 1
 fi
+bash scripts/pdfium.sh
 
 pnpm tauri build --bundles app
 

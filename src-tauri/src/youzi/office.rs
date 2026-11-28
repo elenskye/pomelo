@@ -538,11 +538,11 @@ pub fn look_at(data: &[u8], ext: &str, args: &serde_json::Value, tmp_dir: &Path)
     let num = |k: &str| args[k].as_u64().or_else(|| args[k].as_str().and_then(|s| s.trim().parse().ok())).map(|n| n as usize);
     if ext == "pdf" {
         let page = num("page").or_else(|| num("image")).ok_or("page 写要看第几页")?;
-        let count = super::pdf::pages(data)?.len();
+        let count = super::pdf::page_count(data)?;
         if page == 0 || page > count {
             return Err(format!("只有 {count} 页"));
         }
-        let jpeg = super::pdf::page_jpeg(data, page - 1, MAX_SIDE as f64)?;
+        let jpeg = super::pdf::page_jpeg(data, page, MAX_SIDE)?;
         return Ok((format!("第 {page} 页"), "image/jpeg".into(), base64(&jpeg)));
     }
     let list = embedded_images(data, ext)?;

@@ -44,6 +44,7 @@ Pomelo OS（柚儿园）：只给我一个人用的 macOS 本地个人系统。T
 
 - Pomelo 用到的引擎（`src-tauri/Cargo.toml` 里依赖它，或当期版本正在接它；隔几层的也算，如 engine-pdf 用的 engine-core）在 `~/Documents/GitHub/personal-engine-studio/engine-*`。这边的会话可以直接改它们、照那边的规矩提交和打 tag，不用问、不用另开会话；动之前读它的 `CLAUDE.md`、`HANDOFF.md`、`ROADMAP.md`。
 - 细则（改已有接口先问我、版本号、开发时怎么指本机路径、push 先后）见引擎 `CLAUDE.md`「二」末尾「改用到的引擎」（总仓库 `docs/decisions/0009`）。没用到的引擎只读。
+- **本机已有的大文件**（2026-11-28 我定）：别的仓库里已经有的大文件（预编译库、模型这类，不进 Git）要在这边用时，用 APFS 克隆（`cp -c`）放一份到这边不进 Git 的文件夹：同一块盘上不多占空间，这边自己就能编，那边删了也不影响。不软链、不跨仓库指路径、不重新下载。现在有的：PDFium 静态库（`scripts/pdfium.sh` 克隆到 `src-tauri/vendor/pdfium/`，`.cargo/config.toml` 指过去）。
 
 ## 数据规则
 

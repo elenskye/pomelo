@@ -1,10 +1,10 @@
 //! The print page (print.html in a hidden window `print`): 见字如面's PDF and Word are drawn there, one article at a
 //! time, as A4 pages (1 CSS px = 1 pt), and come back here. Rules:
-//! - PDF: the page shows one page at a time at its top-left; WebKit draws it (`createPDF` of 595 × 842), and PDFKit
+//! - PDF: the page shows one page at a time at its top-left; WebKit draws it (`createPDF` of 595 × 842), and engine-pdf
 //!   puts the pages together with the contents' links (to a page and height), web links, an outline (the headings)
 //!   and the title. Text stays text.
 //! - Word: the page sends the article as blocks (docx.rs writes the file); formulas and diagrams become pictures, drawn
-//!   the same way (a PDF of their box, rendered by PDFKit at 3×).
+//!   the same way (a PDF of their box, rendered by engine-pdf at 3×).
 //! - One export at a time. The job (articles, where each goes, options) is Rust's; the page asks for it, reports each
 //!   file (written, or why not) and finishes; the window is closed then (or after 30 minutes).
 
@@ -12,10 +12,10 @@ use crate::modules::articles::docx;
 use crate::modules::articles::export::{write_new, Options, Planned};
 use crate::modules::articles::import::Left;
 use crate::modules::attachments;
-use crate::youzi::pdf::{bytes_of, ns_string, open, Point, Rect, Size, MEDIA_BOX};
 use crate::AppState;
 use objc2::rc::{autoreleasepool, Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject};
+use objc2::encode::{Encode, Encoding};
 use objc2::msg_send;
 use serde::{Deserialize, Serialize};
 use std::ffi::c_void;
@@ -117,7 +117,7 @@ async fn window_pdf(app: &AppHandle, w: f64, h: f64) -> Result<Vec<u8>, String> 
             return send(Err("这台 Mac 的 WebKit 不能导出 PDF".into()));
         };
         let cfg: Retained<AnyObject> = msg_send![cfg_class, new];
-        let rect = Rect { origin: Point { x: 0.0, y: 0.0 }, size: Size { width: w, height: h } };
+        let rect = CgRect { origin: Point { x: 0.0, y: 0.0 }, size: Size { width: w, height: h } };
         let _: () = msg_send![&*cfg, setRect: rect];
         let send = Arc::new(send);
         let block = block2::RcBlock::new(move |data: *mut AnyObject, error: *mut AnyObject| {
@@ -140,7 +140,7 @@ async fn window_pdf(app: &AppHandle, w: f64, h: f64) -> Result<Vec<u8>, String> 
     }
 }
 
-// ---------- PDFKit: pages together, links, outline ----------
+// ---------- engine-pdf: pages together, links, outline ----------
 
 /// A link on a page (CSS px from the page's top-left): to a page and height, or a web address.
 #[derive(Debug, Clone, Deserialize)]
@@ -169,130 +169,134 @@ pub struct Mark {
     pub y: f64,
 }
 
-unsafe fn alloc(class: &std::ffi::CStr) -> Result<Allocated<AnyObject>, String> {
-    let c = AnyClass::get(class).ok_or("系统的 PDFKit 不可用")?;
-    Ok(msg_send![c, alloc])
+/// A web address as a PDF link takes it: what isn't plain ASCII percent-encoded (as NSURL did); None for one a
+/// PDF link can't hold (no scheme, file:, javascript:).
+fn link_url(u: &str) -> Option<String> {
+    let (scheme, rest) = u.trim().split_once(':')?;
+    let ok = !rest.is_empty() && scheme.starts_with(|c: char| c.is_ascii_alphabetic()) && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
+    if !ok || ["file", "javascript"].contains(&scheme.to_ascii_lowercase().as_str()) || u.chars().any(char::is_control) {
+        return None;
+    }
+    let mut out = String::new();
+    for c in u.trim().chars() {
+        if c.is_ascii_graphic() && !"<>\"\\^`{|}".contains(c) {
+            out.push(c);
+        } else {
+            let mut b = [0; 4];
+            for byte in c.encode_utf8(&mut b).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    Some(out)
 }
 
-unsafe fn destination(page: &AnyObject, x: f64, y: f64) -> Result<Retained<AnyObject>, String> {
-    let a = alloc(c"PDFDestination")?;
-    Ok(msg_send![a, initWithPage: page, atPoint: Point { x, y }])
-}
-
-/// The pages (one-page PDFs) as one document with its links, outline and title.
+/// The pages (one-page PDFs of A4, from WebKit) as one document with its links, outline and title.
 pub fn assemble(pages: &[Vec<u8>], links: &[PdfLink], outline: &[Mark], title: &str) -> Result<Vec<u8>, String> {
+    use engine_pdf::compose::{Assembly, AssemblyLink};
+    use engine_pdf::edit::{InfoPatch, OutlineItem, Rect, Target};
     if pages.is_empty() {
         return Err("没有页".into());
     }
-    autoreleasepool(|_| unsafe {
-        let doc = open(&pages[0])?;
-        for (i, bytes) in pages.iter().enumerate().skip(1) {
-            let one = open(bytes)?;
-            let p: Option<Retained<AnyObject>> = msg_send![&*one, pageAtIndex: 0usize];
-            let p = p.ok_or("WebKit 画出的页是空的")?;
-            let _: () = msg_send![&*doc, insertPage: &*p, atIndex: i];
+    let count = pages.len();
+    let h = PAGE.1;
+    let to = |page: usize, y: f64| Target::Page { page: page as u32 + 1, y: (h - y).clamp(0.0, h) };
+    let links = links
+        .iter()
+        .filter(|l| l.page < count)
+        .filter_map(|l| {
+            let target = match (l.to_page, l.to_y, &l.url) {
+                (Some(p), Some(y), _) if p < count => to(p, y),
+                (Some(_), Some(_), _) => return None,
+                (_, _, Some(u)) => Target::Url { url: link_url(u)? },
+                _ => return None,
+            };
+            Some(AssemblyLink { page: l.page as u32 + 1, rect: Rect::from_top(h, l.x, l.y, l.w, l.h), target })
+        })
+        .collect();
+    // the headings, nested by level
+    let mut roots: Vec<OutlineItem> = vec![];
+    let mut stack: Vec<(u8, OutlineItem)> = vec![];
+    let close = |stack: &mut Vec<(u8, OutlineItem)>, roots: &mut Vec<OutlineItem>| {
+        let (_, item) = stack.pop().expect("an open heading");
+        match stack.last_mut() {
+            Some((_, parent)) => parent.children.push(item),
+            None => roots.push(item),
         }
-        let count: usize = msg_send![&*doc, pageCount];
-        let page_at = |i: usize| -> Option<Retained<AnyObject>> {
-            if i >= count {
-                return None;
-            }
-            msg_send![&*doc, pageAtIndex: i]
-        };
-        let height = |p: &AnyObject| -> f64 {
-            let r: Rect = msg_send![p, boundsForBox: MEDIA_BOX];
-            r.size.height
-        };
-        let link_type = ns_string("Link");
-        for l in links {
-            let Some(page) = page_at(l.page) else { continue };
-            let h = height(&page);
-            let bounds = Rect { origin: Point { x: l.x, y: h - l.y - l.h }, size: Size { width: l.w, height: l.h } };
-            let a = alloc(c"PDFAnnotation")?;
-            let nil: *mut AnyObject = std::ptr::null_mut();
-            let ann: Retained<AnyObject> = msg_send![a, initWithBounds: bounds, forType: &*link_type, withProperties: nil];
-            if let (Some(tp), Some(ty)) = (l.to_page, l.to_y) {
-                let Some(target) = page_at(tp) else { continue };
-                let th = height(&target);
-                let d = destination(&target, 0.0, (th - ty).clamp(0.0, th))?;
-                let _: () = msg_send![&*ann, setDestination: &*d];
-            } else if let Some(u) = &l.url {
-                let url_class = AnyClass::get(c"NSURL").ok_or("系统的 Foundation 不可用")?;
-                let url: Option<Retained<AnyObject>> = msg_send![url_class, URLWithString: &*ns_string(u)];
-                let Some(url) = url else { continue };
-                let _: () = msg_send![&*ann, setURL: &*url];
-            } else {
-                continue;
-            }
-            let b: Retained<AnyObject> = msg_send![alloc(c"PDFBorder")?, init];
-            let _: () = msg_send![&*b, setLineWidth: 0.0f64];
-            let _: () = msg_send![&*ann, setBorder: &*b];
-            let _: () = msg_send![&*page, addAnnotation: &*ann];
+    };
+    for m in outline.iter().filter(|m| m.page < count) {
+        while stack.last().is_some_and(|(lv, _)| *lv >= m.level) {
+            close(&mut stack, &mut roots);
         }
-        if !outline.is_empty() {
-            let root: Retained<AnyObject> = msg_send![alloc(c"PDFOutline")?, init];
-            let mut stack: Vec<(u8, Retained<AnyObject>)> = vec![(0, root.clone())];
-            for m in outline {
-                let Some(page) = page_at(m.page) else { continue };
-                let h = height(&page);
-                let item: Retained<AnyObject> = msg_send![alloc(c"PDFOutline")?, init];
-                let _: () = msg_send![&*item, setLabel: &*ns_string(&m.title)];
-                let d = destination(&page, 0.0, (h - m.y).clamp(0.0, h))?;
-                let _: () = msg_send![&*item, setDestination: &*d];
-                while stack.len() > 1 && stack.last().is_some_and(|(lv, _)| *lv >= m.level) {
-                    stack.pop();
-                }
-                let parent = &stack.last().ok_or("目录出错了")?.1;
-                let n: usize = msg_send![&**parent, numberOfChildren];
-                let _: () = msg_send![&**parent, insertChild: &*item, atIndex: n];
-                stack.push((m.level, item));
-            }
-            let _: () = msg_send![&*doc, setOutlineRoot: &*root];
-        }
-        let dict_class = AnyClass::get(c"NSMutableDictionary").ok_or("系统的 Foundation 不可用")?;
-        let attrs: Retained<AnyObject> = msg_send![dict_class, dictionary];
-        let _: () = msg_send![&*attrs, setObject: &*ns_string(title), forKey: &*ns_string("Title")];
-        let _: () = msg_send![&*attrs, setObject: &*ns_string("Pomelo OS · 见字如面"), forKey: &*ns_string("Creator")];
-        let _: () = msg_send![&*doc, setDocumentAttributes: &*attrs];
-        let data: Option<Retained<AnyObject>> = msg_send![&*doc, dataRepresentation];
-        Ok(bytes_of(&*data.ok_or("没能合成 PDF")?))
+        stack.push((m.level, OutlineItem { title: m.title.clone(), target: to(m.page, m.y), children: vec![] }));
+    }
+    while !stack.is_empty() {
+        close(&mut stack, &mut roots);
+    }
+    let how = Assembly {
+        links,
+        outline: (!roots.is_empty()).then_some(roots),
+        info: Some(InfoPatch { title: Some(title.to_string()), creator: Some("Pomelo OS · 见字如面".into()), ..Default::default() }),
+    };
+    let parts: Vec<&[u8]> = pages.iter().map(Vec::as_slice).collect();
+    engine_pdf::compose::assemble(&parts, &how, &engine_pdf::Cancel::new()).map_err(|e| match e {
+        engine_pdf::Error::NotPdf | engine_pdf::Error::Damaged => "WebKit 画出的页是空的".to_string(),
+        e => e.to_string(),
     })
 }
 
-/// A one-page PDF drawn as a PNG at `scale` (white under it).
-pub fn png_of_pdf(pdf: &[u8], scale: f64) -> Result<Vec<u8>, String> {
-    autoreleasepool(|_| unsafe {
-        let doc = open(pdf)?;
-        let page: Option<Retained<AnyObject>> = msg_send![&*doc, pageAtIndex: 0usize];
-        let page = page.ok_or("画不出来")?;
-        let r: Rect = msg_send![&*page, boundsForBox: MEDIA_BOX];
-        let size = Size { width: (r.size.width * scale).round().max(1.0), height: (r.size.height * scale).round().max(1.0) };
-        let image: Option<Retained<AnyObject>> = msg_send![&*page, thumbnailOfSize: size, forBox: MEDIA_BOX];
-        png_of_image(&*image.ok_or("画不出来")?).ok_or_else(|| "画不出来".to_string())
-    })
+/// A one-page PDF (a box of `w` × `h` points) drawn as a PNG at `scale` (white under it).
+pub fn png_of_pdf(pdf: &[u8], w: f64, h: f64, scale: f64) -> Result<Vec<u8>, String> {
+    let side = (w.max(h) * scale).round().max(1.0) as u32;
+    let doc = crate::youzi::pdf::open(pdf)?;
+    Ok(doc.render(1, engine_pdf::ImageFormat::Png, side).map_err(|_| "画不出来".to_string())?.bytes)
 }
 
-/// NSBitmapImageFileTypePNG / JPEG
-const PNG: usize = 4;
+// ---------- AppKit: an image as JPEG ----------
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Size {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgRect {
+    origin: Point,
+    size: Size,
+}
+
+unsafe impl Encode for Size {
+    const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+}
+unsafe impl Encode for Point {
+    const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+}
+unsafe impl Encode for CgRect {
+    const ENCODING: Encoding = Encoding::Struct("CGRect", &[Point::ENCODING, Size::ENCODING]);
+}
+
+/// An NSData's bytes.
+unsafe fn bytes_of(data: &AnyObject) -> Vec<u8> {
+    let len: usize = msg_send![data, length];
+    let ptr: *const u8 = msg_send![data, bytes];
+    if ptr.is_null() || len == 0 {
+        return vec![];
+    }
+    std::slice::from_raw_parts(ptr, len).to_vec()
+}
+
+/// NSBitmapImageFileTypeJPEG
 const JPEG: usize = 3;
-
-unsafe fn rep_of(image: &AnyObject) -> Option<Retained<AnyObject>> {
-    let tiff: Option<Retained<AnyObject>> = msg_send![image, TIFFRepresentation];
-    let rep_class = AnyClass::get(c"NSBitmapImageRep")?;
-    let alloc: Allocated<AnyObject> = msg_send![rep_class, alloc];
-    msg_send![alloc, initWithData: &*tiff?]
-}
-
-unsafe fn encode_rep(rep: &AnyObject, kind: usize) -> Option<Vec<u8>> {
-    let dict_class = AnyClass::get(c"NSDictionary")?;
-    let props: Retained<AnyObject> = msg_send![dict_class, dictionary];
-    let out: Option<Retained<AnyObject>> = msg_send![rep, representationUsingType: kind, properties: &*props];
-    Some(bytes_of(&*out?))
-}
-
-unsafe fn png_of_image(image: &AnyObject) -> Option<Vec<u8>> {
-    encode_rep(&*rep_of(image)?, PNG)
-}
 
 /// A picture Word can't show (HEIC, WebP, AVIF…) as a JPEG.
 pub fn jpeg_of_image(data: &[u8]) -> Option<Vec<u8>> {
@@ -302,7 +306,14 @@ pub fn jpeg_of_image(data: &[u8]) -> Option<Vec<u8>> {
         let image_class = AnyClass::get(c"NSImage")?;
         let alloc: Allocated<AnyObject> = msg_send![image_class, alloc];
         let image: Option<Retained<AnyObject>> = msg_send![alloc, initWithData: &*bytes];
-        encode_rep(&*rep_of(&*image?)?, JPEG)
+        let tiff: Option<Retained<AnyObject>> = msg_send![&*image?, TIFFRepresentation];
+        let rep_class = AnyClass::get(c"NSBitmapImageRep")?;
+        let alloc: Allocated<AnyObject> = msg_send![rep_class, alloc];
+        let rep: Option<Retained<AnyObject>> = msg_send![alloc, initWithData: &*tiff?];
+        let dict_class = AnyClass::get(c"NSDictionary")?;
+        let props: Retained<AnyObject> = msg_send![dict_class, dictionary];
+        let out: Option<Retained<AnyObject>> = msg_send![&*rep?, representationUsingType: JPEG, properties: &*props];
+        Some(bytes_of(&*out?))
     })
 }
 
@@ -354,8 +365,9 @@ pub async fn print_page(app: AppHandle, job: u64) -> Result<usize, String> {
 /// The box at the window's top-left (w × h) as a picture for Word; returns its number.
 #[tauri::command]
 pub async fn print_picture(app: AppHandle, job: u64, w: f64, h: f64) -> Result<usize, String> {
-    let pdf = window_pdf(&app, w.clamp(1.0, PAGE.0 + 40.0), h.clamp(1.0, 900.0)).await?;
-    let png = tauri::async_runtime::spawn_blocking(move || png_of_pdf(&pdf, 3.0)).await.map_err(|e| e.to_string())??;
+    let (w, h) = (w.clamp(1.0, PAGE.0 + 40.0), h.clamp(1.0, 900.0));
+    let pdf = window_pdf(&app, w, h).await?;
+    let png = tauri::async_runtime::spawn_blocking(move || png_of_pdf(&pdf, w, h, 3.0)).await.map_err(|e| e.to_string())??;
     app.state::<Print>().with(job, |j| {
         j.pictures.push(docx::Picture { bytes: png, ext: "png".into() });
         Ok(j.pictures.len() - 1)

@@ -1,5 +1,5 @@
 //! Files the user adds (attachments, project files):
-//! - Formats: .txt / .text (UTF-8, or UTF-16 with a BOM), .md / .markdown, .pdf (PDFKit; pages with
+//! - Formats: .txt / .text (UTF-8, or UTF-16 with a BOM), .md / .markdown, .pdf (engine-pdf; pages with
 //!   text — a scanned PDF is refused); since v0.4.5 Word, PowerPoint, Excel / CSV, images and saved web
 //!   pages (office.rs). Only a regular file the user chose (no folders, no symlinks), at most 200 MB,
 //!   with some text (images have none).
@@ -117,7 +117,7 @@ fn pictures_only(path: &Path) -> Option<Prepared> {
     let data = std::fs::read(path).ok()?;
     let (media_type, page_count, content) = match ext.as_str() {
         "pdf" => {
-            let n = super::pdf::pages(&data).ok()?.len() as i64;
+            let n = super::pdf::page_count(&data).ok()? as i64;
             ("application/pdf", Some(n), format!("（这份 PDF 没有文字，可能是扫描件，共 {n} 页：只有云端模型能按页看它的样子。）"))
         }
         "docx" | "pptx" => {

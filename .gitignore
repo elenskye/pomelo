@@ -13,6 +13,7 @@ pomelo-export-*.json
 node_modules/
 dist/
 src-tauri/target/
+src-tauri/vendor/
 src-tauri/gen/schemas/
 *.tsbuildinfo
 /vite.config.js

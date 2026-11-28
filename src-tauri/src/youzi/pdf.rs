@@ -1,19 +1,13 @@
-//! Text of a PDF, page by page, with macOS's PDFKit (no extra crate: the framework is linked and
-//! called through objc2). Works on the bytes given; never follows links or companion files.
-//! Pub2MD (v0.6) also draws each page as a JPEG (`render_pages`, the 原页图) and packs images into one PDF
-//! (`images_to_pdf`: AppKit's NSImage reads every format macOS can, HEIC included, upright by its EXIF).
-//! Also SHA-256 through CommonCrypto (libSystem), for storing each file's bytes once.
+//! PDFs through engine-pdf (the shared engine, v1.2: PDFKit, PDFium putting back lost ligatures, Vision). Pomelo
+//! keeps what it does with them; this only adapts: page texts as attachments and the knowledge base take them,
+//! Pomelo's own wording for files that can't be opened, the page images' file names. Works on the bytes given;
+//! never follows links or companion files. Also SHA-256 through CommonCrypto (libSystem), for storing each
+//! file's bytes once.
 
-use objc2::encode::{Encode, Encoding};
-use objc2::rc::{autoreleasepool, Allocated, Retained};
-use objc2::runtime::{AnyClass, AnyObject};
-use objc2::msg_send;
-use objc2_foundation::NSString;
-use std::ffi::{c_char, c_void, CStr};
+use engine_pdf::compose::{self, ImageSource};
+use engine_pdf::{Cancel, Content, Document, Error, ImageFormat, Ocr, ReadOptions};
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-
-#[link(name = "PDFKit", kind = "framework")]
-extern "C" {}
 
 extern "C" {
     fn CC_SHA256(data: *const c_void, len: u32, md: *mut u8) -> *mut u8;
@@ -26,261 +20,62 @@ pub fn sha256_hex(data: &[u8]) -> String {
     out.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The document (inside an autorelease pool).
-pub(crate) unsafe fn open(data: &[u8]) -> Result<Retained<AnyObject>, String> {
-    let ns_data_class = AnyClass::get(c"NSData").ok_or("读不了 PDF")?;
-    let bytes: Retained<AnyObject> = msg_send![ns_data_class, dataWithBytes: data.as_ptr().cast::<c_void>(), length: data.len()];
-    let doc_class = AnyClass::get(c"PDFDocument").ok_or("读不了 PDF：系统的 PDFKit 不可用")?;
-    let alloc: Allocated<AnyObject> = msg_send![doc_class, alloc];
-    let doc: Option<Retained<AnyObject>> = msg_send![alloc, initWithData: &*bytes];
-    let doc = doc.ok_or("PDF 文件已损坏，无法读取")?;
-    let locked: bool = msg_send![&*doc, isLocked];
-    if locked {
-        return Err("PDF 已加密，请先解除密码后再添加".to_string());
+/// Pomelo's words for a PDF that can't be opened (知识库 keeps them as the file's error).
+pub fn error_text(e: Error) -> String {
+    match e {
+        Error::Locked => "PDF 已加密，请先解除密码后再添加".into(),
+        Error::NotPdf | Error::Damaged => "PDF 文件已损坏，无法读取".into(),
+        e => e.to_string(),
     }
-    Ok(doc)
 }
 
-/// Text of every page (empty for pages without text).
+pub fn open(data: &[u8]) -> Result<Document, String> {
+    Document::from_bytes(data).map_err(error_text)
+}
+
+pub fn page_count(data: &[u8]) -> Result<usize, String> {
+    Ok(open(data)?.page_count() as usize)
+}
+
+/// A page's own text ("" for a scan, a blank page, a garbled layer or a page that can't be read).
+pub fn text_of(content: Content) -> String {
+    match content {
+        Content::Text(t) | Content::SearchableText(t) => t,
+        Content::Ocr(o) => o.text,
+        Content::NoText { partial, .. } => partial,
+        Content::Blank | Content::Failed(_) => String::new(),
+    }
+}
+
+/// Text of every page, from its text layer only.
 pub fn pages(data: &[u8]) -> Result<Vec<String>, String> {
-    autoreleasepool(|_| unsafe {
-        let doc = open(data)?;
-        let count: usize = msg_send![&*doc, pageCount];
-        let mut out = Vec::with_capacity(count);
-        for i in 0..count {
-            autoreleasepool(|_| {
-                let page: Option<Retained<AnyObject>> = msg_send![&*doc, pageAtIndex: i];
-                let text: Option<Retained<NSString>> = match &page {
-                    Some(p) => msg_send![&**p, string],
-                    None => None,
-                };
-                out.push(text.map(|s| s.to_string()).unwrap_or_default());
-            });
-        }
-        Ok(out)
-    })
+    let doc = open(data)?;
+    let all: Vec<u32> = (1..=doc.page_count()).collect();
+    let opts = ReadOptions { ocr: Ocr::Off, render: None, ..Default::default() };
+    let read = engine_pdf::read(&doc, &all, &opts, &Cancel::new()).map_err(error_text)?;
+    Ok(read.into_iter().map(|p| text_of(p.content)).collect())
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct Size {
-    pub width: f64,
-    pub height: f64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct Point {
-    pub x: f64,
-    pub y: f64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct Rect {
-    pub origin: Point,
-    pub size: Size,
-}
-
-unsafe impl Encode for Size {
-    const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
-}
-unsafe impl Encode for Point {
-    const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
-}
-unsafe impl Encode for Rect {
-    const ENCODING: Encoding = Encoding::Struct("CGRect", &[Point::ENCODING, Size::ENCODING]);
-}
-
-/// kPDFDisplayBoxMediaBox
-pub(crate) const MEDIA_BOX: isize = 0;
-/// NSBitmapImageFileTypeJPEG
-const JPEG: usize = 3;
-
-pub(crate) unsafe fn ns_string(s: &str) -> Retained<NSString> {
-    NSString::from_str(s)
-}
-
-/// An NSData's bytes.
-pub(crate) unsafe fn bytes_of(data: &AnyObject) -> Vec<u8> {
-    let len: usize = msg_send![data, length];
-    let ptr: *const u8 = msg_send![data, bytes];
-    if ptr.is_null() || len == 0 {
-        return vec![];
-    }
-    std::slice::from_raw_parts(ptr, len).to_vec()
-}
-
-/// An NSImage as JPEG bytes (quality 0.85).
-unsafe fn jpeg_of(image: &AnyObject) -> Option<Vec<u8>> {
-    let tiff: Option<Retained<AnyObject>> = msg_send![image, TIFFRepresentation];
-    let rep_class = AnyClass::get(c"NSBitmapImageRep")?;
-    let alloc: Allocated<AnyObject> = msg_send![rep_class, alloc];
-    let rep: Option<Retained<AnyObject>> = msg_send![alloc, initWithData: &*tiff?];
-    let number_class = AnyClass::get(c"NSNumber")?;
-    let quality: Retained<AnyObject> = msg_send![number_class, numberWithDouble: 0.85f64];
-    let dict_class = AnyClass::get(c"NSDictionary")?;
-    let key = ns_string("NSImageCompressionFactor");
-    let props: Retained<AnyObject> = msg_send![dict_class, dictionaryWithObject: &*quality, forKey: &*key];
-    let jpeg: Option<Retained<AnyObject>> = msg_send![&*rep?, representationUsingType: JPEG, properties: &*props];
-    Some(bytes_of(&*jpeg?))
+/// Page `page` (1-based) as a JPEG, the longer side `max_side` px (what a reader shows: the CropBox).
+pub fn page_jpeg(data: &[u8], page: usize, max_side: u32) -> Result<Vec<u8>, String> {
+    Ok(open(data)?.render(page as u32, ImageFormat::Jpeg, max_side).map_err(error_text)?.bytes)
 }
 
 /// Draws every page as `page-0001.jpg`… in `dir` (the longer side `max_side` px). Returns the page count.
-pub fn render_pages(data: &[u8], dir: &Path, max_side: f64) -> Result<usize, String> {
+pub fn render_pages(data: &[u8], dir: &Path, max_side: u32) -> Result<usize, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("没能准备原页图的文件夹：{e}"))?;
-    autoreleasepool(|_| unsafe {
-        let doc = open(data)?;
-        let count: usize = msg_send![&*doc, pageCount];
-        for i in 0..count {
-            autoreleasepool(|_| -> Result<(), String> {
-                let jpeg = jpeg_page(&doc, i, max_side)?;
-                std::fs::write(dir.join(page_name(i + 1)), jpeg).map_err(|e| format!("没能存下原页图：{e}"))
-            })?;
-        }
-        Ok(count)
-    })
-}
-
-
-unsafe fn jpeg_page(doc: &AnyObject, i: usize, max_side: f64) -> Result<Vec<u8>, String> {
-    let page: Option<Retained<AnyObject>> = msg_send![doc, pageAtIndex: i];
-    let page = page.ok_or_else(|| format!("PDF 的第 {} 页读不出来", i + 1))?;
-    let rect: Rect = msg_send![&*page, boundsForBox: MEDIA_BOX];
-    let rotation: isize = msg_send![&*page, rotation];
-    let (mut w, mut h) = (rect.size.width.max(1.0), rect.size.height.max(1.0));
-    if rotation.rem_euclid(180) == 90 {
-        std::mem::swap(&mut w, &mut h);
+    let doc = open(data)?;
+    for n in 1..=doc.page_count() {
+        let jpeg = doc.render(n, ImageFormat::Jpeg, max_side).map_err(error_text)?;
+        std::fs::write(dir.join(page_name(n as usize)), jpeg.bytes).map_err(|e| format!("没能存下原页图：{e}"))?;
     }
-    let scale = max_side / w.max(h);
-    let size = Size { width: (w * scale).round(), height: (h * scale).round() };
-    let image: Option<Retained<AnyObject>> = msg_send![&*page, thumbnailOfSize: size, forBox: MEDIA_BOX];
-    let jpeg = image.and_then(|im| jpeg_of(&im)).ok_or_else(|| format!("没能画出 PDF 的第 {} 页", i + 1))?;
-    Ok(jpeg)
+    Ok(doc.page_count() as usize)
 }
 
-// ---------- which pages hold images (Quartz's PDF objects: PDFKit doesn't say) ----------
-
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    fn CGDataProviderCreateWithData(info: *mut c_void, data: *const c_void, size: usize, release: *const c_void) -> *mut c_void;
-    fn CGDataProviderRelease(provider: *mut c_void);
-    fn CGPDFDocumentCreateWithProvider(provider: *mut c_void) -> *mut c_void;
-    fn CGPDFDocumentRelease(doc: *mut c_void);
-    fn CGPDFDocumentGetNumberOfPages(doc: *mut c_void) -> usize;
-    fn CGPDFDocumentGetPage(doc: *mut c_void, number: usize) -> *mut c_void;
-    fn CGPDFPageGetDictionary(page: *mut c_void) -> *mut c_void;
-    fn CGPDFDictionaryGetDictionary(dict: *mut c_void, key: *const c_char, out: *mut *mut c_void) -> bool;
-    fn CGPDFDictionaryGetName(dict: *mut c_void, key: *const c_char, out: *mut *const c_char) -> bool;
-    fn CGPDFDictionaryGetInteger(dict: *mut c_void, key: *const c_char, out: *mut std::ffi::c_long) -> bool;
-    fn CGPDFDictionaryApplyFunction(dict: *mut c_void, f: extern "C" fn(*const c_char, *mut c_void, *mut c_void), info: *mut c_void);
-    fn CGPDFObjectGetValue(object: *mut c_void, kind: i32, out: *mut c_void) -> bool;
-    fn CGPDFStreamGetDictionary(stream: *mut c_void) -> *mut c_void;
-}
-
-/// kCGPDFObjectTypeStream
-const PDF_STREAM: i32 = 9;
-/// Smaller ones are rules, bullets, masks.
-const MIN_IMAGE_SIDE: i64 = 32;
-/// Forms inside forms, this deep.
-const MAX_FORMS: u32 = 3;
-
-struct Counting {
-    images: usize,
-    depth: u32,
-}
-
-unsafe fn xobjects_of(resources: *mut c_void, count: &mut Counting) {
-    let mut xobjects = std::ptr::null_mut();
-    if CGPDFDictionaryGetDictionary(resources, c"XObject".as_ptr(), &mut xobjects) {
-        CGPDFDictionaryApplyFunction(xobjects, count_xobject, (count as *mut Counting).cast());
-    }
-}
-
-extern "C" fn count_xobject(_: *const c_char, object: *mut c_void, info: *mut c_void) {
-    unsafe {
-        let count = &mut *info.cast::<Counting>();
-        let mut stream = std::ptr::null_mut::<c_void>();
-        if !CGPDFObjectGetValue(object, PDF_STREAM, (&mut stream as *mut *mut c_void).cast()) {
-            return;
-        }
-        let dict = CGPDFStreamGetDictionary(stream);
-        let mut subtype = std::ptr::null();
-        if !CGPDFDictionaryGetName(dict, c"Subtype".as_ptr(), &mut subtype) {
-            return;
-        }
-        match CStr::from_ptr(subtype).to_bytes() {
-            b"Image" => {
-                let (mut w, mut h): (std::ffi::c_long, std::ffi::c_long) = (0, 0);
-                CGPDFDictionaryGetInteger(dict, c"Width".as_ptr(), &mut w);
-                CGPDFDictionaryGetInteger(dict, c"Height".as_ptr(), &mut h);
-                if w >= MIN_IMAGE_SIDE && h >= MIN_IMAGE_SIDE {
-                    count.images += 1;
-                }
-            }
-            b"Form" if count.depth < MAX_FORMS => {
-                let mut resources = std::ptr::null_mut();
-                if CGPDFDictionaryGetDictionary(dict, c"Resources".as_ptr(), &mut resources) {
-                    count.depth += 1;
-                    xobjects_of(resources, count);
-                    count.depth -= 1;
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// The pages (1-based) holding images, with how many (their own or their parent's resources).
+/// The pages (1-based) holding images, with how many.
 pub fn image_pages(data: &[u8]) -> Result<Vec<(usize, usize)>, String> {
-    // PDFKit says when it's broken or locked
-    autoreleasepool(|_| unsafe { open(data).map(|_| ()) })?;
-    unsafe {
-        let provider = CGDataProviderCreateWithData(std::ptr::null_mut(), data.as_ptr().cast(), data.len(), std::ptr::null());
-        if provider.is_null() {
-            return Err("PDF 文件已损坏，无法读取".into());
-        }
-        let doc = CGPDFDocumentCreateWithProvider(provider);
-        if doc.is_null() {
-            CGDataProviderRelease(provider);
-            return Err("PDF 文件已损坏，无法读取".into());
-        }
-        let mut out = vec![];
-        for n in 1..=CGPDFDocumentGetNumberOfPages(doc) {
-            let page = CGPDFDocumentGetPage(doc, n);
-            if page.is_null() {
-                continue;
-            }
-            let mut dict = CGPDFPageGetDictionary(page);
-            let mut resources = std::ptr::null_mut();
-            // resources may be inherited from the page tree
-            for _ in 0..16 {
-                if CGPDFDictionaryGetDictionary(dict, c"Resources".as_ptr(), &mut resources) {
-                    break;
-                }
-                let mut parent = std::ptr::null_mut();
-                if !CGPDFDictionaryGetDictionary(dict, c"Parent".as_ptr(), &mut parent) {
-                    break;
-                }
-                dict = parent;
-            }
-            let mut count = Counting { images: 0, depth: 0 };
-            if !resources.is_null() {
-                xobjects_of(resources, &mut count);
-            }
-            if count.images > 0 {
-                out.push((n, count.images));
-            }
-        }
-        CGPDFDocumentRelease(doc);
-        CGDataProviderRelease(provider);
-        Ok(out)
-    }
-}
-
-/// Render one page in memory for local OCR; no original or page image is retained.
-pub fn page_jpeg(data: &[u8], index: usize, max_side: f64) -> Result<Vec<u8>, String> {
-    autoreleasepool(|_| unsafe { jpeg_page(&*open(data)?, index, max_side) })
+    let doc = open(data)?;
+    Ok(doc.image_counts(&Cancel::new()).map_err(error_text)?.into_iter().map(|(p, n)| (p as usize, n)).collect())
 }
 
 /// The file name of page `n`'s image (1-based).
@@ -288,52 +83,15 @@ pub fn page_name(n: usize) -> String {
     format!("page-{n:04}.jpg")
 }
 
-/// Images (in this order, one page each) packed into a PDF.
+/// Images (in this order, one page each; a TIFF of several pages a page each) packed into a PDF.
 pub fn images_to_pdf(paths: &[PathBuf]) -> Result<Vec<u8>, String> {
-    autoreleasepool(|_| unsafe {
-        let doc_class = AnyClass::get(c"PDFDocument").ok_or("系统的 PDFKit 不可用")?;
-        let image_class = AnyClass::get(c"NSImage").ok_or("系统的 AppKit 不可用")?;
-        let page_class = AnyClass::get(c"PDFPage").ok_or("系统的 PDFKit 不可用")?;
-        let alloc: Allocated<AnyObject> = msg_send![doc_class, alloc];
-        let doc: Retained<AnyObject> = msg_send![alloc, init];
-        let mut at = 0usize;
-        for p in paths {
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("图片");
-            let alloc: Allocated<AnyObject> = msg_send![image_class, alloc];
-            let path = ns_string(&p.to_string_lossy());
-            let image: Option<Retained<AnyObject>> = msg_send![alloc, initWithContentsOfFile: &*path];
-            let image = image.ok_or_else(|| format!("读不了图片「{name}」"))?;
-            // a TIFF of several pages: a PDF page each
-            let mut images: Vec<Retained<AnyObject>> = vec![];
-            if matches!(p.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref(), Some("tif" | "tiff")) {
-                let reps: Retained<AnyObject> = msg_send![&*image, representations];
-                let n: usize = msg_send![&*reps, count];
-                for k in 0..if n > 1 { n } else { 0 } {
-                    let rep: *mut AnyObject = msg_send![&*reps, objectAtIndex: k];
-                    let size: Size = msg_send![rep, size];
-                    let alloc: Allocated<AnyObject> = msg_send![image_class, alloc];
-                    let one: Retained<AnyObject> = msg_send![alloc, initWithSize: size];
-                    let _: () = msg_send![&*one, addRepresentation: rep];
-                    images.push(one);
-                }
-            }
-            if images.is_empty() {
-                images.push(image);
-            }
-            for image in images {
-                let alloc: Allocated<AnyObject> = msg_send![page_class, alloc];
-                let page: Option<Retained<AnyObject>> = msg_send![alloc, initWithImage: &*image];
-                let page = page.ok_or_else(|| format!("图片「{name}」放不进 PDF"))?;
-                let _: () = msg_send![&*doc, insertPage: &*page, atIndex: at];
-                at += 1;
-            }
+    let sources: Vec<ImageSource> = paths.iter().map(|p| ImageSource::Path(p)).collect();
+    compose::images(&sources, &Cancel::new()).map_err(|e| match e {
+        Error::ImageInput { index } => {
+            let name = paths.get(index.saturating_sub(1)).and_then(|p| p.file_name()).map_or_else(|| "图片".into(), |n| n.to_string_lossy().to_string());
+            format!("读不了图片「{name}」")
         }
-        let data: Option<Retained<AnyObject>> = msg_send![&*doc, dataRepresentation];
-        let bytes = data.map(|d| bytes_of(&d)).unwrap_or_default();
-        if bytes.is_empty() {
-            return Err("没能把图片合成 PDF".into());
-        }
-        Ok(bytes)
+        e => e.to_string(),
     })
 }
 
@@ -382,7 +140,7 @@ pub mod tests {
     fn pages_become_jpegs_and_images_a_pdf() {
         let dir = crate::db::tests::temp_dir("pdf-render");
         let pdf = sample_pdf(&["Page one", "Page two"]);
-        assert_eq!(render_pages(&pdf, &dir.join("pages"), 400.0).unwrap(), 2);
+        assert_eq!(render_pages(&pdf, &dir.join("pages"), 400).unwrap(), 2);
         for n in [1, 2] {
             let jpg = std::fs::read(dir.join("pages").join(page_name(n))).unwrap();
             assert_eq!(&jpg[..3], &[0xFF, 0xD8, 0xFF]);
@@ -428,3 +186,133 @@ pub mod tests {
     }
 }
 
+
+/// Phase 1 of 1.2.0 (engine-pdf): what the PDF code makes of real files, to compare before and after.
+/// `POMELO_PDF_CORPUS` (folders, `:`-separated) → `POMELO_PDF_DUMP` (JSON).
+#[cfg(test)]
+mod compare {
+    use super::*;
+
+    fn jpeg_size(b: &[u8]) -> Option<(u32, u32)> {
+        let mut i = 2;
+        while i + 9 < b.len() {
+            if b[i] != 0xFF {
+                return None;
+            }
+            let m = b[i + 1];
+            let len = u16::from_be_bytes([b[i + 2], b[i + 3]]) as usize;
+            if matches!(m, 0xC0..=0xC3) {
+                return Some((u16::from_be_bytes([b[i + 7], b[i + 8]]) as u32, u16::from_be_bytes([b[i + 5], b[i + 6]]) as u32));
+            }
+            i += 2 + len;
+        }
+        None
+    }
+
+    #[test]
+    #[ignore]
+    fn dump_corpus() {
+        let (Ok(corpus), Ok(out)) = (std::env::var("POMELO_PDF_CORPUS"), std::env::var("POMELO_PDF_DUMP")) else { return };
+        let mut files: Vec<PathBuf> = corpus.split(':').flat_map(|d| walk(Path::new(d))).collect();
+        files.sort();
+        let tmp = crate::db::tests::temp_dir("pdf-dump");
+        let mut all = vec![];
+        for f in files {
+            let data = std::fs::read(&f).unwrap();
+            let t = std::time::Instant::now();
+            let read = crate::youzi::files::read(&f, true);
+            let ms = t.elapsed().as_millis();
+            let read = match read {
+                Ok(p) => serde_json::json!({ "pages": p.page_count, "segments": p.segments.iter().map(|s| [s.label(), s.content.clone()]).collect::<Vec<_>>() }),
+                Err(e) => serde_json::json!({ "error": e }),
+            };
+            let dir = tmp.join("pages");
+            let _ = std::fs::remove_dir_all(&dir);
+            let rendered = render_pages(&data, &dir, 1568);
+            let dims: Vec<Option<(u32, u32)>> = match &rendered {
+                Ok(n) => (1..=*n).map(|i| std::fs::read(dir.join(page_name(i))).ok().and_then(|b| jpeg_size(&b))).collect(),
+                Err(_) => vec![],
+            };
+            all.push(serde_json::json!({
+                "file": f.to_string_lossy(),
+                "read": read,
+                "read_ms": ms,
+                "images": image_pages(&data).map_err(|e| e.to_string()),
+                "images_text": crate::youzi::office::images_text("x", &data, "pdf"),
+                "dims": dims,
+                "render_error": rendered.err(),
+            }));
+            eprintln!("{} {ms} ms", f.display());
+        }
+        std::fs::write(out, serde_json::to_string_pretty(&all).unwrap()).unwrap();
+    }
+
+    fn walk(d: &Path) -> Vec<PathBuf> {
+        let mut out = vec![];
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("pdf")) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// One A4 page (595 × 842, like WebKit's) with a line of text.
+    fn a4(text: &str) -> Vec<u8> {
+        let stream = format!("BT /F1 24 Tf 72 760 Td ({text}) Tj ET");
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [4 0 R] /Count 1 >>".into(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>".into(),
+            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = vec![];
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+        for off in offsets {
+            out.extend(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+        out
+    }
+
+    /// 见字如面's PDF: pages, links, outline and title, read back by engine-pdf.
+    #[test]
+    #[ignore]
+    fn dump_assemble() {
+        let Ok(out) = std::env::var("POMELO_PDF_DUMP") else { return };
+        use crate::print::{assemble, Mark, PdfLink};
+        let pages: Vec<Vec<u8>> = ["First page", "Second page", "Third page"].iter().map(|t| a4(t)).collect();
+        let link = |page, x, y, to_page: Option<usize>, to_y: Option<f64>, url: Option<&str>| PdfLink { page, x, y, w: 120.0, h: 18.0, to_page, to_y, url: url.map(String::from) };
+        let links = vec![
+            link(0, 72.0, 100.0, Some(2), Some(300.0), None),
+            link(1, 80.5, 400.25, None, None, Some("https://example.com/a?b=1&c=中文")),
+            link(2, 72.0, 700.0, Some(0), Some(0.0), None),
+            link(9, 72.0, 700.0, Some(0), Some(0.0), None),
+            link(0, 72.0, 200.0, Some(9), Some(0.0), None),
+        ];
+        let mark = |level, title: &str, page, y| Mark { level, title: title.into(), page, y };
+        let outline = vec![mark(1, "一、开头", 0, 72.0), mark(2, "1.1 小节", 0, 400.0), mark(3, "1.1.1 更小", 1, 50.0), mark(2, "1.2 另一节", 1, 600.0), mark(1, "二、结尾", 2, 100.0), mark(1, "越界", 7, 0.0)];
+        let pdf = assemble(&pages, &links, &outline, "见字如面 · 测试").unwrap();
+        let doc = engine_pdf::Document::from_bytes(&pdf).unwrap();
+        let annotations: Vec<_> = (1..=doc.page_count()).map(|p| doc.annotations(p).unwrap()).collect();
+        let info = doc.info();
+        let dump = serde_json::json!({
+            "pages": doc.page_count(),
+            "texts": (1..=doc.page_count()).map(|p| doc.text(p).unwrap()).collect::<Vec<_>>(),
+            "title": info.title, "creator": info.creator,
+            "outline": doc.outline(),
+            "annotations": annotations,
+        });
+        std::fs::write(out, serde_json::to_string_pretty(&dump).unwrap()).unwrap();
+    }
+}

@@ -52,7 +52,7 @@ pub const TERMS_FILE: &str = "术语表.md";
 const ASSETS: &str = "assets";
 /// Tokens a chunk (less for a small window).
 const TARGET: i64 = 2400;
-const PAGE_SIDE: f64 = 1568.0;
+const PAGE_SIDE: u32 = 1568;
 const IMAGES_A_CHUNK: usize = 6;
 const FIXES_PER_CHUNK: u32 = 2;
 const FIXES_PER_DOC: u32 = 6;
@@ -531,7 +531,7 @@ pub async fn extract(report: &Report, folder: &Path, job: &mut Job, how: Extract
 }
 
 async fn mock_extract(report: &Report, folder: &Path, kind: Kind, paths: &[PathBuf], data: &[u8]) -> Result<String, String> {
-    let pages = if kind == Kind::Word { 1 } else { pdf::pages(data).map(|p| p.len()).unwrap_or(1) };
+    let pages = if kind == Kind::Word { 1 } else { pdf::page_count(data).unwrap_or(1) };
     for i in 1..=pages.min(3) {
         report.step(&format!("Mathpix 识别中（模拟）{i}/{pages} 页"));
         tokio::time::sleep(Duration::from_millis(400)).await;

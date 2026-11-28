@@ -9,7 +9,7 @@
 //! - convert: POST /v3/converter {mmd, formats} (images by their links), GET /v3/converter/{id} for each
 //!   format's status, GET /v3/converter/{id}.{ext}; the files aren't kept there long: fetched at once.
 //! - Service errors are said in fixed Chinese (never the service's own text).
-//! Mock (dev / tests): the PDF's own text per page (PDFKit), a Word file's text, a line per image.
+//! Mock (dev / tests): the PDF's own text per page (engine-pdf), a Word file's text, a line per image.
 
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -213,7 +213,7 @@ pub fn mock_mmd(kind: super::source::Kind, paths: &[std::path::PathBuf], pdf: Op
     Ok(pages.join("\n\n\\pagebreak\n\n"))
 }
 
-/// A page's text as paragraphs (PDFKit gives lines).
+/// A page's text as paragraphs (the text layer gives lines).
 fn mock_page(text: &str) -> String {
     let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     if lines.is_empty() {
